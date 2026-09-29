@@ -1,10 +1,6 @@
-<div align="center">
+<h1 align="center">dots</h1>
 
-# dots
-
-**Every AI agent is a model and a browser.<br>You can swap the model with one flag. The browser is what the website sees.**
-
-</div>
+<p align="center"><b>Every AI agent is a model and a browser.<br>You can swap the model with one flag. The browser is what the website sees.</b></p>
 
 ---
 
