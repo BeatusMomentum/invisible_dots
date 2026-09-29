@@ -2,7 +2,7 @@
 
 # dots
 
-**Open-source dots for the web: an agent with its own browser, one that does not get blocked. Tell it what you want in plain language.**
+**Every AI agent is a model and a browser.<br>You can swap the model with one flag. The browser is what the website sees.**
 
 </div>
 
@@ -24,7 +24,30 @@ source $HOME/.local/bin/env
 uvx --from git+https://github.com/feder-cr/dots dots --openrouter-key sk-or-...
 ```
 
-Then open **http://127.0.0.1:8765**. Chat on the left, the live browser on the right.
+Then open **http://127.0.0.1:8765**. The conversation on the left, the browser on the right, live.
+
+## It all comes down to the browser
+
+When a web agent fails, the model is rarely why. The page never loaded, a
+challenge appeared, the login expired, the click did not land. All of that
+happens in the browser, before the model gets to think.
+
+So dots is built around one:
+
+- **A real Firefox engine, patched in C++.** The fingerprint is decided inside
+  the engine, not painted over with JavaScript that a page can inspect.
+- **One identity per seed.** Screen, fonts, GPU, timezone and language agree
+  with each other, and `--seed` gives back the same person on every run.
+- **Nothing for a page to find.** No WebDriver flag, no DevTools protocol, no
+  automation globals in the page.
+- **A person's hands.** The pointer travels to what it clicks and keys are
+  pressed one at a time, so every event the page receives is a trusted one.
+- **A browser that remembers.** `--profile-dir` keeps logins and cookies from
+  one run to the next.
+- **Where it connects from is who it is.** With `--proxy`, the timezone and the
+  language follow the exit.
+
+The model is any model on OpenRouter, and `--model` changes it.
 
 ## What to ask it
 
@@ -32,14 +55,12 @@ Then open **http://127.0.0.1:8765**. Chat on the left, the live browser on the r
 > every date from the 12th to the 16th of next month and read the cheapest fare
 > for each day. If a date has no availability, say so. Do not guess a number.
 
-It drives the page the way a person would: the pointer moves, keys are pressed.
+## The same browser, in your own assistant
 
-## From your own assistant
-
-Claude Code, Codex, Gemini CLI or any MCP client: use
-[invisible_playwright_mcp](https://github.com/feder-cr/invisible_playwright_mcp),
-the same browser as a server. `dots` is its interface, and every option it takes
-is listed by `dots --help`.
+Claude Code, Codex, Gemini CLI or any MCP client:
+[invisible_playwright_mcp](https://github.com/feder-cr/invisible_playwright_mcp)
+gives them this browser as a server. `dots` is its interface, and `dots --help`
+lists every option.
 
 ---
 
