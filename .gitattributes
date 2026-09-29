@@ -1,0 +1,5 @@
+# The pre-push hook is a shell script, and git must never hand it to a POSIX
+# shell with CRLF line endings: `/bin/sh^M: bad interpreter` is how a gate stops
+# running on a machine where nothing else looks wrong. Git-for-Windows' sh is
+# the one that runs it on a Windows clone with core.autocrlf=true.
+.githooks/** text eol=lf
