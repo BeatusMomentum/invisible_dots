@@ -1,0 +1,18 @@
+{
+  "name": "@invisible-dots/task-runtime",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Local task queue and lifecycle.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@invisible-dots/memory": "0.0.0",
+    "@invisible-dots/shared": "0.0.0"
+  }
+}

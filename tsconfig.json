@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.base.json",
+  "include": [
+    "*.ts",
+    "apps/*/src/**/*.ts",
+    "apps/*/test/**/*.ts",
+    "packages/*/src/**/*.ts",
+    "packages/*/test/**/*.ts",
+    "guest/invisible-dots-agent/src/**/*.ts",
+    "guest/invisible-dots-agent/test/**/*.ts",
+    "guest-runtime/*/src/**/*.ts",
+    "guest-runtime/*/test/**/*.ts"
+  ],
+  "exclude": ["node_modules", "apps/web"]
+}

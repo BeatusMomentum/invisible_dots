@@ -1,0 +1,102 @@
+import type { DotConfig, DotState, VmState } from "@invisible-dots/shared";
+import type { DotRecord, DotSummary } from "@invisible-dots/shared";
+import { isUniqueViolation, isoRequired, type Queryable } from "./rows.js";
+
+export class DotNameTakenError extends Error {
+  constructor(readonly dotName: string) {
+    super(`a Dot named "${dotName}" already exists`);
+    this.name = "DotNameTakenError";
+  }
+}
+
+interface DotRow {
+  id: string;
+  name: string;
+  config: DotConfig;
+  status: DotState;
+  error: string | null;
+  created_at: Date;
+  updated_at: Date;
+  computer_state?: VmState | null;
+}
+
+function toRecord(row: DotRow): DotRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    config: row.config,
+    status: row.status,
+    error: row.error,
+    created_at: isoRequired(row.created_at),
+    updated_at: isoRequired(row.updated_at),
+  };
+}
+
+function toSummary(row: DotRow): DotSummary {
+  return { ...toRecord(row), computer_state: row.computer_state ?? null };
+}
+
+const SUMMARY_SELECT = `SELECT d.*, c.state AS computer_state FROM dots d LEFT JOIN computers c ON c.dot_id = d.id`;
+
+export class DotsRepository {
+  constructor(private readonly q: Queryable) {}
+
+  async insert(input: { id: string; config: DotConfig; status: DotState }): Promise<DotRecord> {
+    try {
+      const { rows } = await this.q.query<DotRow>(
+        "INSERT INTO dots (id, name, config, status) VALUES ($1, $2, $3, $4) RETURNING *",
+        [input.id, input.config.name, JSON.stringify(input.config), input.status],
+      );
+      return toRecord(rows[0]!);
+    } catch (error) {
+      if (isUniqueViolation(error, "dots_name_key")) throw new DotNameTakenError(input.config.name);
+      throw error;
+    }
+  }
+
+  async get(id: string): Promise<DotRecord | null> {
+    const { rows } = await this.q.query<DotRow>("SELECT * FROM dots WHERE id = $1", [id]);
+    return rows[0] ? toRecord(rows[0]) : null;
+  }
+
+  /**
+   * A Dot by id or by name. Ids carry a `_` and names cannot, so the two
+   * never collide; the API and the CLI accept either.
+   */
+  async resolve(idOrName: string): Promise<DotSummary | null> {
+    const { rows } = await this.q.query<DotRow>(`${SUMMARY_SELECT} WHERE d.id = $1 OR d.name = $1`, [idOrName]);
+    return rows[0] ? toSummary(rows[0]) : null;
+  }
+
+  async list(): Promise<DotSummary[]> {
+    const { rows } = await this.q.query<DotRow>(`${SUMMARY_SELECT} ORDER BY d.created_at, d.id`);
+    return rows.map(toSummary);
+  }
+
+  async updateConfig(id: string, config: DotConfig): Promise<DotRecord | null> {
+    try {
+      const { rows } = await this.q.query<DotRow>(
+        "UPDATE dots SET name = $2, config = $3, updated_at = now() WHERE id = $1 RETURNING *",
+        [id, config.name, JSON.stringify(config)],
+      );
+      return rows[0] ? toRecord(rows[0]) : null;
+    } catch (error) {
+      if (isUniqueViolation(error, "dots_name_key")) throw new DotNameTakenError(config.name);
+      throw error;
+    }
+  }
+
+  /** Set the status; `error` is cleared unless given, so a stale reason never outlives its ERROR. */
+  async setStatus(id: string, status: DotState, error: string | null = null): Promise<DotRecord | null> {
+    const { rows } = await this.q.query<DotRow>(
+      "UPDATE dots SET status = $2, error = $3, updated_at = now() WHERE id = $1 RETURNING *",
+      [id, status, error],
+    );
+    return rows[0] ? toRecord(rows[0]) : null;
+  }
+
+  async delete(id: string): Promise<boolean> {
+    const { rowCount } = await this.q.query("DELETE FROM dots WHERE id = $1", [id]);
+    return (rowCount ?? 0) > 0;
+  }
+}

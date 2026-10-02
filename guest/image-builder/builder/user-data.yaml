@@ -1,0 +1,21 @@
+#cloud-config
+# Seed of the one-off builder VM that turns the Ubuntu cloud image into a
+# golden image. The real work is provision.sh on the IDOTS-BUILD payload disk;
+# it prints IDOTS-BUILD-RESULT to the serial console and powers the VM off.
+hostname: idots-golden-builder
+users:
+  - name: dot
+    gecos: invisible_dots agent
+    shell: /bin/bash
+    lock_passwd: true
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    groups: [audio, video]
+disable_root: true
+ssh_pwauth: false
+package_update: false
+package_upgrade: false
+growpart:
+  mode: auto
+  devices: ["/"]
+runcmd:
+  - [ sh, -c, "mkdir -p /mnt/idots-build && mount -o ro LABEL=IDOTS-BUILD /mnt/idots-build && bash /mnt/idots-build/provision.sh || { echo 'IDOTS-BUILD-RESULT: failed (provision did not run to the end)' > /dev/ttyS0; systemctl poweroff; }" ]

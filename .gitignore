@@ -1,8 +1,19 @@
+node_modules/
+.next/
+dist/
+coverage/
+*.tsbuildinfo
+*.log
+.env
+.env.*
+
+# Go build output of guest/dot-agentd
+guest/dot-agentd/bin/
+
+# Python leftovers (pyproject.toml is still in the tree)
 __pycache__/
 *.py[cod]
 .venv/
 build/
-dist/
 *.egg-info/
 .pytest_cache/
-.env

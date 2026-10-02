@@ -1,0 +1,17 @@
+{
+  "name": "@invisible-dots/openrouter-client",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The only LLM client: OpenRouter chat completions.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@invisible-dots/shared": "0.0.0"
+  }
+}

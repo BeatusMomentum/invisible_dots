@@ -1,0 +1,31 @@
+# PostgreSQL for the invisible_dots control plane (architecture section 9.1).
+#
+# deploy/install.sh writes a generated password to
+# /etc/invisible-dots/postgres.env and starts this with:
+#
+#   docker compose --env-file /etc/invisible-dots/postgres.env -f deploy/docker-compose.yml up -d
+#
+# The port is bound to loopback only: the control plane is the one client.
+name: invisible-dots
+
+services:
+  postgres:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: invisible_dots
+      POSTGRES_DB: invisible_dots
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD, deploy/install.sh writes it to /etc/invisible-dots/postgres.env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      # PostgreSQL 18 images keep their data under /var/lib/postgresql/<major>.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U invisible_dots -d invisible_dots"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pgdata:

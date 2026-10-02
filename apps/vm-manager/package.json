@@ -1,0 +1,17 @@
+{
+  "name": "@invisible-dots/vm-manager",
+  "version": "0.0.0",
+  "private": true,
+  "description": "libvirt driver: overlays, seeds, domain XML, vsock bridge, CID allocation.",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@invisible-dots/shared": "0.0.0"
+  }
+}

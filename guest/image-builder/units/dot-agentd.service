@@ -1,0 +1,22 @@
+[Unit]
+Description=invisible_dots computer daemon (vsock port 1024 and the local agentd socket)
+After=network-online.target dot-desktop.service
+Wants=network-online.target dot-desktop.service
+RequiresMountsFor=/opt/invisible-dots
+
+[Service]
+Type=simple
+User=dot
+Group=dot
+WorkingDirectory=/home/dot
+Environment=HOME=/home/dot
+# Screenshots and exec use the desktop; the health check looks up
+# invisible-playwright-mcp, which uv installed in ~/.local/bin.
+Environment=DISPLAY=:0
+Environment=PATH=/home/dot/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/opt/invisible-dots/bin/dot-agentd
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
