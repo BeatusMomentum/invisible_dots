@@ -80,6 +80,8 @@ export class DotRuntime {
   #waitingForKeyLogged = false;
 
   constructor(options: DotRuntimeOptions) {
+    // One entry point, always durable: there is no in-memory mode to fall into.
+    if (!options?.store) throw new Error("the engine runs on dot.db: DotRuntime needs a store");
     this.#store = options.store;
     this.#registry = options.registry;
     this.#model = options.model;
