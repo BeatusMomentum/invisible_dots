@@ -1,12 +1,14 @@
-<h1 align="center">dots</h1>
+<h1 align="center">invisible_dots</h1>
 
 <p align="center"><b>Every Dot is an AI agent with a computer of its own:<br>a virtual machine, a desktop, browser identities and a memory that outlast every task.</b></p>
 
 ---
 
-Needs Node 24, Go 1.25 and git. Windows, in PowerShell:
+Windows, in PowerShell:
 
 ```powershell
+winget install -e --id OpenJS.NodeJS.LTS; winget install -e --id GoLang.Go; winget install -e --id Git.Git
+$env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
 git clone https://github.com/feder-cr/dots; cd dots
 npm ci
 npm run build --workspace @invisible-dots/invisible-dots-agent --workspace @invisible-dots/cli
@@ -14,13 +16,21 @@ $env:CGO_ENABLED = "0"; $env:GOOS = "linux"; $env:GOARCH = "amd64"
 go -C guest/dot-agentd build -trimpath -o bin/dot-agentd ./cmd/dot-agentd
 Remove-Item Env:CGO_ENABLED, Env:GOOS, Env:GOARCH
 node apps/cli/dist/invisible-dots.mjs setup
+```
+
+If `setup` asks for a restart, restart, then in the same folder:
+
+```powershell
 node apps/cli/dist/invisible-dots.mjs image build
 node apps/cli/dist/invisible-dots.mjs server
 ```
 
-Linux:
+Linux (Ubuntu 24.04):
 
 ```bash
+curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
+sudo apt-get install -y nodejs git
+sudo snap install go --classic
 git clone https://github.com/feder-cr/dots && cd dots
 npm ci
 npm run build --workspace @invisible-dots/invisible-dots-agent --workspace @invisible-dots/cli
@@ -30,7 +40,7 @@ node apps/cli/dist/invisible-dots.mjs image build
 node apps/cli/dist/invisible-dots.mjs server
 ```
 
-Then, in a second terminal in the same directory:
+Then, in a second terminal in the same folder:
 
 ```text
 node apps/cli/dist/invisible-dots.mjs secret openrouter
@@ -41,8 +51,8 @@ node apps/cli/dist/invisible-dots.mjs message my-first-dot "What is on your desk
 
 `secret openrouter` asks for your OpenRouter key and stores it. `init` writes
 `dot.yaml`, the Dot's name, goal, model and permissions, to edit before
-`create`. The API listens on http://127.0.0.1:8787; `invisible-dots doctor`
-checks the host and names the command that fixes anything missing.
+`create`. `invisible-dots doctor` checks the host and names the command that
+fixes anything missing.
 
 The web client:
 
@@ -56,22 +66,27 @@ Open http://127.0.0.1:3000 and sign in with the first line of
 
 ## What a Dot is
 
-- **A computer.** Its own QEMU virtual machine with a persistent disk, on Linux
-  or Windows hosts alike. It sleeps when it has nothing to do and wakes for
-  the next task or message.
+- **A computer.** Its own QEMU virtual machine with a persistent disk. It
+  sleeps when it has nothing to do and wakes for the next task or message.
 - **An agent inside it.** It reasons with any model on OpenRouter and works
   through tools: a shell, files, screenshots, memory and the browser.
 - **Browser identities.** Each one is a separate browser profile with its own
   cookies, logins and fingerprint, kept from one task to the next.
 - **Rules you set.** Every tool runs as allow, ask or deny; an ask waits for
-  `invisible-dots approve`.
+  `invisible-dots approve`, and a pending approval survives a restart.
+
+The same code runs on Linux (KVM) and Windows (Windows Hypervisor Platform).
+The full run, from an empty machine to a Dot that browses, asks for approval,
+sleeps and wakes with everything kept, is tested on Linux; the Windows path
+is not verified on real hardware yet.
 
 How it works, and the contract every part is written against:
 [docs/architecture.md](docs/architecture.md).
 
 ---
 
-MIT licensed. Parts of the agent engine come from Open Multi-Agent, also MIT,
-with its notice in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). QEMU, the
-guest operating system, the browser engine and the packages a host downloads
-keep their own licenses (docs/architecture.md, section 11.3).
+Not affiliated with OpenAI. MIT licensed. Parts of the agent engine come from
+Open Multi-Agent, also MIT, with its notice in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). QEMU, the guest operating
+system, the browser engine and the packages a host downloads keep their own
+licenses (docs/architecture.md, section 11.3).
