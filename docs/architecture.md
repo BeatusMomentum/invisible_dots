@@ -408,7 +408,7 @@ because cloud-init adds no group to a user that exists already.
 /home/dot/
   workspace/  downloads/  documents/
   memory/                           long-term memory notes the Dot writes itself
-  state/dot.db                      SQLite: conversation, tasks, memories, outbox, identities
+  state/dot.db                      SQLite: conversation, tasks, memories, outbox, identities, tool intents, context summaries
   browsers/<identity_id>/
     profile/                        the browser profile
     mcp/                            INVISIBLE_MCP_HOME for that identity's server
@@ -417,6 +417,13 @@ because cloud-init adds no group to a user that exists already.
   agentd.sock                       dot-agentd, local API for the agent (mode 0600, owner dot)
   agent.sock                        the agent's API, reached by dot-agentd's proxy
 ```
+
+One agent process owns `dot.db`: it opens it in SQLite's exclusive locking
+mode and takes the write lock at once, so a second process on the same file
+fails at open ("another agent owns ..."), and the kernel releases the lock
+the moment the owner dies, so a restart opens it again without waiting.
+Nothing else opens the file; the host reads the guest only through the
+agent's API.
 
 dot-agentd reads the Dot's home from `DOT_HOME` (default `/home/dot`; the
 units do not set it). `INVISIBLE_DOTS_HOME` is the host's data directory

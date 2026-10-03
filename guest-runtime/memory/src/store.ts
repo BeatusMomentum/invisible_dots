@@ -1,8 +1,11 @@
 /**
- * `dot.db` (architecture sections 4.2, 5.3 and 8.6): the conversation, the
- * local task queue, long-term memories with full-text search, the outbox of
- * outbound events, pending approvals, the runtime config and the browser
- * identities. One synchronous SQLite connection owned by the agent process.
+ * `dot.db` (architecture sections 4.2, 5.3, 8.6 and 8.7): the conversation,
+ * the local task queue, long-term memories with full-text search, the outbox
+ * of outbound events, pending approvals, tool intents, context summaries, the
+ * runtime config and the browser identities. One synchronous SQLite
+ * connection, owned by one agent process: it holds the database's lock for as
+ * long as it is open, so a second process cannot open it, and the kernel
+ * releases the lock the moment the owner dies.
  *
  * Secrets never go through this class: the OpenRouter key lives in memory only.
  */
@@ -90,6 +93,10 @@ export interface PendingApprovalRecord {
   /** The thread the suspended call belongs to: the conversation or a task id. */
   thread: string;
   taskId: string | null;
+  /** The assistant message of the call; null only on rows written before schema version 2. */
+  messageId: number | null;
+  /** The call's position in that message; null only on rows written before schema version 2. */
+  callIndex: number | null;
   toolCallId: string;
   tool: string;
   permission: Permission;
@@ -99,6 +106,40 @@ export interface PendingApprovalRecord {
   note: string | null;
   createdAt: string;
   resolvedAt: string | null;
+}
+
+export interface ToolIntentRecord {
+  thread: string;
+  /** The assistant message the call belongs to. */
+  messageId: number;
+  /** The call's position in that message's `tool_calls`. */
+  callIndex: number;
+  toolCallId: string;
+  tool: string;
+  permission: string;
+  decision: string;
+  /** How many times the call was started; 2 means a crash interrupted it once already. */
+  attempts: number;
+  startedAt: string;
+}
+
+export interface ContextSummaryRecord {
+  id: number;
+  thread: string;
+  /** The newest message the summary covers; the thread is read after it. */
+  uptoMessageId: number;
+  summary: string;
+  /** Memory keys written while the summary was made. */
+  memoryKeys: string[];
+  createdAt: string;
+}
+
+/** Thrown at open when another process holds `dot.db`. */
+export class DotStoreLockedError extends Error {
+  constructor(readonly path: string, options?: { cause?: unknown }) {
+    super(`another agent owns ${path}`, options);
+    this.name = "DotStoreLockedError";
+  }
 }
 
 export type OutboxListener = (event: OutboundEvent) => void;
@@ -119,11 +160,33 @@ export class DotStore {
     this.#now = options.now ?? (() => new Date());
     if (options.path !== ":memory:") mkdirSync(dirname(options.path), { recursive: true });
     this.#db = new DatabaseSync(options.path);
-    // WAL keeps readers (the SSE replay) from blocking the writer; FULL sync
-    // because an outbox row the host has not seen must survive a power cut.
-    if (options.path !== ":memory:") this.#db.exec("PRAGMA journal_mode = WAL");
-    this.#db.exec("PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
+    if (options.path !== ":memory:") this.#lock(options.path);
+    // FULL sync because an outbox row the host has not seen must survive a power cut.
+    this.#db.exec("PRAGMA synchronous = FULL; PRAGMA foreign_keys = ON;");
     this.#migrate();
+  }
+
+  /**
+   * Take the database for this process alone: EXCLUSIVE locking mode keeps
+   * every lock until the connection closes, and an empty write transaction
+   * takes the write lock now rather than at the first real write. Nothing
+   * else opens `dot.db` (the host reads the guest through the agent's API),
+   * so a second opener is a second agent, and it fails here instead of
+   * interleaving its writes with the first one's. WAL keeps a write from
+   * waiting on a reader of the same connection.
+   */
+  #lock(path: string): void {
+    try {
+      // A restart may race the old owner's exit by a moment; a live owner never lets go.
+      this.#db.exec("PRAGMA busy_timeout = 1000");
+      this.#db.exec("PRAGMA locking_mode = EXCLUSIVE");
+      this.#db.exec("PRAGMA journal_mode = WAL");
+      this.#db.exec("BEGIN IMMEDIATE; COMMIT");
+    } catch (error) {
+      this.#db.close();
+      if ((error as { errcode?: number }).errcode === 5) throw new DotStoreLockedError(path, { cause: error });
+      throw error;
+    }
   }
 
   /** Open (creating it and its directory if needed) the store at `path`. */
@@ -227,22 +290,35 @@ export class DotStore {
     return { id: Number(result.lastInsertRowid), thread, message, createdAt };
   }
 
-  /** Messages of a thread in order; with `limit`, only the last `limit` of them. */
-  listMessages<M = Record<string, unknown>>(thread: string, options: { limit?: number } = {}): StoredMessage<M>[] {
+  /**
+   * Messages of a thread in order; with `afterId`, only those after that
+   * message; with `limit`, only the last `limit` of those.
+   */
+  listMessages<M = Record<string, unknown>>(thread: string, options: { limit?: number; afterId?: number } = {}): StoredMessage<M>[] {
+    const after = options.afterId ?? 0;
     const rows = (
       options.limit === undefined
-        ? this.#db.prepare("SELECT * FROM conversation_messages WHERE thread = ? ORDER BY id").all(thread)
+        ? this.#db.prepare("SELECT * FROM conversation_messages WHERE thread = ? AND id > ? ORDER BY id").all(thread, after)
         : this.#db
-            .prepare("SELECT * FROM conversation_messages WHERE thread = ? ORDER BY id DESC LIMIT ?")
-            .all(thread, options.limit)
+            .prepare("SELECT * FROM conversation_messages WHERE thread = ? AND id > ? ORDER BY id DESC LIMIT ?")
+            .all(thread, after, options.limit)
             .reverse()
     ) as { id: number; thread: string; message: string; created_at: string }[];
     return rows.map((r) => ({ id: r.id, thread: r.thread, message: JSON.parse(r.message) as M, createdAt: r.created_at }));
   }
 
-  countMessages(thread: string): number {
-    const row = this.#db.prepare("SELECT COUNT(*) AS n FROM conversation_messages WHERE thread = ?").get(thread) as { n: number };
+  /** Messages of a thread, all of them or only those after `afterId`. */
+  countMessages(thread: string, afterId = 0): number {
+    const row = this.#db
+      .prepare("SELECT COUNT(*) AS n FROM conversation_messages WHERE thread = ? AND id > ?")
+      .get(thread, afterId) as { n: number };
     return row.n;
+  }
+
+  /** Threads that have messages, the conversation included. */
+  listThreads(): string[] {
+    const rows = this.#db.prepare("SELECT DISTINCT thread FROM conversation_messages ORDER BY thread").all() as { thread: string }[];
+    return rows.map((r) => r.thread);
   }
 
 
@@ -434,17 +510,20 @@ export class DotStore {
 
 
   insertPendingApproval(
-    input: Omit<PendingApprovalRecord, "status" | "note" | "createdAt" | "resolvedAt">,
+    input: Omit<PendingApprovalRecord, "status" | "note" | "createdAt" | "resolvedAt" | "messageId" | "callIndex"> &
+      Partial<Pick<PendingApprovalRecord, "messageId" | "callIndex">>,
   ): PendingApprovalRecord {
     this.#db
       .prepare(
-        `INSERT INTO pending_approvals (approval_id, thread, task_id, tool_call_id, tool, permission, arguments, reason, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO pending_approvals (approval_id, thread, task_id, message_id, call_index, tool_call_id, tool, permission, arguments, reason, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         input.approvalId,
         input.thread,
         input.taskId,
+        input.messageId ?? null,
+        input.callIndex ?? null,
         input.toolCallId,
         input.tool,
         input.permission,
@@ -463,6 +542,21 @@ export class DotStore {
   getApprovalByToolCall(toolCallId: string): PendingApprovalRecord | undefined {
     const row = this.#db.prepare("SELECT * FROM pending_approvals WHERE tool_call_id = ?").get(toolCallId) as Row | undefined;
     return row === undefined ? undefined : approvalFromRow(row);
+  }
+
+  /** The approval of the call at `callIndex` of assistant message `messageId`. */
+  getApprovalByCall(thread: string, messageId: number, callIndex: number): PendingApprovalRecord | undefined {
+    const row = this.#db
+      .prepare("SELECT * FROM pending_approvals WHERE thread = ? AND message_id = ? AND call_index = ?")
+      .get(thread, messageId, callIndex) as Row | undefined;
+    return row === undefined ? undefined : approvalFromRow(row);
+  }
+
+  /** Give a row of the first schema version, which had no position, the position of its call. */
+  setApprovalPosition(approvalId: string, messageId: number, callIndex: number): void {
+    this.#db
+      .prepare("UPDATE pending_approvals SET message_id = ?, call_index = ? WHERE approval_id = ?")
+      .run(messageId, callIndex, approvalId);
   }
 
   listApprovals(options: { status?: ApprovalRowStatus } = {}): PendingApprovalRecord[] {
@@ -488,6 +582,70 @@ export class DotStore {
 
   deleteApprovalsForThread(thread: string): void {
     this.#db.prepare("DELETE FROM pending_approvals WHERE thread = ?").run(thread);
+  }
+
+
+  /**
+   * Record that a call is about to run: a new row with `attempts = 1`, or one
+   * more attempt of a call a crash interrupted. Returns the row as written.
+   */
+  recordIntent(input: Omit<ToolIntentRecord, "attempts" | "startedAt">): ToolIntentRecord {
+    this.#db
+      .prepare(
+        `INSERT INTO tool_intents (thread, message_id, call_index, tool_call_id, tool, permission, decision, attempts, started_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?)
+         ON CONFLICT (thread, message_id, call_index) DO UPDATE SET attempts = attempts + 1, started_at = excluded.started_at`,
+      )
+      .run(input.thread, input.messageId, input.callIndex, input.toolCallId, input.tool, input.permission, input.decision, this.#iso());
+    return this.getIntent(input.thread, input.messageId, input.callIndex)!;
+  }
+
+  getIntent(thread: string, messageId: number, callIndex: number): ToolIntentRecord | undefined {
+    const row = this.#db
+      .prepare("SELECT * FROM tool_intents WHERE thread = ? AND message_id = ? AND call_index = ?")
+      .get(thread, messageId, callIndex) as Row | undefined;
+    return row === undefined ? undefined : intentFromRow(row);
+  }
+
+  /** Intents of a thread, in call order. */
+  listIntents(thread: string): ToolIntentRecord[] {
+    const rows = this.#db
+      .prepare("SELECT * FROM tool_intents WHERE thread = ? ORDER BY message_id, call_index")
+      .all(thread) as Row[];
+    return rows.map(intentFromRow);
+  }
+
+  deleteIntent(thread: string, messageId: number, callIndex: number): void {
+    this.#db.prepare("DELETE FROM tool_intents WHERE thread = ? AND message_id = ? AND call_index = ?").run(thread, messageId, callIndex);
+  }
+
+  deleteIntentsForThread(thread: string): void {
+    this.#db.prepare("DELETE FROM tool_intents WHERE thread = ?").run(thread);
+  }
+
+
+  addSummary(input: Omit<ContextSummaryRecord, "id" | "createdAt">): ContextSummaryRecord {
+    const createdAt = this.#iso();
+    const result = this.#db
+      .prepare("INSERT INTO context_summaries (thread, upto_message_id, summary, memory_keys, created_at) VALUES (?, ?, ?, ?, ?)")
+      .run(input.thread, input.uptoMessageId, input.summary, JSON.stringify(input.memoryKeys), createdAt);
+    return { ...input, id: Number(result.lastInsertRowid), createdAt };
+  }
+
+  /** The newest summary of a thread, if it has one. */
+  latestSummary(thread: string): ContextSummaryRecord | undefined {
+    const row = this.#db
+      .prepare("SELECT * FROM context_summaries WHERE thread = ? ORDER BY id DESC LIMIT 1")
+      .get(thread) as Row | undefined;
+    if (row === undefined) return undefined;
+    return {
+      id: row.id as number,
+      thread: row.thread as string,
+      uptoMessageId: row.upto_message_id as number,
+      summary: row.summary as string,
+      memoryKeys: JSON.parse(row.memory_keys as string) as string[],
+      createdAt: row.created_at as string,
+    };
   }
 
 
@@ -548,6 +706,8 @@ function approvalFromRow(row: Row): PendingApprovalRecord {
     approvalId: row.approval_id as string,
     thread: row.thread as string,
     taskId: row.task_id as string | null,
+    messageId: row.message_id as number | null,
+    callIndex: row.call_index as number | null,
     toolCallId: row.tool_call_id as string,
     tool: row.tool as string,
     permission: row.permission as Permission,
@@ -557,6 +717,20 @@ function approvalFromRow(row: Row): PendingApprovalRecord {
     note: row.note as string | null,
     createdAt: row.created_at as string,
     resolvedAt: row.resolved_at as string | null,
+  };
+}
+
+function intentFromRow(row: Row): ToolIntentRecord {
+  return {
+    thread: row.thread as string,
+    messageId: row.message_id as number,
+    callIndex: row.call_index as number,
+    toolCallId: row.tool_call_id as string,
+    tool: row.tool as string,
+    permission: row.permission as string,
+    decision: row.decision as string,
+    attempts: row.attempts as number,
+    startedAt: row.started_at as string,
   };
 }
 

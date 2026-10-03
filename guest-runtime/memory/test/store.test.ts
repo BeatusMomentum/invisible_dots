@@ -19,11 +19,11 @@ describe("DotStore", () => {
   it("creates the directory, applies the migrations once and reopens", () => {
     const path = tempDb();
     const a = DotStore.open(path);
-    expect(a.schemaVersion()).toBe(1);
+    expect(a.schemaVersion()).toBe(2);
     a.setConfig("runtime", { name: "x" });
     a.close();
     const b = DotStore.open(path);
-    expect(b.schemaVersion()).toBe(1);
+    expect(b.schemaVersion()).toBe(2);
     expect(b.getConfig("runtime")).toEqual({ name: "x" });
     b.close();
   });

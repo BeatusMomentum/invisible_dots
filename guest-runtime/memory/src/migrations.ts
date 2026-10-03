@@ -105,4 +105,65 @@ export const MIGRATIONS: readonly { version: number; name: string; sql: string }
       );
     `,
   },
+  {
+    version: 2,
+    name: "tool intents, context summaries, approvals by call position",
+    sql: `
+      -- A tool call about to run, written before it starts and deleted with its
+      -- result: a row left behind is a call a crash interrupted (section 8.7).
+      -- Calls are keyed by their position, because providers do not guarantee
+      -- unique call ids across rounds. permission and decision are what they
+      -- were when the call started; the config may differ after a restart.
+      CREATE TABLE tool_intents (
+        thread TEXT NOT NULL,
+        message_id INTEGER NOT NULL,
+        call_index INTEGER NOT NULL,
+        tool_call_id TEXT NOT NULL,
+        tool TEXT NOT NULL,
+        permission TEXT NOT NULL,
+        decision TEXT NOT NULL,
+        attempts INTEGER NOT NULL,
+        started_at TEXT NOT NULL,
+        PRIMARY KEY (thread, message_id, call_index)
+      );
+
+      -- What a thread said up to a message, so a request never reads the whole thread (section 8.6).
+      CREATE TABLE context_summaries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        thread TEXT NOT NULL,
+        upto_message_id INTEGER NOT NULL,
+        summary TEXT NOT NULL,
+        memory_keys TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX context_summaries_thread ON context_summaries (thread, id);
+
+      -- An approval is found by its call's position, not by the provider's call
+      -- id. SQLite cannot drop a constraint, so the table is rebuilt; rows of the
+      -- first version keep a NULL position until the agent fills it in.
+      CREATE TABLE pending_approvals_v2 (
+        approval_id TEXT PRIMARY KEY,
+        thread TEXT NOT NULL,
+        task_id TEXT,
+        message_id INTEGER,
+        call_index INTEGER,
+        tool_call_id TEXT NOT NULL,
+        tool TEXT NOT NULL,
+        permission TEXT NOT NULL,
+        arguments TEXT NOT NULL,
+        reason TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        note TEXT,
+        created_at TEXT NOT NULL,
+        resolved_at TEXT
+      );
+      INSERT INTO pending_approvals_v2
+        (approval_id, thread, task_id, tool_call_id, tool, permission, arguments, reason, status, note, created_at, resolved_at)
+        SELECT approval_id, thread, task_id, tool_call_id, tool, permission, arguments, reason, status, note, created_at, resolved_at
+        FROM pending_approvals;
+      DROP TABLE pending_approvals;
+      ALTER TABLE pending_approvals_v2 RENAME TO pending_approvals;
+      CREATE UNIQUE INDEX pending_approvals_call ON pending_approvals (thread, message_id, call_index);
+    `,
+  },
 ];
