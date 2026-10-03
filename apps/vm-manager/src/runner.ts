@@ -209,26 +209,7 @@ export class NodeProcessControl implements ProcessControl {
   }
 }
 
-/** Error codes Windows gives for a file another process (or a handle not closed yet) holds. */
-const IN_USE = new Set(["EBUSY", "EPERM", "EACCES"]);
-
-/**
- * Run a file operation again while the file is in use. Windows can report a
- * process gone (GetExitCodeProcess) before its handles are closed, and an
- * antivirus or indexer may hold a file for a moment; on Linux nothing holds
- * a file this way, so the first try succeeds. One wrapper for every
- * operation on a VM's files right after its QEMU stopped.
- */
-export async function retryWhileInUse<T>(operation: () => Promise<T>, attempts = 10, delayMs = 200): Promise<T> {
-  for (let attempt = 1; ; attempt++) {
-    try {
-      return await operation();
-    } catch (error) {
-      if (attempt >= attempts || !IN_USE.has((error as NodeJS.ErrnoException).code ?? "")) throw error;
-      await new Promise((resolve) => setTimeout(resolve, delayMs));
-    }
-  }
-}
+export { retryWhileInUse } from "@invisible-dots/shared";
 
 /** Size of a file, 0 when it does not exist: where this start's output begins in an appended log. */
 export async function fileSize(path: string): Promise<number> {

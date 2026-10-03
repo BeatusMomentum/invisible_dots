@@ -4,8 +4,9 @@
  */
 import { createHash, randomBytes } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, open, rename, rm, stat } from "node:fs/promises";
+import { mkdir, open, rm, stat } from "node:fs/promises";
 import { basename, dirname } from "node:path";
+import { replaceFile } from "@invisible-dots/shared";
 
 export type Fetch = typeof globalThis.fetch;
 
@@ -103,7 +104,7 @@ export async function fetchVerified(file: VerifiedFile, dest: string, options: F
     await rm(temporary, { force: true });
     throw new DownloadError(`${file.url} hashes to ${sha256}, but the pin is ${file.sha256}`);
   }
-  await rename(temporary, dest);
+  await replaceFile(temporary, dest);
   log(`${name}: verified (${bytes} bytes, sha256 ${sha256})`);
   return { path: dest, cached: false, bytes };
 }

@@ -5,10 +5,10 @@
  * image once to provision it.
  */
 import { createHash } from "node:crypto";
-import { chmod, copyFile, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { writeIso } from "@invisible-dots/iso";
-import { hostPaths, type HostPaths } from "@invisible-dots/shared";
+import { hostPaths, replaceFile, type HostPaths } from "@invisible-dots/shared";
 import { BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_USER_DATA, defaultAssetRoot, readGuestAsset } from "./assets.js";
 import { fetchVerified, sha256File, type Fetch, type FetchVerifiedOptions } from "./download.js";
 import { acquireLock, type Lock } from "./lock.js";
@@ -235,7 +235,7 @@ async function buildLocked(options: GoldenBuildOptions & Resolved, target: Targe
     // The manifest goes first: the control plane picks images by file name,
     // so the image must not appear before the record that describes it.
     await writeManifest(target.manifest, manifest);
-    await rename(partial, target.image);
+    await replaceFile(partial, target.image);
     // Immutable once a VM uses it (section 3.3); QEMU opens a backing file read-only anyway.
     await chmod(target.image, 0o444);
     await rm(workDir, { recursive: true, force: true });

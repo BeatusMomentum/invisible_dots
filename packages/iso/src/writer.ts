@@ -24,7 +24,7 @@
  * means nothing on an image can be made private inside the guest.
  */
 import { randomBytes } from "node:crypto";
-import { open, readdir, rename, rm, stat, type FileHandle } from "node:fs/promises";
+import { open, readdir, rm, stat, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import {
   assertRecordableDate,
@@ -48,6 +48,7 @@ import {
   splitImagePath,
   validateVolumeId,
 } from "./names.js";
+import { replaceFile } from "@invisible-dots/shared/replace-file";
 
 /** One item of the image. Directories that hold files are created implicitly. */
 export type IsoEntry =
@@ -170,7 +171,7 @@ export async function writeIso(outputPath: string, entries: readonly IsoEntry[],
     await writeAll(handle, Buffer.alloc(PADDING_SECTORS * SECTOR_SIZE), layout.dataEndSector * SECTOR_SIZE);
     await handle.sync();
     await handle.close();
-    await rename(temporary, outputPath);
+    await replaceFile(temporary, outputPath);
   } catch (error) {
     await handle.close().catch(() => undefined);
     await rm(temporary, { force: true }).catch(() => undefined);

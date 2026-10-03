@@ -5,9 +5,10 @@
  * all ask these functions.
  */
 import { randomBytes } from "node:crypto";
-import { open, readFile, rename, rm } from "node:fs/promises";
+import { open, readFile, rm } from "node:fs/promises";
 import { uptime } from "node:os";
 import { resolve } from "node:path";
+import { replaceFile } from "./replace-file.js";
 
 /**
  * What `process.kill(pid, 0)` says about a pid, which means the same on both
@@ -200,7 +201,7 @@ function lockHandle(path: string, key: string, mine: PidLockRecord): PidLock {
       } finally {
         await handle.close();
       }
-      await rename(temporary, path);
+      await replaceFile(temporary, path);
     },
     async release() {
       held.delete(key);

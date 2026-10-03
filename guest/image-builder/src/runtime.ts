@@ -16,11 +16,11 @@
  * permission bits having to survive a Windows host.
  */
 import { createHash } from "node:crypto";
-import { chmod, mkdir, open, rename, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, open, rm, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeIso, type IsoEntry } from "@invisible-dots/iso";
-import { hostPaths, type HostPaths } from "@invisible-dots/shared";
+import { hostPaths, replaceFile, type HostPaths } from "@invisible-dots/shared";
 import { RUNTIME_ISO_LABEL } from "@invisible-dots/vm-manager";
 import { defaultAssetRoot, GUEST_UNITS, readGuestAsset, RUNTIME_DESKTOP, RUNTIME_INSTALL, unitAsset } from "./assets.js";
 import { sha256File } from "./download.js";
@@ -191,7 +191,7 @@ export async function buildRuntimeIso(options: RuntimeBuildOptions = {}): Promis
       };
       // Manifest first, then the image appears under the name the control plane looks for.
       await writeManifest(manifestPath, manifest);
-      await rename(partial, iso);
+      await replaceFile(partial, iso);
       await chmod(iso, 0o444);
       log(`done: ${iso} (sha256 ${manifest.sha256})`);
       return { version, iso, manifest: manifestPath, created: true };

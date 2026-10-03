@@ -11,7 +11,8 @@
     "./browser": "./src/browser.ts",
     "./api": "./src/api.ts",
     "./paths": "./src/paths.ts",
-    "./api-token": "./src/api-token.ts"
+    "./api-token": "./src/api-token.ts",
+    "./replace-file": "./src/replace-file.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"

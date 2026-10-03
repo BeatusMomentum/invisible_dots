@@ -14,7 +14,7 @@
  * restart the pid file stands in for it, checked as `processIsOurs` says.
  */
 import { randomBytes } from "node:crypto";
-import { access, appendFile, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 import {
   allowlistedEnvironment,
@@ -23,6 +23,7 @@ import {
   hostRestartedSince,
   hostUptimeSeconds,
   isFatalGuestError,
+  replaceFile,
   type DotConfig,
   type HostPaths,
   type VmState,
@@ -449,7 +450,7 @@ export class VmManager {
     const path = this.paths.processFilePath(dotId);
     const temporary = `${path}.tmp`;
     await writeFile(temporary, `${JSON.stringify(record)}\n`, { mode: 0o600 });
-    await rename(temporary, path);
+    await replaceFile(temporary, path);
   }
 
   /** Forget a QEMU that is gone: its pid file, and its ChildProcess if this process held it. */

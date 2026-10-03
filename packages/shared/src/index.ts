@@ -5,3 +5,4 @@ export * from "./paths.js";
 export * from "./sockets.js";
 export * from "./process.js";
 export * from "./run-process.js";
+export * from "./replace-file.js";

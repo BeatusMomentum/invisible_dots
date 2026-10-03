@@ -326,7 +326,8 @@ qemu-system-x86_64
   disk goes too. The VM's files are rewritten or removed right after its QEMU
   stopped (the seed at the next start, everything at a destroy) through one
   retry while a file is in use (`retryWhileInUse()`,
-  `apps/vm-manager/src/runner.ts`): Windows can report a process gone before
+  `packages/shared/src/replace-file.ts`, which also replaces every file this
+  repository writes atomically, through `replaceFile()`): Windows can report a process gone before
   its handles are closed, and an antivirus may hold a file for a moment; on
   Linux the first try succeeds.
 - Reboot is a stop and a start, not a reset: a reset skips the guest's

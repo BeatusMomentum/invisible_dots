@@ -5,10 +5,11 @@
  * `invisible-dots doctor` checks an image against (architecture 11.1).
  */
 import { randomBytes } from "node:crypto";
-import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { sha256File } from "./download.js";
 import type { BaseImagePin } from "./pins.js";
+import { replaceFile } from "@invisible-dots/shared";
 
 export interface PinnedComponent {
   version: string;
@@ -76,7 +77,7 @@ export async function writeManifest(path: string, manifest: ImageManifest): Prom
   const temporary = `${path}.${process.pid}-${randomBytes(4).toString("hex")}.tmp`;
   try {
     await writeFile(temporary, `${JSON.stringify(manifest, null, 2)}\n`, { mode: 0o644, flag: "wx" });
-    await rename(temporary, path);
+    await replaceFile(temporary, path);
   } catch (error) {
     await rm(temporary, { force: true }).catch(() => undefined);
     throw error;

@@ -11,9 +11,10 @@
  * differs: chmod on Linux, an ACL with the current user alone on Windows.
  */
 import { randomBytes } from "node:crypto";
-import { chmod, mkdir, open, readFile, rename, rm } from "node:fs/promises";
+import { chmod, mkdir, open, readFile, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { runProcess } from "./run-process.js";
+import { replaceFile } from "./replace-file.js";
 
 export const SECRET_FILE_MODE = 0o600;
 export const SECRET_DIR_MODE = 0o700;
@@ -100,7 +101,7 @@ export async function writeSecretFile(path: string, bytes: Uint8Array | string):
     // open() applies the umask, which can only remove bits, and on Windows the
     // file inherits its directory's ACL: made private before it is renamed in place.
     await restrictToOwner(temporary, "file");
-    await rename(temporary, path);
+    await replaceFile(temporary, path);
   } catch (error) {
     await rm(temporary, { force: true }).catch(() => undefined);
     throw error;
