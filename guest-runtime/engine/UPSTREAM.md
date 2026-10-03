@@ -57,6 +57,38 @@ telemetry, the CLI and dashboard, upstream's tests, `package.json`,
 `AGENTS.md` and `CLAUDE.md`. Where a kept module needs a test, the test is
 written here against this repository's types, not copied.
 
+## What was cut
+
+The commit "engine: cut what a Dot does not run from the imported files"
+removed, from the files above:
+
+- streaming (`AgentRunner.stream` and the `StreamEvent` type): a Dot answers
+  through its event outbox, one committed step at a time;
+- tracing and observability spans, and the redaction they needed;
+- the run journal, its lineage bookkeeping and the journal-watermark
+  checkpoint version;
+- delegation to other agents, teams, and the shell executor and workspace
+  sandbox of upstream's built-in tools;
+- structured output, external agent backends and provider-specific options
+  (sampling knobs, reasoning, `extraBody`), because the Dot has one model
+  client;
+- tool grants and presets: the Dot's tools are offered by its own registry;
+- `groupIntoTurns`, `stripMediaBlocksForSummary` and the sliding-window and
+  rule-based compaction strategies;
+- the batch executor and its semaphore, and the error classes of routing,
+  egress, structured output, provider capabilities, image models and the
+  journal.
+
+Whole files deleted in the same commit, because a Dot has no use for them and
+they cannot work without upstream modules that were never imported:
+`orchestrator/orchestrator.ts`, `orchestrator/task-execution.ts`,
+`orchestrator/run-context.ts` and `orchestrator/recovery.ts` (teams, plans,
+routing, retries and parallel task scheduling over upstream's agent pool and
+scheduler), `task/queue.ts` and `task/task.ts` (an in-memory dependency graph
+of tasks inside one run; a Dot's task queue is `guest-runtime/task-runtime`,
+persisted in `dot.db`), and `agent/agent.ts` (the agent object around the
+runner, built on the provider adapters and structured output).
+
 ## Ported later
 
 Nothing outside the list above is planned. A later need for sub-agents, teams
@@ -70,4 +102,6 @@ or another provider starts from the commit above, in a change of its own.
 and loop, and `stripMediaBlocksForSummary`, whose comment says it is modelled
 on the library's `stripAttachmentsForCompression`. Because this repository's
 history contains them, `THIRD_PARTY_NOTICES.md` at the repository root carries
-context-chef's MIT notice.
+context-chef's MIT notice. Both functions were removed by the commit "engine:
+cut what a Dot does not run from the imported files"; the notice stays,
+because the history keeps them.

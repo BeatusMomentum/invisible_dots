@@ -71,6 +71,15 @@ describe("the vendored engine", () => {
     }
   });
 
+  it("holds none of the text modelled on context-chef, whose notice stays for the history", () => {
+    for (const file of engineSources("src")) {
+      const text = readFileSync(join(engine, file), "utf8");
+      for (const name of ["groupIntoTurns", "stripMediaBlocksForSummary", "context-chef", "chef Janitor"]) {
+        expect(text.includes(name), `${name} in ${file}`).toBe(false);
+      }
+    }
+  });
+
   it("has no npm dependency outside this workspace", () => {
     const pkg = JSON.parse(readFileSync(join(engine, "package.json"), "utf8")) as Record<string, Record<string, string> | undefined>;
     const names = [...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.devDependencies ?? {}), ...Object.keys(pkg.peerDependencies ?? {})];

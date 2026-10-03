@@ -2,12 +2,11 @@
 // Co., Ltd. and open-multi-agent contributors. Modified for invisible_dots.
 // See guest-runtime/engine/LICENSE and UPSTREAM.md.
 /**
- * Parallel tool executor with concurrency control and error isolation.
+ * Tool executor with error isolation.
  *
  * Validates input via Zod schemas, optionally validates tool output via
- * `tool.outputSchema`, enforces a maximum concurrency limit using a lightweight
- * semaphore, and surfaces any execution errors as ToolResult objects rather
- * than thrown exceptions.
+ * `tool.outputSchema`, and surfaces any execution errors as ToolResult objects
+ * rather than thrown exceptions.
  *
  * Types are imported from `../types` to ensure consistency with the rest of
  * the framework.
@@ -25,7 +24,6 @@ import type {
 } from '../types.js'
 import type { ToolDefinition } from '../types.js'
 import { ToolRegistry } from './framework.js'
-import { Semaphore } from '../utils/semaphore.js'
 import type { ZodSchema } from 'zod'
 import {
   assertApprovalDecision,
@@ -39,11 +37,6 @@ import { copyToolResultContent } from './result.js'
 // ---------------------------------------------------------------------------
 
 export interface ToolExecutorOptions {
-  /**
-   * Maximum number of tool calls that may run in parallel.
-   * Defaults to 4.
-   */
-  maxConcurrency?: number
   /**
    * Agent-level default for maximum tool output length in characters.
    * Per-tool `maxOutputChars` takes priority over this value.
@@ -67,19 +60,9 @@ export interface ToolExecutorExecutionOptions {
   }
 }
 
-/** Describes one call in a batch. */
-export interface BatchToolCall {
-  /** Caller-assigned ID used as the key in the result map. */
-  id: string
-  /** Registered tool name. */
-  name: string
-  /** Raw (unparsed) input object from the LLM. */
-  input: Record<string, unknown>
-}
-
 /**
  * Executes tools from a {@link ToolRegistry}, validating input against each
- * tool's Zod schema and enforcing a concurrency limit for batch execution.
+ * tool's Zod schema.
  *
  * All errors — including unknown tool names, Zod validation failures, and
  * execution exceptions — are caught and returned as `ToolResult` objects with
@@ -87,13 +70,11 @@ export interface BatchToolCall {
  */
 export class ToolExecutor {
   private readonly registry: ToolRegistry
-  private readonly semaphore: Semaphore
   private readonly maxToolOutputChars?: number
   private readonly onToolCall?: ToolCallGate
 
   constructor(registry: ToolRegistry, options: ToolExecutorOptions = {}) {
     this.registry = registry
-    this.semaphore = new Semaphore(options.maxConcurrency ?? 4)
     this.maxToolOutputChars = options.maxToolOutputChars
     this.onToolCall = options.onToolCall
   }
@@ -133,37 +114,6 @@ export class ToolExecutor {
     }
 
     return this.runTool(tool, input, context, options)
-  }
-
-  // -------------------------------------------------------------------------
-  // Batch execution
-  // -------------------------------------------------------------------------
-
-  /**
-   * Execute multiple tool calls in parallel, honouring the concurrency limit.
-   *
-   * Returns a `Map` from call ID to result.  Every call in `calls` is
-   * guaranteed to produce an entry — errors are captured as results.
-   *
-   * @param calls    Array of tool calls to execute.
-   * @param context  Shared execution context for all calls in this batch.
-   */
-  async executeBatch(
-    calls: BatchToolCall[],
-    context: ToolUseContext,
-  ): Promise<Map<string, ToolResult<any>>> {
-    const results = new Map<string, ToolResult<any>>()
-
-    await Promise.all(
-      calls.map(async (call) => {
-        const result = await this.semaphore.run(() =>
-          this.execute(call.name, call.input, context),
-        )
-        results.set(call.id, result)
-      }),
-    )
-
-    return results
   }
 
   // -------------------------------------------------------------------------

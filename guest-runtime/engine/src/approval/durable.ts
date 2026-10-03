@@ -18,7 +18,6 @@ import type {
   ApprovalReviewer,
   ApprovalScope,
   MemoryStore,
-  Task,
 } from '../types.js'
 
 export const APPROVAL_KEY_PREFIX = '__oma_approval__/'
@@ -131,20 +130,6 @@ export function hashApprovalRequest(
   content: ApprovalRequestContent,
 ): string {
   return sha256(stableJson(requestPayload(scope, boundary, content)))
-}
-
-/**
- * Fail closed when a task boundary contains live verification wiring that the
- * checkpoint schema cannot reconstruct after a process restart.
- */
-export function assertDurableTaskApprovalSupport(tasks: readonly Task[]): void {
-  const unsupported = tasks.find((task) => task.verify !== undefined)
-  if (!unsupported) return
-  throw new DurableApprovalError(
-    'APPROVAL_VALIDATION_ERROR',
-    `Task "${unsupported.title}" cannot use durable suspension because its verify config ` +
-      'contains live judge/schema/callback wiring that checkpoints do not persist.',
-  )
 }
 
 export interface CreateApprovalRequestInput {
