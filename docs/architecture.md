@@ -763,7 +763,10 @@ steps).
   and the ratio the provider last reported for the model. Building stops as
   soon as the estimate is at or under 0.75 of the budget: first, tool results
   the model has already processed become `[Tool result of <tool>: <n>
-  characters, already processed]`, oldest first, never in the newest round,
+  characters, already processed]`, the largest first (the oldest first among
+  equals), never one under 1000 tokens (`MIN_PLACEHOLDER_TOKENS`: a short
+  result costs little and is often the very value a later step needs, such as
+  a code looked up at the start of a task) and never in the newest round,
   and only the newest three images are sent; then a summary of the older part
   of the thread, cut where no call is separated from its results and so the
   part kept verbatim fits in 0.35 of the budget, made by the unit's model in

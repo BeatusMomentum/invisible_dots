@@ -12,9 +12,10 @@
  * and it is built in steps, each stopping once the estimate is at or under
  * the trigger (`TRIGGER` of `limits.context_tokens`):
  *
- *  1. consumed tool results become placeholders, oldest first, never in the
- *     newest round (the compression of consumed results this was derived
- *     from), and only the newest images are sent;
+ *  1. consumed tool results become placeholders, the largest first (the
+ *     oldest first among equals), never one below `MIN_PLACEHOLDER_TOKENS`
+ *     and never in the newest round (the compression of consumed results
+ *     this was derived from), and only the newest images are sent;
  *  2. a summary of the older part of the thread, after an optional
  *     memory-flush turn (the summary strategy this was derived from, with a
  *     cut at a legal point, the unit's start message pinned, the summary
@@ -73,6 +74,13 @@ export function placeholderText(tool: string, chars: number): string {
 }
 
 /**
+ * A consumed result smaller than this is never replaced by a placeholder: it
+ * costs little, and a short result is often exactly the value a later step
+ * needs (a code, a name, a number looked up at the start of a task).
+ */
+export const MIN_PLACEHOLDER_TOKENS = 1_000;
+
+/**
  * Tool results the model has already processed (an assistant message follows
  * them), oldest first, with the name of the tool that produced each. The
  * newest round is never among them: the model is about to see it.
@@ -93,6 +101,25 @@ export function consumedResults(messages: readonly StoredMessage<ThreadMessage>[
     if (m.role === "tool" && index < lastAssistant) out.push({ id: stored.id, tool: names.get(m.tool_call_id) ?? "a tool" });
   });
   return out;
+}
+
+/**
+ * The consumed results step 1 may replace, in the order it replaces them:
+ * the largest first, so each placeholder saves the most, and the oldest
+ * first among equals; never one below `MIN_PLACEHOLDER_TOKENS`.
+ */
+export function placeholderCandidates(
+  messages: readonly StoredMessage<ThreadMessage>[],
+  tokensOf: (text: string) => number,
+): { id: number; tool: string; chars: number }[] {
+  return consumedResults(messages)
+    .map((result, order) => {
+      const content = (messages.find((m) => m.id === result.id)!.message as StoredToolMessage).content;
+      return { ...result, chars: content.length, tokens: tokensOf(content), order };
+    })
+    .filter((result) => result.tokens >= MIN_PLACEHOLDER_TOKENS)
+    .sort((a, b) => b.tokens - a.tokens || a.order - b.order)
+    .map(({ id, tool, chars }) => ({ id, tool, chars }));
 }
 
 /**
@@ -253,14 +280,14 @@ export class ContextManager {
     return { pinned, summary, tail };
   }
 
-  /** Step 1: the request with placeholders for consumed results, oldest first, until it is under the trigger. */
+  /** Step 1: placeholders for the largest consumed results, until the request is under the trigger. */
   private fit(view: ContextView, system: string, tools: FunctionTool[] | undefined, model: string, budget: number) {
     const replaced = new Map<number, ThreadMessage>();
     let request = this.assemble(view, replaced, system, tools, model);
-    for (const result of consumedResults(view.tail)) {
+    for (const result of placeholderCandidates(view.tail, (text) => this.deps.estimator.textTokens(model, text))) {
       if (request.estimate <= budget * TRIGGER) break;
       const stored = view.tail.find((m) => m.id === result.id)!.message as StoredToolMessage;
-      replaced.set(result.id, { role: "tool", tool_call_id: stored.tool_call_id, content: placeholderText(result.tool, stored.content.length) });
+      replaced.set(result.id, { role: "tool", tool_call_id: stored.tool_call_id, content: placeholderText(result.tool, result.chars) });
       request = this.assemble(view, replaced, system, tools, model);
     }
     return { request, replaced };

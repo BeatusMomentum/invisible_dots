@@ -157,6 +157,34 @@ describe("the context ceiling", () => {
     expect(tools.at(-1)).toHaveLength(12_000);
   });
 
+  it("a small early fact survives many large results: placeholders take the largest results, never a small one", async () => {
+    b = bench(withBudget(24_000));
+    // The shape of the prototype's T3: one small lookup first, then large reads, then a question about the lookup.
+    b.store.appendMessage("t1", { role: "assistant", content: null, tool_calls: [{ id: "v", type: "function", function: { name: "files_read", arguments: '{"path":"vault"}' } }] });
+    b.store.appendMessage("t1", { role: "tool", tool_call_id: "v", content: "The vault code is KESTREL-4417." });
+    for (let n = 0; n < 10; n++) round(b.store, "t1", n, [30_000]);
+    b.model.respond = summarizer();
+    const request = await b.context.prepare(b.unit());
+    expect(request.estimate).toBeLessThanOrEqual(24_000 * CEILING);
+    const vault = request.messages.find((m) => m.role === "tool" && (m as { tool_call_id: string }).tool_call_id === "v");
+    expect(vault?.content).toBe("The vault code is KESTREL-4417.");
+  });
+
+  it("placeholders take the largest consumed results first", async () => {
+    b = bench(withBudget(20_000));
+    round(b.store, "t1", 0, [6_000]);
+    round(b.store, "t1", 1, [20_000]);
+    round(b.store, "t1", 2, [8_000]);
+    round(b.store, "t1", 3, [100]);
+    b.model.respond = summarizer();
+    const request = await b.context.prepare(b.unit());
+    const results = request.messages.filter((m) => m.role === "tool").map((m) => m.content as string);
+    // The 20,000-character result goes first; the older 6,000 one stays while the request fits.
+    expect(results[1]).toBe(placeholderText("files_read", 20_000));
+    expect(results[0]).toHaveLength(6_000);
+    expect(b.model.requests).toEqual([]);
+  });
+
   it("images are charged, and only the newest are sent", async () => {
     b = bench(withBudget(64_000));
     const image: ChatMessage = { role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } }] };
