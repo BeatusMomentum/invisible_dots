@@ -36,11 +36,13 @@ export async function currentUserSid(env: Record<string, string | undefined> = p
 }
 
 /**
- * Make `path` readable and writable by the user this process runs as and
- * nobody else, the same promise on both hosts. Linux: mode 0600 for a file,
- * 0700 for a directory. Windows, which ignores those bits: the inherited
- * entries are removed and the current user alone gets full control, also
- * passed on to whatever the directory will contain.
+ * Make `path` readable and writable by the user this process runs as and by
+ * no other account, the same promise on both hosts. Linux: mode 0600 for a
+ * file, 0700 for a directory (root can still open it). Windows, which ignores
+ * those bits: the inherited entries are removed and the current user gets
+ * full control, also passed on to whatever the directory will contain. SYSTEM
+ * and the local Administrators, which can open any file anyway, may keep an
+ * entry: some machines grant them explicitly on every new directory.
  */
 export async function restrictToOwner(
   path: string,

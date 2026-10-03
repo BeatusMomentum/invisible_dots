@@ -1,8 +1,8 @@
-import { mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ensureDir, ensurePrivateDir, permissionBitsEnforced, readSecretFile, runProcess, writeSecretFile } from "../src/index.js";
+import { currentUserSid, ensureDir, ensurePrivateDir, permissionBitsEnforced, readSecretFile, runProcess, writeSecretFile } from "../src/index.js";
 
 let dir: string;
 
@@ -71,7 +71,7 @@ describe("writeSecretFile and readSecretFile", () => {
 });
 
 describe("private files and directories", () => {
-  it("are this user's alone on either host, also under a directory everybody may read", async () => {
+  it("no account but this user can open them, also under a directory everybody may read", async () => {
     // On Windows a directory outside the profile (a drive root) inherits "Authenticated Users: Modify".
     const home = join(dir, "home");
     await ensurePrivateDir(home);
@@ -82,18 +82,26 @@ describe("private files and directories", () => {
       expect(await modeOf(file)).toBe(0o600);
       return;
     }
+    // Read as SDDL, by SID: account names are translated with the Windows display language.
+    // SYSTEM (SY) and the local Administrators (BA) are allowed: like root on Linux they can open
+    // any file anyway, and some machines (CI runners among them) grant them explicitly on every
+    // new directory, where removing inheritance does not remove them.
+    const owner = await currentUserSid();
     const icacls = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "icacls.exe");
     for (const path of [home, file]) {
-      const listing = (await runProcess(icacls, [path], { timeoutMs: 30_000 })).stdout.replace(path, "");
-      const entries = listing
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line.includes(":("));
-      // One entry, inherited from nothing: the owner. No group, no other account.
-      // The whole listing goes with a failure: an ACL that differs on another machine is only diagnosable from it.
-      expect(entries, `icacls ${path}:\n${listing}`).toHaveLength(1);
-      expect(entries[0]).toMatch(/:(?:\(OI\)\(CI\))?\(F\)$/);
-      expect(entries.join(" ")).not.toMatch(/Users|Everyone|Authenticated|\(I\)/i);
+      const saved = join(dir, "acl.txt");
+      await runProcess(icacls, [path, "/save", saved], { timeoutMs: 30_000 });
+      const sddl = (await readFile(saved)).toString("utf16le");
+      const dacl = /D:([A-Z]*)((?:\([^)]*\))*)/.exec(sddl);
+      const aces = [...(dacl?.[2] ?? "").matchAll(/\(([^)]*)\)/g)].map((m) => (m[1] ?? "").split(";"));
+      const context = `${path}: ${sddl.trim()}`;
+      expect(dacl?.[1], context).toContain("P");
+      for (const [type, flags, , , , sid] of aces) {
+        expect(flags, context).not.toContain("ID");
+        expect([owner, "SY", "BA", "S-1-5-18", "S-1-5-32-544"], context).toContain(sid);
+        expect(type, context).toBe("A");
+      }
+      expect(aces.some(([, , rights, , , sid]) => sid === owner && rights === "FA"), context).toBe(true);
     }
   });
 });
