@@ -7,6 +7,12 @@ import { WORKING_MEMORY_MESSAGES } from "@invisible-dots/shared";
 import type { StoredMessage } from "@invisible-dots/memory";
 import type { ThreadMessage, ToolImage } from "../types.js";
 
+/** Messages of a thread read for one step. */
+export const THREAD_READ_LIMIT = 200;
+
+/** The result of a call its unit never ran. */
+export const NOT_EXECUTED_TEXT = "Not executed: the unit ended before this call ran.";
+
 /** Only the newest images are re-sent; older screenshots cost tokens and say little. */
 export const IMAGES_KEPT = 3;
 
@@ -92,4 +98,22 @@ export function openCalls(messages: readonly StoredMessage<ThreadMessage>[]): { 
     if (m.role !== "tool") return null;
   }
   return null;
+}
+
+/**
+ * Every call in a request is followed by its result. The units that end
+ * answer the calls they leave open, so a break here is a fault in the engine:
+ * the unit fails with this error rather than repairing the thread a second
+ * time in another place, and rather than sending a request the provider
+ * would refuse on every later turn.
+ */
+export function assertCallsAnswered(messages: readonly ThreadMessage[]): void {
+  const answered = new Set<string>();
+  for (const m of messages) if (m.role === "tool") answered.add(m.tool_call_id);
+  for (const m of messages) {
+    if (m.role !== "assistant") continue;
+    for (const call of m.tool_calls ?? []) {
+      if (!answered.has(call.id)) throw new Error(`the thread holds the call ${call.id} (${call.function.name}) without its result`);
+    }
+  }
 }

@@ -35,7 +35,7 @@ import type { AgentState, DotRuntimeConfig, OutboundEventDataMap, Permission, Po
 import type { DurableApprovalLedger } from "../approval/durable.js";
 import { decideTool } from "../dot/gate.js";
 import { callKey, classifyIntent, interruptedText } from "../dot/intents.js";
-import { openCalls, type OpenCall } from "../dot/request.js";
+import { THREAD_READ_LIMIT, assertCallsAnswered, openCalls, type OpenCall } from "../dot/request.js";
 import { UnitAbort, throwIfAborted } from "../errors.js";
 import type { CallPosition, Checkpoint } from "../memory/checkpoint.js";
 import { describeRun, threadOf, type RunRecord } from "../run/record.js";
@@ -46,9 +46,6 @@ import { toolResultMessage } from "../tool/result.js";
 import type { FaultSeam, Logger, LoopDetectionConfig, ThreadMessage } from "../types.js";
 import { estimateTokens } from "../utils/tokens.js";
 import { LoopDetector, loopWarningText } from "./loop-detector.js";
-
-/** Messages of a thread read for one step. */
-export const THREAD_READ_LIMIT = 200;
 
 /** Default minimum content length before tool result compression kicks in. */
 const DEFAULT_MIN_COMPRESS_CHARS = 500;
@@ -164,6 +161,8 @@ export class AgentRunner {
       // Compress consumed tool results before the context strategy (no model call).
       if (this.options.compressToolResults) history = this.compressConsumedToolResults(history);
       if (this.options.contextStrategy) history = await this.summarizeMessages(history, unit);
+      const requestThread = unit.requestMessages(history);
+      assertCallsAnswered(history);
 
       // One transaction before the request: a response whose commit kills the
       // process is paid for at most three times.
@@ -174,7 +173,7 @@ export class AgentRunner {
         result = await this.deps.model.chat(
           {
             model: unit.config.model.id,
-            messages: [{ role: "system", content: unit.systemPrompt() }, ...unit.requestMessages(history)],
+            messages: [{ role: "system", content: unit.systemPrompt() }, ...requestThread],
             ...(unit.tools.length > 0 ? { tools: toFunctionTools(unit.tools) } : {}),
           },
           { signal: unit.signal },

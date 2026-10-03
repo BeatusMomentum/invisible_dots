@@ -77,6 +77,12 @@ export class RunLedger {
     });
   }
 
+  /** Give a record written before `startMessageId` existed its start message. */
+  setStartMessage(messageId: number): void {
+    const current = this.get();
+    if (current) this.store.setConfig(KEY_ACTIVE_UNIT, { ...current, startMessageId: messageId });
+  }
+
   /** Model turns the unit has taken. */
   steps(record: RunRecord): number {
     if (record.kind === "chat") {

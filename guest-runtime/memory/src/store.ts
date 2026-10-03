@@ -291,6 +291,16 @@ export class DotStore {
   }
 
   /**
+   * Replace a stored message. Threads are append-only; the one exception is
+   * the repair of a thread written by older code, whose assistant message
+   * kept calls that never got a result and can no longer get one in place.
+   */
+  replaceMessage<M extends object>(id: number, message: M): void {
+    const result = this.#db.prepare("UPDATE conversation_messages SET message = ? WHERE id = ?").run(JSON.stringify(message), id);
+    if (result.changes === 0) throw new Error(`no message with id ${id}`);
+  }
+
+  /**
    * Messages of a thread in order; with `afterId`, only those after that
    * message; with `limit`, only the last `limit` of those.
    */

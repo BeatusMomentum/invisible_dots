@@ -649,7 +649,7 @@ minus `computer`.
 
 `IDLE -> THINKING -> PLANNING -> EXECUTING -> (THINKING | WAITING_APPROVAL) -> DONE -> IDLE`
 
-`THINKING` is a model request in flight; `PLANNING` is the model's answer being
+`DONE` follows a failed unit as well as a completed one. `THINKING` is a model request in flight; `PLANNING` is the model's answer being
 turned into tool calls; `EXECUTING` is a tool running. Every transition is an
 `agent.state` event.
 
@@ -768,6 +768,20 @@ starts it again. What it guarantees:
   at most twice. `tool.called` is written exactly once per call. `agent.state`
   and the events a tool emits itself (`memory.written`, `browser.identity.*`)
   are at-least-once: a call run again emits them again.
+- A unit can end between a response and the results of its calls (a failed
+  write, a failure, a cancel). The transaction that ends it answers every call
+  of the newest assistant message that has no result: `Not executed: the unit
+  ended before this call ran.`, or the interrupted result for a call that had
+  started; and it deletes the thread's intents. A thread never keeps a call
+  without its result, which the provider would refuse on every later turn;
+  the request builder only asserts it, and fails the unit if it is broken.
+- The first start on this engine (marked by a config row, not by the
+  migration, so a crash between the two cannot skip it) applies the inbound
+  events the previous version accepted but never applied, gives old approvals
+  the position of their call, answers the calls the previous version left
+  open (removing from their message, as never run, those that sit in the
+  middle of a thread where no result can follow them), and gives the active
+  unit's first open call an intent unless its approval shows it never ran.
 - Each model request of a step is counted, in its own transaction, before it
   is sent; the assistant's commit resets the count. A step whose fourth
   request would start fails its unit with "stopped: the model request failed

@@ -33,6 +33,7 @@ import { ToolExecutor } from "../tool/executor.js";
 import type { ToolRegistry } from "../tool/framework.js";
 import { NO_FAULTS, silentLogger, type FaultSeam, type Logger, type ThreadMessage } from "../types.js";
 import { applyInbound, type InboundContext, type PostCommitAction } from "./inbound.js";
+import { firstStartPass } from "./intents.js";
 import { buildSystemPrompt, taskSeedMessage } from "./prompt.js";
 import { toRequestMessages, trimThread } from "./request.js";
 
@@ -95,6 +96,7 @@ export class DotRuntime {
       queue: this.#queue,
       approvals: this.#approvals,
       ledger: this.#ledger,
+      checkpoint: this.#checkpoint,
       log: this.#log,
       running: () => this.#controller !== null,
     };
@@ -144,12 +146,15 @@ export class DotRuntime {
       }
     }
     // Events accepted before a crash that were never applied: each in its own transaction.
+    const pendingBefore = this.#store.listApprovals({ status: "pending" }).map((a) => a.approvalId);
     for (const row of this.#store.pendingInbound()) {
       if (row.type === "user.message") continue;
       this.#log.info("applying an inbound event accepted before the last stop", { id: row.id, type: row.type });
       this.#runActions(this.#store.transaction(() => applyInbound(this.#inbound, row)));
     }
+    const resolvedByReplay = new Set(pendingBefore.filter((id) => this.#store.getApproval(id)?.status !== "pending"));
     const resumed = this.#ledger.adoptOrphan();
+    firstStartPass(this.#store, this.#ledger, resolvedByReplay, this.#log);
     if (resumed) this.#log.info("resuming work interrupted by the last stop", describeRun(resumed));
     if (resumed?.kind === "task") this.#activeTaskId = resumed.taskId;
     this.#started = true;
@@ -403,7 +408,7 @@ export class DotRuntime {
 
   /** Drop a unit that ended without an answer of its own (a cancelled task). */
   #finishUnit(record: RunRecord): void {
-    this.#checkpoint.drop();
+    this.#checkpoint.drop(record);
     if (record.kind === "task" && this.#activeTaskId === record.taskId) this.#activeTaskId = null;
     this.#emitState("IDLE");
   }

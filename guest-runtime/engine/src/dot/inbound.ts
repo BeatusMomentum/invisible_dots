@@ -12,6 +12,7 @@ import type { DotStore, InboxEntry } from "@invisible-dots/memory";
 import { TASK_CANCELLED_SYSTEM_EVENT } from "@invisible-dots/shared";
 import type { TaskQueue } from "@invisible-dots/task-runtime";
 import type { DurableApprovalLedger } from "../approval/durable.js";
+import type { Checkpoint } from "../memory/checkpoint.js";
 import type { RunLedger } from "../run/ledger.js";
 import type { Logger } from "../types.js";
 
@@ -27,6 +28,7 @@ export interface InboundContext {
   queue: TaskQueue;
   approvals: DurableApprovalLedger;
   ledger: RunLedger;
+  checkpoint: Checkpoint;
   log: Logger;
   /** True while a unit is running in this process. */
   running(): boolean;
@@ -85,6 +87,6 @@ function cancelTask(ctx: InboundContext, taskId: string): PostCommitAction[] {
   if (active?.kind !== "task" || active.taskId !== taskId) return [];
   if (ctx.running()) return [{ kind: "abort-unit", taskId }];
   // Not running: it was waiting for an approval, or for the next start.
-  ctx.ledger.clear();
+  ctx.checkpoint.drop(active);
   return [{ kind: "unit-dropped", taskId }];
 }
