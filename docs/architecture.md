@@ -633,6 +633,7 @@ memory:
   enabled: true
 limits:
   max_steps_per_task: 60               # model turns before a task is failed
+  context_tokens: 32000                # prompt tokens a request may use, 4000..1000000 (section 8.6)
 ```
 
 Defaults for permissions not listed: everything under `computer.*`,
@@ -731,12 +732,35 @@ Retries with exponential backoff on 429 and 5xx (at most 4 attempts, honouring
 `Retry-After`). Images (screenshots) are sent as `image_url` parts with a
 `data:image/png;base64,` URL. Tool results longer than 12000 characters are cut
 with a marker. Usage (`prompt_tokens`, `completion_tokens`, `cost` when
-OpenRouter reports it) is accumulated per task.
+OpenRouter reports it) is accumulated per task, the usage of the summary and
+memory-flush calls of section 8.6 included (they count toward cost, not
+steps).
 
 ### 8.6 Memory
 
-- Working memory: the conversation and the current task's messages in
-  `dot.db`, trimmed to the last 40 messages plus the system prompt.
+- Working memory: the thread is append-only in `dot.db`; what is sent is
+  bounded by `limits.context_tokens`. A request is the system prompt, the
+  unit's start message (the task's seed, or the chat turn's user message,
+  always kept whole), the newest summary of the thread (`context_summaries`),
+  and the thread after that summary; the thread is never read whole. The
+  estimate covers the system prompt, the tool definitions, the messages and
+  each image (1600 tokens); characters count as tokens at the larger of 1/3
+  and the ratio the provider last reported for the model. Building stops as
+  soon as the estimate is at or under 0.75 of the budget: first, tool results
+  the model has already processed become `[Tool result of <tool>: <n>
+  characters, already processed]`, oldest first, never in the newest round,
+  and only the newest three images are sent; then a summary of the older part
+  of the thread, cut where no call is separated from its results and so the
+  part kept verbatim fits in 0.35 of the budget, made by the unit's model in
+  requests of at most 0.5 of the budget and stored capped at 0.15 of it (a
+  failed or cut summary falls back to a mechanical digest, capped the same
+  way); before the summary, when memory is on and the policy allows
+  `memory.write`, a memory-flush turn lets the model save what it still needs
+  with `memory_remember`, if that request itself fits; then the largest
+  results of the newest round are shrunk, head and tail. A summary is also
+  made once 200 messages follow the newest one. A request still above 0.9 of
+  the budget is never sent: the unit fails with "the context budget
+  (limits.context_tokens = N) is too small for the current step".
 - Long-term memory: `memories(key, content, updated_at)` in `dot.db` with an
   FTS5 index; `memory_search` queries it. The system prompt lists the 20 most
   recently updated keys.
@@ -782,12 +806,13 @@ starts it again. What it guarantees:
   open (removing from their message, as never run, those that sit in the
   middle of a thread where no result can follow them), and gives the active
   unit's first open call an intent unless its approval shows it never ran.
-- Each model request of a step is counted, in its own transaction, before it
-  is sent; the assistant's commit resets the count. A step whose fourth
-  request would start fails its unit with "stopped: the model request failed
-  to complete 3 times", so a response whose commit kills the process is paid
-  for at most three times. A request the agent abandons on purpose (a sleep,
-  a cancel) does not count.
+- Each attempt of a step (its memory flush and summary, if any, and its model
+  request) is counted, in its own transaction, before it starts; the
+  assistant's commit and a summary's commit reset the count. A step whose
+  fourth attempt would start fails its unit with "stopped: the model request
+  failed to complete 3 times", so a response whose commit kills the process is
+  paid for at most three times. An attempt the agent abandons on purpose (a
+  sleep, a cancel) does not count.
 
 ## 9. Control plane
 

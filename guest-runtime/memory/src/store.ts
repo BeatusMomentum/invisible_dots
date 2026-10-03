@@ -290,6 +290,13 @@ export class DotStore {
     return { id: Number(result.lastInsertRowid), thread, message, createdAt };
   }
 
+  getMessage<M = Record<string, unknown>>(id: number): StoredMessage<M> | undefined {
+    const row = this.#db.prepare("SELECT * FROM conversation_messages WHERE id = ?").get(id) as
+      | { id: number; thread: string; message: string; created_at: string }
+      | undefined;
+    return row === undefined ? undefined : { id: row.id, thread: row.thread, message: JSON.parse(row.message) as M, createdAt: row.created_at };
+  }
+
   /**
    * Replace a stored message. Threads are append-only; the one exception is
    * the repair of a thread written by older code, whose assistant message

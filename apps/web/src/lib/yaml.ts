@@ -137,4 +137,5 @@ memory:
   enabled: true
 limits:
   max_steps_per_task: 60
+  context_tokens: 32000
 `;

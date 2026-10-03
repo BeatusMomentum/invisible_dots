@@ -201,9 +201,13 @@ export const dotConfigSchema = z
       .strict()
       .default({ enabled: true }),
     limits: z
-      .object({ max_steps_per_task: z.number().int().min(1).max(1000).default(60) })
+      .object({
+        max_steps_per_task: z.number().int().min(1).max(1000).default(60),
+        // Prompt tokens a request may use; what is sent is kept under it (section 8.6).
+        context_tokens: z.number().int().min(4000).max(1_000_000).default(32_000),
+      })
       .strict()
-      .default({ max_steps_per_task: 60 }),
+      .default({ max_steps_per_task: 60, context_tokens: 32_000 }),
   })
   .strict()
   .superRefine((config, ctx) => {

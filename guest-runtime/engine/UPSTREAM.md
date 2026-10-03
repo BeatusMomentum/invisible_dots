@@ -121,6 +121,18 @@ optional compression of consumed tool results and the optional summary
 strategy. Code of this repository's own lives in `src/dot/` and carries no
 header.
 
+## Where upstream's parts went
+
+Later commits fix defects of upstream's engine inside these files; the
+contract they implement is `docs/architecture.md` (sections 8.4, 8.6 and
+8.7). Two moves are worth knowing when comparing with upstream:
+
+- the compression of consumed tool results and the summary strategy left
+  `agent/runner.ts` for `agent/compression.ts`, where they became steps of a
+  request built under a ceiling instead of a trigger;
+- the parallel round of tool calls became one call at a time, each with its
+  intent committed first (`agent/runner.ts`, `memory/checkpoint.ts`).
+
 ## Ported later
 
 Nothing outside the list above is planned. A later need for sub-agents, teams

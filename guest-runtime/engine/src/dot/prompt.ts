@@ -73,6 +73,8 @@ export function buildSystemPrompt(input: PromptInput): string {
   return lines.join("\n");
 }
 
+/** Messages of the conversation read for a task's seed, of which the last `SUMMARY_MESSAGES` turns are kept. */
+export const SEED_CONVERSATION_READ = 40;
 const SUMMARY_MESSAGES = 10;
 const SUMMARY_CHARS_PER_MESSAGE = 600;
 

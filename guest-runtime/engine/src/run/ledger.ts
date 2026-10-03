@@ -120,6 +120,24 @@ export class RunLedger {
     if (current && current.requestAttempts !== 0) this.store.setConfig(KEY_ACTIVE_UNIT, { ...current, requestAttempts: 0 });
   }
 
+  /** Usage of a request that is not a step (a memory flush, a summary): it counts toward cost, not steps. */
+  addUsage(record: RunRecord, usage: Usage): void {
+    this.store.transaction(() => {
+      const current = this.get();
+      if (record.kind === "chat") {
+        const base = current?.kind === "chat" ? current : record;
+        const total = new UsageAccumulator(base.usage);
+        total.add(usage);
+        this.store.setConfig(KEY_ACTIVE_UNIT, { ...base, usage: total.toJSON() });
+        return;
+      }
+      const task = this.queue.get(record.taskId);
+      const total = new UsageAccumulator(task?.usage ?? undefined);
+      total.add(usage);
+      this.store.updateTask(record.taskId, { usage: total.toJSON() });
+    });
+  }
+
   /** Count one more model turn and its usage; part of the assistant commit. */
   countStep(record: RunRecord, usage: Usage): void {
     const current = this.get();

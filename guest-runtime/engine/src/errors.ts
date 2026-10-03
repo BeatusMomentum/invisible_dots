@@ -20,6 +20,16 @@ export class UnitAbort extends Error {
   }
 }
 
+/** The request of a step cannot be made to fit `limits.context_tokens`; the unit fails with this message. */
+export class ContextBudgetError extends Error {
+  readonly code = "CONTEXT_BUDGET";
+
+  constructor(readonly budget: number) {
+    super(`the context budget (limits.context_tokens = ${budget}) is too small for the current step`);
+    this.name = "ContextBudgetError";
+  }
+}
+
 /** Throw the abort reason when the signal is aborted; a signal aborted without a UnitAbort counts as a suspension. */
 export function throwIfAborted(signal: AbortSignal): void {
   if (signal.aborted) throw signal.reason instanceof UnitAbort ? signal.reason : new UnitAbort("suspend");

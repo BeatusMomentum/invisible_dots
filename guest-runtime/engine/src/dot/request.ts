@@ -1,9 +1,10 @@
 /**
- * The request a step sends (architecture section 8.6): what of a thread the
- * model sees on each turn, and which calls of a thread still wait for a result.
+ * The request a step sends (architecture section 8.6): how thread messages
+ * become request messages, and which calls of a thread still wait for a
+ * result. What of the thread is sent is decided under the context budget by
+ * `agent/compression.ts`.
  */
 import { imagePart, type ChatMessage, type ContentPart, type ToolCall } from "@invisible-dots/openrouter-client";
-import { WORKING_MEMORY_MESSAGES } from "@invisible-dots/shared";
 import type { StoredMessage } from "@invisible-dots/memory";
 import type { ThreadMessage, ToolImage } from "../types.js";
 
@@ -15,17 +16,6 @@ export const NOT_EXECUTED_TEXT = "Not executed: the unit ended before this call 
 
 /** Only the newest images are re-sent; older screenshots cost tokens and say little. */
 export const IMAGES_KEPT = 3;
-
-/**
- * Keep the last `max` messages. A cut must not separate tool results from the
- * assistant message that asked for them, because providers refuse a tool
- * result with no matching call, so leading tool messages are dropped too.
- */
-export function trimThread(messages: readonly ThreadMessage[], max: number = WORKING_MEMORY_MESSAGES): ThreadMessage[] {
-  let start = Math.max(messages.length - max, 0);
-  while (start < messages.length && messages[start]!.role === "tool") start++;
-  return messages.slice(start);
-}
 
 /**
  * Turn stored thread messages into request messages: images carried by tool

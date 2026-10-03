@@ -14,7 +14,6 @@ import { OpenRouterError, type ChatModel } from "@invisible-dots/openrouter-clie
 import { CONVERSATION_THREAD, type DotStore } from "@invisible-dots/memory";
 import {
   SYSTEM_PROMPT_MEMORY_KEYS,
-  WORKING_MEMORY_MESSAGES,
   parseRuntimeConfig,
   type AgentState,
   type AgentStateAnswer,
@@ -23,6 +22,7 @@ import {
   type InboundEvent,
 } from "@invisible-dots/shared";
 import { TaskQueue } from "@invisible-dots/task-runtime";
+import { ContextManager } from "../agent/compression.js";
 import { AgentRunner, type RunnerDeps } from "../agent/runner.js";
 import { DurableApprovalLedger } from "../approval/durable.js";
 import { UnitAbort, abortReason } from "../errors.js";
@@ -34,8 +34,8 @@ import type { ToolRegistry } from "../tool/framework.js";
 import { NO_FAULTS, silentLogger, type FaultSeam, type Logger, type ThreadMessage } from "../types.js";
 import { applyInbound, type InboundContext, type PostCommitAction } from "./inbound.js";
 import { firstStartPass } from "./intents.js";
-import { buildSystemPrompt, taskSeedMessage } from "./prompt.js";
-import { toRequestMessages, trimThread } from "./request.js";
+import { SEED_CONVERSATION_READ, buildSystemPrompt, taskSeedMessage } from "./prompt.js";
+import { TokenEstimator } from "../utils/tokens.js";
 
 export interface DotRuntimeOptions {
   store: DotStore;
@@ -100,18 +100,32 @@ export class DotRuntime {
       log: this.#log,
       running: () => this.#controller !== null,
     };
+    const executor = new ToolExecutor(this.#registry, this.#log);
+    const emit = (event: Parameters<RunnerDeps["emit"]>[0]) => {
+      this.#store.appendEvent(event.type, event.data as never);
+    };
+    const estimator = new TokenEstimator();
     this.#deps = {
       model: this.#model,
-      executor: new ToolExecutor(this.#registry, this.#log),
+      executor,
+      estimator,
+      context: new ContextManager({
+        model: this.#model,
+        store: this.#store,
+        ledger: this.#ledger,
+        executor,
+        estimator,
+        log: this.#log,
+        faults: this.#faults,
+        emit,
+      }),
       checkpoint: this.#checkpoint,
       approvals: this.#approvals,
       ledger: this.#ledger,
       log: this.#log,
       faults: this.#faults,
       executing: new Set<string>(),
-      emit: (event) => {
-        this.#store.appendEvent(event.type, event.data as never);
-      },
+      emit,
     };
   }
 
@@ -328,7 +342,7 @@ export class DotRuntime {
     const task = this.#queue.peekNext();
     if (task) {
       const conversation = this.#store
-        .listMessages<ThreadMessage>(CONVERSATION_THREAD, { limit: WORKING_MEMORY_MESSAGES })
+        .listMessages<ThreadMessage>(CONVERSATION_THREAD, { limit: SEED_CONVERSATION_READ })
         .map((m) => m.message);
       const record = this.#ledger.startTask(task, taskSeedMessage(task.description, conversation));
       this.#log.info("task started", { task_id: task.id, priority: task.priority });
@@ -358,7 +372,6 @@ export class DotRuntime {
         config,
         tools,
         systemPrompt: () => this.#systemPrompt(record, config),
-        requestMessages: (thread) => toRequestMessages(trimThread(thread)),
         signal: controller.signal,
         onState: (state) => this.#emitState(state),
       });

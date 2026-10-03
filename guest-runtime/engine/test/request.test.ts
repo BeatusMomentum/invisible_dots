@@ -1,25 +1,27 @@
 import { describe, expect, it } from "vitest";
 import { parseRuntimeConfig } from "@invisible-dots/shared";
-import { buildSystemPrompt, openCalls, toRequestMessages, trimThread, type ThreadMessage } from "../src/dot/index.js";
+import { alignCut, chooseCut } from "../src/agent/compression.js";
+import { buildSystemPrompt, openCalls, toRequestMessages, type ThreadMessage } from "../src/dot/index.js";
 
 const call = (id: string) => ({ id, type: "function" as const, function: { name: "files_read", arguments: "{}" } });
 
 describe("the request of a step", () => {
-  it("keeps the last 40 messages and never starts on an orphan tool result", () => {
-    const messages: ThreadMessage[] = [];
-    for (let i = 0; i < 50; i++) messages.push({ role: "user", content: `m${i}` });
-    expect(trimThread(messages)).toHaveLength(40);
-    expect(trimThread(messages)[0]).toEqual({ role: "user", content: "m10" });
-
+  it("cuts a thread only where no call is separated from its results, and never past the newest answer", () => {
     const withTools: ThreadMessage[] = [
       { role: "user", content: "start" },
       { role: "assistant", content: null, tool_calls: [call("a"), call("b")] },
       { role: "tool", tool_call_id: "a", content: "A" },
       { role: "tool", tool_call_id: "b", content: "B" },
       { role: "assistant", content: "done" },
+      { role: "user", content: "more" },
     ];
-    expect(trimThread(withTools, 3)).toEqual([{ role: "assistant", content: "done" }]);
-    expect(trimThread(withTools, 4)[0]!.role).toBe("assistant");
+    expect(alignCut(withTools, 2)).toBe(4);
+    expect(alignCut(withTools, 3)).toBe(4);
+    expect(alignCut(withTools, 6)).toBe(4);
+    expect(alignCut(withTools, 1)).toBe(1);
+    const size = () => 10;
+    expect(chooseCut(withTools, 25, size)).toBe(4);
+    expect(chooseCut(withTools, 1000, size)).toBe(0);
   });
 
   it("finds the tool calls of the newest assistant message that have no result, with their positions", () => {
