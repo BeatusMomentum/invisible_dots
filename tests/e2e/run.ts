@@ -13,7 +13,7 @@
  *
  * The OpenRouter key is read from E2E_OPENROUTER_KEY_FILE and only ever
  * written to the stdin of `invisible-dots secret openrouter`; it is never
- * printed, logged or passed on a command line. Steps i and k look for it in
+ * printed, logged or passed on a command line. Steps k and m look for it in
  * every log, database row and file the run leaves.
  *
  * Every output file goes to E2E_LOG_DIR (default tmp/e2e/<UTC time>, which git
@@ -21,7 +21,7 @@
  * screenshots and summary.json with each step's result and duration.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, type WriteStream } from "node:fs";
 import { appendFile, copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -565,6 +565,48 @@ async function relaunchTask(dotName: string, identity: Identity, afterEventId: n
   assert(launched, `no browser.identity.launched event for ${identity.id} after the restart`);
 }
 
+/** What every guest request carries after `GET /v1/proof` (section 5.1). */
+const GUEST_PROOF_CONTEXT = "invisible-dots guest proof v1\n";
+
+/**
+ * The Dot's own token, from its seed in the data directory. The seed is the
+ * only place the host and this run can both read it; it is used only to reach
+ * dot-agentd, and never printed.
+ */
+async function dotToken(dotId: string): Promise<string> {
+  const seed = await readFile(join(HOME, "vms", dotId, "seed.iso"));
+  const match = /"dotId":\s*"[^"]+",\s*"token":\s*"([^"]+)"/.exec(seed.toString("latin1"));
+  assert(match, `could not read the Dot token from vms/${dotId}/seed.iso`);
+  return match[1]!;
+}
+
+/**
+ * Runs a command in the guest through dot-agentd's `POST /v1/exec`
+ * (section 5.2), the way the control plane reaches the guest: the forwarded
+ * port of the running computer, the proof handshake, and the Dot's own token.
+ * This is how the run does to a guest what the model is not allowed to do to
+ * its own computer, such as ending the agent process to check that systemd
+ * brings it back and the engine resumes.
+ */
+async function guestExec(dotId: string, guestPort: number, command: string): Promise<{ exit_code: number; stdout: string; stderr: string; timed_out: boolean }> {
+  const token = await dotToken(dotId);
+  const base = `http://127.0.0.1:${guestPort}`;
+  const nonce = randomBytes(16).toString("hex");
+  const proofResponse = await fetch(`${base}/v1/proof?nonce=${nonce}`, { signal: AbortSignal.timeout(30_000) });
+  assert(proofResponse.ok, `GET /v1/proof: ${proofResponse.status}`);
+  const { proof } = (await proofResponse.json()) as { proof?: string };
+  const expected = createHmac("sha256", token).update(`${GUEST_PROOF_CONTEXT}${nonce}`).digest("hex");
+  assert(proof === expected, "dot-agentd did not prove it holds this Dot's token");
+  const response = await fetch(`${base}/v1/exec`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ command, timeout_ms: 30_000 }),
+    signal: AbortSignal.timeout(60_000),
+  });
+  assert(response.ok, `POST /v1/exec: ${response.status} ${await response.text()}`);
+  return (await response.json()) as { exit_code: number; stdout: string; stderr: string; timed_out: boolean };
+}
+
 async function main(): Promise<void> {
   await mkdir(LOG_DIR, { recursive: true });
   cliLog = createWriteStream(join(LOG_DIR, "cli.log"), { flags: "a" });
@@ -779,16 +821,99 @@ async function main(): Promise<void> {
     );
   });
 
-  await step("i", "the key is in none of the Dot's own files and rows", async () => {
+  await step("i", "the agent is restarted while an approval waits; the engine resumes", async () => {
+    const dotId = state.dotId!;
+    const computer = await api<Computer>("GET", `/api/dots/${enc(dotId)}/computer`);
+    assert(computer.guest_port, "the computer has no guest port");
+    const guestPort = computer.guest_port;
+    const counter = "~/workspace/approval-counter.txt";
+    await guestExec(dotId, guestPort, `rm -f ${counter.replace("~", "$HOME")}`);
+    await api("PATCH", `/api/dots/${enc(dotId)}`, { config: dotYaml("  computer.exec: ask") });
+    const queued = await cli([
+      "task",
+      DOT_NAME,
+      `Run this exact command with the computer_exec tool: printf x >> ${counter}\nThen answer with only the word DONE.`,
+      "--json",
+    ]);
+    assert(queued.code === 0, `invisible-dots task failed (${queued.code}): ${queued.stderr.trim()}`);
+    const taskId = (JSON.parse(queued.stdout) as Task).id;
+    const approval = await waitFor("an approval request", TIMEOUTS.task, async () => {
+      const task = await api<Task>("GET", `/api/tasks/${enc(taskId)}`);
+      assert(!["COMPLETED", "FAILED", "CANCELLED"].includes(task.status), `the task ended ${task.status} without asking: ${task.summary ?? task.error}`);
+      return (await api<{ approvals: Approval[] }>("GET", "/api/approvals?status=pending")).approvals.find((a) => a.task_id === taskId);
+    }, 3000);
+
+    // End the agent process while it holds the approval; systemd (Restart=on-failure) starts it again.
+    const killed = await guestExec(dotId, guestPort, "pkill -9 -f invisible-dots-agent; sleep 1; echo restarting");
+    assert(killed.exit_code === 0, `could not end the agent process: ${killed.stderr}`);
+    // The host sees the restart (agent.started) and re-pushes key and config; the same approval is still pending.
+    const restored = await waitFor("the agent to restart and show the same pending approval", TIMEOUTS.task, async () => {
+      const pending = (await api<{ approvals: Approval[] }>("GET", "/api/approvals?status=pending")).approvals;
+      const same = pending.find((a) => a.id === approval.id);
+      return same ? true : undefined;
+    }, 2000);
+    assert(restored, "the pending approval was lost across the restart");
+    const startedEvents = (await events(dotId)).filter((e) => e.type === "agent.started").length;
+    assert(startedEvents >= 2, "no agent.started event after the restart");
+
+    const approved = await cli(["approve", approval.id, "--note", "only once", "--json"]);
+    assert(approved.code === 0, `invisible-dots approve exited with ${approved.code}: ${approved.stderr.trim()}`);
+    await waitTask(taskId);
+    // The tool ran exactly once, which the counter file proves.
+    const count = await guestExec(dotId, guestPort, `wc -c < ${counter.replace("~", "$HOME")}`);
+    assert(count.stdout.trim() === "1", `the approved command ran ${count.stdout.trim()} time(s), not once`);
+    // The note reached the model: it is in the tool result of the next request.
+    const request = (await events(dotId)).some((e) => e.type === "task.completed" && e.data.task_id === taskId);
+    assert(request, "the task did not complete after the approval");
+    return `agent restarted under systemd, approval ${approval.id} kept; the approved command ran once (counter = ${count.stdout.trim()})`;
+  });
+
+  await step("j", "the agent is restarted during a command; the interrupted call is reported", async () => {
+    const dotId = state.dotId!;
+    const computer = await api<Computer>("GET", `/api/dots/${enc(dotId)}/computer`);
+    assert(computer.guest_port, "the computer has no guest port");
+    const guestPort = computer.guest_port;
+    await api("PATCH", `/api/dots/${enc(dotId)}`, { config: dotYaml() });
+    const marker = "~/workspace/exec-marker.txt";
+    await guestExec(dotId, guestPort, `rm -f ${marker.replace("~", "$HOME")}`);
+    // A command long enough that the restart lands while it runs; it appends one line once.
+    const queued = await cli([
+      "task",
+      DOT_NAME,
+      `Run this exact command with the computer_exec tool: sleep 8; printf 'ran\\n' >> ${marker}\nThen answer with only the word DONE.`,
+      "--json",
+    ]);
+    assert(queued.code === 0, `invisible-dots task failed (${queued.code}): ${queued.stderr.trim()}`);
+    const taskId = (JSON.parse(queued.stdout) as Task).id;
+    // Wait until the command is in flight (computer.exec is not replay-safe), then end the agent.
+    await waitFor("the exec to be in flight", TIMEOUTS.task, async () => {
+      const running = (await api<Dot>("GET", `/api/dots/${enc(dotId)}`)).status;
+      assert(running !== "ERROR", "the Dot went to ERROR while the command ran");
+      const list = await guestExec(dotId, guestPort, "pgrep -f 'sleep 8' >/dev/null && echo yes || echo no");
+      return list.stdout.trim() === "yes" ? true : undefined;
+    }, 1000);
+    const killed = await guestExec(dotId, guestPort, "pkill -9 -f invisible-dots-agent; echo done");
+    assert(killed.exit_code === 0, `could not end the agent process: ${killed.stderr}`);
+    const done = await waitTask(taskId);
+    const all = await events(dotId);
+    const interrupted = taskEvents(all, taskId).find((e) => e.type === "tool.called" && e.data.tool === "computer_exec" && e.data.interrupted === true);
+    assert(interrupted, `no interrupted computer_exec event for the task (tools: ${describeTools(all, taskId)})`);
+    // The command itself ran once: the agent cancelled its request to agentd, but the command ran to its own end.
+    const ran = await guestExec(dotId, guestPort, `wc -l < ${marker.replace("~", "$HOME")} 2>/dev/null || echo 0`);
+    assert(ran.stdout.trim() === "1", `the command left ${ran.stdout.trim()} line(s), not one`);
+    return `agent restarted during computer_exec; tool.called interrupted=true recorded; the command ran once; task ended ${done.status}`;
+  });
+
+  await step("k", "the key is in none of the Dot's own files and rows", async () => {
     const dotId = state.dotId!;
     const needle = Buffer.from(key.slice(0, 12), "utf8");
     // The database stores large jsonb values compressed (TOAST), so a key in
-    // a long event would not show in its files (step k): the rows are read
+    // a long event would not show in its files (step m): the rows are read
     // back decompressed through the API, while the Dot's approvals still exist.
     const rows = [...(await events(dotId)), ...(await api<{ approvals: unknown[] }>("GET", "/api/approvals")).approvals];
     assert(rowsHolding(rows, needle) === 0, "found in an event or approval row of the database");
     // Stopped first, so the guest has flushed its disk and QEMU has closed
-    // its files; scanned before step j deletes them.
+    // its files; scanned before step l deletes them.
     await stopComputer(dotId, state.pid!);
     await copyFile(join(HOME, "vms", dotId, "serial.log"), join(LOG_DIR, "serial.log")).catch(() => undefined);
     const files = [...(await filesUnder(join(HOME, "vms", dotId))), join(HOME, "logs", `qemu-${dotId}.log`)];
@@ -807,7 +932,7 @@ async function main(): Promise<void> {
     );
   });
 
-  await step("j", "delete the Dot", async () => {
+  await step("l", "delete the Dot", async () => {
     const dotId = state.dotId!;
     const pid = state.pid!;
     await api("DELETE", `/api/dots/${enc(dotId)}`);
@@ -827,7 +952,7 @@ async function main(): Promise<void> {
     return `pid ${pid} gone, vms/${dotId} removed`;
   });
 
-  await step("k", "the key appears in no log and no database file", async () => {
+  await step("m", "the key appears in no log and no database file", async () => {
     const needle = Buffer.from(key.slice(0, 12), "utf8");
     // Events outlive their Dot: read back once more, decompressed, after the delete.
     const rows = await events(state.dotId!);

@@ -23,19 +23,26 @@ time, and an OpenRouter key that it spends a few cents of.
 | f | `GET /api/dots/:id/computer/screenshot` returns a PNG (saved as `screenshot.png`) |
 | g | with `files.write: ask`, a task stops at `approval.requested`, `invisible-dots approve` releases it, it completes, and the file holds exactly what was approved (by SHA-256) |
 | h | the server restarts and adopts the running VM (same pid); `invisible-dots computer stop` reaches STOPPED with QEMU gone, through the guest's own poweroff (`computer.stopped` says `forced: false`, in well under the 60 s after which QEMU is killed); `start` reaches READY; the identity is launched again and its `.stealth-identity.json` is unchanged (by SHA-256); `heading.txt` (by SHA-256), the memory and the conversation are all still there; the guest's whole system journal, read inside the guest, holds no OpenRouter key |
-| i | the key is in none of the Dot's event and approval rows (read back decompressed through the API) and, once the Dot is stopped, in none of its files: the overlay disk, the seed, the serial log and QEMU's log |
-| j | `DELETE /api/dots/:id` removes the Dot, its QEMU process and `vms/<id>` |
-| k | the key is in no event row read back after the delete, and in no file of the run's logs, `logs/` or the embedded database's directory |
+| i | with `computer.exec: ask`, a task stops at an approval; the agent process is ended inside the guest (`pkill -9` through `POST /v1/exec`); systemd restarts it, the host re-pushes key and config (a second `agent.started`), the same approval is still pending; approved with a note, the task completes and a counter file proves the command ran exactly once |
+| j | a task runs a slow `computer_exec`; while it is in flight the agent process is ended the same way; after the restart the Dot's event log has a `tool.called` with `interrupted: true` for that call, and a marker file proves the command itself ran once |
+| k | the key is in none of the Dot's event and approval rows (read back decompressed through the API) and, once the Dot is stopped, in none of its files: the overlay disk, the seed, the serial log and QEMU's log |
+| l | `DELETE /api/dots/:id` removes the Dot, its QEMU process and `vms/<id>` |
+| m | the key is in no event row read back after the delete, and in no file of the run's logs, `logs/` or the embedded database's directory |
+
+Steps i and j reach dot-agentd directly (`127.0.0.1:<guest_port>`, the proof
+handshake, the Dot's token read from its seed) to do to a guest what the
+model is not allowed to do to its own computer: end the agent process and
+check that systemd brings it back and the engine resumes from `dot.db`.
 
 The key checks report only "found" or "not found" and where, never any part
 of the key. They look for its first 12 characters; the journal check of step
 h looks inside the guest for the `sk-or-` prefix every OpenRouter key has
 (the run refuses a key without it), without giving the model any part of the
 key, and is only accepted when the guest proves it read the system journal.
-Large rows are compressed inside the database's files, which is why step i
-reads them through the API as well as step k scanning the files. The guest's
+Large rows are compressed inside the database's files, which is why step k
+reads them through the API as well as step m scanning the files. The guest's
 journal compresses large entries too, which is why step h reads it inside the
-guest besides step i scanning the disk.
+guest besides step k scanning the disk.
 
 A file the Dot wrote is checked by having the Dot hash it in the guest
 (`printf '%s' "$(cat <file>)" | sha256sum`, so a trailing newline does not
