@@ -7,11 +7,38 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 )
+
+// PowerOffAnswer is the 202 of POST /v1/system/poweroff.
+type PowerOffAnswer struct {
+	Status string `json:"status"`
+}
+
+// handlePowerOff starts the poweroff and answers 202 before the shutdown
+// gets going. The command is not tied to the request: systemctl only queues
+// the poweroff job, and systemd then stops every unit, this daemon included,
+// so the host sees the end of it as QEMU exiting, not as an HTTP answer.
+func (s *Server) handlePowerOff(w http.ResponseWriter, r *http.Request) {
+	cmd := exec.Command(s.opts.PowerOff[0], s.opts.PowerOff[1:]...)
+	if err := cmd.Start(); err != nil {
+		s.log.Error("poweroff", "error", err)
+		writeError(w, http.StatusInternalServerError, "poweroff_failed", err.Error())
+		return
+	}
+	s.log.Info("powering off at the host's request", "command", strings.Join(s.opts.PowerOff, " "))
+	go func() {
+		// Reaps the child; a failure is in the journal for whoever reads it.
+		if err := cmd.Wait(); err != nil {
+			s.log.Error("poweroff command failed", "error", err)
+		}
+	}()
+	writeJSON(w, http.StatusAccepted, PowerOffAnswer{Status: "powering_off"})
+}
 
 // SystemAnswer is GET /v1/system.
 type SystemAnswer struct {

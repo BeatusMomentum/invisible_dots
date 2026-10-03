@@ -12,6 +12,7 @@
     "apps/*",
     "packages/*",
     "guest/invisible-dots-agent",
+    "guest/image-builder",
     "guest-runtime/*"
   ],
   "scripts": {

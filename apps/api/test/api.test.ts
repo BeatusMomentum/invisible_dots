@@ -1,20 +1,19 @@
 import type { AddressInfo } from "node:net";
 import type { Database } from "@invisible-dots/database";
-import { createTestDatabase, warnIfNoDatabase, type TestDatabase } from "@invisible-dots/database/testing";
+import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-dots/database/testing";
 import { Scheduler } from "@invisible-dots/scheduler";
-import { FakeDriver, ManualClock, waitFor } from "@invisible-dots/scheduler/testing";
+import { FakeDriver, ManualClock, waitFor, waitUntilSettledReady } from "@invisible-dots/scheduler/testing";
 import { ApiError, InvisibleDotsClient } from "@invisible-dots/sdk";
 import type { StoredEvent } from "@invisible-dots/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildServer, type FastifyInstance } from "../src/index.js";
 
-const skip = warnIfNoDatabase("apps/api");
 const TOKEN = "test-token-0123456789abcdef";
 
 const yaml = (name: string, idle = "15m") =>
   `name: ${name}\ngoal: watch fares\nmodel:\n  provider: openrouter\n  id: test/model\ncomputer:\n  idle_timeout: ${idle}\n`;
 
-describe.skipIf(skip)("control-plane API", () => {
+describe.each(testAdapters())("control-plane API (%s)", (kind) => {
   let t: TestDatabase;
   let db: Database;
   let app: FastifyInstance;
@@ -25,7 +24,7 @@ describe.skipIf(skip)("control-plane API", () => {
   let api: InvisibleDotsClient;
 
   beforeAll(async () => {
-    t = await createTestDatabase();
+    t = await createTestDatabase(kind);
     db = t.db;
     driver = new FakeDriver();
     clock = new ManualClock();
@@ -33,7 +32,6 @@ describe.skipIf(skip)("control-plane API", () => {
       db,
       driver,
       clock,
-      cidBase: 40_000,
       lifecycle: { healthPollMs: 5, readyTimeoutMs: 3_000, pumpRetryMs: 10 },
       dispatcher: { retryDelayMs: 0 },
     });
@@ -51,7 +49,7 @@ describe.skipIf(skip)("control-plane API", () => {
 
   async function readyDot(name: string, idle?: string) {
     const dot = await api.createDot(yaml(name, idle));
-    await waitFor(async () => (await api.getDot(dot.id)).status === "READY" && !scheduler.lifecycle.isBusy(dot.id), `${name} READY`);
+    await waitUntilSettledReady(scheduler, driver, dot.id, name);
     return dot;
   }
 

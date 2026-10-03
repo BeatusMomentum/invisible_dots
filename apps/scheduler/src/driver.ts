@@ -47,49 +47,89 @@ export interface GuestApi {
 
 export interface ComputerSpecInput {
   dotId: string;
-  cid: number;
-  /** The Dot token in clear. */
+  /** The Dot token in clear; it goes into the seed (section 4.2). */
   token: string;
   resources: ComputerResources;
 }
 
 export interface CreatedComputer {
-  domainName: string;
   /** The golden image the overlay is backed by; recorded, because it can never change for this disk. */
   goldenImage: string;
   runtimeImage: string;
 }
 
 export interface StartedComputer {
-  /** The CID the VM runs with; differs from the requested one when that was taken on the host. */
-  cid: number;
+  /** The host port on 127.0.0.1 that QEMU forwards to the guest's port 1024 (section 3.5). */
+  guestPort: number;
+  /** The QEMU process. */
+  pid: number;
   runtimeImage: string;
+  /** The VM was already running; nothing was spawned and `guestPort` is the one it runs with. */
   alreadyRunning: boolean;
 }
 
-export interface DomainState {
-  /** Whether libvirt knows the domain. */
-  defined: boolean;
+/** What the VM layer sees of one Dot's VM: its disk, its pid file and its QEMU process (section 3.4). */
+export interface ComputerState {
+  /** Whether the Dot's disk exists, that is whether the VM was ever created and not destroyed. */
+  exists: boolean;
+  /**
+   * RUNNING while the Dot's QEMU process runs, STOPPED when it does not,
+   * ERROR when a live pid cannot be proven to be that QEMU. Whether the guest
+   * inside is up is guest health, which the READY procedure checks.
+   */
   state: VmState;
-  /** What libvirt reported, for logs and error messages. */
+  /** The pid of the live QEMU process, null when there is none. */
+  pid: number | null;
+  /**
+   * The host port forwarded to the guest, from the pid file written when
+   * QEMU was spawned, so it is right even when the database row is not;
+   * null when not running.
+   */
+  guestPort: number | null;
+  /** Why the state is ERROR, for logs and error messages. */
   detail: string | null;
 }
 
+/** Where a guest is reached: the forwarded port recorded in the `computers` row (section 5.1). */
+export interface GuestEndpoint {
+  dotId: string;
+  port: number;
+}
+
+export interface WaitForHealthOptions {
+  timeoutMs: number;
+  intervalMs: number;
+  /** Timeout of each health request. */
+  requestTimeoutMs: number;
+}
+
 export interface ComputerDriver {
-  /** Overlay, seed and domain definition (section 9.4 up to `virsh define`). Safe to retry. */
+  /** Overlay and seed (section 9.4 up to `write seed.iso`). Safe to retry. */
   create(spec: ComputerSpecInput): Promise<CreatedComputer>;
-  /** Start the VM and its bridge; `reservedCids` are the CIDs other Dots hold. */
-  start(spec: ComputerSpecInput & { goldenImage: string }, reservedCids: readonly number[]): Promise<StartedComputer>;
-  /** Graceful shutdown, forced after the grace period, then the bridge is stopped (section 9.5). */
-  stop(dotId: string): Promise<{ forced: boolean }>;
-  reboot(dotId: string): Promise<void>;
-  /** Remove the domain, its definition and the VM directory with the disk. */
+  /** Pick a guest port and spawn QEMU detached (sections 3.4 and 3.5). */
+  start(spec: ComputerSpecInput & { goldenImage: string }): Promise<StartedComputer>;
+  /**
+   * Poll `GET /v1/health` until dot-agentd and the agent both report ok.
+   * Fails at once on a refused token (status 401) and when the VM's QEMU
+   * process exits, and after `timeoutMs` otherwise.
+   */
+  waitForHealth(endpoint: GuestEndpoint, token: string, options: WaitForHealthOptions): Promise<HealthAnswer>;
+  /**
+   * `POST /v1/system/poweroff` through the guest channel with the Dot's
+   * token, then the QEMU process is killed after the grace period (section 9.5).
+   */
+  stop(dotId: string, token: string): Promise<{ forced: boolean }>;
+  /**
+   * A full stop and start, so the guest shuts down cleanly and new resources
+   * and a new runtime ISO apply. The guest port changes.
+   */
+  reboot(spec: ComputerSpecInput & { goldenImage: string }): Promise<StartedComputer>;
+  /** Stop the VM if it runs and remove its directory with the disk. */
   destroy(dotId: string): Promise<void>;
-  state(dotId: string): Promise<DomainState>;
-  /** Make sure the bridge of a VM that is already running is up (after a control plane restart). */
-  attach(dotId: string, cid: number): Promise<void>;
-  guest(dotId: string, token: string): GuestApi;
-  /** Release host resources owned by this process (bridges). VMs keep running. */
+  /** From the pid file and the process, never from the database: this is what reconciliation compares against. */
+  state(dotId: string): Promise<ComputerState>;
+  guest(endpoint: GuestEndpoint, token: string): GuestApi;
+  /** Release what this process holds. VMs keep running. */
   close(): Promise<void>;
 }
 

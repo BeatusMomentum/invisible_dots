@@ -1,5 +1,6 @@
 import { newId, type TaskState } from "@invisible-dots/shared";
 import type { TaskRecord, TaskRunRecord } from "@invisible-dots/shared";
+import { InboundRepository, type InboundRecord } from "./inbound.js";
 import { iso, isoRequired, type Queryable } from "./rows.js";
 
 interface TaskRow {
@@ -57,11 +58,16 @@ const ACTIVE = "('RUNNING', 'WAITING_APPROVAL')";
 const TERMINAL = "('COMPLETED', 'FAILED', 'CANCELLED')";
 
 /**
- * The claim of section 9.2. The task row and its Dot row are both locked:
- * a second dispatcher running the same statement skips every task of a Dot
- * that is being claimed, instead of claiming a second task for it before the
- * first one's RUNNING status is committed. Higher priority first, then
- * creation order.
+ * The claim of section 9.2. Higher priority first, then creation order. A
+ * Dot with an active task is skipped.
+ *
+ * Only one dispatcher ever runs this against a database: one server holds
+ * the database (`Database.holdInstanceLock`, taken at start), and its
+ * dispatcher runs one pass at a time. The row locks make the claim and the
+ * rest of its transaction one unit; they are NOT what would keep two
+ * dispatchers on one external PostgreSQL from claiming two tasks of one Dot
+ * (under READ COMMITTED the NOT EXISTS reads the statement's snapshot), which
+ * is why a second server on the same database is refused instead.
  */
 export const CLAIM_SQL = `
 SELECT t.*
@@ -80,10 +86,22 @@ SELECT t.*
 export interface ClaimedTask {
   task: TaskRecord;
   run: TaskRunRecord;
+  /** The task.created stored for the guest in the same transaction. */
+  inbound: InboundRecord;
+}
+
+/** A task moved to a new state, and the state it left. */
+export interface TaskTransition {
+  task: TaskRecord;
+  previous: TaskState;
 }
 
 export class TasksRepository {
-  constructor(private readonly q: Queryable) {}
+  readonly #inbound: InboundRepository;
+
+  constructor(private readonly q: Queryable) {
+    this.#inbound = new InboundRepository(q);
+  }
 
   async insert(input: {
     id: string;
@@ -123,11 +141,13 @@ export class TasksRepository {
   }
 
   /**
-   * Claim the next due task and open a run for it. Must run inside a
-   * transaction (`Database.transaction`): the row locks of CLAIM_SQL last
-   * until it commits.
+   * Claim the next due task: mark it RUNNING, open a run, and store its
+   * task.created for the guest, all in the caller's transaction
+   * (`Database.transaction`), so a task is never RUNNING without the event
+   * that tells its guest about it. Delivering that event is the inbound
+   * deliverer's job, which survives a failed send and a restart.
    */
-  async claimNext(): Promise<ClaimedTask | null> {
+  async claimNext(ts: string = new Date().toISOString()): Promise<ClaimedTask | null> {
     const { rows } = await this.q.query<TaskRow>(CLAIM_SQL);
     const claimed = rows[0];
     if (!claimed) return null;
@@ -139,89 +159,112 @@ export class TasksRepository {
       "INSERT INTO task_runs (id, task_id) VALUES ($1, $2) RETURNING *",
       [newId("run"), claimed.id],
     );
-    return { task: toTask(updated[0]!), run: toRun(runs[0]!) };
-  }
-
-  async markDelivered(runId: string): Promise<void> {
-    await this.q.query("UPDATE task_runs SET delivered_at = now() WHERE id = $1", [runId]);
+    const task = toTask(updated[0]!);
+    const run = toRun(runs[0]!);
+    const inbound = await this.#inbound.enqueue(
+      task.dot_id,
+      {
+        id: newId("evt"),
+        type: "task.created",
+        ts,
+        data: { task_id: task.id, description: task.description, priority: task.priority },
+      },
+      { taskId: task.id, runId: run.id },
+    );
+    return { task, run, inbound };
   }
 
   /**
-   * Put a claimed task back in the queue after its delivery failed, closing
-   * the run with `outcome`. A task that was cancelled meanwhile stays
-   * cancelled.
-   */
-  async requeue(taskId: string, runId: string, outcome: string, scheduledAt: Date | null): Promise<void> {
-    await this.q.query(
-      "UPDATE task_runs SET finished_at = now(), outcome = $2 WHERE id = $1 AND finished_at IS NULL",
-      [runId, outcome],
-    );
-    await this.q.query(
-      `UPDATE tasks SET status = 'PENDING', scheduled_at = $2 WHERE id = $1 AND status NOT IN ${TERMINAL}`,
-      [taskId, scheduledAt],
-    );
-  }
-
-  /** How many runs of a task ended without reaching the guest. */
-  async failedDeliveries(taskId: string): Promise<number> {
-    const { rows } = await this.q.query<{ n: string }>(
-      "SELECT count(*) AS n FROM task_runs WHERE task_id = $1 AND delivered_at IS NULL AND finished_at IS NOT NULL",
-      [taskId],
-    );
-    return Number(rows[0]?.n ?? 0);
-  }
-
-  /**
-   * Move a task to `status` from the guest's events. A task already in a
-   * terminal state is left alone (a cancelled task the guest finishes
-   * anyway stays cancelled); returns the updated task or null. With
-   * `dotId`, only a task of that Dot moves: a guest can never touch another
-   * Dot's tasks by naming their ids.
+   * Move a task to `status`. A task already in a terminal state is left
+   * alone (a cancelled task the guest finishes anyway stays cancelled), and
+   * null comes back; otherwise the task and the state it left. With `dotId`,
+   * only a task of that Dot moves: a guest can never touch another Dot's
+   * tasks by naming their ids.
+   *
+   * Reaching a terminal state also closes the task's open run and expires its
+   * pending approvals, here and nowhere else, so no caller can end a task and
+   * leave an approval that nothing waits for in the pending list. Callers
+   * that need all of it atomic run this inside their transaction.
    */
   async transition(
     taskId: string,
     status: TaskState,
     fields: { summary?: string; error?: string; dotId?: string } = {},
-  ): Promise<TaskRecord | null> {
+  ): Promise<TaskTransition | null> {
     const terminal = status === "COMPLETED" || status === "FAILED" || status === "CANCELLED";
-    const { rows } = await this.q.query<TaskRow>(
-      `UPDATE tasks
+    // The CTE locks the row first, so `previous` is the state this update replaced, also under concurrency.
+    const { rows } = await this.q.query<TaskRow & { previous_status: TaskState }>(
+      `WITH prev AS (
+         SELECT id, status FROM tasks
+          WHERE id = $1 AND status NOT IN ${TERMINAL} AND ($6::text IS NULL OR dot_id = $6)
+          FOR UPDATE
+       )
+       UPDATE tasks t
           SET status = $2,
-              started_at = CASE WHEN $2 IN ('RUNNING', 'WAITING_APPROVAL') THEN COALESCE(started_at, now()) ELSE started_at END,
-              finished_at = CASE WHEN $3 THEN now() ELSE finished_at END,
-              summary = COALESCE($4, summary),
-              error = COALESCE($5, error)
-        WHERE id = $1 AND status NOT IN ${TERMINAL} AND ($6::text IS NULL OR dot_id = $6)
-        RETURNING *`,
+              started_at = CASE WHEN $2 IN ('RUNNING', 'WAITING_APPROVAL') THEN COALESCE(t.started_at, now()) ELSE t.started_at END,
+              finished_at = CASE WHEN $3 THEN now() ELSE t.finished_at END,
+              summary = COALESCE($4, t.summary),
+              error = COALESCE($5, t.error)
+         FROM prev
+        WHERE t.id = prev.id
+        RETURNING t.*, prev.status AS previous_status`,
       [taskId, status, terminal, fields.summary ?? null, fields.error ?? null, fields.dotId ?? null],
     );
-    if (rows[0] && terminal) {
+    const row = rows[0];
+    if (!row) return null;
+    if (terminal) {
       await this.q.query(
         "UPDATE task_runs SET finished_at = now(), outcome = $2 WHERE task_id = $1 AND finished_at IS NULL",
         [taskId, status.toLowerCase()],
       );
+      await this.q.query(
+        "UPDATE approvals SET status = 'expired', resolved_at = now() WHERE task_id = $1 AND status = 'pending'",
+        [taskId],
+      );
     }
-    return rows[0] ? toTask(rows[0]) : null;
+    const { previous_status: previous, ...task } = row;
+    return { task: toTask(task), previous };
   }
 
-  /** Whether the Dot has work: a due PENDING task, or one RUNNING or WAITING_APPROVAL (section 9.5). */
+  /**
+   * Whether the Dot has work (section 9.5): a due PENDING task, one RUNNING or
+   * WAITING_APPROVAL, or an inbound event that has not reached its guest yet
+   * (a message, an approval, a task being delivered).
+   */
   async hasWork(dotId: string, now: Date): Promise<boolean> {
     const { rows } = await this.q.query(
       `SELECT 1 FROM tasks
         WHERE dot_id = $1
           AND (status IN ${ACTIVE} OR (status = 'PENDING' AND (scheduled_at IS NULL OR scheduled_at <= $2)))
-        LIMIT 1`,
+       UNION ALL
+       SELECT 1 FROM inbound_events WHERE dot_id = $1 AND delivered_at IS NULL AND dropped_at IS NULL
+       LIMIT 1`,
       [dotId, now],
     );
     return rows.length > 0;
   }
 
-  /** Runs opened by a dispatcher that stopped before the guest got the task (recovery at startup). */
-  async interruptedRuns(): Promise<TaskRunRecord[]> {
-    const { rows } = await this.q.query<TaskRunRow>(
-      "SELECT * FROM task_runs WHERE delivered_at IS NULL AND finished_at IS NULL ORDER BY started_at",
+  /**
+   * Stopped Dots that new work waits for although the claim skips them: a due
+   * PENDING task behind an active one (the Dot was stopped while its guest
+   * worked on a task). Waking such a Dot lets its guest finish the active
+   * task, after which the claim hands it the next one (section 9.5). A Dot in
+   * ERROR is left to the person.
+   */
+  async stoppedDotsWithBlockedWork(): Promise<string[]> {
+    const { rows } = await this.q.query<{ dot_id: string }>(
+      `SELECT DISTINCT p.dot_id
+         FROM tasks p
+         JOIN dots d ON d.id = p.dot_id
+         JOIN computers c ON c.dot_id = p.dot_id
+        WHERE p.status = 'PENDING'
+          AND (p.scheduled_at IS NULL OR p.scheduled_at <= now())
+          AND c.state = 'STOPPED'
+          AND d.status NOT IN ('CREATING', 'DISABLED', 'ERROR')
+          AND EXISTS (SELECT 1 FROM tasks busy WHERE busy.dot_id = p.dot_id AND busy.status IN ${ACTIVE})
+        ORDER BY p.dot_id`,
     );
-    return rows.map(toRun);
+    return rows.map((r) => r.dot_id);
   }
 
   /** The tasks a Dot's guest is working on, as the host last heard. */

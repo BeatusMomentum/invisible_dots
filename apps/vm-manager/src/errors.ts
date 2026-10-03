@@ -1,4 +1,8 @@
-/** Errors raised by the vm-manager. Each one says which command or VM it is about. */
+/** Errors raised by the vm-manager. Each one says which command or VM it is about, and what fixes it when something can. */
+
+/** The commands that prepare a host (architecture section 11); errors about the host name them. */
+export const DOCTOR_COMMAND = "invisible-dots doctor";
+export const SETUP_COMMAND = "invisible-dots setup";
 
 /** A host command exited non-zero, timed out or could not be started. */
 export class CommandError extends Error {
@@ -29,7 +33,7 @@ export class CommandError extends Error {
       (init.timedOut
         ? "timed out"
         : init.code === "ENOENT"
-          ? "command not found (is it installed and on PATH?)"
+          ? `command not found (run "${DOCTOR_COMMAND}")`
           : `exited with code ${init.exitCode}`);
     super(`${line}: ${reason}${stderr ? `: ${stderr}` : ""}`, init.cause === undefined ? undefined : { cause: init.cause });
     this.name = "CommandError";
@@ -51,7 +55,7 @@ export class CommandError extends Error {
 /** A feature the contract places out of scope for this version (architecture section 10). */
 export class NotImplementedError extends Error {
   constructor(feature: string) {
-    super(`${feature} is out of scope for this version`);
+    super(`${feature} is out of scope for this version (architecture section 10)`);
     this.name = "NotImplementedError";
   }
 }
@@ -71,6 +75,82 @@ export class VmManagerError extends Error {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
     this.name = "VmManagerError";
+  }
+}
+
+/** QEMU (qemu-system-x86_64 or qemu-img) is not installed where the vm-manager looks (section 3.1). */
+export class QemuNotFoundError extends Error {
+  readonly binary: string;
+  readonly searched: readonly string[];
+  constructor(binary: string, searched: readonly string[]) {
+    super(
+      `${binary} was not found (looked in: ${searched.length > 0 ? searched.join(", ") : "nothing"}). ` +
+        `Run "${SETUP_COMMAND}" to install QEMU, or set INVISIBLE_DOTS_QEMU_DIR to the directory that holds it; ` +
+        `"${DOCTOR_COMMAND}" checks the result.`,
+    );
+    this.name = "QemuNotFoundError";
+    this.binary = binary;
+    this.searched = searched;
+  }
+}
+
+/**
+ * QEMU could not use the hardware accelerator. There is no fallback to
+ * software emulation (section 1.1): the start fails and says what fixes it.
+ */
+export class AcceleratorUnavailableError extends Error {
+  readonly accelerator: string;
+  readonly qemuOutput: string;
+  constructor(accelerator: string, qemuOutput: string) {
+    super(
+      `QEMU could not use the ${accelerator} accelerator, and invisible_dots never falls back to software emulation. ` +
+        `Run "${DOCTOR_COMMAND}" to see what is missing and "${SETUP_COMMAND}" to fix it. QEMU said: ${qemuOutput.trim() || "nothing"}`,
+    );
+    this.name = "AcceleratorUnavailableError";
+    this.accelerator = accelerator;
+    this.qemuOutput = qemuOutput;
+  }
+}
+
+/**
+ * The accelerator does not run `-cpu host`. Section 3.4 forbids replacing it
+ * with a guessed CPU model, so this is an error to report, not to work around.
+ */
+export class CpuModelError extends Error {
+  readonly accelerator: string;
+  readonly qemuOutput: string;
+  constructor(accelerator: string, qemuOutput: string) {
+    super(
+      `QEMU rejected "-cpu host" with the ${accelerator} accelerator. invisible_dots does not substitute another CPU model ` +
+        `(architecture section 3.4); run "${DOCTOR_COMMAND}". QEMU said: ${qemuOutput.trim() || "nothing"}`,
+    );
+    this.name = "CpuModelError";
+    this.accelerator = accelerator;
+    this.qemuOutput = qemuOutput;
+  }
+}
+
+/**
+ * QEMU exited during start, never set up its port forward, or started but
+ * never brought the guest up. `qemuOutput` is what QEMU wrote to its log and
+ * `serialOutput` the end of the guest's serial console: together they are
+ * what says why, since nothing else watches a VM's insides (section 3.4).
+ */
+export class VmStartError extends Error {
+  readonly dotId: string;
+  readonly qemuOutput: string;
+  readonly serialOutput: string;
+  constructor(dotId: string, message: string, qemuOutput = "", options?: { cause?: unknown; serialOutput?: string }) {
+    const output = qemuOutput.trim();
+    const serial = (options?.serialOutput ?? "").trim();
+    super(
+      `dot ${dotId}: ${message}${output ? `. QEMU said: ${output}` : ""}${serial ? `. The serial console ends with: ${serial}` : ""}`,
+      options?.cause === undefined ? undefined : { cause: options.cause },
+    );
+    this.name = "VmStartError";
+    this.dotId = dotId;
+    this.qemuOutput = qemuOutput;
+    this.serialOutput = options?.serialOutput ?? "";
   }
 }
 

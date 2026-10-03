@@ -15,7 +15,10 @@ Environment=NODE_ENV=production
 # (architecture section 6), so the agent needs both of these.
 Environment=DISPLAY=:0
 Environment=PATH=/home/dot/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/usr/local/bin/node /opt/invisible-dots/invisible-dots-agent.mjs
+# --disable-sigusr1: the OpenRouter key lives only in this process's memory
+# (architecture section 4.3), and SIGUSR1 would open Node's inspector to any
+# process of the same user, which could then read it without ptrace.
+ExecStart=/usr/local/bin/node --disable-sigusr1 /opt/invisible-dots/invisible-dots-agent.mjs
 Restart=on-failure
 RestartSec=2
 # prepare-sleep closes the browsers before shutdown; a plain stop gets time to do the same.

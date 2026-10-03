@@ -20,6 +20,8 @@ export interface ScriptedReply {
   body: unknown;
   /** Wait this long before answering. */
   delayMs?: number;
+  /** Answer only once this settles: a reply the test releases itself, instead of a delay a loaded machine can outlast. */
+  hold?: Promise<unknown>;
 }
 
 export type Responder = (request: RecordedRequest, index: number) => ScriptedReply;
@@ -29,6 +31,8 @@ export interface FakeOpenRouter {
   requests: RecordedRequest[];
   /** Queue replies; once the queue is empty the fallback answers. */
   push(...replies: (ScriptedReply | Responder)[]): void;
+  /** Resolves once at least `count` requests have arrived, however long that takes. */
+  waitForRequests(count: number): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -70,6 +74,7 @@ export function completion(
 export async function startFakeOpenRouter(fallback?: Responder): Promise<FakeOpenRouter> {
   const queue: (ScriptedReply | Responder)[] = [];
   const requests: RecordedRequest[] = [];
+  const waiters: { count: number; resolve: () => void }[] = [];
 
   const server: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
@@ -84,6 +89,10 @@ export async function startFakeOpenRouter(fallback?: Responder): Promise<FakeOpe
       }
       const recorded: RecordedRequest = { method: req.method ?? "", url: req.url ?? "", headers: req.headers, body };
       requests.push(recorded);
+      for (const waiter of waiters.filter((w) => requests.length >= w.count)) {
+        waiters.splice(waiters.indexOf(waiter), 1);
+        waiter.resolve();
+      }
       const next = queue.shift();
       const reply: ScriptedReply =
         next === undefined
@@ -98,8 +107,9 @@ export async function startFakeOpenRouter(fallback?: Responder): Promise<FakeOpe
         res.writeHead(reply.status ?? 200, { "content-type": "application/json", ...reply.headers });
         res.end(payload);
       };
-      if (reply.delayMs) setTimeout(send, reply.delayMs);
-      else send();
+      const answer = () => (reply.delayMs ? setTimeout(send, reply.delayMs) : send());
+      if (reply.hold) void reply.hold.then(answer, answer);
+      else answer();
     });
   });
 
@@ -109,6 +119,8 @@ export async function startFakeOpenRouter(fallback?: Responder): Promise<FakeOpe
     url: `http://127.0.0.1:${port}/api/v1/chat/completions`,
     requests,
     push: (...replies) => queue.push(...replies),
+    waitForRequests: (count) =>
+      requests.length >= count ? Promise.resolve() : new Promise<void>((resolve) => waiters.push({ count, resolve })),
     close: () =>
       new Promise<void>((resolve) => {
         server.closeAllConnections();

@@ -10,7 +10,20 @@ export { ApiError };
 
 export type ComputerAction = "start" | "stop" | "reboot";
 
-export const api = new InvisibleDotsClient({ baseUrl: "" });
+/**
+ * A request this server refuses for want of a session (401, header
+ * `x-invisible-dots-login: required`) sends the page to /login; every other
+ * answer goes to the SDK unchanged.
+ */
+async function fetchOrLogin(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  const response = await fetch(input, init);
+  if (response.status === 401 && response.headers.get("x-invisible-dots-login") === "required" && typeof window !== "undefined") {
+    window.location.assign(`/login?next=${encodeURIComponent(window.location.pathname)}`);
+  }
+  return response;
+}
+
+export const api = new InvisibleDotsClient({ baseUrl: "", fetch: fetchOrLogin });
 
 export function computerAction(client: InvisibleDotsClient, dotId: string, action: ComputerAction): Promise<unknown> {
   switch (action) {

@@ -1,5 +1,5 @@
 /**
- * Identifiers. Ids are lowercase so they are safe in libvirt domain names,
+ * Identifiers. Ids are lowercase so they are safe in QEMU `-name` values,
  * file paths and URLs, and they sort by creation time to the millisecond,
  * which keeps database indexes and directory listings in creation order.
  */

@@ -18,6 +18,7 @@ export type InboundEventType = (typeof INBOUND_EVENT_TYPES)[number];
 export const TASK_CANCELLED_SYSTEM_EVENT = "task.cancelled";
 
 export const OUTBOUND_EVENT_TYPES = [
+  "agent.started",
   "agent.state",
   "message.assistant",
   "task.started",
@@ -75,6 +76,12 @@ export interface ApprovalRequestedData {
 }
 
 export interface OutboundEventDataMap {
+  /**
+   * The agent process started (a boot, or a restart by systemd inside a
+   * running VM). It keeps the OpenRouter key in memory only, so the host
+   * pushes the key again when it sees this.
+   */
+  "agent.started": Record<string, never>;
   "agent.state": { state: AgentState };
   "message.assistant": { text: string; in_reply_to?: string };
   "task.started": { task_id: string };
@@ -183,6 +190,7 @@ const identityData = z.object({ identity_id: nonEmpty, name: z.string() });
 const permission = z.enum(PERMISSIONS);
 
 export const outboundEventSchema = z.discriminatedUnion("type", [
+  z.object({ ...outboundBase, type: z.literal("agent.started"), data: z.object({}) }),
   z.object({ ...outboundBase, type: z.literal("agent.state"), data: z.object({ state: z.enum(AGENT_STATES) }) }),
   z.object({
     ...outboundBase,

@@ -2,12 +2,17 @@
  * In-process stand-ins for the VM layer and the guest agent, used by the
  * scheduler and API tests. FakeGuest follows the guest protocol of
  * architecture section 5: health that comes up after a boot, a key held in
- * memory only (lost on every reboot), an outbox with monotonically
- * increasing `seq` replayed after a cursor, and browser identities.
+ * memory only (lost on every reboot and every agent restart), `agent.started`
+ * at every start of the agent, inbound events accepted once per id, an
+ * outbox with monotonically increasing `seq` replayed after a cursor, and
+ * browser identities under the same rules as the real agent's.
  */
 import {
+  checkIdentityRequest,
+  IdentityRequestError,
   newId,
   newIdentityId,
+  pollGuestHealth,
   type AgentState,
   type AgentStateAnswer,
   type BrowserIdentity,
@@ -23,7 +28,16 @@ import {
   type SystemAnswer,
   type VmState,
 } from "@invisible-dots/shared";
-import type { ComputerDriver, ComputerSpecInput, DomainState, GuestApi, StartedComputer } from "./driver.js";
+import type {
+  ComputerDriver,
+  ComputerSpecInput,
+  ComputerState,
+  CreatedComputer,
+  GuestApi,
+  GuestEndpoint,
+  StartedComputer,
+  WaitForHealthOptions,
+} from "./driver.js";
 
 /** The error shape of vm-manager's GuestRequestError: a status (0 = unreachable) and the guest's code. */
 export class FakeGuestError extends Error {
@@ -102,7 +116,21 @@ export class FakeGuest implements GuestApi {
     this.#bootedAt = Date.now();
     this.openrouterKey = null;
     this.agentState = "IDLE";
+    this.emit("agent.started", {});
   }
+
+  /**
+   * The agent process restarts inside a running VM (systemd after a crash):
+   * its key is gone, its event stream drops, and it announces its start.
+   */
+  restartAgent(): void {
+    this.agentRestarts++;
+    this.openrouterKey = null;
+    this.disconnectStreams();
+    this.emit("agent.started", {});
+  }
+
+  agentRestarts = 0;
 
   powerOff(): void {
     this.running = false;
@@ -127,7 +155,7 @@ export class FakeGuest implements GuestApi {
         setTimeout(() => this.boot(), this.#rebootDelayMs);
         this.#rebootDelayMs = null;
       }
-      throw new FakeGuestError(0, `${what}: connect ENOENT (the VM is off)`);
+      throw new FakeGuestError(0, `${what}: connect ECONNREFUSED (the VM is off)`, "ECONNREFUSED");
     }
   }
 
@@ -223,6 +251,8 @@ export class FakeGuest implements GuestApi {
       this.failNextPost = null;
       throw error;
     }
+    // Like the agent's inbox: an id it already accepted is accepted again and ignored.
+    if (this.inbound.some((e) => e.id === event.id)) return { accepted: true };
     this.inbound.push(event);
     await this.onInbound(event, this);
     return { accepted: true };
@@ -240,18 +270,26 @@ export class FakeGuest implements GuestApi {
 
   async createBrowserIdentity(body: CreateBrowserIdentityRequest): Promise<BrowserIdentity> {
     this.#reachable("createBrowserIdentity");
-    const id = newIdentityId(body.name);
+    let checked: { name: string; proxy?: string };
+    try {
+      // The agent's own rules: before any config the schema default of 20 applies.
+      checked = checkIdentityRequest(body, this.identities.size, this.config?.browser.identities.max_identities ?? 20);
+    } catch (error) {
+      if (error instanceof IdentityRequestError) throw new FakeGuestError(error.code === "limit" ? 409 : 400, error.message, error.code);
+      throw error;
+    }
+    const id = newIdentityId(checked.name);
     const identity: BrowserIdentity = {
       id,
-      name: body.name,
+      name: checked.name,
       createdAt: new Date().toISOString(),
       lastUsedAt: null,
       status: "available",
       profilePath: `/home/dot/browsers/${id}/profile`,
-      ...(body.proxy ? { proxy: body.proxy } : {}),
+      ...(checked.proxy ? { proxy: checked.proxy } : {}),
     };
     this.identities.set(id, identity);
-    this.emit("browser.identity.created", { identity_id: id, name: body.name });
+    this.emit("browser.identity.created", { identity_id: id, name: checked.name });
     return identity;
   }
 
@@ -312,28 +350,35 @@ export class FakeGuest implements GuestApi {
   }
 }
 
-interface FakeDomain {
-  defined: boolean;
+interface FakeVm {
   state: VmState;
-  cid: number;
+  guestPort: number | null;
+  pid: number | null;
   token: string;
 }
 
-export type DriverOperation = "create" | "start" | "stop" | "reboot" | "destroy" | "attach";
+export type DriverOperation = "create" | "start" | "stop" | "reboot" | "destroy";
 
-/** A ComputerDriver that keeps its "VMs" in memory and boots a FakeGuest in each. */
+/** The first port FakeDriver hands out; far from anything a test binds, and never really bound. */
+const FAKE_FIRST_PORT = 47_000;
+
+/**
+ * A ComputerDriver that keeps its "VMs" in memory and boots a FakeGuest in
+ * each. Like QEMU with a fresh port forward, every start gets a new port,
+ * and a guest is reached only through the port its VM runs with now.
+ */
 export class FakeDriver implements ComputerDriver {
-  readonly domains = new Map<string, FakeDomain>();
+  readonly vms = new Map<string, FakeVm>();
   readonly guests = new Map<string, FakeGuest>();
   readonly calls: string[] = [];
-  /** CIDs "another program on the host" holds: start moves off them, like vm-manager does. */
-  readonly hostTakenCids = new Set<number>();
   readonly #failures = new Map<DriverOperation, { error: Error; times: number }>();
+  #nextPort = FAKE_FIRST_PORT;
+  #nextPid = 9_000;
   /** Applied to every new guest, e.g. to install a custom agent behaviour. */
   configureGuest: (guest: FakeGuest) => void = () => {};
   rebootDelayMs = 30;
-  goldenImage = "/var/lib/invisible-dots/images/golden-test.qcow2";
-  runtimeImage = "/var/lib/invisible-dots/images/runtime-test.iso";
+  goldenImage = "images/golden-test.qcow2";
+  runtimeImage = "images/runtime-test.iso";
 
   /** Make the next `times` calls of `operation` fail with `error`. */
   failNext(operation: DriverOperation, error: Error = new Error(`${operation} failed (injected)`), times = 1): void {
@@ -355,75 +400,99 @@ export class FakeDriver implements ComputerDriver {
     return guest;
   }
 
-  async create(spec: ComputerSpecInput) {
+  /** Power a VM off behind the control plane's back, as a crash or a host reboot would. */
+  crash(dotId: string): void {
+    const vm = this.vms.get(dotId);
+    if (vm) Object.assign(vm, { state: "STOPPED", guestPort: null, pid: null });
+    this.guests.get(dotId)?.powerOff();
+  }
+
+  async create(spec: ComputerSpecInput): Promise<CreatedComputer> {
     this.#enter("create", spec.dotId);
-    const existing = this.domains.get(spec.dotId);
-    this.domains.set(spec.dotId, { defined: true, state: existing?.state ?? "STOPPED", cid: spec.cid, token: spec.token });
+    if (!this.vms.has(spec.dotId)) this.vms.set(spec.dotId, { state: "STOPPED", guestPort: null, pid: null, token: spec.token });
     if (!this.guests.has(spec.dotId)) {
       const guest = new FakeGuest(spec.token);
       this.configureGuest(guest);
       this.guests.set(spec.dotId, guest);
     }
-    return { domainName: `invisible-dot-${spec.dotId}`, goldenImage: this.goldenImage, runtimeImage: this.runtimeImage };
+    return { goldenImage: this.goldenImage, runtimeImage: this.runtimeImage };
   }
 
-  async start(spec: ComputerSpecInput & { goldenImage: string }, reservedCids: readonly number[]): Promise<StartedComputer> {
+  async start(spec: ComputerSpecInput & { goldenImage: string }): Promise<StartedComputer> {
     this.#enter("start", spec.dotId);
-    const domain = this.domains.get(spec.dotId);
-    if (!domain?.defined) throw new Error(`domain invisible-dot-${spec.dotId} is not defined`);
-    if (domain.state === "RUNNING") return { cid: domain.cid, runtimeImage: this.runtimeImage, alreadyRunning: true };
-    let cid = spec.cid;
-    const taken = new Set([...reservedCids, ...this.hostTakenCids]);
-    while (taken.has(cid)) cid++;
-    domain.cid = cid;
-    domain.state = "RUNNING";
+    const vm = this.vms.get(spec.dotId);
+    if (!vm) throw new Error(`the disk of ${spec.dotId} does not exist`);
+    if (vm.state === "RUNNING" && vm.guestPort !== null && vm.pid !== null) {
+      return { guestPort: vm.guestPort, pid: vm.pid, runtimeImage: this.runtimeImage, alreadyRunning: true };
+    }
+    Object.assign(vm, { state: "RUNNING", guestPort: this.#nextPort++, pid: this.#nextPid++ });
     this.guestOf(spec.dotId).boot();
-    return { cid, runtimeImage: this.runtimeImage, alreadyRunning: false };
+    return { guestPort: vm.guestPort!, pid: vm.pid!, runtimeImage: this.runtimeImage, alreadyRunning: false };
   }
 
-  async stop(dotId: string) {
+  async stop(dotId: string, token: string) {
     this.#enter("stop", dotId);
-    const domain = this.domains.get(dotId);
-    if (domain) domain.state = "STOPPED";
-    this.guests.get(dotId)?.powerOff();
+    // Like dot-agentd: the poweroff needs the Dot's token.
+    if (this.vms.get(dotId) && token !== this.vms.get(dotId)!.token) throw new FakeGuestError(401, "unauthorized", "unauthorized");
+    this.crash(dotId);
     return { forced: false };
   }
 
-  async reboot(dotId: string) {
-    this.#enter("reboot", dotId);
-    const guest = this.guestOf(dotId);
-    guest.reboot(this.rebootDelayMs);
+  /** Like the real one: the guest goes down, comes back a moment later, and the port changes. */
+  async reboot(spec: ComputerSpecInput & { goldenImage: string }): Promise<StartedComputer> {
+    this.#enter("reboot", spec.dotId);
+    const vm = this.vms.get(spec.dotId);
+    if (!vm) throw new Error(`the disk of ${spec.dotId} does not exist`);
+    Object.assign(vm, { state: "RUNNING", guestPort: this.#nextPort++, pid: this.#nextPid++ });
+    this.guestOf(spec.dotId).reboot(this.rebootDelayMs);
+    return { guestPort: vm.guestPort!, pid: vm.pid!, runtimeImage: this.runtimeImage, alreadyRunning: false };
+  }
+
+  /** vm-manager's rule and loop (pollGuestHealth), with "QEMU exited" as the check, as VmManager has. */
+  async waitForHealth(endpoint: GuestEndpoint, token: string, options: WaitForHealthOptions): Promise<HealthAnswer> {
+    const source = { address: `fake:${endpoint.port}`, health: (o: { timeoutMs?: number }) => this.guest(endpoint, token).health(o) };
+    return pollGuestHealth(source, {
+      timeoutMs: options.timeoutMs,
+      intervalMs: options.intervalMs,
+      requestTimeoutMs: options.requestTimeoutMs,
+      check: () => {
+        if (this.vms.get(endpoint.dotId)?.state !== "RUNNING") throw new Error(`QEMU of ${endpoint.dotId} is not running any more`);
+      },
+    });
   }
 
   async destroy(dotId: string) {
     this.#enter("destroy", dotId);
     this.guests.get(dotId)?.powerOff();
-    this.domains.delete(dotId);
+    this.vms.delete(dotId);
     this.guests.delete(dotId);
   }
 
-  async state(dotId: string): Promise<DomainState> {
-    const domain = this.domains.get(dotId);
-    if (!domain) return { defined: false, state: "STOPPED", detail: null };
-    return { defined: true, state: domain.state, detail: domain.state === "RUNNING" ? "running" : "shut off" };
+  async state(dotId: string): Promise<ComputerState> {
+    const vm = this.vms.get(dotId);
+    if (!vm) return { exists: false, state: "STOPPED", pid: null, guestPort: null, detail: null };
+    return { exists: true, state: vm.state, pid: vm.pid, guestPort: vm.guestPort, detail: vm.state === "RUNNING" ? "running" : null };
   }
 
-  async attach(dotId: string, cid: number) {
-    this.#enter("attach", dotId);
-    const domain = this.domains.get(dotId);
-    if (domain) domain.cid = cid;
-  }
-
-  guest(dotId: string, token: string): GuestApi {
-    const guest = this.guestOf(dotId);
-    if (token !== guest.token) {
-      // Every call is refused, like dot-agentd answering 401 to a wrong token.
-      return new Proxy(guest, {
-        get: () => async () => {
-          throw new FakeGuestError(401, "unauthorized", "unauthorized");
-        },
+  guest(endpoint: GuestEndpoint, token: string): GuestApi {
+    const vm = this.vms.get(endpoint.dotId);
+    const guest = this.guests.get(endpoint.dotId);
+    const refuse = (status: number, message: string, code?: string) =>
+      new Proxy({} as GuestApi, {
+        // Not a thenable: `await` on the client must not call "then" and hang.
+        get: (_target, property) =>
+          property === "then"
+            ? undefined
+            : async () => {
+                throw new FakeGuestError(status, message, code);
+              },
       });
+    // A port the VM no longer runs with reaches nothing, like a stale forward after a restart.
+    if (!vm || !guest || vm.guestPort !== endpoint.port) {
+      return refuse(0, `connect ECONNREFUSED 127.0.0.1:${endpoint.port}`, "ECONNREFUSED");
     }
+    // Every call is refused, like dot-agentd answering 401 to a wrong token.
+    if (token !== guest.token) return refuse(401, "unauthorized", "unauthorized");
     return guest;
   }
 
@@ -444,6 +513,31 @@ export async function waitFor<T>(
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, intervalMs));
   }
+}
+
+/**
+ * Wait until the Dot is READY and doing nothing: no lifecycle operation
+ * under its lock, every event its fake guest emitted so far stored by the
+ * pump, and what READY and those events started in the background done too
+ * (the flush of its outbox, the push an agent.started asks for). A test that
+ * starts earlier races that work: an idle check skips a Dot whose outbox is
+ * being flushed, and a guest event stored later counts as activity, which is
+ * right in a server and a coin toss in a test.
+ */
+export async function waitUntilSettledReady(
+  scheduler: {
+    db: { dots: { get(id: string): Promise<{ status: string } | null> }; computers: { get(id: string): Promise<{ event_cursor: number } | null> } };
+    lifecycle: { isBusy(id: string): boolean };
+    settle(): Promise<void>;
+  },
+  driver: FakeDriver,
+  dotId: string,
+  what: string,
+): Promise<void> {
+  await waitFor(async () => (await scheduler.db.dots.get(dotId))?.status === "READY" && !scheduler.lifecycle.isBusy(dotId), `${what} READY`);
+  const lastSeq = driver.guestOf(dotId).outbox.at(-1)?.seq ?? 0;
+  await waitFor(async () => ((await scheduler.db.computers.get(dotId))?.event_cursor ?? 0) >= lastSeq, `${what}'s guest events stored`);
+  await scheduler.settle();
 }
 
 /** A clock tests move by hand. */

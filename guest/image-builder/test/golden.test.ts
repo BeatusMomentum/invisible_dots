@@ -1,0 +1,263 @@
+import { copyFile, readdir, readFile, rm, stat, writeFile, mkdir } from "node:fs/promises";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { hostPaths, type HostPaths } from "@invisible-dots/shared";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_USER_DATA, defaultAssetRoot } from "../src/assets.js";
+import { buildGoldenImage, GoldenBuildError, type GoldenBuildOptions } from "../src/golden.js";
+import { readManifest, verifyImage, type GoldenManifest } from "../src/manifest.js";
+import type { BaseImagePin, GuestPins } from "../src/pins.js";
+import { parsePythonLock } from "../src/python-lock.js";
+import { fakeRunner, type VmScript } from "./fake-runner.js";
+import { sha256, startFakeHttp, type FakeHttp } from "./http-fixture.js";
+
+const BASE = Buffer.from("QFI\xfb pretend qcow2 cloud image ".repeat(4000), "latin1");
+const NODE = Buffer.from("node tarball ".repeat(1000));
+const UV = Buffer.from("uv tarball ".repeat(1000));
+const NODE_FILE = "node-v24.21.0-linux-x64.tar.xz";
+const UV_FILE = "uv-x86_64-unknown-linux-gnu.tar.gz";
+
+const OK_CONSOLE = [
+  "[    0.000000] Linux version 6.8.0",
+  "idots-build: installing packages: xvfb",
+  "idots-build: installing Node 24.21.0",
+  "IDOTS-BUILD-COMPONENT: node=v24.21.0",
+  "IDOTS-BUILD-COMPONENT: browser-engine=151.0",
+  "IDOTS-BUILD-RESULT: ok",
+  "[  300.1] reboot: Power down",
+];
+
+let http: FakeHttp;
+let home: string;
+let paths: HostPaths;
+let base: BaseImagePin;
+let pins: GuestPins;
+let logs: string[];
+
+beforeEach(async () => {
+  http = await startFakeHttp({
+    "/noble/base.img": { body: BASE },
+    "/noble/SHA256SUMS": { body: `${sha256(BASE)} *base.img\n` },
+    [`/node/${NODE_FILE}`]: { body: NODE },
+    "/node/SHASUMS256.txt": { body: `${sha256(NODE)}  ${NODE_FILE}\n` },
+    [`/uv/${UV_FILE}`]: { body: UV },
+    [`/uv/${UV_FILE}.sha256`]: { body: `${sha256(UV)} *${UV_FILE}\n` },
+  });
+  home = mkdtempSync(join(tmpdir(), "idots-golden-"));
+  paths = hostPaths({ INVISIBLE_DOTS_HOME: home });
+  base = {
+    name: "ubuntu-24.04-server-cloudimg-amd64",
+    release: "24.04",
+    serial: "20260926",
+    url: http.url("/noble/base.img"),
+    sha256sums_url: http.url("/noble/SHA256SUMS"),
+    sha256sums_entry: "base.img",
+    sha256: sha256(BASE),
+    local_name: "noble-server-cloudimg-amd64.img",
+  };
+  pins = {
+    node: { version: "24.21.0", url: http.url(`/node/${NODE_FILE}`), shasums_url: http.url("/node/SHASUMS256.txt"), shasums_entry: NODE_FILE, sha256: sha256(NODE) },
+    uv: { version: "0.12.22", url: http.url(`/uv/${UV_FILE}`), shasums_url: http.url(`/uv/${UV_FILE}.sha256`), shasums_entry: UV_FILE, sha256: sha256(UV) },
+    apt_packages: ["xvfb", "imagemagick"],
+  };
+  logs = [];
+});
+
+afterEach(async () => {
+  await http.close();
+  await rm(home, { recursive: true, force: true });
+});
+
+function options(script: VmScript, extra: Partial<GoldenBuildOptions> = {}) {
+  const runner = fakeRunner(script);
+  const opts: GoldenBuildOptions = {
+    qemu: { system: "/opt/qemu/qemu-system-x86_64", img: "/opt/qemu/qemu-img" },
+    accelerator: "kvm",
+    runner,
+    paths,
+    base,
+    pins,
+    download: { attempts: 1, retryDelayMs: 0 },
+    log: (line) => logs.push(line),
+    now: () => new Date("2026-10-02T12:34:56Z"),
+    serialPollMs: 5,
+    ...extra,
+  };
+  return { runner, opts };
+}
+
+describe("buildGoldenImage", () => {
+  it("downloads, provisions and writes a read-only golden image with its manifest", async () => {
+    const { runner, opts } = options({ console: OK_CONSOLE, exit: 0 });
+    let seedSize = 0;
+    runner.onSpawn = async (args) => {
+      const seed = args.find((arg) => arg.startsWith("media=cdrom,file="))!.replace(/^media=cdrom,file=/, "").replace(/,format=raw,readonly=on$/, "");
+      seedSize = (await stat(seed)).size;
+    };
+    const result = await buildGoldenImage(opts);
+
+    expect(result.created).toBe(true);
+    expect(result.version).toMatch(/^20261002123456-[0-9a-f]{12}$/);
+    expect(result.image).toBe(paths.goldenImagePath(result.version));
+
+    // qemu-img grew a copy of the verified base image, then converted the provisioned disk.
+    expect(runner.runs.map((r) => [r.command, r.args[0]])).toEqual([
+      ["/opt/qemu/qemu-img", "resize"],
+      ["/opt/qemu/qemu-img", "convert"],
+    ]);
+    expect(runner.runs[0]!.args).toEqual(["resize", "-q", "-f", "qcow2", expect.stringMatching(/disk\.qcow2$/), "10G"]);
+    expect(runner.spawns).toHaveLength(1);
+    expect(runner.spawns[0]!.command).toBe("/opt/qemu/qemu-system-x86_64");
+    expect(runner.spawns[0]!.args).toEqual(expect.arrayContaining(["-accel", "kvm", "-cpu", "host", "-m", "4096", "-smp", "2"]));
+    // The seed carried both tarballs.
+    expect(seedSize).toBeGreaterThan(NODE.length + UV.length);
+
+    expect(await readFile(result.image)).toEqual(BASE);
+    expect((await stat(result.image)).mode & 0o222).toBe(0);
+    const manifest = (await readManifest(result.manifest)) as GoldenManifest;
+    expect(manifest).toMatchObject({
+      kind: "golden",
+      version: result.version,
+      file: `golden-${result.version}.qcow2`,
+      sha256: sha256(BASE),
+      size_bytes: BASE.length,
+      virtual_size: "10G",
+      built_at: "2026-10-02T12:34:56.000Z",
+      base: { sha256: sha256(BASE), serial: "20260926" },
+      pinned: {
+        node: { version: "24.21.0", sha256: sha256(NODE) },
+        uv: { version: "0.12.22", sha256: sha256(UV) },
+        "invisible-playwright-mcp": "0.70.2",
+        "invisible-playwright": "0.25.7",
+        apt_packages: ["xvfb", "imagemagick"],
+      },
+      installed: { node: "v24.21.0", "browser-engine": "151.0" },
+      builder: { accelerator: "kvm" },
+    });
+    expect(result.version.endsWith(manifest.inputs_digest)).toBe(true);
+    expect(await verifyImage(result.image)).toMatchObject({ ok: true });
+
+    // The guest's progress reached the person; the work directory and the lock are gone.
+    expect(logs).toEqual(expect.arrayContaining(["guest: installing packages: xvfb", "guest: installing Node 24.21.0"]));
+    expect((await readdir(paths.imagesDir)).sort()).toEqual(
+      [".cache", "noble-server-cloudimg-amd64.img", `golden-${result.version}.json`, `golden-${result.version}.qcow2`].sort(),
+    );
+    expect((await readdir(join(paths.imagesDir, ".cache"))).sort()).toEqual([NODE_FILE, UV_FILE]);
+  });
+
+  it("does nothing when an image for the same inputs exists", async () => {
+    const first = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }).opts);
+    const requests = http.requests.length;
+    const { runner, opts } = options({ console: OK_CONSOLE, exit: 0 }, { now: () => new Date("2026-11-01T00:00:00Z") });
+    const second = await buildGoldenImage(opts);
+    expect(second).toEqual({ ...first, created: false });
+    expect(runner.spawns).toHaveLength(0);
+    expect(http.requests.length).toBe(requests);
+  });
+
+  it("builds a new version when an input changes", async () => {
+    const first = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }).opts);
+    const second = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }, { diskSize: "12G" }).opts);
+    expect(second.created).toBe(true);
+    expect(second.version).not.toBe(first.version);
+  });
+
+  it("builds a new version when only the Python lock changes, a transitive package included", async () => {
+    const first = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }).opts);
+    // A copy of the guest files whose lock differs in one hash of one dependency.
+    const assetRoot = join(home, "assets");
+    for (const relative of [BUILDER_USER_DATA, BUILDER_PROVISION, BUILDER_PYTHON_LOCK]) {
+      await mkdir(join(assetRoot, dirname(relative)), { recursive: true });
+      await copyFile(join(defaultAssetRoot(), relative), join(assetRoot, relative));
+    }
+    const lockPath = join(assetRoot, BUILDER_PYTHON_LOCK);
+    const lock = await readFile(lockPath, "utf8");
+    const hash = /--hash=sha256:([0-9a-f]{64})/.exec(lock.slice(lock.indexOf("\nanyio==")))![1]!;
+    await writeFile(lockPath, lock.replace(hash, "0".repeat(64)));
+
+    const second = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }, { assetRoot }).opts);
+    expect(second.created).toBe(true);
+    expect(second.version).not.toBe(first.version);
+    const manifest = (await readManifest(second.manifest)) as GoldenManifest;
+    expect(manifest.pinned["mcp-requirements.lock"]).toBe(sha256(Buffer.from(await readFile(lockPath))));
+    // The versions in the manifest are the lock's own.
+    expect(manifest.pinned["invisible-playwright-mcp"]).toBe(parsePythonLock(lock).mcpVersion);
+  });
+
+  it("fails with the provisioner's reason and keeps the work directory", async () => {
+    const { opts } = options({ console: ["idots-build: installing packages", "IDOTS-BUILD-RESULT: failed at line 37: apt-get install"], exit: 0 });
+    const error = (await buildGoldenImage(opts).catch((e: unknown) => e)) as GoldenBuildError;
+    expect(error).toBeInstanceOf(GoldenBuildError);
+    expect(error.message).toMatch(/provisioning failed inside the builder VM: failed at line 37: apt-get install/);
+    expect(error.workDir).toBeDefined();
+    expect(await readFile(join(error.workDir!, "serial.log"), "utf8")).toContain("IDOTS-BUILD-RESULT: failed");
+    expect((await readdir(paths.imagesDir)).filter((name) => name.startsWith("golden-"))).toEqual([]);
+    expect(await readdir(paths.imagesDir)).not.toContain(".golden-build.lock");
+  });
+
+  it("kills a builder VM that does not power off in time", async () => {
+    const { runner, opts } = options({ console: ["idots-build: fetching the browser engine"], exit: "hang" }, { timeoutMs: 200 });
+    await expect(buildGoldenImage(opts)).rejects.toThrow(/did not power off within 200 ms; last console lines:\nidots-build: fetching the browser engine/);
+    expect(runner.kills).toEqual(["SIGKILL"]);
+  });
+
+  it("kills the builder VM when the build is cancelled", async () => {
+    const controller = new AbortController();
+    const { runner, opts } = options({ console: [], exit: "hang" }, { signal: controller.signal });
+    runner.onSpawn = async () => {
+      setTimeout(() => controller.abort(), 20);
+    };
+    await expect(buildGoldenImage(opts)).rejects.toThrow(/the build was cancelled/);
+    expect(runner.kills).toEqual(["SIGKILL"]);
+  });
+
+  it("reports QEMU's own error and points at doctor when it exits non-zero", async () => {
+    const { opts } = options({ console: [], exit: 1, stderr: "qemu-system-x86_64: -accel kvm: Could not access KVM kernel module: Permission denied" });
+    await expect(buildGoldenImage(opts)).rejects.toThrow(/exited with status 1: .*Permission denied\n.*invisible-dots doctor/);
+  });
+
+  it("refuses to run next to another build of the same directory", async () => {
+    await mkdir(paths.imagesDir, { recursive: true });
+    // The process that started this test is certainly alive, and it is not this one.
+    await writeFile(join(paths.imagesDir, ".golden-build.lock"), `${process.ppid}\n`);
+    await expect(buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }).opts)).rejects.toThrow(
+      /another golden image build is running .*remove .*\.golden-build\.lock/,
+    );
+  });
+
+  it("records its builder VM in the lock while it runs, and runs it in the work directory", async () => {
+    const lockPath = join(paths.imagesDir, ".golden-build.lock");
+    const { opts, runner } = options({ console: OK_CONSOLE, exit: 0 });
+    let recorded: { pid?: number; child?: number } = {};
+    runner.onSpawn = async () => {
+      // The VM "boots" only once the lock names it, as the next build will read it.
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        // On Windows a read that meets the lock's rename-over fails for a
+        // moment (ENOENT or EPERM); the next poll reads the new record.
+        recorded = await readFile(lockPath, "utf8").then((text) => JSON.parse(text) as typeof recorded, () => recorded);
+        if (recorded.child !== undefined || Date.now() > deadline) break;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+    };
+    expect((await buildGoldenImage(opts)).created).toBe(true);
+    expect(recorded).toMatchObject({ pid: process.pid, child: 4242 });
+    expect(runner.spawns[0]!.cwd).toMatch(/\.golden-.*\.work$/);
+  });
+
+  it("refuses to take over from a build that died while its builder VM still runs", async () => {
+    await mkdir(paths.imagesDir, { recursive: true });
+    // The build (a pid that does not exist) is gone; its QEMU (this live process) is not.
+    await writeFile(join(paths.imagesDir, ".golden-build.lock"), `${JSON.stringify({ pid: 999999999, child: process.ppid })}\n`);
+    await expect(buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }).opts)).rejects.toThrow(
+      new RegExp(`the process it started \\(pid ${process.ppid}\\) still runs`),
+    );
+  });
+
+  it("takes over a lock left by a process that no longer exists", async () => {
+    await mkdir(paths.imagesDir, { recursive: true });
+    await writeFile(join(paths.imagesDir, ".golden-build.lock"), "999999999\n");
+    expect((await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }).opts)).created).toBe(true);
+  });
+});

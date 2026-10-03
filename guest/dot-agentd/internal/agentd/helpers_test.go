@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -25,7 +24,10 @@ type fixture struct {
 	runDir      string
 	agentSocket string
 	srv         *Server
-	remote      *httptest.Server
+	// baseURL is the remote handler served by ListenTCP and NewHTTPServer,
+	// the same pieces the daemon runs, so every test goes over real TCP.
+	baseURL string
+	client  *http.Client
 }
 
 // newFixture builds a server whose every path lives in temporary directories.
@@ -44,9 +46,21 @@ func newFixture(t *testing.T, mutate ...func(*Options)) *fixture {
 		m(&opts)
 	}
 	srv := New(opts)
-	remote := httptest.NewServer(srv.RemoteHandler())
-	t.Cleanup(remote.Close)
-	return &fixture{t: t, home: home, runDir: runDir, agentSocket: opts.AgentSocket, srv: srv, remote: remote}
+	ln, err := ListenTCP("127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hs := NewHTTPServer(srv.RemoteHandler(), opts.Logger)
+	go func() { _ = hs.Serve(ln) }()
+	client := &http.Client{Transport: &http.Transport{DisableCompression: true}}
+	t.Cleanup(func() {
+		client.CloseIdleConnections()
+		_ = hs.Close()
+	})
+	return &fixture{
+		t: t, home: home, runDir: runDir, agentSocket: opts.AgentSocket, srv: srv,
+		baseURL: "http://" + ln.Addr().String(), client: client,
+	}
 }
 
 // shortTempDir keeps unix socket paths under the 108-byte sun_path limit,
@@ -67,7 +81,7 @@ func shortTempDir(t *testing.T) string {
 
 func (f *fixture) do(method, path string, body io.Reader, headers ...string) *http.Response {
 	f.t.Helper()
-	req, err := http.NewRequest(method, f.remote.URL+path, body)
+	req, err := http.NewRequest(method, f.baseURL+path, body)
 	if err != nil {
 		f.t.Fatal(err)
 	}
@@ -75,7 +89,7 @@ func (f *fixture) do(method, path string, body io.Reader, headers ...string) *ht
 	for i := 0; i+1 < len(headers); i += 2 {
 		req.Header.Set(headers[i], headers[i+1])
 	}
-	resp, err := f.remote.Client().Do(req)
+	resp, err := f.client.Do(req)
 	if err != nil {
 		f.t.Fatal(err)
 	}

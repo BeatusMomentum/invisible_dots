@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { afterEach, describe, expect, it } from "vitest";
-import { httpOverSocket, SocketRequestError, testSocketPath } from "../src/index.js";
+import { httpOverSocket, SocketRequestError, socketIsAFile, testSocketPath } from "../src/index.js";
 
 const servers: Server[] = [];
 
@@ -28,12 +28,24 @@ afterEach(async () => {
 });
 
 describe("testSocketPath", () => {
-  it("is unique and platform appropriate", () => {
+  it("is unique, a named pipe on Windows and a socket file elsewhere", () => {
     const a = testSocketPath("x y");
     expect(a).not.toBe(testSocketPath("x y"));
-    if (process.platform === "win32") expect(a.startsWith("\\\\.\\pipe\\")).toBe(true);
-    else expect(a.endsWith(".sock")).toBe(true);
     expect(a).not.toContain(" ");
+    const pipe = testSocketPath("x", "win32");
+    expect(pipe.startsWith("\\\\.\\pipe\\idots-x-")).toBe(true);
+    expect(socketIsAFile(pipe)).toBe(false);
+    const file = testSocketPath("x", "linux");
+    expect(file.endsWith(".sock")).toBe(true);
+    expect(socketIsAFile(file)).toBe(true);
+  });
+});
+
+describe("socketIsAFile", () => {
+  it("tells a named pipe from a unix socket path by the path alone", () => {
+    expect(socketIsAFile("/run/invisible-dots/agentd.sock")).toBe(true);
+    expect(socketIsAFile("C:\\Users\\someone\\AppData\\Local\\Temp\\agent.sock")).toBe(true);
+    expect(socketIsAFile("\\\\.\\pipe\\idots-agent")).toBe(false);
   });
 });
 

@@ -2,7 +2,7 @@
   "name": "@invisible-dots/database",
   "version": "0.0.0",
   "private": true,
-  "description": "PostgreSQL schema, migrations, repositories and the durable queue.",
+  "description": "PostgreSQL schema, migrations, repositories and the durable queue, on embedded PGlite or an external server.",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -13,6 +13,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@electric-sql/pglite": "^0.5.8",
     "@invisible-dots/shared": "0.0.0",
     "pg": "^8.23.1"
   },

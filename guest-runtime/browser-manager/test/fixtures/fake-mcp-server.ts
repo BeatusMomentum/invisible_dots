@@ -6,12 +6,19 @@
  * environment and arguments. Behaviour is steered by
  * `$INVISIBLE_MCP_HOME/control.json`, since the manager's environment
  * allowlist would drop any custom variable.
+ *
+ * Its tools/list is the real server's (mcp-tools.json, captured from the
+ * version the golden image pins), and every call is checked against that
+ * schema: an argument the real server does not have, a missing required one
+ * or one of the wrong type is refused, so a renamed parameter fails here and
+ * not only inside a Dot.
  */
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema, type CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { argumentProblems, REAL_TOOLS } from "./mcp-schema.js";
 
 interface Control {
   /** browser_open answers with download progress this many times before opening. */
@@ -44,30 +51,18 @@ const error = (value: string): CallToolResult => ({ content: [{ type: "text", te
 const PNG =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
 
-const TOOL_NAMES = [
-  "browser_open",
-  "browser_close",
-  "browser_status",
-  "browser_navigate",
-  "browser_snapshot",
-  "browser_read_text",
-  "browser_take_screenshot",
-  "browser_click",
-  "browser_click_at",
-  "browser_type",
-  "browser_press_key",
-];
-
 const server = new Server({ name: "fake-stealth", version: "0.0.0" }, { capabilities: { tools: {} } });
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
-  tools: TOOL_NAMES.map((name) => ({ name, inputSchema: { type: "object" as const, properties: {} } })),
+  tools: REAL_TOOLS.map((tool) => ({ name: tool.name, inputSchema: { type: "object" as const, ...tool.inputSchema } })),
 }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request): Promise<CallToolResult> => {
   const name = request.params.name;
   const args = (request.params.arguments ?? {}) as Record<string, unknown>;
   record({ kind: "call", name, args });
+  const problems = argumentProblems(name, args);
+  if (problems.length > 0) return error(`invalid arguments for ${name}: ${problems.join("; ")}`);
   const role = typeof args.browser === "string" ? args.browser : "main";
 
   if (name === "browser_open") {

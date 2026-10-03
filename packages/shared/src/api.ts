@@ -29,8 +29,12 @@ export interface DotSummary extends DotRecord {
 
 export interface ComputerRecord {
   dot_id: string;
-  domain_name: string;
-  cid: number;
+  /** The QEMU `-name` of the VM (see vmName in protocol.ts). */
+  vm_name: string;
+  /** The host's 127.0.0.1 port forwarded to dot-agentd, chosen at each start; null while no QEMU process runs. */
+  guest_port: number | null;
+  /** The QEMU process id; null while none runs. */
+  pid: number | null;
   state: VmState;
   golden_image: string | null;
   runtime_image: string | null;
@@ -133,6 +137,8 @@ export interface HealthResponse {
   status: "ok";
   database: "ok";
   version: string;
+  /** Whether a global OpenRouter key is stored; `invisible-dots doctor` reports it (section 11.1). */
+  openrouter_configured: boolean;
 }
 
 export interface DotsAnswer {

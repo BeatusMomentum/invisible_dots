@@ -1,7 +1,7 @@
 /**
- * The real ComputerDriver: an adapter over vm-manager's VmManager. It adds
- * the one decision VmManager leaves to its caller, which images a computer
- * uses:
+ * The real ComputerDriver: an adapter over vm-manager's VmManager (QEMU
+ * started directly, sections 3.4 and 3.5). It adds the one decision
+ * VmManager leaves to its caller, which images a computer uses:
  *
  * - a new computer gets the newest `golden-<version>.qcow2`; its overlay
  *   stays on that golden image for its whole life (a backing file never
@@ -9,28 +9,30 @@
  * - every start uses the newest `runtime-<version>.iso`, so a new version of
  *   our code reaches a Dot with a restart (section 3.3).
  */
-import { readdir } from "node:fs/promises";
+import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type {
   ComputerDriver,
   ComputerSpecInput,
+  ComputerState,
   CreatedComputer,
-  DomainState,
   GuestApi,
+  GuestEndpoint,
+  Logger,
   StartedComputer,
+  WaitForHealthOptions,
 } from "@invisible-dots/scheduler";
-import { type ComputerSpec, type VmManager } from "@invisible-dots/vm-manager";
-
-const GOLDEN = /^golden-(.+)\.qcow2$/;
-const RUNTIME = /^runtime-(.+)\.iso$/;
+import { imageLabel, imageVersionOf, type HealthAnswer, type HostPaths, type ImageKind } from "@invisible-dots/shared";
+import { VmManager, type StartVmResult, type VmSpec } from "@invisible-dots/vm-manager";
 
 /** Compare versions such as "2026.10.1" and "2026.9.3" numerically, part by part. */
 export function compareVersions(a: string, b: string): number {
   return a.localeCompare(b, "en", { numeric: true, sensitivity: "base" });
 }
 
-/** The file of `dir` with the highest version for `pattern`, as an absolute path. */
-export async function latestImage(dir: string, pattern: RegExp, label: string): Promise<string> {
+/** The image of that kind in `dir` with the highest version, as an absolute path. */
+export async function latestImage(dir: string, kind: ImageKind): Promise<string> {
+  const label = imageLabel(kind);
   let names: string[];
   try {
     names = await readdir(dir);
@@ -38,15 +40,16 @@ export async function latestImage(dir: string, pattern: RegExp, label: string): 
     throw new Error(`cannot list the images directory ${dir}: ${(error as Error).message}`, { cause: error });
   }
   const candidates = names
-    .map((name) => ({ name, version: pattern.exec(name)?.[1] }))
+    .map((name) => ({ name, version: imageVersionOf(kind, name) }))
     .filter((c): c is { name: string; version: string } => c.version !== undefined)
     .sort((x, y) => compareVersions(x.version, y.version));
   const newest = candidates.at(-1);
-  if (!newest) {
-    throw new Error(`no ${label} in ${dir}: build one with guest/image-builder (expected a file like ${label === "golden image" ? "golden-<version>.qcow2" : "runtime-<version>.iso"})`);
-  }
+  if (!newest) throw new Error(`no ${label} in ${dir}: build one with "invisible-dots image build"`);
   return join(dir, newest.name);
 }
+
+export const latestGoldenImage = (imagesDir: string) => latestImage(imagesDir, "golden");
+export const latestRuntimeImage = (imagesDir: string) => latestImage(imagesDir, "runtime");
 
 export class VmManagerDriver implements ComputerDriver {
   readonly #vm: VmManager;
@@ -58,17 +61,16 @@ export class VmManagerDriver implements ComputerDriver {
   }
 
   latestGolden(): Promise<string> {
-    return latestImage(this.#imagesDir, GOLDEN, "golden image");
+    return latestGoldenImage(this.#imagesDir);
   }
 
   latestRuntime(): Promise<string> {
-    return latestImage(this.#imagesDir, RUNTIME, "runtime ISO");
+    return latestRuntimeImage(this.#imagesDir);
   }
 
-  #spec(input: ComputerSpecInput, goldenImage: string, runtimeImage: string): ComputerSpec {
+  #spec(input: ComputerSpecInput, goldenImage: string, runtimeImage: string): VmSpec {
     return {
       dotId: input.dotId,
-      cid: input.cid,
       token: input.token,
       goldenImage,
       runtimeImage,
@@ -78,49 +80,75 @@ export class VmManagerDriver implements ComputerDriver {
     };
   }
 
+  #started(result: StartVmResult, runtimeImage: string): StartedComputer {
+    return { guestPort: result.guestPort, pid: result.pid, runtimeImage, alreadyRunning: result.alreadyRunning };
+  }
+
   async create(input: ComputerSpecInput): Promise<CreatedComputer> {
     const [golden, runtime] = await Promise.all([this.latestGolden(), this.latestRuntime()]);
-    const created = await this.#vm.createVM(this.#spec(input, golden, runtime));
-    return { domainName: created.domainName, goldenImage: golden, runtimeImage: runtime };
+    await this.#vm.create(this.#spec(input, golden, runtime));
+    return { goldenImage: golden, runtimeImage: runtime };
   }
 
-  async start(input: ComputerSpecInput & { goldenImage: string }, reservedCids: readonly number[]): Promise<StartedComputer> {
+  async start(input: ComputerSpecInput & { goldenImage: string }): Promise<StartedComputer> {
     const runtime = await this.latestRuntime();
-    const state = await this.#vm.getVMState(input.dotId);
+    const spec = this.#spec(input, input.goldenImage, runtime);
     // A bigger computer.disk from a PATCH: the overlay can only grow while the VM is off.
-    if (state.defined && state.libvirt === "shut off") {
-      await this.#vm.resizeDisk(input.dotId, input.resources.diskBytes);
-    }
-    const started = await this.#vm.startVM(this.#spec(input, input.goldenImage, runtime), { reservedCids });
-    return { cid: started.cid, runtimeImage: runtime, alreadyRunning: started.alreadyRunning };
+    if ((await this.#vm.state(input.dotId)).state === "STOPPED") await this.#vm.resize(spec);
+    return this.#started(await this.#vm.start(spec), runtime);
   }
 
-  async stop(dotId: string): Promise<{ forced: boolean }> {
-    return this.#vm.stopVM(dotId);
+  waitForHealth(endpoint: GuestEndpoint, token: string, options: WaitForHealthOptions): Promise<HealthAnswer> {
+    return this.#vm.waitForGuestHealth(endpoint.dotId, endpoint.port, token, {
+      timeoutMs: options.timeoutMs,
+      intervalMs: options.intervalMs,
+      requestTimeoutMs: options.requestTimeoutMs,
+    });
   }
 
-  reboot(dotId: string): Promise<void> {
-    return this.#vm.rebootVM(dotId);
+  async stop(dotId: string, token: string): Promise<{ forced: boolean }> {
+    const { forced } = await this.#vm.stop(dotId, token);
+    return { forced };
+  }
+
+  async reboot(input: ComputerSpecInput & { goldenImage: string }): Promise<StartedComputer> {
+    const runtime = await this.latestRuntime();
+    return this.#started(await this.#vm.reboot(this.#spec(input, input.goldenImage, runtime)), runtime);
   }
 
   destroy(dotId: string): Promise<void> {
-    return this.#vm.destroyVM(dotId);
+    return this.#vm.destroy(dotId);
   }
 
-  async state(dotId: string): Promise<DomainState> {
-    const info = await this.#vm.getVMState(dotId);
-    return { defined: info.defined, state: info.state, detail: info.libvirt };
+  async state(dotId: string): Promise<ComputerState> {
+    const [info, exists] = await Promise.all([this.#vm.state(dotId), fileExists(this.#vm.paths.diskPath(dotId))]);
+    return {
+      exists,
+      state: info.state,
+      pid: info.pid,
+      guestPort: info.guestPort,
+      detail: info.detail ?? null,
+    };
   }
 
-  async attach(dotId: string, cid: number): Promise<void> {
-    await this.#vm.ensureBridge(dotId, cid);
+  guest(endpoint: GuestEndpoint, token: string): GuestApi {
+    return this.#vm.guestClient(endpoint.port, token);
   }
 
-  guest(dotId: string, token: string): GuestApi {
-    return this.#vm.guestClient(dotId, token);
-  }
+  /** VmManager holds no connection between calls, so there is nothing to release. */
+  async close(): Promise<void> {}
+}
 
-  close(): Promise<void> {
-    return this.#vm.stopAllBridges();
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
   }
+}
+
+/** The driver `invisible-dots server` uses: VmManager over this host's QEMU and INVISIBLE_DOTS_HOME. */
+export function createVmDriver(options: { env: Record<string, string | undefined>; paths: HostPaths; logger: Logger }): VmManagerDriver {
+  return new VmManagerDriver(new VmManager({ env: options.env, paths: options.paths, logger: options.logger }));
 }

@@ -13,12 +13,7 @@
     "shasums_entry": "uv-x86_64-unknown-linux-gnu.tar.gz",
     "sha256": "b9980552309f09c15172b8be828555e375097f16deb459795ce7bfd200380f0b"
   },
-  "python_packages": {
-    "invisible-playwright-mcp": "0.70.2",
-    "invisible-playwright": "0.25.7"
-  },
   "apt_packages": [
-    "qemu-guest-agent",
     "xvfb",
     "xfce4-session",
     "xfwm4",

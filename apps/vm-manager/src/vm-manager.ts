@@ -1,58 +1,82 @@
 /**
- * The libvirt driver (architecture sections 3, 9.4, 9.5). It is stateless
- * apart from the bridge processes it runs: the control plane stores the CID,
- * the token and the image versions in `computers` and passes them in as a
- * ComputerSpec on every call that needs them.
+ * The QEMU driver (architecture sections 3, 9.4, 9.5). What a VM is lives in
+ * its directory (disk, seed, pid file) and in the QEMU process; the control
+ * plane passes the rest (token, images, resources) on every call that needs
+ * it. That is what lets the control plane restart while VMs keep running.
+ *
+ * There is no monitor: QEMU is seen only as a process (alive or not, and the
+ * guest port its user networking listens on), and the guest only through the
+ * guest channel (section 5.1). Both work the same way on Linux and Windows,
+ * which is why there is nothing else (section 1.1).
+ *
+ * The one thing kept in memory is the ChildProcess of every QEMU this
+ * process spawned: while it is held, its exit is known exactly. After a
+ * restart the pid file stands in for it, checked as `processIsOurs` says.
  */
 import { randomBytes } from "node:crypto";
-import { access, chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join, relative, resolve, isAbsolute } from "node:path";
+import { access, appendFile, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { isAbsolute, relative, resolve } from "node:path";
 import {
+  allowlistedEnvironment,
   computerResources,
-  domainName,
   hostPaths,
+  hostRestartedSince,
+  hostUptimeSeconds,
+  isFatalGuestError,
   type DotConfig,
   type HostPaths,
   type VmState,
 } from "@invisible-dots/shared";
-import { VsockBridge, type BridgeOptions } from "./bridge.js";
-import { allocateCid, cidBaseFromEnv, isCidInUseError } from "./cid.js";
-import { CommandError, NotImplementedError, VmManagerError, VmStateError } from "./errors.js";
-import { GuestClient, type GuestClientOptions } from "./guest-client.js";
+import {
+  AcceleratorUnavailableError,
+  CommandError,
+  CpuModelError,
+  GuestRequestError,
+  NotImplementedError,
+  VmManagerError,
+  VmStartError,
+  VmStateError,
+} from "./errors.js";
+import { GuestClient, waitForGuestHealth, type GuestClientOptions, type WaitForGuestHealthOptions } from "./guest-client.js";
+import { accelerator as hostAccelerator, findQemu, type Accelerator, type QemuInstallation } from "./host.js";
 import { stderrLogger, type Logger } from "./logger.js";
-import { ExecFileRunner, type CommandRunner } from "./runner.js";
-import { loadTemplates, renderDomainXml, renderSeed, type TemplateSet } from "./templates.js";
+import { pickFreePort, portListens } from "./ports.js";
+import { qemuArgs, qemuPathArg } from "./qemu-args.js";
+import {
+  fileSize,
+  NodeCommandRunner,
+  NodeProcessControl,
+  retryWhileInUse,
+  type CommandRunner,
+  type DetachedProcess,
+  type ProcessControl,
+  type ProcessExit,
+} from "./runner.js";
+import { DEFAULT_VIRTUALIZATION_DIR, loadSeedTemplates, renderSeed, writeSeedIso, type SeedTemplates } from "./seed.js";
 
 /** Everything the vm-manager needs to know about one Dot's computer. */
-export interface ComputerSpec {
+export interface VmSpec {
   dotId: string;
-  /** vsock CID, as recorded in `computers.cid`. */
-  cid: number;
-  /** The Dot token, in clear (the control plane decrypts `token_enc`). */
+  /** The Dot token, in clear (the control plane decrypts `token_enc`). It goes into the seed. */
   token: string;
   /** Absolute path of the golden image the overlay is backed by. */
   goldenImage: string;
-  /** Absolute path of the runtime ISO. */
+  /** Absolute path of the runtime ISO attached on every start. */
   runtimeImage: string;
   cpus: number;
   memoryMiB: number;
+  /** Size of the overlay at create; resizeDisk grows it later. */
   diskBytes: number;
 }
 
-/** Build a ComputerSpec from a parsed Dot config plus what the control plane stored. */
-export function computerSpecFromConfig(
+/** Build a VmSpec from a parsed Dot config plus what the control plane stored. */
+export function vmSpecFromConfig(
   dotId: string,
   config: Pick<DotConfig, "computer">,
-  stored: { cid: number; token: string; goldenImage: string; runtimeImage: string },
-): ComputerSpec {
+  stored: { token: string; goldenImage: string; runtimeImage: string },
+): VmSpec {
   const resources = computerResources(config);
-  return {
-    dotId,
-    ...stored,
-    cpus: resources.cpus,
-    memoryMiB: resources.memoryMiB,
-    diskBytes: resources.diskBytes,
-  };
+  return { dotId, ...stored, cpus: resources.cpus, memoryMiB: resources.memoryMiB, diskBytes: resources.diskBytes };
 }
 
 /** A new Dot token: 32 random bytes, base64url. It only authorizes requests to that Dot's VM. */
@@ -60,94 +84,93 @@ export function generateToken(): string {
   return randomBytes(32).toString("base64url");
 }
 
-/** What `virsh domstate` prints, mapped to the VM states of section 9.3. */
-export function mapDomState(libvirtState: string): VmState {
-  switch (libvirtState.trim().toLowerCase()) {
-    case "running":
-    case "idle":
-    case "blocked":
-      return "RUNNING";
-    case "in shutdown":
-      return "STOPPING";
-    case "shut off":
-      return "STOPPED";
-    // We never pause or suspend a Dot. libvirt pauses a domain on its own when
-    // the disk fills up or an I/O error happens, so these mean something broke.
-    case "paused":
-    case "pmsuspended":
-    case "crashed":
-    case "no state":
-    default:
-      return "ERROR";
-  }
-}
-
 export interface VmStateInfo {
-  /** Whether libvirt knows the domain at all. */
-  defined: boolean;
+  /** RUNNING while this Dot's QEMU process runs, STOPPED when it does not, ERROR when a live pid cannot be identified. */
   state: VmState;
-  /** The raw `virsh domstate` text, null when the domain is not defined. */
-  libvirt: string | null;
-}
-
-export interface VmManagerOptions {
-  runner?: CommandRunner;
-  /** Environment for INVISIBLE_DOTS_* settings. Default process.env. */
-  env?: Record<string, string | undefined>;
-  /** Host paths; default from `hostPaths(env)`. */
-  paths?: HostPaths;
-  /** libvirt connection. Default LIBVIRT_DEFAULT_URI from env, else qemu:///system. */
-  libvirtUri?: string;
-  logger?: Logger;
-  /** Where the templates live. Default the repository's `virtualization/`. */
-  virtualizationDir?: string;
-  /** Graceful shutdown budget before `virsh destroy` (section 9.5). Default 60 s. */
-  shutdownTimeoutMs?: number;
-  /** How often domstate is polled while waiting for a shutdown. Default 1 s. */
-  pollIntervalMs?: number;
-  /** How many CIDs `startVM` tries when the kernel says one is in use. Default 16. */
-  maxCidAttempts?: number;
-  /** Bridge tuning; the socket path comes from `bridgeSocketPath`. */
-  bridge?: Pick<BridgeOptions, "socatCommand" | "readyTimeoutMs" | "restartDelayMs" | "socketExists">;
-  /** Override of the bridge socket path (tests on Windows use named pipes). */
-  bridgeSocketPath?: (dotId: string) => string;
-  /** Timeouts of host commands. */
-  timeouts?: { virshMs?: number; qemuImgMs?: number; isoMs?: number };
-  sleep?: (ms: number) => Promise<void>;
+  /** The QEMU pid from the pid file, null when no QEMU runs. */
+  pid: number | null;
+  /** The host port forwarded to dot-agentd, from the pid file; null when no QEMU runs. */
+  guestPort: number | null;
+  /** Why the state is ERROR, in words. */
+  detail?: string;
 }
 
 export interface CreateVmResult {
-  domainName: string;
   vmDir: string;
   diskPath: string;
   seedPath: string;
-  xmlPath: string;
   /** False when the overlay already existed and was kept (a retried create never wipes a disk). */
   diskCreated: boolean;
-}
-
-export interface StartVmOptions {
-  /** CIDs other Dots hold according to the `computers` table. */
-  reservedCids?: Iterable<number>;
+  /** The cloud-init instance-id written into the seed. */
+  instanceId: string;
 }
 
 export interface StartVmResult {
-  /** The CID the VM runs with. Store it when it differs from `spec.cid`. */
-  cid: number;
-  cidChanged: boolean;
+  /** QEMU's pid; store it as `computers.pid`. */
+  pid: number;
+  /** The host port forwarded to dot-agentd; store it as `computers.guest_port`. */
+  guestPort: number;
+  /** True when QEMU was already running and nothing was started. */
   alreadyRunning: boolean;
 }
 
 export interface StopVmResult {
-  /** True when the guest did not power off in time and was destroyed. */
+  /** True when the guest did not power off by itself in time and QEMU was killed. */
   forced: boolean;
+  /** False when there was no running VM to stop. */
+  wasRunning: boolean;
 }
 
 export interface ResizeResult {
-  /** True when the VM is running and the new size applies from its next start. */
+  /** True when the VM is running and new cpus or memory apply from its next start. */
   restartRequired: boolean;
+  /** True when the overlay was grown. */
+  diskResized: boolean;
 }
 
+export interface VmManagerOptions {
+  /** Environment for INVISIBLE_DOTS_HOME and INVISIBLE_DOTS_QEMU_DIR. Default process.env. */
+  env?: Record<string, string | undefined>;
+  /** Host paths; default `hostPaths(env)`. */
+  paths?: HostPaths;
+  logger?: Logger;
+  /** Where the cloud-init templates live. Default the repository's `virtualization/`. */
+  virtualizationDir?: string;
+  /** QEMU binaries; default found by `findQemu(env)` on first use. */
+  qemu?: QemuInstallation;
+  /** The accelerator; default `accelerator()` of this host. */
+  accelerator?: Accelerator;
+  /** Runs qemu-img. */
+  runner?: CommandRunner;
+  /** Starts, probes and kills QEMU. */
+  processes?: ProcessControl;
+  /** Picks the guest port; default a kernel-chosen free port on 127.0.0.1. */
+  pickPort?: () => Promise<number>;
+  /** How long a stop waits for the guest to power off before QEMU is killed (sections 3.4 and 9.5). Default 60 s. */
+  shutdownTimeoutMs?: number;
+  /** How long QEMU gets to disappear after it was killed. Default 10 s. */
+  killTimeoutMs?: number;
+  /** Timeout of the poweroff request itself. Default 10 s. */
+  powerOffRequestTimeoutMs?: number;
+  /** How long a start waits for QEMU to set up the guest port forward. Default 30 s. */
+  startTimeoutMs?: number;
+  /**
+   * Once the forward is up, QEMU must still be running this much later: it
+   * builds the machine (and checks -cpu host) after it sets up networking,
+   * so a refused CPU model ends the process just after the port listens.
+   * Default 1 s.
+   */
+  startSettleMs?: number;
+  /** Ports tried when QEMU cannot bind the forward (section 3.5). Default 5. */
+  maxPortAttempts?: number;
+  /** How often liveness is polled while waiting. Default 500 ms. */
+  pollIntervalMs?: number;
+  /** Timeout of qemu-img commands. Default 5 minutes. */
+  qemuImgTimeoutMs?: number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/** Dot ids become directory names, QEMU `-name` values and parts of hostnames. */
 const DOT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 function assertDotId(dotId: string): void {
@@ -162,67 +185,182 @@ function assertIntInRange(label: string, value: number, min: number, max: number
   }
 }
 
-function isDomainMissing(error: unknown): boolean {
-  return error instanceof CommandError && /failed to get domain|domain not found|no domain with matching/i.test(error.stderr);
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-function isNotRunning(error: unknown): boolean {
-  return error instanceof CommandError && /not running|domain is not running/i.test(error.stderr);
+/** QEMU wrote this when it could not bind the host side of the port forward. */
+const PORT_TAKEN = /Could not set up host forwarding rule/i;
+
+/** What QEMU prints when the accelerator itself is unusable, on either host. */
+const ACCELERATOR_FAILURES = [
+  /Could not access KVM kernel module/i,
+  /failed to initialize kvm/i,
+  /\/dev\/kvm/i,
+  /WHPX: No accelerator found/i,
+  /failed to initialize whpx/i,
+  /WHPX: Failed to/i,
+  /invalid accelerator/i,
+  /no accelerator found/i,
+  /accelerator .* not (?:found|available|supported)/i,
+];
+
+const CPU_MODEL_FAILURES = [/CPU model 'host' requires/i, /unable to find CPU model 'host'/i];
+
+/** How much of the end of a log goes into an error: enough for QEMU's last words and the guest's last boot lines. */
+const LOG_TAIL_BYTES = 4 * 1024;
+
+/**
+ * The pid file (section 3.2): the QEMU process of a Dot, the guest port it
+ * forwards, and the host's uptime when it was spawned. A host uptime lower
+ * than that one means the host restarted since, so the process is gone
+ * whatever now runs under that pid.
+ */
+export interface ProcessFile {
+  pid: number;
+  guest_port: number;
+  host_uptime_s?: number;
 }
+
+function parseProcessFile(text: string): ProcessFile | undefined {
+  try {
+    const value = JSON.parse(text) as Partial<ProcessFile>;
+    const pid = value.pid;
+    const port = value.guest_port;
+    if (Number.isSafeInteger(pid) && pid! > 0 && Number.isInteger(port) && port! >= 1 && port! <= 65535) {
+      const record: ProcessFile = { pid: pid!, guest_port: port! };
+      if (typeof value.host_uptime_s === "number" && Number.isFinite(value.host_uptime_s)) record.host_uptime_s = value.host_uptime_s;
+      return record;
+    }
+  } catch {
+    // Falls through: not JSON is as unreadable as JSON of the wrong shape.
+  }
+  return undefined;
+}
+
+/** A QEMU this process spawned: its exit is set the moment Node reports it. */
+interface OwnedProcess {
+  pid: number;
+  exited: Promise<ProcessExit>;
+  exit?: ProcessExit;
+}
+
+interface Probe extends VmStateInfo {
+  /** The pid file, when there is one that can be read. */
+  record?: ProcessFile;
+  /** Whether the live process is proven to be this Dot's QEMU, so it may be killed. */
+  verified: boolean;
+}
+
+const STOPPED: Probe = { state: "STOPPED", pid: null, guestPort: null, verified: false };
 
 export class VmManager {
   readonly paths: HostPaths;
-  private readonly runner: CommandRunner;
   private readonly env: Record<string, string | undefined>;
-  private readonly uri: string;
   private readonly logger: Logger;
   private readonly options: VmManagerOptions;
-  private readonly bridges = new Map<string, VsockBridge>();
-  private templates: Promise<TemplateSet> | undefined;
+  private readonly runner: CommandRunner;
+  private readonly processes: ProcessControl;
   private readonly sleep: (ms: number) => Promise<void>;
+  private qemuPromise: Promise<QemuInstallation> | undefined;
+  private templates: Promise<SeedTemplates> | undefined;
+  private readonly locks = new Map<string, Promise<unknown>>();
+  private readonly owned = new Map<string, OwnedProcess>();
 
   constructor(options: VmManagerOptions = {}) {
     this.options = options;
     this.env = options.env ?? process.env;
     this.paths = options.paths ?? hostPaths(this.env);
-    this.runner = options.runner ?? new ExecFileRunner();
-    this.uri = options.libvirtUri ?? (this.env.LIBVIRT_DEFAULT_URI || "qemu:///system");
     this.logger = options.logger ?? stderrLogger;
+    this.runner = options.runner ?? new NodeCommandRunner();
+    this.processes = options.processes ?? new NodeProcessControl();
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    if (options.qemu) this.qemuPromise = Promise.resolve(options.qemu);
   }
 
-  /** The configured CID base (INVISIBLE_DOTS_CID_BASE). */
-  get cidBase(): number {
-    return cidBaseFromEnv(this.env);
+  /** The QEMU binaries this manager runs; throws QemuNotFoundError naming the fix. */
+  qemu(): Promise<QemuInstallation> {
+    this.qemuPromise ??= findQemu(this.env).catch((error: unknown) => {
+      // Not cached: `invisible-dots setup` may install QEMU while the server runs.
+      this.qemuPromise = undefined;
+      throw error;
+    });
+    return this.qemuPromise;
   }
 
-  /** A CID for a new Dot, given the CIDs recorded for the others. */
-  allocateCid(taken: Iterable<number>): number {
-    return allocateCid(taken, this.cidBase);
+  /** The accelerator every VM of this host starts with. */
+  get accelerator(): Accelerator {
+    return this.options.accelerator ?? hostAccelerator();
   }
 
   generateToken(): string {
     return generateToken();
   }
 
-  bridgeSocketPath(dotId: string): string {
-    return this.options.bridgeSocketPath?.(dotId) ?? this.paths.bridgeSocket(dotId);
+  /** A client for every guest route of a running Dot. */
+  guestClient(guestPort: number, token: string, options: GuestClientOptions = {}): GuestClient {
+    return new GuestClient(guestPort, token, { logger: this.logger, ...options });
   }
 
-  private loadTemplates(): Promise<TemplateSet> {
-    this.templates ??= loadTemplates(this.options.virtualizationDir).catch((error: unknown) => {
+  /**
+   * Wait until the guest answers `GET /v1/health` (section 9.4). Fails early
+   * when QEMU exits meanwhile instead of waiting out the whole timeout. A
+   * guest that never comes up is reported with the end of QEMU's log and of
+   * the serial console, because a VM that QEMU runs but that never boots
+   * (a vCPU the accelerator stopped, a guest stuck in its firmware) shows
+   * nothing anywhere else. A refused token (401) is passed on as it is.
+   */
+  async waitForGuestHealth(dotId: string, guestPort: number, token: string, options: WaitForGuestHealthOptions = {}) {
+    assertDotId(dotId);
+    const client = this.guestClient(guestPort, token);
+    try {
+      return await waitForGuestHealth(client, {
+        ...options,
+        check: async () => {
+          await options.check?.();
+          if (!(await this.qemuRuns(dotId))) throw new VmStateError(dotId, "QEMU is not running any more");
+        },
+      });
+    } catch (error) {
+      if (isFatalGuestError(error) || options.signal?.aborted) throw error;
+      throw await this.guestNotUp(dotId, error as Error);
+    }
+  }
+
+  private async guestNotUp(dotId: string, cause: Error): Promise<VmStartError> {
+    const qemuLog = this.paths.qemuLogPath(dotId);
+    const serialLog = this.paths.serialLogPath(dotId);
+    const [qemuOutput, serialOutput] = await Promise.all([this.readTail(qemuLog), this.readTail(serialLog)]);
+    return new VmStartError(dotId, `the guest did not come up (${cause.message}); QEMU's log is ${qemuLog}, the serial console ${serialLog}`, qemuOutput, {
+      cause,
+      serialOutput,
+    });
+  }
+
+  private loadTemplates(): Promise<SeedTemplates> {
+    this.templates ??= loadSeedTemplates(this.options.virtualizationDir ?? DEFAULT_VIRTUALIZATION_DIR).catch((error: unknown) => {
       this.templates = undefined;
       throw error;
     });
     return this.templates;
   }
 
-  private virsh(args: string[]) {
-    return this.runner.run("virsh", ["-c", this.uri, ...args], { timeoutMs: this.options.timeouts?.virshMs ?? 60_000 });
-  }
-
-  private qemuImg(args: string[]) {
-    return this.runner.run("qemu-img", args, { timeoutMs: this.options.timeouts?.qemuImgMs ?? 300_000 });
+  /** Run `fn` with no other operation on the same Dot in flight in this process. */
+  private async withLock<T>(dotId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.locks.get(dotId) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(fn);
+    const tail = run.catch(() => undefined);
+    this.locks.set(dotId, tail);
+    try {
+      return await run;
+    } finally {
+      if (this.locks.get(dotId) === tail) this.locks.delete(dotId);
+    }
   }
 
   private vmDir(dotId: string): string {
@@ -235,331 +373,508 @@ export class VmManager {
     return dir;
   }
 
-  private validateSpec(spec: ComputerSpec): void {
+  private validateSpec(spec: VmSpec): void {
     assertDotId(spec.dotId);
-    assertIntInRange("cid", spec.cid, 3, 0xfffffffe);
     assertIntInRange("cpus", spec.cpus, 1, 16);
-    assertIntInRange("memoryMiB", spec.memoryMiB, 256, 1024 * 1024);
+    assertIntInRange("memoryMiB", spec.memoryMiB, 256, 64 * 1024);
     if (!Number.isSafeInteger(spec.diskBytes) || spec.diskBytes <= 0) {
       throw new VmManagerError(`diskBytes must be a positive integer, got ${spec.diskBytes}`);
     }
     if (!spec.token) throw new VmManagerError("the Dot token is empty");
     if (!isAbsolute(spec.goldenImage) || !isAbsolute(spec.runtimeImage)) {
-      throw new VmManagerError("goldenImage and runtimeImage must be absolute paths: libvirt and qemu-img resolve them elsewhere");
+      throw new VmManagerError("goldenImage and runtimeImage must be absolute paths: QEMU runs detached and qemu-img records the backing path");
     }
   }
 
-  /** Write domain.xml from the template and `virsh define` it. Also updates a running domain's persistent definition. */
-  private async defineDomain(spec: ComputerSpec): Promise<string> {
-    const templates = await this.loadTemplates();
-    const dir = this.vmDir(spec.dotId);
-    const xml = renderDomainXml(templates.domain, {
-      dotId: spec.dotId,
-      cid: spec.cid,
-      cpus: spec.cpus,
-      memoryMiB: spec.memoryMiB,
-      diskPath: join(dir, "disk.qcow2"),
-      seedPath: join(dir, "seed.iso"),
-      runtimeImage: spec.runtimeImage,
-      serialLog: join(dir, "serial.log"),
-    });
-    const xmlPath = join(dir, "domain.xml");
-    await writeFile(xmlPath, xml, { mode: 0o644 });
-    await this.virsh(["define", xmlPath]);
-    return xmlPath;
+  private async qemuImg(args: string[]) {
+    const { img } = await this.qemu();
+    return this.runner.run(img, args, { timeoutMs: this.options.qemuImgTimeoutMs ?? 300_000 });
   }
 
-  /** Write seed.iso: cloud-localds when installed, else xorriso (section 3.1 lists both). */
-  private async writeSeed(spec: ComputerSpec, seedPath: string): Promise<void> {
-    const templates = await this.loadTemplates();
-    const seed = renderSeed(templates.seed, spec.dotId, spec.token);
-    // The staging directory holds the token in clear, so it lives only as long as this call.
-    const staging = await mkdtemp(join(this.vmDir(spec.dotId), ".seed-"));
-    try {
-      const userData = join(staging, "user-data");
-      const metaData = join(staging, "meta-data");
-      await writeFile(userData, seed.userData, { mode: 0o600 });
-      await writeFile(metaData, seed.metaData, { mode: 0o600 });
-      const timeoutMs = this.options.timeouts?.isoMs ?? 60_000;
-      try {
-        await this.runner.run("cloud-localds", [seedPath, userData, metaData], { timeoutMs });
-      } catch (error) {
-        if (!(error instanceof CommandError && error.notFound)) throw error;
-        this.logger.info("cloud-localds not installed, writing the seed with xorriso", { dotId: spec.dotId });
-        await this.runner.run("xorriso", ["-as", "mkisofs", "-o", seedPath, "-V", "cidata", "-J", "-r", userData, metaData], {
-          timeoutMs,
-        });
-      }
-      await chmod(seedPath, 0o600).catch((error: NodeJS.ErrnoException) => {
-        // The fake runners of the tests write no file; a real run always has one.
-        if (error.code !== "ENOENT") throw error;
-      });
-    } finally {
-      await rm(staging, { recursive: true, force: true });
-    }
+  private async writeSeed(spec: VmSpec): Promise<string> {
+    const seed = renderSeed(await this.loadTemplates(), spec.dotId, spec.token);
+    // Replaces a seed.iso a QEMU killed a moment ago may still hold open (Windows).
+    await retryWhileInUse(() => writeSeedIso(this.paths.seedPath(spec.dotId), seed));
+    return seed.instanceId;
   }
 
   /**
-   * Provision a Dot's computer (section 9.4, up to `virsh define`): the overlay
-   * backed by the golden image, the NoCloud seed and the domain. Safe to call
-   * again after a failure: an existing disk is kept, the seed and the domain
-   * are rewritten.
+   * Provision a Dot's computer (section 9.4, up to the seed): the overlay
+   * backed by the golden image and the NoCloud seed. Safe to call again after
+   * a failure: an existing disk is kept and the seed is rewritten.
    */
-  async createVM(spec: ComputerSpec): Promise<CreateVmResult> {
+  async create(spec: VmSpec): Promise<CreateVmResult> {
     this.validateSpec(spec);
+    return this.withLock(spec.dotId, async () => {
+      for (const [label, path] of [
+        ["golden image", spec.goldenImage],
+        ["runtime ISO", spec.runtimeImage],
+      ] as const) {
+        if (!(await exists(path))) throw new VmManagerError(`${label} ${path} does not exist: build it with "invisible-dots image build" first`);
+      }
+      const current = await this.probe(spec.dotId);
+      if (current.state !== "STOPPED") {
+        throw new VmStateError(spec.dotId, `the VM is ${current.state}; stop it before creating its disk and seed again`);
+      }
+      const dir = this.vmDir(spec.dotId);
+      await mkdir(dir, { recursive: true, mode: 0o700 });
+      const diskPath = this.paths.diskPath(spec.dotId);
+      let diskCreated = false;
+      if (await exists(diskPath)) {
+        this.logger.warn("overlay already exists, keeping it", { dotId: spec.dotId, disk: diskPath });
+      } else {
+        await this.qemuImg(["create", "-f", "qcow2", "-F", "qcow2", "-b", qemuPathArg("golden image", spec.goldenImage), qemuPathArg("disk", diskPath), String(spec.diskBytes)]);
+        diskCreated = true;
+      }
+      const instanceId = await this.writeSeed(spec);
+      this.logger.info("vm created", { dotId: spec.dotId, diskCreated, instanceId });
+      return { vmDir: dir, diskPath, seedPath: this.paths.seedPath(spec.dotId), diskCreated, instanceId };
+    });
+  }
+
+  /** The pid file: undefined when there is none, "unreadable" when it is not one this code wrote. */
+  private async readProcessFile(dotId: string): Promise<ProcessFile | "unreadable" | undefined> {
+    let text: string;
+    try {
+      text = await readFile(this.paths.processFilePath(dotId), "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+      throw error;
+    }
+    return parseProcessFile(text) ?? "unreadable";
+  }
+
+  /** Written whole or not at all (a temporary file renamed over it), so a reader never sees half a pid file. */
+  private async writeProcessFile(dotId: string, record: ProcessFile): Promise<void> {
+    const path = this.paths.processFilePath(dotId);
+    const temporary = `${path}.tmp`;
+    await writeFile(temporary, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+    await rename(temporary, path);
+  }
+
+  /** Forget a QEMU that is gone: its pid file, and its ChildProcess if this process held it. */
+  private async forget(dotId: string): Promise<void> {
+    this.owned.delete(dotId);
+    await rm(this.paths.processFilePath(dotId), { force: true });
+  }
+
+  /**
+   * Whether the QEMU of the pid file still runs. Its exit when this process
+   * spawned it; otherwise its pid, unless the host restarted since the file
+   * was written. A pid that exists for another user counts as running here,
+   * so such a VM is reported ERROR rather than STOPPED and forgotten.
+   */
+  private runs(dotId: string, record: ProcessFile): boolean {
+    const owned = this.owned.get(dotId);
+    if (owned && owned.pid === record.pid) return owned.exit === undefined;
+    if (hostRestartedSince(record.host_uptime_s)) return false;
+    return this.processes.presence(record.pid) !== "gone";
+  }
+
+  private async qemuRuns(dotId: string): Promise<boolean> {
+    const record = await this.readProcessFile(dotId);
+    return record !== undefined && record !== "unreadable" && this.runs(dotId, record);
+  }
+
+  /**
+   * The rule that decides whether a process may be killed or treated as a
+   * Dot's QEMU: either this process spawned it and Node has not reported its
+   * exit (Node holds the process, so its pid cannot be recycled meanwhile),
+   * or its pid from the pid file is alive and runs as this user (a QEMU this
+   * control plane spawned always does; EPERM means another user's process)
+   * AND the guest port from the same file accepts connections. QEMU listens
+   * there for as long as it runs; a process that got a recycled pid after a
+   * crash or a host restart does not listen on that one port. Nothing else
+   * is ever killed. A listener is still not trusted with the Dot token: the
+   * guest client asks it for its proof first (section 5.1).
+   */
+  private async processIsOurs(dotId: string, record: ProcessFile): Promise<boolean> {
+    const owned = this.owned.get(dotId);
+    if (owned && owned.pid === record.pid) return owned.exit === undefined;
+    if (hostRestartedSince(record.host_uptime_s)) return false;
+    return this.processes.presence(record.pid) === "ours" && (await portListens(record.guest_port));
+  }
+
+  /** Read a VM's state from its pid file and its process (section 3.4). */
+  private async probe(dotId: string): Promise<Probe> {
+    const record = await this.readProcessFile(dotId);
+    if (record === undefined) return STOPPED;
+    const file = this.paths.processFilePath(dotId);
+    if (record === "unreadable") {
+      return {
+        state: "ERROR",
+        pid: null,
+        guestPort: null,
+        verified: false,
+        detail: `${file} is not a pid file this version wrote, so whether a QEMU runs on this disk is unknown; make sure none does, then remove the file`,
+      };
+    }
+    if (!this.runs(dotId, record)) return { ...STOPPED, record };
+    if (await this.processIsOurs(dotId, record)) {
+      return { state: "RUNNING", pid: record.pid, guestPort: record.guest_port, verified: true, record };
+    }
+    return {
+      state: "ERROR",
+      pid: record.pid,
+      guestPort: null,
+      verified: false,
+      record,
+      detail:
+        `process ${record.pid} from ${file} is alive but nothing listens on its guest port ${record.guest_port}: ` +
+        `either the pid now belongs to another process or that QEMU hangs. It is never killed by invisible_dots; ` +
+        `check the process, then remove ${file}`,
+    };
+  }
+
+  /**
+   * The VM's state (section 3.4): RUNNING while its QEMU runs, STOPPED when it
+   * does not. Whether the guest is up is guest health (section 9.3). This is
+   * the reconciliation of section 3.4 too, the one place it happens: a pid
+   * file whose process is gone is removed the moment it is read, under the
+   * Dot's lock, so a pid recycled later can never make it look alive.
+   */
+  async state(dotId: string): Promise<VmStateInfo> {
+    assertDotId(dotId);
+    return this.withLock(dotId, async () => {
+      const { verified: _verified, record, ...info } = await this.probe(dotId);
+      if (info.state === "STOPPED" && record) {
+        this.logger.info("QEMU of the pid file is gone, removing the file", { dotId, pid: record.pid });
+        await this.forget(dotId);
+      }
+      return info;
+    });
+  }
+
+  /**
+   * Start the VM (section 9.4 from "pick a guest port" to "spawn QEMU"). The
+   * seed is rewritten from `spec` first, so the token on record is the one
+   * the guest sees; cpus, memory and the runtime ISO come from `spec` too, so
+   * new values apply on this start. Returns once QEMU listens on the guest
+   * port and is still running a moment later; waiting for the guest is
+   * `waitForGuestHealth`.
+   */
+  async start(spec: VmSpec): Promise<StartVmResult> {
+    this.validateSpec(spec);
+    return this.withLock(spec.dotId, () => this.startLocked(spec));
+  }
+
+  private async startLocked(spec: VmSpec): Promise<StartVmResult> {
+    const { dotId } = spec;
+    const current = await this.probe(dotId);
+    if (current.state === "RUNNING" && current.record) {
+      return { pid: current.record.pid, guestPort: current.record.guest_port, alreadyRunning: true };
+    }
+    if (current.state !== "STOPPED") {
+      throw new VmStateError(dotId, `cannot start a VM that is ${current.state}${current.detail ? ` (${current.detail})` : ""}; stop or destroy it first`);
+    }
+    await this.forget(dotId);
+    const diskPath = this.paths.diskPath(dotId);
+    if (!(await exists(diskPath))) throw new VmStateError(dotId, `${diskPath} does not exist; create the VM first`);
     for (const [label, path] of [
       ["golden image", spec.goldenImage],
       ["runtime ISO", spec.runtimeImage],
     ] as const) {
-      await access(path).catch(() => {
-        throw new VmManagerError(`${label} ${path} does not exist: build it with guest/image-builder first`);
+      if (!(await exists(path))) throw new VmManagerError(`${label} ${path} does not exist: build it with "invisible-dots image build" first`);
+    }
+    await this.writeSeed(spec);
+    const qemu = await this.qemu();
+    const accel = this.accelerator;
+    await mkdir(this.paths.logsDir, { recursive: true, mode: 0o700 });
+    const logPath = this.paths.qemuLogPath(dotId);
+    const attempts = this.options.maxPortAttempts ?? 5;
+    const pickPort = this.options.pickPort ?? (() => pickFreePort());
+
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const guestPort = await pickPort();
+      const args = qemuArgs({
+        dotId,
+        accelerator: accel,
+        cpus: spec.cpus,
+        memoryMiB: spec.memoryMiB,
+        diskPath,
+        seedPath: this.paths.seedPath(dotId),
+        runtimeIsoPath: spec.runtimeImage,
+        guestPort,
+        serialLogPath: this.paths.serialLogPath(dotId),
       });
-    }
-    const dir = this.vmDir(spec.dotId);
-    await mkdir(dir, { recursive: true, mode: 0o755 });
-    const diskPath = join(dir, "disk.qcow2");
-    const seedPath = join(dir, "seed.iso");
-
-    let diskCreated = false;
-    const diskExists = await access(diskPath).then(
-      () => true,
-      () => false,
-    );
-    if (diskExists) {
-      this.logger.warn("overlay already exists, keeping it", { dotId: spec.dotId, disk: diskPath });
-    } else {
-      await this.qemuImg(["create", "-f", "qcow2", "-F", "qcow2", "-b", spec.goldenImage, diskPath, String(spec.diskBytes)]);
-      diskCreated = true;
-    }
-    await this.writeSeed(spec, seedPath);
-    const xmlPath = await this.defineDomain(spec);
-    this.logger.info("vm defined", { dotId: spec.dotId, domain: domainName(spec.dotId), cid: spec.cid });
-    return { domainName: domainName(spec.dotId), vmDir: dir, diskPath, seedPath, xmlPath, diskCreated };
-  }
-
-  /** The domain's state from `virsh domstate`. */
-  async getVMState(dotId: string): Promise<VmStateInfo> {
-    assertDotId(dotId);
-    try {
-      const { stdout } = await this.virsh(["domstate", domainName(dotId)]);
-      const libvirt = stdout.trim().split("\n")[0]!.trim();
-      return { defined: true, state: mapDomState(libvirt), libvirt };
-    } catch (error) {
-      if (isDomainMissing(error)) return { defined: false, state: "STOPPED", libvirt: null };
-      throw error;
-    }
-  }
-
-  /**
-   * Start the VM and its bridge. The domain is redefined from `spec` first, so
-   * a new runtime ISO or new resources take effect on this start. When the
-   * kernel says the CID is in use, the next free one is taken and the domain
-   * redefined; the result says which CID the VM runs with.
-   */
-  async startVM(spec: ComputerSpec, options: StartVmOptions = {}): Promise<StartVmResult> {
-    this.validateSpec(spec);
-    const current = await this.getVMState(spec.dotId);
-    if (!current.defined) {
-      throw new VmStateError(spec.dotId, `domain ${domainName(spec.dotId)} is not defined; call createVM first`);
-    }
-    if (current.libvirt !== "shut off") {
-      if (current.state === "RUNNING") {
-        await this.ensureBridge(spec.dotId, spec.cid);
-        return { cid: spec.cid, cidChanged: false, alreadyRunning: true };
-      }
-      throw new VmStateError(spec.dotId, `cannot start a domain that is "${current.libvirt}"`);
-    }
-
-    const tried = new Set<number>(options.reservedCids ?? []);
-    tried.add(spec.cid);
-    const maxAttempts = this.options.maxCidAttempts ?? 16;
-    let cid = spec.cid;
-    await this.defineDomain(spec);
-    for (let attempt = 1; ; attempt++) {
+      await appendFile(logPath, `--- ${new Date().toISOString()} start, guest port ${guestPort}\n`, { mode: 0o600 });
+      const logOffset = await fileSize(logPath);
+      let child: DetachedProcess;
       try {
-        await this.virsh(["start", domainName(spec.dotId)]);
-        break;
+        child = await this.processes.spawnDetached(qemu.system, args, {
+          logPath,
+          cwd: this.paths.home,
+          env: allowlistedEnvironment(process.env),
+        });
       } catch (error) {
-        if (!(error instanceof CommandError && isCidInUseError(error.stderr)) || attempt >= maxAttempts) throw error;
-        const next = allocateCid(tried, this.cidBase);
-        tried.add(next);
-        this.logger.warn("vsock CID in use on this host, trying another", { dotId: spec.dotId, cid, next, attempt });
-        cid = next;
-        await this.defineDomain({ ...spec, cid });
+        if (error instanceof CommandError && error.notFound) {
+          // Installed QEMU went away since it was found: look again next time.
+          this.qemuPromise = this.options.qemu ? this.qemuPromise : undefined;
+        }
+        throw new VmStartError(dotId, `cannot run ${qemu.system}: ${(error as Error).message}`, "", { cause: error });
       }
-    }
-    this.logger.info("vm started", { dotId: spec.dotId, cid });
-    try {
-      await this.ensureBridge(spec.dotId, cid);
-    } catch (error) {
-      this.logger.error("bridge failed to start; the VM is running without it", {
-        dotId: spec.dotId,
-        error: (error as Error).message,
+      const owned: OwnedProcess = { pid: child.pid, exited: child.exited };
+      void child.exited.then((exit) => {
+        owned.exit = exit;
       });
-      throw error;
+      this.owned.set(dotId, owned);
+      const record: ProcessFile = { pid: child.pid, guest_port: guestPort, host_uptime_s: hostUptimeSeconds() };
+      try {
+        // Before anything can fail: from here on a restarted control plane finds this QEMU.
+        await this.writeProcessFile(dotId, record);
+      } catch (error) {
+        await this.killOurs(dotId, record);
+        await this.forget(dotId);
+        throw new VmStartError(dotId, `cannot write the pid file ${this.paths.processFilePath(dotId)}: ${(error as Error).message}`, "", { cause: error });
+      }
+      this.logger.info("qemu spawned", { dotId, pid: child.pid, guestPort, attempt });
+
+      const outcome = await this.waitForForward(owned, guestPort);
+      if (outcome.kind === "exited") {
+        const output = await this.readLogFrom(logPath, logOffset);
+        await this.forget(dotId);
+        if (PORT_TAKEN.test(output) && attempt < attempts) {
+          this.logger.warn("guest port taken, trying another", { dotId, guestPort, attempt });
+          continue;
+        }
+        throw this.startFailure(dotId, accel, output, outcome.exit);
+      }
+      if (outcome.kind === "timeout") {
+        await this.killOurs(dotId, record);
+        await this.forget(dotId);
+        const output = await this.readLogFrom(logPath, logOffset);
+        throw new VmStartError(
+          dotId,
+          `QEMU did not set up its port forward on 127.0.0.1:${guestPort} within ${this.options.startTimeoutMs ?? 30_000} ms and was killed`,
+          output,
+        );
+      }
+      this.logger.info("vm started", { dotId, pid: child.pid, guestPort });
+      return { pid: child.pid, guestPort, alreadyRunning: false };
     }
-    return { cid, cidChanged: cid !== spec.cid, alreadyRunning: false };
+    throw new VmStartError(dotId, `QEMU could not bind a guest port in ${attempts} attempts`);
   }
 
-  /** Start the bridge if it is not running, or restart it on a different CID. Used after a control plane restart. */
-  async ensureBridge(dotId: string, cid: number): Promise<VsockBridge> {
-    assertDotId(dotId);
-    const existing = this.bridges.get(dotId);
-    if (existing && existing.cid === cid) {
-      await existing.start();
-      return existing;
+  /**
+   * Wait until QEMU listens on the guest port and is still running
+   * `startSettleMs` later, until it exits, or until the start timeout. The
+   * listening port is the sign QEMU parsed its command line, opened the
+   * accelerator and set up networking; the settle catches what fails right
+   * after (the CPU model is checked when the machine is built).
+   */
+  private async waitForForward(owned: OwnedProcess, guestPort: number): Promise<{ kind: "ready" } | { kind: "exited"; exit: ProcessExit } | { kind: "timeout" }> {
+    const deadline = Date.now() + (this.options.startTimeoutMs ?? 30_000);
+    const interval = this.options.pollIntervalMs ?? 500;
+    const exited = async () => {
+      // A settled `exited` is seen only after the microtask queue drains.
+      await Promise.resolve();
+      if (owned.exit === undefined && this.processes.presence(owned.pid) !== "gone") return undefined;
+      // Let the exit event deliver the code when it is about to.
+      return owned.exit ?? (await Promise.race([owned.exited, this.sleep(interval).then(() => ({ code: null, signal: null }))]));
+    };
+    for (;;) {
+      const exit = await exited();
+      if (exit) return { kind: "exited", exit };
+      if (await portListens(guestPort)) {
+        await this.sleep(this.options.startSettleMs ?? 1000);
+        const late = await exited();
+        return late ? { kind: "exited", exit: late } : { kind: "ready" };
+      }
+      if (Date.now() >= deadline) return { kind: "timeout" };
+      await this.sleep(interval);
     }
-    if (existing) await this.stopBridge(dotId);
-    const bridge = new VsockBridge({
-      dotId,
-      cid,
-      socketPath: this.bridgeSocketPath(dotId),
-      runner: this.runner,
-      logger: this.logger,
-      ...this.options.bridge,
-    });
-    if (!this.options.bridgeSocketPath) await mkdir(this.paths.runDir, { recursive: true, mode: 0o750 });
-    this.bridges.set(dotId, bridge);
+  }
+
+  private startFailure(dotId: string, accel: Accelerator, output: string, exit: ProcessExit): Error {
+    if (CPU_MODEL_FAILURES.some((pattern) => pattern.test(output))) return new CpuModelError(accel, output);
+    if (ACCELERATOR_FAILURES.some((pattern) => pattern.test(output))) return new AcceleratorUnavailableError(accel, output);
+    const how = exit.signal ? `was killed by ${exit.signal}` : exit.code === null ? "exited" : `exited with code ${exit.code}`;
+    return new VmStartError(dotId, `QEMU ${how} during start`, output);
+  }
+
+  /** What a log gained since `offset`, at most its last 64 KiB: the tail is what explains a failure. */
+  private async readLogFrom(path: string, offset: number): Promise<string> {
+    return this.readRange(path, offset, 64 * 1024);
+  }
+
+  /** The last few KiB of a log, or "" when it does not exist. */
+  private readTail(path: string): Promise<string> {
+    return this.readRange(path, 0, LOG_TAIL_BYTES);
+  }
+
+  private async readRange(path: string, offset: number, maxBytes: number): Promise<string> {
     try {
-      await bridge.start();
-    } catch (error) {
-      this.bridges.delete(dotId);
-      throw error;
+      const handle = await open(path, "r");
+      try {
+        const { size } = await handle.stat();
+        // A runaway log must not be read whole.
+        const start = Math.max(offset, size - maxBytes);
+        const buffer = Buffer.alloc(Math.max(0, size - start));
+        await handle.read(buffer, 0, buffer.length, start);
+        return buffer.toString("utf8");
+      } finally {
+        await handle.close();
+      }
+    } catch {
+      return "";
     }
-    return bridge;
   }
 
-  async stopBridge(dotId: string): Promise<void> {
-    const bridge = this.bridges.get(dotId);
-    this.bridges.delete(dotId);
-    await bridge?.stop();
+  /** Wait until the QEMU of `record` is gone; false when it still runs after `timeoutMs`. */
+  private async waitForExit(dotId: string, record: ProcessFile, timeoutMs: number): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    const interval = this.options.pollIntervalMs ?? 500;
+    for (;;) {
+      // A settled `exited` is seen only after the microtask queue drains.
+      await Promise.resolve();
+      if (!this.runs(dotId, record)) return true;
+      if (Date.now() >= deadline) return false;
+      await this.sleep(interval);
+    }
   }
 
-  /** Stop every bridge, for a clean control plane shutdown. The VMs keep running. */
-  async stopAllBridges(): Promise<void> {
-    await Promise.all([...this.bridges.keys()].map((dotId) => this.stopBridge(dotId)));
-  }
-
-  bridge(dotId: string): VsockBridge | undefined {
-    return this.bridges.get(dotId);
-  }
-
-  /** Ask the guest to power off (ACPI) and return at once. */
-  async shutdownVM(dotId: string): Promise<void> {
-    assertDotId(dotId);
-    try {
-      await this.virsh(["shutdown", domainName(dotId)]);
-    } catch (error) {
-      if (!isNotRunning(error)) throw error;
+  /** Kill the QEMU of `record`, only if `processIsOurs` still holds, and wait for it to go. */
+  private async killOurs(dotId: string, record: ProcessFile): Promise<void> {
+    if (!(await this.processIsOurs(dotId, record))) {
+      this.logger.info("QEMU is gone, nothing to kill", { dotId, pid: record.pid });
+      return;
+    }
+    this.logger.warn("killing QEMU", { dotId, pid: record.pid });
+    this.processes.kill(record.pid);
+    const timeoutMs = this.options.killTimeoutMs ?? 10_000;
+    if (!(await this.waitForExit(dotId, record, timeoutMs))) {
+      throw new VmStateError(dotId, `QEMU ${record.pid} is still running ${timeoutMs} ms after it was killed`);
     }
   }
 
   /**
-   * Graceful stop (section 9.5): `virsh shutdown`, wait up to the shutdown
-   * timeout for "shut off", then `virsh destroy`; the bridge is stopped either way.
+   * Graceful stop (sections 3.4 and 9.5): `POST /v1/system/poweroff` through
+   * the guest channel, then wait up to the shutdown timeout for QEMU to exit
+   * (the guest powers off and QEMU exits with it), then kill it. A guest
+   * that does not accept the poweroff (it is not up, or it refuses the
+   * token) cannot power itself off, so its QEMU is killed at once. Callers
+   * that want the guest's state flushed first call the agent's prepare-sleep
+   * before this.
    */
-  async stopVM(dotId: string, options: { timeoutMs?: number } = {}): Promise<StopVmResult> {
+  async stop(dotId: string, token: string, options: { timeoutMs?: number } = {}): Promise<StopVmResult> {
     assertDotId(dotId);
-    const name = domainName(dotId);
+    return this.withLock(dotId, () => this.stopLocked(dotId, token, options.timeoutMs ?? this.options.shutdownTimeoutMs ?? 60_000));
+  }
+
+  private async stopLocked(dotId: string, token: string, timeoutMs: number): Promise<StopVmResult> {
+    const current = await this.probe(dotId);
+    if (current.state === "STOPPED") {
+      await this.forget(dotId);
+      return { forced: false, wasRunning: false };
+    }
+    if (!current.verified || !current.record) {
+      throw new VmStateError(dotId, `cannot stop it safely: ${current.detail ?? "its QEMU cannot be identified"}`);
+    }
+    const record = current.record;
+    let accepted = false;
+    try {
+      await this.guestClient(record.guest_port, token).powerOff(this.options.powerOffRequestTimeoutMs ?? 10_000);
+      accepted = true;
+    } catch (error) {
+      this.logger.warn("the guest did not accept the poweroff, killing QEMU", { dotId, error: (error as Error).message });
+    }
     let forced = false;
-    const initial = await this.getVMState(dotId);
-    if (initial.defined && initial.libvirt !== "shut off") {
-      await this.shutdownVM(dotId);
-      const timeoutMs = options.timeoutMs ?? this.options.shutdownTimeoutMs ?? 60_000;
-      const interval = this.options.pollIntervalMs ?? 1000;
-      const deadline = Date.now() + timeoutMs;
-      let state = await this.getVMState(dotId);
-      while (state.libvirt !== "shut off" && state.defined && Date.now() < deadline) {
-        await this.sleep(interval);
-        state = await this.getVMState(dotId);
-      }
-      if (state.defined && state.libvirt !== "shut off") {
-        this.logger.warn("guest did not power off in time, destroying", { dotId, timeoutMs, state: state.libvirt });
-        try {
-          await this.virsh(["destroy", name]);
-        } catch (error) {
-          if (!isNotRunning(error)) throw error;
-        }
-        forced = true;
-      }
+    if (!accepted || !(await this.waitForExit(dotId, record, timeoutMs))) {
+      if (accepted) this.logger.warn("guest did not power off in time, killing QEMU", { dotId, timeoutMs });
+      await this.killOurs(dotId, record);
+      forced = true;
     }
-    await this.stopBridge(dotId);
+    await this.forget(dotId);
     this.logger.info("vm stopped", { dotId, forced });
-    return { forced };
-  }
-
-  async rebootVM(dotId: string): Promise<void> {
-    assertDotId(dotId);
-    await this.virsh(["reboot", domainName(dotId)]);
-  }
-
-  /** Remove everything: the bridge, the running domain, its definition and the VM directory with the disk. */
-  async destroyVM(dotId: string): Promise<void> {
-    assertDotId(dotId);
-    const name = domainName(dotId);
-    const dir = this.vmDir(dotId);
-    await this.stopBridge(dotId);
-    const state = await this.getVMState(dotId);
-    if (state.defined) {
-      if (state.libvirt !== "shut off") {
-        try {
-          await this.virsh(["destroy", name]);
-        } catch (error) {
-          if (!isNotRunning(error)) throw error;
-        }
-      }
-      try {
-        await this.virsh(["undefine", name]);
-      } catch (error) {
-        if (!isDomainMissing(error)) throw error;
-      }
-    }
-    await rm(dir, { recursive: true, force: true });
-    this.logger.info("vm destroyed", { dotId, dir });
-  }
-
-  /** New vCPU count, written to the definition. A running VM picks it up on its next start. */
-  async resizeCPU(spec: ComputerSpec, cpus: number): Promise<ResizeResult> {
-    assertIntInRange("cpus", cpus, 1, 16);
-    return this.redefine({ ...spec, cpus });
-  }
-
-  /** New memory size in MiB, written to the definition. A running VM picks it up on its next start. */
-  async resizeRAM(spec: ComputerSpec, memoryMiB: number): Promise<ResizeResult> {
-    assertIntInRange("memoryMiB", memoryMiB, 256, 1024 * 1024);
-    return this.redefine({ ...spec, memoryMiB });
-  }
-
-  private async redefine(spec: ComputerSpec): Promise<ResizeResult> {
-    this.validateSpec(spec);
-    const state = await this.getVMState(spec.dotId);
-    if (!state.defined) throw new VmStateError(spec.dotId, "domain is not defined; call createVM first");
-    await this.defineDomain(spec);
-    return { restartRequired: state.libvirt !== "shut off" };
+    return { forced, wasRunning: true };
   }
 
   /**
-   * Grow the overlay with `qemu-img resize`; the guest's cloud-init grows the
-   * partition and filesystem on the next boot. Only on a stopped VM, and never
-   * smaller: shrinking a disk under a filesystem destroys data.
+   * Reboot as a full stop and start, not a reset: a reset skips the guest's
+   * shutdown (the agent's SQLite state, browser profiles) and keeps the old
+   * QEMU process, so a new runtime ISO or new cpus and memory would not
+   * apply. The guest port changes; store the result.
    */
+  async reboot(spec: VmSpec, options: { timeoutMs?: number } = {}): Promise<StartVmResult> {
+    this.validateSpec(spec);
+    return this.withLock(spec.dotId, async () => {
+      await this.stopLocked(spec.dotId, spec.token, options.timeoutMs ?? this.options.shutdownTimeoutMs ?? 60_000);
+      return this.startLocked(spec);
+    });
+  }
+
+  /** Remove everything: the running QEMU (killed, no graceful shutdown: the disk goes too) and the VM directory. */
+  async destroy(dotId: string): Promise<void> {
+    assertDotId(dotId);
+    return this.withLock(dotId, async () => {
+      const dir = this.vmDir(dotId);
+      const current = await this.probe(dotId);
+      if (current.state !== "STOPPED") {
+        if (!current.verified || !current.record) {
+          throw new VmStateError(dotId, `cannot destroy it safely: ${current.detail ?? "its QEMU cannot be identified"}`);
+        }
+        await this.killOurs(dotId, current.record);
+      }
+      this.owned.delete(dotId);
+      await retryWhileInUse(() => rm(dir, { recursive: true, force: true }));
+      await retryWhileInUse(() => rm(this.paths.qemuLogPath(dotId), { force: true }));
+      this.logger.info("vm destroyed", { dotId, dir });
+    });
+  }
+
+  /**
+   * Apply new resources. cpus and memory are not stored here: they are part
+   * of the VmSpec of every start, so a running VM gets them on its next
+   * start. The disk is grown with `qemu-img resize` and only while the VM is
+   * stopped; the guest's cloud-init grows the partition on the next boot.
+   */
+  async resize(spec: VmSpec): Promise<ResizeResult> {
+    this.validateSpec(spec);
+    return this.withLock(spec.dotId, async () => {
+      const current = await this.probe(spec.dotId);
+      if (current.state === "STOPPED") {
+        const { resized } = await this.resizeDiskLocked(spec.dotId, spec.diskBytes);
+        return { restartRequired: false, diskResized: resized };
+      }
+      const size = await this.diskSize(spec.dotId);
+      if (spec.diskBytes !== size) {
+        throw new VmStateError(spec.dotId, `the disk can only be resized while the VM is stopped (it is ${current.state})`);
+      }
+      return { restartRequired: true, diskResized: false };
+    });
+  }
+
+  /** Grow the overlay; never shrink it, because that destroys the filesystem on it. */
   async resizeDisk(dotId: string, diskBytes: number): Promise<{ resized: boolean; previousBytes: number }> {
     assertDotId(dotId);
-    if (!Number.isSafeInteger(diskBytes) || diskBytes <= 0) {
-      throw new VmManagerError(`diskBytes must be a positive integer, got ${diskBytes}`);
-    }
-    const state = await this.getVMState(dotId);
-    if (state.defined && state.libvirt !== "shut off") {
-      throw new VmStateError(dotId, `the disk can only be resized while the VM is stopped (it is "${state.libvirt}")`);
-    }
-    const disk = join(this.vmDir(dotId), "disk.qcow2");
+    return this.withLock(dotId, async () => {
+      const current = await this.probe(dotId);
+      if (current.state !== "STOPPED") {
+        throw new VmStateError(dotId, `the disk can only be resized while the VM is stopped (it is ${current.state})`);
+      }
+      return this.resizeDiskLocked(dotId, diskBytes);
+    });
+  }
+
+  private async diskSize(dotId: string): Promise<number> {
+    const disk = this.paths.diskPath(dotId);
+    // -U: read the header even if a QEMU holds the image; the size is in the header and never torn.
     const { stdout } = await this.qemuImg(["info", "--output=json", "-U", disk]);
-    let previousBytes: number;
     try {
-      previousBytes = Number((JSON.parse(stdout) as { "virtual-size": number })["virtual-size"]);
+      const size = Number((JSON.parse(stdout) as { "virtual-size": number })["virtual-size"]);
+      if (!Number.isSafeInteger(size)) throw new Error(`virtual-size is ${size}`);
+      return size;
     } catch (error) {
       throw new VmManagerError(`cannot read the size of ${disk} from qemu-img info`, { cause: error });
     }
+  }
+
+  private async resizeDiskLocked(dotId: string, diskBytes: number): Promise<{ resized: boolean; previousBytes: number }> {
+    if (!Number.isSafeInteger(diskBytes) || diskBytes <= 0) {
+      throw new VmManagerError(`diskBytes must be a positive integer, got ${diskBytes}`);
+    }
+    const disk = this.paths.diskPath(dotId);
+    const previousBytes = await this.diskSize(dotId);
     if (diskBytes < previousBytes) {
       throw new VmManagerError(`dot ${dotId}: the disk is ${previousBytes} bytes; shrinking it to ${diskBytes} is not supported`);
     }
@@ -567,12 +882,6 @@ export class VmManager {
     await this.qemuImg(["resize", "-f", "qcow2", disk, String(diskBytes)]);
     this.logger.info("disk resized", { dotId, previousBytes, diskBytes });
     return { resized: true, previousBytes };
-  }
-
-  /** A client for every guest route of this Dot, through its bridge. */
-  guestClient(dotId: string, token: string, options: GuestClientOptions = {}): GuestClient {
-    assertDotId(dotId);
-    return new GuestClient(this.bridgeSocketPath(dotId), token, { logger: this.logger, ...options });
   }
 
   // Snapshots and rollback are out of scope (architecture section 10).

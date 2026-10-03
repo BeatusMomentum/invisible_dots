@@ -9,7 +9,7 @@ export const AGENT_STATES = [
 ] as const;
 export type AgentState = (typeof AGENT_STATES)[number];
 
-/** Libvirt-backed computer states, stored in `computers.state` (section 9.3). */
+/** States of a Dot's QEMU virtual machine, stored in `computers.state` (section 9.3). */
 export const VM_STATES = [
   "PROVISIONING",
   "STARTING",
@@ -48,8 +48,11 @@ export type TaskState = (typeof TASK_STATES)[number];
 /** A task in one of these states never runs again. */
 export const TERMINAL_TASK_STATES: readonly TaskState[] = ["COMPLETED", "FAILED", "CANCELLED"];
 
-/** `approvals.status` (section 9.1). */
-export const APPROVAL_STATUSES = ["pending", "approved", "rejected"] as const;
+/**
+ * `approvals.status` (section 9.1). An approval is `expired` when its task
+ * ended before anybody decided: nothing waits for the decision any more.
+ */
+export const APPROVAL_STATUSES = ["pending", "approved", "rejected", "expired"] as const;
 export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
 
 /** `events.source` (section 9.1). */

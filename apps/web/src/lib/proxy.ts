@@ -3,8 +3,10 @@
  * with the control plane's own paths, so the browser uses the SDK unchanged,
  * and it adds the bearer token, so the browser never sees it.
  */
-import { readFile } from "node:fs/promises";
-import { DEFAULT_LISTEN, ENV, hostPaths } from "@invisible-dots/shared/browser";
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { ApiTokenError, readApiToken } from "@invisible-dots/shared/api-token";
+import { DEFAULT_LISTEN, ENV } from "@invisible-dots/shared/browser";
+import { hostPaths } from "@invisible-dots/shared/paths";
 
 export const WEB_ENV = {
   /** Base URL of the control plane API. */
@@ -34,33 +36,82 @@ export class ProxyError extends Error {
 }
 
 /**
- * The API token: `INVISIBLE_DOTS_TOKEN` when set, otherwise the contents of
- * `<INVISIBLE_DOTS_CONFIG_DIR>/api.token`. Read on every request so a rotated
- * token file takes effect without a restart.
+ * The API token as the server reads it (shared readApiToken):
+ * `INVISIBLE_DOTS_TOKEN` when set, otherwise the first line of
+ * `<INVISIBLE_DOTS_HOME>/config/api.token`, the file the server creates.
+ * Read on every request so a rotated token file takes effect without a
+ * restart.
  */
-export async function loadApiToken(
-  env: Env = process.env,
-  read: (path: string) => Promise<string> = (path) => readFile(path, "utf8"),
-): Promise<string> {
-  const fromEnv = env[WEB_ENV.token]?.trim();
-  if (fromEnv) return fromEnv;
-  const file = hostPaths(env).apiToken;
-  let text: string;
+export async function loadApiToken(env: Env = process.env): Promise<string> {
+  let token;
   try {
-    text = await read(file);
+    token = await readApiToken(env);
   } catch (error) {
-    const reason = (error as NodeJS.ErrnoException).code ?? (error as Error).message;
-    throw new ProxyError(
-      500,
-      "web_token_missing",
-      `the web server has no API token: set ${WEB_ENV.token} or make ${file} readable (${reason})`,
-    );
+    if (error instanceof ApiTokenError) throw new ProxyError(500, "web_token_missing", `the web server has no usable API token: ${error.message}`);
+    throw error;
   }
-  const token = text.trim();
   if (!token) {
-    throw new ProxyError(500, "web_token_missing", `the API token file ${file} is empty`);
+    const file = hostPaths(env).apiTokenPath;
+    throw new ProxyError(500, "web_token_missing", `the web server has no API token: start the server once (it creates ${file}) or set ${WEB_ENV.token}`);
   }
-  return token;
+  return token.value;
+}
+
+/**
+ * The web server's own credential (architecture section 9.7). It holds the
+ * API token and listens on the host's loopback, which every guest reaches as
+ * 10.0.2.2 (section 3.6), so Host and Origin, which any client writes
+ * itself, cannot be what lets a request through. The person signs in once
+ * at /login with the API token; the cookie then holds a value derived from
+ * it, never the token itself, and changes when the token does.
+ */
+export const SESSION_COOKIE = "idots_session";
+
+/** Answered with 401 to a request without a valid session, so the page knows to show /login. */
+export const LOGIN_REQUIRED = "login_required";
+export const LOGIN_HEADER = "x-invisible-dots-login";
+
+export function sessionValue(token: string): string {
+  return createHmac("sha256", token).update("invisible-dots web session v1").digest("hex");
+}
+
+function cookieValue(cookieHeader: string | null, name: string): string | undefined {
+  for (const part of (cookieHeader ?? "").split(";")) {
+    const at = part.indexOf("=");
+    if (at < 0) continue;
+    if (part.slice(0, at).trim() === name) return part.slice(at + 1).trim();
+  }
+  return undefined;
+}
+
+/** Whether the request's cookie holds the session of `token` (constant-time). */
+export function hasSession(cookieHeader: string | null, token: string): boolean {
+  const given = Buffer.from(cookieValue(cookieHeader, SESSION_COOKIE) ?? "", "utf8");
+  const expected = Buffer.from(sessionValue(token), "utf8");
+  return given.length === expected.length && timingSafeEqual(given, expected);
+}
+
+/** Whether a token typed at /login is the API token (constant-time). */
+export function tokenMatches(given: string, token: string): boolean {
+  const a = Buffer.from(sessionValue(given), "utf8");
+  const b = Buffer.from(sessionValue(token), "utf8");
+  return timingSafeEqual(a, b);
+}
+
+/** HttpOnly: no script reads it. SameSite=Strict: no other site's page makes the browser send it. */
+export function sessionCookie(token: string): string {
+  return `${SESSION_COOKIE}=${sessionValue(token)}; Path=/; HttpOnly; SameSite=Strict`;
+}
+
+export function clearedSessionCookie(): string {
+  return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`;
+}
+
+export function loginRequired(): Response {
+  return Response.json(
+    { error: LOGIN_REQUIRED, message: "sign in at /login with the API token first" },
+    { status: 401, headers: { "cache-control": "no-store", [LOGIN_HEADER]: "required" } },
+  );
 }
 
 /**
@@ -102,7 +153,8 @@ export interface OriginCheckInput {
 }
 
 /**
- * Whoever can talk to this server acts with the API token, so requests from
+ * A defence against DNS rebinding and cross-site pages, in front of the
+ * session check (which is what authenticates a request); requests from
  * other sites are refused:
  * - the Host header must be loopback or listed in INVISIBLE_DOTS_WEB_ALLOWED_HOSTS
  *   (a DNS rebinding page reaches 127.0.0.1 under its own host name),

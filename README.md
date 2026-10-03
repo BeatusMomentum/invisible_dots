@@ -1,63 +1,76 @@
 <h1 align="center">dots</h1>
 
-<p align="center"><b>Every AI agent is a model and a browser.<br>You can swap the model with one flag. The browser is what the website sees.</b></p>
+<p align="center"><b>Every Dot is an AI agent with a computer of its own:<br>a virtual machine, a desktop, browser identities and a memory that outlast every task.</b></p>
 
 ---
 
-Windows, in PowerShell:
+Needs Node 24, Go 1.25 and git. Windows, in PowerShell:
 
 ```powershell
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
-$env:Path = "$env:USERPROFILE\.local\bin;$env:Path"
-uvx --from git+https://github.com/feder-cr/dots dots --openrouter-key sk-or-...
+git clone https://github.com/feder-cr/dots; cd dots
+npm ci
+npm run build --workspace @invisible-dots/invisible-dots-agent --workspace @invisible-dots/cli
+$env:CGO_ENABLED = "0"; $env:GOOS = "linux"; $env:GOARCH = "amd64"
+go -C guest/dot-agentd build -trimpath -o bin/dot-agentd ./cmd/dot-agentd
+Remove-Item Env:CGO_ENABLED, Env:GOOS, Env:GOARCH
+node apps/cli/dist/invisible-dots.mjs setup
+node apps/cli/dist/invisible-dots.mjs image build
+node apps/cli/dist/invisible-dots.mjs server
 ```
 
 Linux:
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-source $HOME/.local/bin/env
-uvx --from git+https://github.com/feder-cr/dots dots --openrouter-key sk-or-...
+git clone https://github.com/feder-cr/dots && cd dots
+npm ci
+npm run build --workspace @invisible-dots/invisible-dots-agent --workspace @invisible-dots/cli
+CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C guest/dot-agentd build -trimpath -o bin/dot-agentd ./cmd/dot-agentd
+node apps/cli/dist/invisible-dots.mjs setup
+node apps/cli/dist/invisible-dots.mjs image build
+node apps/cli/dist/invisible-dots.mjs server
 ```
 
-Then open **http://127.0.0.1:8765**. The conversation on the left, the browser on the right, live.
+Then, in a second terminal in the same directory:
 
-## It all comes down to the browser
+```text
+node apps/cli/dist/invisible-dots.mjs secret openrouter
+node apps/cli/dist/invisible-dots.mjs init
+node apps/cli/dist/invisible-dots.mjs create dot.yaml
+node apps/cli/dist/invisible-dots.mjs message my-first-dot "What is on your desktop right now?"
+```
 
-When a web agent fails, the model is rarely why. The page never loaded, a
-challenge appeared, the login expired, the click did not land. All of that
-happens in the browser, before the model gets to think.
+`secret openrouter` asks for your OpenRouter key and stores it. `init` writes
+`dot.yaml`, the Dot's name, goal, model and permissions, to edit before
+`create`. The API listens on http://127.0.0.1:8787; `invisible-dots doctor`
+checks the host and names the command that fixes anything missing.
 
-So dots is built around one:
+The web client:
 
-- **A real Firefox engine, patched in C++.** The fingerprint is decided inside
-  the engine, not painted over with JavaScript that a page can inspect.
-- **One identity per seed.** Screen, fonts, GPU, timezone and language agree
-  with each other, and `--seed` gives back the same person on every run.
-- **Nothing for a page to find.** No WebDriver flag, no DevTools protocol, no
-  automation globals in the page.
-- **A person's hands.** The pointer travels to what it clicks and keys are
-  pressed one at a time, so every event the page receives is a trusted one.
-- **A browser that remembers.** `--profile-dir` keeps logins and cookies from
-  one run to the next.
-- **Where it connects from is who it is.** With `--proxy`, the timezone and the
-  language follow the exit.
+```text
+npm run build --workspace @invisible-dots/web
+npm run start --workspace @invisible-dots/web
+```
 
-The model is any model on OpenRouter, and `--model` changes it.
+Open http://127.0.0.1:3000 and sign in with the first line of
+`config/api.token` in `~/.invisible-dots`.
 
-## What to ask it
+## What a Dot is
 
-> Go to `<paste the URL>`. One way, Milan to Lisbon, economy, one adult. Check
-> every date from the 12th to the 16th of next month and read the cheapest fare
-> for each day. If a date has no availability, say so. Do not guess a number.
+- **A computer.** Its own QEMU virtual machine with a persistent disk, on Linux
+  or Windows hosts alike. It sleeps when it has nothing to do and wakes for
+  the next task or message.
+- **An agent inside it.** It reasons with any model on OpenRouter and works
+  through tools: a shell, files, screenshots, memory and the browser.
+- **Browser identities.** Each one is a separate browser profile with its own
+  cookies, logins and fingerprint, kept from one task to the next.
+- **Rules you set.** Every tool runs as allow, ask or deny; an ask waits for
+  `invisible-dots approve`.
 
-## The same browser, in your own assistant
-
-Claude Code, Codex, Gemini CLI or any MCP client:
-[invisible_playwright_mcp](https://github.com/feder-cr/invisible_playwright_mcp)
-gives them this browser as a server. `dots` is its interface, and `dots --help`
-lists every option.
+How it works, and the contract every part is written against:
+[docs/architecture.md](docs/architecture.md).
 
 ---
 
-Not affiliated with OpenAI. MIT licensed.
+MIT licensed. QEMU, the guest operating system, the browser engine and the
+packages a host downloads keep their own licenses (docs/architecture.md,
+section 11.3).

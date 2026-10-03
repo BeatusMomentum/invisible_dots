@@ -1,7 +1,6 @@
 export {
   BrowserIdentityError,
   BrowserIdentityManager,
-  redactProxy,
   resultText,
   type BrowserIdentityEvent,
   type BrowserIdentityEventType,
@@ -11,4 +10,4 @@ export {
   type CreateIdentityInput,
 } from "./manager.js";
 export { childEnvironment, INHERITED_ENV_VARS, type ChildEnvironmentInput } from "./env.js";
-export { JsonFileIdentityPersistence, MemoryIdentityPersistence, type IdentityPersistence } from "./persistence.js";
+export { MemoryIdentityPersistence, type IdentityPersistence } from "./persistence.js";

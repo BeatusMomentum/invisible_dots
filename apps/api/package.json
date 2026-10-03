@@ -2,17 +2,14 @@
   "name": "@invisible-dots/api",
   "version": "0.0.0",
   "private": true,
-  "description": "Control-plane HTTP API and SSE stream; the invisible-dots-server entry point.",
+  "description": "Control-plane HTTP API and SSE stream, and startServer: the control plane composed as one process (invisible-dots server).",
   "license": "MIT",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json",
-    "build": "node scripts/build.mjs",
-    "dev": "tsx src/main.ts",
-    "start": "node dist/invisible-dots-server.mjs"
+    "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@invisible-dots/shared": "0.0.0",
@@ -22,8 +19,5 @@
     "@invisible-dots/scheduler": "0.0.0",
     "@invisible-dots/sdk": "0.0.0",
     "@invisible-dots/vm-manager": "0.0.0"
-  },
-  "bin": {
-    "invisible-dots-server": "dist/invisible-dots-server.mjs"
   }
 }

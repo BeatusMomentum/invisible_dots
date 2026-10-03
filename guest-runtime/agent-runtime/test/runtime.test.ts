@@ -387,9 +387,10 @@ describe("AgentRuntime: limits and lifecycle", () => {
     const { approval_id } = h.events("approval.requested")[0]!.data as { approval_id: string };
 
     await h.restart();
-    // The restart announces the state again, after the old events.
+    // The restart announces itself (the host pushes the key again on it), then the state, after the old events.
     const restartState = h.store.readAfter(lastSeq);
-    expect(restartState[0]).toMatchObject({ seq: lastSeq + 1, type: "agent.state", data: { state: "WAITING_APPROVAL" } });
+    expect(restartState[0]).toMatchObject({ seq: lastSeq + 1, type: "agent.started" });
+    expect(restartState[1]).toMatchObject({ seq: lastSeq + 2, type: "agent.state", data: { state: "WAITING_APPROVAL" } });
     expect(h.runtime.stateAnswer()).toMatchObject({ current_task_id: "t1", pending_approval: { approval_id } });
 
     h.fake.push(completion({ content: "deleted after the reboot" }));
@@ -401,15 +402,17 @@ describe("AgentRuntime: limits and lifecycle", () => {
 
   it("resumes a task that was RUNNING when the agent stopped", async () => {
     h = await harness();
+    let release!: () => void;
     h.fake.push(completion({ content: null, tool_calls: [toolCall("c1", "files_read", { path: "a" })] }), {
       ...completion({ content: "never seen" }),
-      delayMs: 400,
+      hold: new Promise<void>((resolve) => (release = resolve)),
     });
     h.runtime.accept(inbound("task.created", { task_id: "t1", description: "x", priority: 0 }));
-    // Let the first turn and the tool run, then stop during the second model request.
-    await new Promise((r) => setTimeout(r, 150));
+    // The first turn and the tool run; stop while the second model request is held.
+    await h.fake.waitForRequests(2);
     expect(h.fake.requests).toHaveLength(2);
     await h.restart();
+    release();
     expect(h.runtime.tasks.get("t1")!.status).toBe("RUNNING");
 
     h.fake.push(completion({ content: "finished after restart" }));
@@ -419,6 +422,44 @@ describe("AgentRuntime: limits and lifecycle", () => {
     expect(h.events("task.completed")[0]!.data).toMatchObject({ task_id: "t1", summary: "finished after restart" });
     // The resumed turn sees the tool result from before the restart.
     expect(sentMessages(h.fake, h.fake.requests.length - 1).at(-1)).toMatchObject({ role: "tool", tool_call_id: "c1" });
+  });
+
+  it("sends an approval request without the proxy password, and runs the approved call with it", async () => {
+    h = await harness({ ...baseConfig, permissions: { "browser.identity.create": "ask" } });
+    const proxy = "http://shopper:hunter2-secret@proxy.example:8080";
+    h.fake.push(completion({ content: null, tool_calls: [toolCall("p1", "browser_identity_create", { name: "shop", proxy })] }));
+    h.runtime.accept(inbound("task.created", { task_id: "t-proxy", description: "make an identity", priority: 0 }));
+    await h.runtime.idle();
+    const requested = h.events("approval.requested")[0]!.data as { approval_id: string; arguments: Record<string, unknown> };
+    expect(requested.arguments).toEqual({ name: "shop", proxy: "http://shopper:***@proxy.example:8080" });
+    expect(JSON.stringify(h.events())).not.toContain("hunter2");
+    // The guest's own pending row keeps the call whole, so approving runs what the model asked for.
+    expect(h.store.getApproval(requested.approval_id)?.arguments).toEqual({ name: "shop", proxy });
+    h.fake.push(completion({ content: "created" }));
+    h.runtime.accept(inbound("approval.received", { approval_id: requested.approval_id, decision: "approve" }));
+    await h.runtime.idle();
+    expect(h.registry.calls).toEqual([{ name: "browser_identity_create", args: { name: "shop", proxy }, taskId: "t-proxy" }]);
+  });
+
+  it("announces every start with agent.started, before its state", async () => {
+    h = await harness();
+    expect(h.events().slice(0, 2).map((e) => e.type)).toEqual(["agent.started", "agent.state"]);
+  });
+
+  it("goes back to work when the key is pushed after a prepare-sleep that no shutdown followed", async () => {
+    h = await harness();
+    let release!: () => void;
+    h.fake.push({ ...completion({ content: "never seen" }), hold: new Promise<void>((resolve) => (release = resolve)) });
+    h.runtime.accept(inbound("task.created", { task_id: "t-after-failed-stop", description: "x", priority: 0 }));
+    await h.fake.waitForRequests(1);
+    // prepare-sleep: the model request in flight is abandoned and the task waits.
+    await h.runtime.suspend();
+    release();
+    // The stop failed, the VM kept running, and the host's READY procedure pushes the key again.
+    h.fake.push(completion({ content: "done after all" }));
+    h.runtime.modelConfigured();
+    await h.runtime.idle();
+    expect(h.events("task.completed").map((e) => e.data)).toEqual([{ task_id: "t-after-failed-stop", summary: "done after all" }]);
   });
 
   it("answers a chat message that arrived just before a restart", async () => {

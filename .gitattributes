@@ -12,6 +12,13 @@
 *.socket text eol=lf
 *.target text eol=lf
 *.env text eol=lf
+# Guest files the image builder copies verbatim onto the runtime ISO or into
+# the cloud-init seed, and the Go sources whose gofmt check rejects a CR.
+*.tmpl text eol=lf
+*.yaml text eol=lf
+*.go text eol=lf
+*.sql text eol=lf
+guest/image-builder/** text eol=lf
 
 *.png binary
 *.jpg binary

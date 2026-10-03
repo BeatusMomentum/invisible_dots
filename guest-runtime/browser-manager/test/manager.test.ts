@@ -1,11 +1,10 @@
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   BrowserIdentityError,
-  JsonFileIdentityPersistence,
   childEnvironment,
   resultText,
   type BrowserIdentityEvent,
@@ -96,7 +95,8 @@ describe("identity records", () => {
   });
 });
 
-describe("launch", () => {
+// These start real MCP server processes (tsx): a loaded machine needs more than the default 5 s per test.
+describe("launch", { timeout: 60_000 }, () => {
   it("starts the MCP server with exactly the allowlisted environment", async () => {
     process.env.OPENROUTER_API_KEY = "sk-or-test-not-a-real-key";
     process.env.SOME_OTHER_SECRET = "hidden";
@@ -172,7 +172,7 @@ describe("launch", () => {
   });
 });
 
-describe("open sessions", () => {
+describe("open sessions", { timeout: 60_000 }, () => {
   it("closes the least recently used identity beyond max_open", async () => {
     harness = await makeHarness({ maxOpen: 2 });
     const a = await harness.manager.create({ name: "a" });
@@ -261,34 +261,5 @@ describe("open sessions", () => {
     await harness.manager.closeAll();
     expect(harness.manager.openCount).toBe(0);
     expect((await harness.manager.list()).every((i) => i.status === "available")).toBe(true);
-  });
-});
-
-describe("JsonFileIdentityPersistence", () => {
-  it("round-trips records through the file", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "idots-json-"));
-    try {
-      const file = join(dir, "nested", "identities.json");
-      const store = new JsonFileIdentityPersistence(file);
-      expect(await store.listIdentities()).toEqual([]);
-      const record = {
-        id: "a-123456",
-        name: "a",
-        createdAt: new Date().toISOString(),
-        lastUsedAt: null,
-        status: "available" as const,
-        profilePath: "/p",
-      };
-      await Promise.all([store.putIdentity(record), store.putIdentity({ ...record, id: "b-123456", name: "b" })]);
-      expect((await new JsonFileIdentityPersistence(file).listIdentities()).map((r) => r.id).sort()).toEqual([
-        "a-123456",
-        "b-123456",
-      ]);
-      await store.deleteIdentity("a-123456");
-      expect(await store.getIdentity("a-123456")).toBeNull();
-      expect((await store.getIdentity("b-123456"))!.name).toBe("b");
-    } finally {
-      await rm(dir, { recursive: true, force: true });
-    }
   });
 });

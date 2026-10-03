@@ -70,9 +70,32 @@ export class EventLog {
 
   /** Write a user message (see USER_MESSAGE_EVENT) and publish it. */
   async appendUserMessage(dotId: string, data: UserMessageData): Promise<StoredEvent> {
-    const event = await this.repo.insertHost(dotId, USER_MESSAGE_EVENT, { ...data });
+    const event = await this.appendUserMessageIn({ events: this.repo }, dotId, data);
     this.publish(event);
     return event;
+  }
+
+  /**
+   * Write a host event through `tx` (the caller's transaction) WITHOUT
+   * publishing it, for a host event that must commit together with other
+   * rows; the caller publishes the result after COMMIT, as for guest events.
+   */
+  async appendHostIn<T extends HostEventType>(
+    tx: { events: Pick<EventsRepository, "insertHost"> },
+    dotId: string,
+    type: T,
+    data: HostEventDataMap[T],
+  ): Promise<StoredEvent> {
+    return tx.events.insertHost(dotId, type, data as Record<string, unknown>);
+  }
+
+  /** `appendUserMessage` through the caller's transaction, published by the caller after COMMIT. */
+  async appendUserMessageIn(
+    tx: { events: Pick<EventsRepository, "insertHost"> },
+    dotId: string,
+    data: UserMessageData,
+  ): Promise<StoredEvent> {
+    return tx.events.insertHost(dotId, USER_MESSAGE_EVENT, { ...data });
   }
 
   /**

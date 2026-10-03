@@ -21,7 +21,7 @@ export class SecretsRepository {
   }
 
   async get(scope: string, name: string): Promise<string | null> {
-    const { rows } = await this.q.query<{ value_enc: Buffer }>(
+    const { rows } = await this.q.query<{ value_enc: Uint8Array }>(
       "SELECT value_enc FROM secrets WHERE scope = $1 AND name = $2",
       [scope, name],
     );

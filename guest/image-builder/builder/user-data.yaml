@@ -1,15 +1,22 @@
 #cloud-config
 # Seed of the one-off builder VM that turns the Ubuntu cloud image into a
-# golden image. The real work is provision.sh on the IDOTS-BUILD payload disk;
-# it prints IDOTS-BUILD-RESULT to the serial console and powers the VM off.
+# golden image. The seed disk (label cidata) also carries provision.sh, pins.env
+# and the Node and uv tarballs: runcmd mounts it again and runs the
+# provisioner, which reports on the serial console and powers the VM off.
 hostname: idots-golden-builder
+# dot gets no sudo rule here: provision.sh runs as root and reaches dot
+# through root's own `sudo -u`. A rule written now would stay in the golden
+# image, and each Dot's seed only adds its own rule next to it (section 4.1).
+# The groups are set here, where the user is created: cloud-init does not
+# add groups to a user that already exists, which every Dot's user does.
+# systemd-journal lets dot read its computer's system journal.
 users:
   - name: dot
     gecos: invisible_dots agent
     shell: /bin/bash
     lock_passwd: true
-    sudo: "ALL=(ALL) NOPASSWD:ALL"
-    groups: [audio, video]
+    sudo: false
+    groups: [audio, video, systemd-journal]
 disable_root: true
 ssh_pwauth: false
 package_update: false
@@ -18,4 +25,4 @@ growpart:
   mode: auto
   devices: ["/"]
 runcmd:
-  - [ sh, -c, "mkdir -p /mnt/idots-build && mount -o ro LABEL=IDOTS-BUILD /mnt/idots-build && bash /mnt/idots-build/provision.sh || { echo 'IDOTS-BUILD-RESULT: failed (provision did not run to the end)' > /dev/ttyS0; systemctl poweroff; }" ]
+  - [ sh, -c, "mkdir -p /mnt/idots-build && mount -o ro LABEL=cidata /mnt/idots-build && bash /mnt/idots-build/provision.sh || { echo 'IDOTS-BUILD-RESULT: failed (provision did not run to the end)' > /dev/ttyS0; systemctl poweroff; }" ]

@@ -1,4 +1,5 @@
--- The control-plane schema of architecture section 9.1.
+-- The control-plane schema of architecture section 9.1. It runs unchanged on
+-- PGlite and on PostgreSQL 16 or newer: nothing here may need an extension.
 
 CREATE TABLE dots (
   id          text PRIMARY KEY,
@@ -12,9 +13,13 @@ CREATE TABLE dots (
 
 CREATE TABLE computers (
   dot_id          text PRIMARY KEY REFERENCES dots (id) ON DELETE CASCADE,
-  domain_name     text NOT NULL,
-  cid             integer NOT NULL UNIQUE CHECK (cid >= 3),
-  state           text NOT NULL CHECK (state IN ('PROVISIONING', 'STARTING', 'RUNNING', 'IDLE', 'STOPPING', 'STOPPED', 'ERROR', 'DELETING')),
+  vm_name         text NOT NULL,
+  -- Both set while a QEMU process runs and cleared when it is gone. The port
+  -- is not unique: a stale row of a crashed VM may name a port the OS has
+  -- since handed to another VM.
+  guest_port      integer CHECK (guest_port BETWEEN 1 AND 65535),
+  pid             integer CHECK (pid > 0),
+  state          text NOT NULL CHECK (state IN ('PROVISIONING', 'STARTING', 'RUNNING', 'IDLE', 'STOPPING', 'STOPPED', 'ERROR', 'DELETING')),
   golden_image    text,
   runtime_image   text,
   token_enc       bytea NOT NULL,

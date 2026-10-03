@@ -24,7 +24,7 @@ describe("newId", () => {
     expect(ids.size).toBe(2000);
   });
 
-  it("refuses prefixes that would break paths or domain names", () => {
+  it("refuses prefixes that would break paths or VM names", () => {
     expect(() => newId("")).toThrow(/invalid id prefix/);
     expect(() => newId("Dot")).toThrow(/invalid id prefix/);
     expect(() => newId("a/b")).toThrow(/invalid id prefix/);

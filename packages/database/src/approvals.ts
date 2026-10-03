@@ -35,11 +35,19 @@ function toRecord(row: ApprovalRow): ApprovalRecord {
 export class ApprovalsRepository {
   constructor(private readonly q: Queryable) {}
 
-  /** Record an `approval.requested` event; a replayed event is ignored and returns null. */
-  async insertRequested(dotId: string, data: ApprovalRequestedData): Promise<ApprovalRecord | null> {
+  /**
+   * Record an `approval.requested` event; a replayed event is ignored and
+   * returns null. `expired` records a request whose task had already ended
+   * when it arrived, so it never shows up as pending.
+   */
+  async insertRequested(
+    dotId: string,
+    data: ApprovalRequestedData,
+    status: "pending" | "expired" = "pending",
+  ): Promise<ApprovalRecord | null> {
     const { rows } = await this.q.query<ApprovalRow>(
-      `INSERT INTO approvals (id, dot_id, task_id, tool, permission, arguments, reason, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending')
+      `INSERT INTO approvals (id, dot_id, task_id, tool, permission, arguments, reason, status, resolved_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::text, CASE WHEN $8::text = 'pending' THEN NULL ELSE now() END)
        ON CONFLICT (id) DO NOTHING RETURNING *`,
       [
         data.approval_id,
@@ -49,6 +57,7 @@ export class ApprovalsRepository {
         data.permission,
         JSON.stringify(data.arguments),
         data.reason,
+        status,
       ],
     );
     return rows[0] ? toRecord(rows[0]) : null;

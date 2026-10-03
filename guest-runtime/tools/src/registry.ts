@@ -1,5 +1,5 @@
-import { redactProxy, type BrowserIdentityManager, type CallToolResult } from "@invisible-dots/browser-manager";
-import { getTool, offeredTools, TOOL_RESULT_MAX_CHARS, type BrowserIdentity, type ToolDefinition, type ToolName } from "@invisible-dots/shared";
+import type { BrowserIdentityManager, CallToolResult } from "@invisible-dots/browser-manager";
+import { getTool, offeredTools, redactProxy, TOOL_RESULT_MAX_CHARS, type BrowserIdentity, type ToolDefinition, type ToolName } from "@invisible-dots/shared";
 import type { AgentdClient } from "./agentd.js";
 import type { MemoryToolStore, ToolContext, ToolImage, ToolOfferConfig, ToolRegistry, ToolResult } from "./types.js";
 import { validateArguments } from "./validate.js";

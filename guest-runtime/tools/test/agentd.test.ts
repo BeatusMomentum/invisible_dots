@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import { rm } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { testSocketPath } from "@invisible-dots/shared";
+import { socketIsAFile, testSocketPath } from "@invisible-dots/shared";
 import { AgentdError, SocketAgentdClient } from "../src/index.js";
 
 interface Seen {
@@ -66,7 +66,7 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
-  if (process.platform !== "win32") await rm(socketPath, { force: true });
+  if (socketIsAFile(socketPath)) await rm(socketPath, { force: true });
 });
 
 describe("SocketAgentdClient", () => {

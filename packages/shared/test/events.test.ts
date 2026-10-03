@@ -15,8 +15,9 @@ const ts = "2026-10-02T08:15:00.000Z";
 describe("event type lists", () => {
   it("match section 5.4", () => {
     expect(INBOUND_EVENT_TYPES).toEqual(["user.message", "task.created", "approval.received", "system.event"]);
-    expect(OUTBOUND_EVENT_TYPES).toHaveLength(13);
+    expect(OUTBOUND_EVENT_TYPES).toHaveLength(14);
     expect(OUTBOUND_EVENT_TYPES).toContain("browser.identity.launched");
+    expect(OUTBOUND_EVENT_TYPES).toContain("agent.started");
     expect(HOST_EVENT_TYPES).toContain("computer.state");
     expect(isInboundEventType("user.message")).toBe(true);
     expect(isOutboundEventType("user.message")).toBe(false);

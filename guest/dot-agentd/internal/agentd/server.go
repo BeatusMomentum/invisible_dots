@@ -1,6 +1,7 @@
 // Package agentd implements dot-agentd, the computer daemon that runs inside
-// every Dot's VM: the vsock endpoint the host talks to (architecture section
-// 5.2) and the local unix socket the agent uses for the same operations.
+// every Dot's VM: the TCP endpoint the host reaches through QEMU's port
+// forward (architecture sections 5.1 and 5.2) and the local unix socket the
+// agent uses for the same operations.
 package agentd
 
 import (
@@ -32,7 +33,9 @@ type Options struct {
 	ProcDir string
 	// CheckTimeout bounds the agent call of the health route.
 	CheckTimeout time.Duration
-	Logger       *slog.Logger
+	// PowerOff is the command POST /v1/system/poweroff starts, as an argv.
+	PowerOff []string
+	Logger   *slog.Logger
 }
 
 // Server serves the dot-agentd routes.
@@ -66,6 +69,9 @@ func New(o Options) *Server {
 	if o.CheckTimeout <= 0 {
 		o.CheckTimeout = 2 * time.Second
 	}
+	if len(o.PowerOff) == 0 {
+		o.PowerOff = DefaultPowerOff
+	}
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
@@ -74,20 +80,36 @@ func New(o Options) *Server {
 
 // Defaults match the guest filesystem of architecture section 4.2.
 const (
-	DefaultConfigPath    = "/etc/invisible-dots/config.json"
-	DefaultHome          = "/home/dot"
-	DefaultRunDir        = "/run/invisible-dots"
-	DefaultAgentdSocket  = DefaultRunDir + "/agentd.sock"
-	DefaultAgentSocket   = DefaultRunDir + "/agent.sock"
-	DefaultDisplay       = ":0"
-	DefaultVsockPort     = 1024
+	DefaultConfigPath   = "/etc/invisible-dots/config.json"
+	DefaultHome         = "/home/dot"
+	DefaultRunDir       = "/run/invisible-dots"
+	DefaultAgentdSocket = DefaultRunDir + "/agentd.sock"
+	DefaultAgentSocket  = DefaultRunDir + "/agent.sock"
+	DefaultDisplay      = ":0"
+	// DefaultListenAddr uses port 1024, the one QEMU's forward targets
+	// (architecture sections 3.4 and 5.1), on every interface; ListenTCP
+	// says why every interface.
+	DefaultListenAddr    = "0.0.0.0:1024"
 	agentProxyPrefix     = "/v1/agent"
 	maxJSONBodyBytes     = 1 << 20
 	healthLogLevelQuiet  = slog.LevelDebug
 	accessLogLevelNormal = slog.LevelInfo
 )
 
-func (s *Server) routes(withAgentProxy bool) *http.ServeMux {
+// DefaultPowerOff is how the guest powers itself off when the host stops the
+// VM (architecture 3.4). dot runs it through sudo, which the seed grants
+// without a password; -n makes a missing grant fail at once instead of
+// waiting for a password nobody will type.
+var DefaultPowerOff = []string{"sudo", "-n", "systemctl", "poweroff"}
+
+// routes builds the mux of either listener. The remote one (the TCP port,
+// token required) also carries the agent proxy and the poweroff: the agent
+// would only be talking to itself through the proxy, and the poweroff route
+// is how the control plane stops a VM. Leaving it off the agent's socket is
+// not a guarantee that the agent cannot power its computer off (it can run
+// the same sudo command); the control plane records such an exit and starts
+// the VM again when work waits (architecture section 5.2).
+func (s *Server) routes(remote bool) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", s.handleHealth)
 	mux.HandleFunc("GET /v1/system", s.handleSystem)
@@ -96,7 +118,8 @@ func (s *Server) routes(withAgentProxy bool) *http.ServeMux {
 	mux.HandleFunc("PUT /v1/files", s.handleFilePut)
 	mux.HandleFunc("GET /v1/files/list", s.handleFileList)
 	mux.HandleFunc("GET /v1/screenshot", s.handleScreenshot)
-	if withAgentProxy {
+	if remote {
+		mux.HandleFunc("POST /v1/system/poweroff", s.handlePowerOff)
 		proxy := s.newAgentProxy()
 		mux.Handle(agentProxyPrefix, proxy)
 		mux.Handle(agentProxyPrefix+"/", proxy)
@@ -108,16 +131,21 @@ func (s *Server) routes(withAgentProxy bool) *http.ServeMux {
 }
 
 // LocalHandler serves agentd.sock: no token (the socket file is 0600 and
-// owned by the agent's user) and no agent proxy, since the agent would only be
-// talking to itself.
+// owned by the agent's user), no agent proxy and no poweroff.
 func (s *Server) LocalHandler() http.Handler {
 	return s.accessLog("local", s.routes(false))
 }
 
-// RemoteHandler serves vsock (and the development TCP listener): every
-// request must carry the Dot's bearer token.
+// RemoteHandler serves the TCP listener: every request must carry the Dot's
+// bearer token, because the port is reachable by anything on the host's
+// loopback, including other Dots (architecture section 3.6). The one
+// exception is GET /v1/proof, which the host asks before it sends the token
+// at all (proof.go).
 func (s *Server) RemoteHandler() http.Handler {
-	return s.accessLog("remote", s.requireToken(s.routes(true)))
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /v1/proof", s.handleProof)
+	mux.Handle("/", s.requireToken(s.routes(true)))
+	return s.accessLog("remote", mux)
 }
 
 func (s *Server) requireToken(next http.Handler) http.Handler {
@@ -164,9 +192,10 @@ func (s *Server) accessLog(listener string, next http.Handler) http.Handler {
 		rec := &statusRecorder{ResponseWriter: w}
 		next.ServeHTTP(rec, r)
 		level := accessLogLevelNormal
-		// The host polls health while it waits for READY; at Info it would
-		// drown everything else in the journal.
-		if r.URL.Path == "/v1/health" && rec.status == http.StatusOK {
+		// The host polls health while it waits for READY, and asks for a
+		// proof before the first request of every client; at Info they
+		// would drown everything else in the journal.
+		if (r.URL.Path == "/v1/health" || r.URL.Path == "/v1/proof") && rec.status == http.StatusOK {
 			level = healthLogLevelQuiet
 		}
 		if rec.status >= 500 {
@@ -208,4 +237,20 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 		return false
 	}
 	return true
+}
+
+// NewHTTPServer is the http.Server behind every listener. The daemon and the
+// tests both build theirs here, so the tests run against the real timeouts.
+func NewHTTPServer(h http.Handler, log *slog.Logger) *http.Server {
+	if log == nil {
+		log = slog.Default()
+	}
+	return &http.Server{
+		Handler: h,
+		// No WriteTimeout: the agent event stream and long exec calls
+		// legitimately keep a response open for minutes or hours.
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+		ErrorLog:          slog.NewLogLogger(log.Handler(), slog.LevelWarn),
+	}
 }

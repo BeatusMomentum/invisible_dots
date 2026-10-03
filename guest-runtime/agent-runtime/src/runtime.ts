@@ -28,6 +28,7 @@ import {
   WORKING_MEMORY_MESSAGES,
   newId,
   parseRuntimeConfig,
+  redactToolArguments,
   type AgentState,
   type AgentStateAnswer,
   type BrowserIdentity,
@@ -139,6 +140,9 @@ export class AgentRuntime {
     if (resumed) this.#log.info("resuming work interrupted by the last stop", describeUnit(resumed));
     if (resumed?.kind === "task") this.#activeTaskId = resumed.taskId;
     this.#started = true;
+    // The host pushes the OpenRouter key again when it sees this: a restart of
+    // this process inside a running VM loses it, since it lives in memory only.
+    this.#store.appendEvent("agent.started", {});
     // The outbox may end on THINKING from before the stop; say where we really are.
     this.#emitState(this.#pendingApprovalRecord() ? "WAITING_APPROVAL" : "IDLE", true);
     this.#kick();
@@ -154,9 +158,16 @@ export class AgentRuntime {
     return config;
   }
 
-  /** The OpenRouter key arrived: work that waited for it can start. */
+  /**
+   * The OpenRouter key arrived (`POST /secrets`). The host pushes it on every
+   * READY transition and only to a guest it considers READY, so it also ends
+   * a suspension from a prepare-sleep that was not followed by a shutdown
+   * (the stop failed and the VM kept running): work that waited can go on.
+   */
   modelConfigured(): void {
     this.#waitingForKeyLogged = false;
+    if (this.#suspended && !this.#stopped) this.#log.info("resuming work: the host pushed the key, so no shutdown is coming");
+    this.#suspended = false;
     this.#kick();
   }
 
@@ -554,12 +565,14 @@ export class AgentRuntime {
         reason,
       });
       if (taskId) this.#queue.waitForApproval(taskId);
+      // The pending row above keeps the call whole, so an approval runs it as asked; what leaves
+      // the guest for the host's event log, approvals table and SSE has its secrets replaced.
       this.#store.appendEvent("approval.requested", {
         approval_id: approvalId,
         ...(taskId ? { task_id: taskId } : {}),
         tool: call.name,
         permission: permission as PendingApprovalRecord["permission"],
-        arguments: call.arguments ?? {},
+        arguments: redactToolArguments(call.name, call.arguments ?? {}),
         reason,
       });
     });

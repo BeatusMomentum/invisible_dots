@@ -393,4 +393,38 @@ describe("with the real browser manager and a fake MCP server", () => {
     const unknown = await registry.call("browser_snapshot", { identity_id: "no-such-identity" }, ctx);
     expect(unknown).toEqual({ ok: false, text: 'browser_snapshot failed: no browser identity "no-such-identity"' });
   });
+
+  it("calls every browser tool with arguments the real server's schema accepts", async () => {
+    // The fake refuses any argument name, type or omission the pinned
+    // invisible-playwright-mcp would refuse (fixtures/mcp-tools.json).
+    harness = await makeHarness();
+    const registry = createToolRegistry({ agentd: fakeAgentd().agentd, browsers: harness.manager });
+    const { ctx } = context();
+    await registry.call("browser_identity_create", { name: "schema" }, ctx);
+    const identity_id = (await harness.manager.list())[0]!.id;
+    const calls: Array<[string, Record<string, unknown>]> = [
+      ["browser_navigate", { url: "https://example.com/" }],
+      ["browser_snapshot", {}],
+      ["browser_read_text", {}],
+      ["browser_read_text", { selector: "h1" }],
+      ["browser_click", { selector: "#go" }],
+      ["browser_click_at", { x: 10, y: 20 }],
+      ["browser_type", { selector: "#q", text: "hello" }],
+      ["browser_press_key", { key: "Enter" }],
+      ["browser_scroll", { direction: "up" }],
+      ["browser_scroll", { direction: "down" }],
+      ["browser_back", {}],
+      ["browser_forward", {}],
+      ["browser_reload", {}],
+      ["browser_screenshot", {}],
+    ];
+    const offered = new Set(registry.definitions(full).map((t) => t.name));
+    const covered = new Set(calls.map(([name]) => name));
+    // Every browser tool the model can see is in the list above.
+    expect([...offered].filter((name) => name.startsWith("browser_") && !name.startsWith("browser_identity_")).sort()).toEqual([...covered].sort());
+    for (const [name, args] of calls) {
+      const result = await registry.call(name, { identity_id, ...args }, ctx);
+      expect(result.ok, `${name}: ${result.text}`).toBe(true);
+    }
+  });
 });

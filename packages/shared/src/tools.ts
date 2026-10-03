@@ -3,6 +3,7 @@
  * checks or describes a tool reads it from here, so a tool exists in exactly
  * one place.
  */
+import { redactProxy } from "./identity-rules.js";
 
 /** The subset of JSON Schema the tool arguments use. */
 export interface JsonSchema {
@@ -52,6 +53,12 @@ export interface ToolDefinition {
   returnsImage: boolean;
   /** Offered only when `browser.identities.managed_by_dot` is true. */
   requiresManagedIdentities: boolean;
+  /**
+   * Arguments that are URLs which may carry a password (a proxy). Wherever a
+   * call's arguments leave the guest (`approval.requested`), the password is
+   * replaced: `redactToolArguments` is the one place that does it.
+   */
+  secretUrlArguments: readonly string[];
 }
 
 function args(properties: Record<string, JsonSchema>, required: string[]): ToolDefinition["parameters"] {
@@ -69,7 +76,7 @@ function tool<const N extends string>(
   permission: Permission,
   description: string,
   parameters: ToolDefinition["parameters"],
-  options: { returnsImage?: boolean; requiresManagedIdentities?: boolean } = {},
+  options: { returnsImage?: boolean; requiresManagedIdentities?: boolean; secretUrlArguments?: readonly string[] } = {},
 ): ToolDefinition & { name: N } {
   return {
     name,
@@ -78,6 +85,7 @@ function tool<const N extends string>(
     parameters,
     returnsImage: options.returnsImage ?? false,
     requiresManagedIdentities: options.requiresManagedIdentities ?? false,
+    secretUrlArguments: options.secretUrlArguments ?? [],
   };
 }
 
@@ -164,7 +172,7 @@ export const TOOLS = [
       },
       ["name"],
     ),
-    { requiresManagedIdentities: true },
+    { requiresManagedIdentities: true, secretUrlArguments: ["proxy"] },
   ),
   tool(
     "browser_identity_delete",
@@ -284,6 +292,22 @@ export type ToolName = (typeof TOOLS)[number]["name"];
 export const TOOL_NAMES: readonly ToolName[] = TOOLS.map((t) => t.name);
 
 const byName = new Map<string, ToolDefinition>(TOOLS.map((t) => [t.name, t]));
+
+/**
+ * A tool call's arguments as they may leave the guest: every argument the
+ * tool lists in `secretUrlArguments` has its password replaced. Unknown
+ * tools and arguments that are not strings pass unchanged.
+ */
+export function redactToolArguments(name: string, args: Record<string, unknown>): Record<string, unknown> {
+  const secret = getTool(name)?.secretUrlArguments ?? [];
+  if (secret.length === 0) return args;
+  const out: Record<string, unknown> = { ...args };
+  for (const key of secret) {
+    const value = out[key];
+    if (typeof value === "string" && value !== "") out[key] = redactProxy(value);
+  }
+  return out;
+}
 
 export function getTool(name: string): ToolDefinition | undefined {
   return byName.get(name);

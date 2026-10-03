@@ -1,49 +1,71 @@
 /**
- * The `invisible-dots` command line client. `run` takes its arguments and
- * its world (output streams, stdin, environment, fetch) as parameters, so the
- * tests drive it in-process against a fake server.
+ * The `invisible-dots` command line. `run` takes its arguments and its world
+ * (output streams, stdin, environment, fetch, the host commands) as
+ * parameters, so the tests drive it in-process against a fake server and
+ * fake host commands.
+ *
+ * Two kinds of command live here: the host commands of architecture
+ * section 11 (setup, doctor, image build, server), which act on this
+ * machine, and the API client commands, which talk to a running server.
  */
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
-import { ApiError, InvisibleDotsClient, type DotSummary, type TaskRecord } from "@invisible-dots/sdk";
-import { hostPaths, type StoredEvent } from "@invisible-dots/shared";
+import { ApiError, type DotSummary, type InvisibleDotsClient, type TaskRecord } from "@invisible-dots/sdk";
+import { ENV, type StoredEvent } from "@invisible-dots/shared";
+import { apiUrl, AuthSetupError, connectApi, DEFAULT_URL } from "./api-client.js";
+import { STORE_OPENROUTER_KEY } from "./commands.js";
+import { EXIT } from "./exit.js";
+
+export { DEFAULT_URL } from "./api-client.js";
+export { EXIT } from "./exit.js";
 
 export const CLI_VERSION = "0.1.0";
-export const DEFAULT_URL = "http://127.0.0.1:8787";
 
-/** Exit codes: what went wrong, for scripts. */
-export const EXIT = {
-  ok: 0,
-  /** The server answered with an error (not found, conflict, invalid config...). */
-  failed: 1,
-  /** Wrong command line. */
-  usage: 2,
-  /** The server could not be reached. */
-  unreachable: 3,
-  /** No API token, or the server refused it. */
-  auth: 4,
-} as const;
+/**
+ * The commands that act on this host. The real ones (host.ts) load QEMU
+ * discovery, the image builder and the whole control plane, so they are
+ * imported only when one of them runs; tests pass fakes.
+ */
+export interface HostCommands {
+  doctor(options: { json: boolean }, io: CliIo): Promise<number>;
+  setup(io: CliIo): Promise<number>;
+  imageBuild(io: CliIo): Promise<number>;
+  server(io: CliIo): Promise<number>;
+}
 
 export interface CliIo {
   stdout: (text: string) => void;
   stderr: (text: string) => void;
-  /** All of standard input, as text. */
+  /** All of standard input, as text: for input that is piped in. */
   readStdin: () => Promise<string>;
+  /**
+   * One line typed in the terminal. Enter ends it on every host; the
+   * end-of-input key differs (Ctrl-D on Linux, Ctrl-Z then Enter on
+   * Windows), so nothing a person types depends on it.
+   */
+  readLine: () => Promise<string>;
   stdinIsTTY: boolean;
   env: Record<string, string | undefined>;
   cwd: string;
   fetch?: typeof fetch;
-  /** Aborted on Ctrl-C, to end `logs`. */
+  /** Aborted on Ctrl-C, to end `logs` and stop `image build`. */
   signal?: AbortSignal;
+  /** Default: the real host commands. */
+  host?: HostCommands;
 }
 
 class UsageError extends Error {}
-class AuthSetupError extends Error {}
 
 export const USAGE = `invisible-dots - control your Dots
 
-Usage:
+Getting this host ready (the same four commands on Linux and Windows):
+  invisible-dots setup                          get QEMU and its accelerator ready (may ask for administrator rights once)
+  invisible-dots doctor [--json]                check everything; one line per check and the command that fixes a failure
+  invisible-dots image build                    build the golden image and the runtime ISO
+  invisible-dots server                         run the control plane in the foreground
+
+Using the server:
   invisible-dots init [file] [--force]          write a sample Dot config (default dot.yaml), check the server
   invisible-dots create <file.yaml>             create a Dot from a YAML config
   invisible-dots list                           list Dots
@@ -58,17 +80,20 @@ Usage:
   invisible-dots approve <approval-id> [--note text]
   invisible-dots reject <approval-id> [--note text]
   invisible-dots secret openrouter [--dot <dot>]
-                                                store the OpenRouter key, read from stdin (never from arguments)
+                                                store the OpenRouter key: asked for in a terminal, read from stdin when piped (never from arguments)
   invisible-dots logs <dot> [--tail N] [--no-follow]
                                                 print recent events, then follow new ones
 
 <dot> is a Dot name or id. Add --json for machine-readable output.
 
 Environment:
-  INVISIBLE_DOTS_URL     server URL (default ${DEFAULT_URL})
-  INVISIBLE_DOTS_TOKEN   API token (default: the first line of /etc/invisible-dots/api.token)
+  ${ENV.HOME}       the data directory (default ~/.invisible-dots)
+  ${ENV.QEMU_DIR}   the one directory QEMU is looked for in, when set (otherwise the official installer's directory, then PATH)
+  ${ENV.URL}        server URL (default ${DEFAULT_URL})
+  ${ENV.TOKEN}      API token (default: the first line of <${ENV.HOME}>/config/api.token)
 
-Exit codes: 0 ok, 1 the server reported an error, 2 usage error, 3 server unreachable, 4 missing or refused token.
+Exit codes: 0 ok; 1 the server reported an error, a doctor check is not ok or a setup step failed;
+2 usage error; 3 server unreachable; 4 missing or refused token; 5 restart the computer, then run doctor.
 `;
 
 export const SAMPLE_DOT = `# A Dot configuration (docs/architecture.md, section 7).
@@ -113,20 +138,17 @@ const OPTIONS = {
   version: { type: "boolean", short: "v" },
 } as const;
 
-async function resolveToken(env: Record<string, string | undefined>): Promise<string> {
-  const fromEnv = env.INVISIBLE_DOTS_TOKEN?.trim();
-  if (fromEnv) return fromEnv;
-  const path = hostPaths(env).apiToken;
+/** The command word of an argument list, so main.ts can decide what Ctrl-C does before `run` starts. */
+export function commandOf(argv: string[]): string | undefined {
   try {
-    const token = (await readFile(path, "utf8")).split(/\r?\n/)[0]!.trim();
-    if (token) return token;
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    throw new AuthSetupError(
-      `no API token: set INVISIBLE_DOTS_TOKEN or make ${path} readable (${code === "EACCES" ? "permission denied: try sudo or join the right group" : code ?? "unreadable"})`,
-    );
+    return parseArgs({ args: argv, options: OPTIONS, allowPositionals: true, strict: false }).positionals[0];
+  } catch {
+    return undefined;
   }
-  throw new AuthSetupError(`no API token: ${path} is empty; set INVISIBLE_DOTS_TOKEN`);
+}
+
+function noArguments(args: string[], command: string): void {
+  if (args.length > 0) throw new UsageError(`${command} takes no arguments, got "${args.join(" ")}"`);
 }
 
 function need(args: string[], index: number, what: string): string {
@@ -187,16 +209,29 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     return command || values.help ? EXIT.ok : EXIT.usage;
   }
 
-  const baseUrl = io.env.INVISIBLE_DOTS_URL?.trim() || DEFAULT_URL;
+  const baseUrl = apiUrl(io.env);
   const out = (value: unknown, text: string) => io.stdout(values.json ? `${JSON.stringify(value, null, 2)}\n` : text);
   let client: InvisibleDotsClient | undefined;
-  const api = async () => {
-    client ??= new InvisibleDotsClient({ baseUrl, token: await resolveToken(io.env), fetch: io.fetch });
-    return client;
-  };
+  const api = async () => (client ??= await connectApi(io.env, io.fetch));
+  const host = async (): Promise<HostCommands> => io.host ?? (await import("./host.js")).realHostCommands();
 
   try {
     switch (command) {
+      case "setup":
+        noArguments(args, "setup");
+        return await (await host()).setup(io);
+      case "doctor":
+        noArguments(args, "doctor");
+        return await (await host()).doctor({ json: values.json === true }, io);
+      case "image": {
+        const what = need(args, 0, "build");
+        if (what !== "build") throw new UsageError(`unknown image subcommand "${what}": use build`);
+        noArguments(args.slice(1), "image build");
+        return await (await host()).imageBuild(io);
+      }
+      case "server":
+        noArguments(args, "server");
+        return await (await host()).server(io);
       case "init": {
         const file = resolve(io.cwd, args[0] ?? "dot.yaml");
         try {
@@ -345,9 +380,9 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
         if (args.length > 1) {
           throw new UsageError("the key is read from stdin, never from arguments (they end up in shell history and ps)");
         }
-        if (io.stdinIsTTY) io.stderr("paste the OpenRouter API key, then press Enter and Ctrl-D:\n");
-        const key = (await io.readStdin()).trim();
-        if (!key) throw new UsageError("no key on stdin; e.g. invisible-dots secret openrouter < key.txt");
+        if (io.stdinIsTTY) io.stderr("paste the OpenRouter API key, then press Enter:\n");
+        const key = (io.stdinIsTTY ? await io.readLine() : await io.readStdin()).trim();
+        if (!key) throw new UsageError(`no key given; run "${STORE_OPENROUTER_KEY}" in a terminal and paste it, or pipe it in`);
         if (/\s/.test(key)) throw new UsageError("the key on stdin contains whitespace; pass only the key");
         const result = await (await api()).setOpenRouterKey(key, values.dot);
         out(
@@ -401,11 +436,11 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     }
     if (error instanceof ApiError) {
       if (error.status === 0) {
-        io.stderr(`invisible-dots: ${error.message}\nIs invisible-dots-server running? Set INVISIBLE_DOTS_URL if it listens elsewhere.\n`);
+        io.stderr(`invisible-dots: ${error.message}\nIs the server running (invisible-dots server)? Set ${ENV.URL} if it listens elsewhere.\n`);
         return EXIT.unreachable;
       }
       if (error.status === 401) {
-        io.stderr(`invisible-dots: the server refused the API token (401); check INVISIBLE_DOTS_TOKEN or api.token\n`);
+        io.stderr(`invisible-dots: the server refused the API token (401); check ${ENV.TOKEN} or api.token\n`);
         return EXIT.auth;
       }
       io.stderr(`invisible-dots: ${error.message} [${error.status} ${error.code}]\n`);
@@ -417,7 +452,8 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
       }
       return EXIT.failed;
     }
-    if (io.signal?.aborted) return EXIT.ok;
+    // Ctrl-C is how `logs` ends; for every other command it is an interruption.
+    if (io.signal?.aborted && command === "logs") return EXIT.ok;
     io.stderr(`invisible-dots: ${(error as Error).message}\n`);
     return EXIT.failed;
   }

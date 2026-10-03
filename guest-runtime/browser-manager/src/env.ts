@@ -1,25 +1,17 @@
-import { ENV } from "@invisible-dots/shared";
+import { allowlistedEnvironment, BASE_CHILD_ENV_VARS, ENV } from "@invisible-dots/shared";
 
 /**
  * Variables an identity's MCP server may inherit from the agent. The agent
  * holds the OpenRouter key in memory and its environment may carry other
- * secrets, so the child gets an allowlist, never a copy with things removed.
- * Everything the browser layer needs to know about the identity is set
- * explicitly by `childEnvironment`.
+ * secrets, so the child gets an allowlist (the shared filter of
+ * packages/shared), never a copy with things removed. Everything the browser
+ * layer needs to know about the identity is set explicitly by
+ * `childEnvironment`.
  */
 export const INHERITED_ENV_VARS: readonly string[] = [
-  "PATH",
-  "HOME",
-  "USER",
-  "LOGNAME",
+  ...BASE_CHILD_ENV_VARS,
   "SHELL",
   "TERM",
-  "LANG",
-  "LANGUAGE",
-  "LC_ALL",
-  "LC_CTYPE",
-  "TZ",
-  "TMPDIR",
   "XDG_RUNTIME_DIR",
   "XDG_CACHE_HOME",
   "XDG_CONFIG_HOME",
@@ -27,19 +19,6 @@ export const INHERITED_ENV_VARS: readonly string[] = [
   "XAUTHORITY",
   // Set by the golden image when the engine is installed outside the cache.
   "STEALTHFOX_BINARY",
-  // Windows needs these to start any process at all; they only matter on development machines.
-  "SYSTEMROOT",
-  "WINDIR",
-  "TEMP",
-  "TMP",
-  "USERPROFILE",
-  "APPDATA",
-  "LOCALAPPDATA",
-  "PATHEXT",
-  "COMSPEC",
-  "HOMEDRIVE",
-  "HOMEPATH",
-  "PROGRAMFILES",
 ];
 
 export interface ChildEnvironmentInput {
@@ -55,15 +34,7 @@ export function childEnvironment(
   input: ChildEnvironmentInput,
   base: Record<string, string | undefined>,
 ): Record<string, string> {
-  // Windows environment names are case-insensitive (`Path` is `PATH`).
-  const allowed = new Set(INHERITED_ENV_VARS.map((name) => name.toUpperCase()));
-  const env: Record<string, string> = {};
-  for (const [name, value] of Object.entries(base)) {
-    if (value === undefined || !allowed.has(name.toUpperCase())) continue;
-    // A value starting with "()" is an exported shell function, a known injection vector.
-    if (value.startsWith("()")) continue;
-    env[name] = value;
-  }
+  const env = allowlistedEnvironment(base, INHERITED_ENV_VARS);
   env[ENV.MCP_HOME] = input.mcpHome;
   env[ENV.MCP_SESSION_ID] = input.identityId;
   env[ENV.PROFILE_DIR] = input.profileDir;

@@ -1,0 +1,98 @@
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { writeIso } from "@invisible-dots/iso";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_USER_DATA, defaultAssetRoot, readGuestAsset } from "../src/assets.js";
+import { GUEST_PINS } from "../src/pins.js";
+import { parsePythonLock } from "../src/python-lock.js";
+import { SEED_VOLUME_ID } from "@invisible-dots/vm-manager";
+import { builderMetaData, builderSeedEntries, pinsEnv } from "../src/seed.js";
+
+const pythonLock = await readGuestAsset(defaultAssetRoot(), BUILDER_PYTHON_LOCK);
+const python = parsePythonLock(pythonLock.toString("utf8"));
+
+let dir: string;
+beforeEach(async () => {
+  dir = await mkdtemp(join(tmpdir(), "idots-seed-"));
+});
+afterEach(async () => {
+  await rm(dir, { recursive: true, force: true });
+});
+
+describe("pins.env", () => {
+  it("carries every value provision.sh reads, single-quoted", async () => {
+    const text = pinsEnv(GUEST_PINS, python);
+    expect(text).toContain(`NODE_VERSION='${GUEST_PINS.node.version}'\n`);
+    expect(text).toContain(`NODE_TARBALL='node-v${GUEST_PINS.node.version}-linux-x64.tar.xz'\n`);
+    expect(text).toContain(`UV_VERSION='${GUEST_PINS.uv.version}'\n`);
+    expect(text).toContain("UV_TARBALL='uv-x86_64-unknown-linux-gnu.tar.gz'\n");
+    // The two Python versions come from the lock, the one place they are written.
+    expect(text).toContain(`MCP_VERSION='${python.mcpVersion}'\n`);
+    expect(text).toContain(`PLAYWRIGHT_VERSION='${python.playwrightVersion}'\n`);
+    expect(text).toContain("PYTHON_LOCK='mcp-requirements.lock'\n");
+    expect(text).toContain(`APT_PACKAGES='${GUEST_PINS.apt_packages.join(" ")}'\n`);
+
+    const provision = (await readGuestAsset(defaultAssetRoot(), BUILDER_PROVISION)).toString("utf8");
+    for (const variable of text.split("\n").filter(Boolean).map((line) => line.split("=")[0]!)) {
+      expect(provision).toContain(`$${variable}`);
+    }
+  });
+
+  it("refuses a value that could break out of the quotes", () => {
+    expect(() => pinsEnv({ ...GUEST_PINS, apt_packages: ["xvfb", "it's"] }, python)).toThrow(/APT_PACKAGES/);
+  });
+});
+
+describe("the builder seed", () => {
+  it("holds the NoCloud files, the provisioner, its pins, the Python lock and both tarballs", async () => {
+    const nodeTarball = join(dir, "node.tar.xz");
+    const uvTarball = join(dir, "uv.tar.gz");
+    await writeFile(nodeTarball, "node bytes");
+    await writeFile(uvTarball, "uv bytes");
+    const userData = await readGuestAsset(defaultAssetRoot(), BUILDER_USER_DATA);
+    const provision = await readGuestAsset(defaultAssetRoot(), BUILDER_PROVISION);
+    const entries = builderSeedEntries({
+      version: "20261002120000-abc",
+      pins: GUEST_PINS,
+      userData,
+      provision,
+      pythonLock,
+      python,
+      nodeTarball,
+      uvTarball,
+    });
+
+    expect(entries.map((entry) => entry.path)).toEqual([
+      "user-data",
+      "meta-data",
+      "provision.sh",
+      "pins.env",
+      "mcp-requirements.lock",
+      `node-v${GUEST_PINS.node.version}-linux-x64.tar.xz`,
+      "uv-x86_64-unknown-linux-gnu.tar.gz",
+    ]);
+    expect(entries[0]).toEqual({ path: "user-data", data: userData });
+    expect(entries[4]).toEqual({ path: "mcp-requirements.lock", data: pythonLock });
+    expect(entries[5]).toEqual({ path: entries[5]!.path, file: nodeTarball });
+
+    // The real writer accepts it under the label NoCloud looks for.
+    const summary = await writeIso(join(dir, "seed.iso"), entries, { volumeId: SEED_VOLUME_ID });
+    expect(summary.files).toBe(7);
+    const image = await readFile(join(dir, "seed.iso"));
+    // Primary volume descriptor at sector 16: the label at offset 40.
+    expect(image.toString("latin1", 16 * 2048 + 40, 16 * 2048 + 46)).toBe("cidata");
+  });
+
+  it("gives every build its own instance id, so cloud-init runs as on a first boot", () => {
+    expect(builderMetaData("v1")).toBe("instance-id: idots-golden-v1\nlocal-hostname: idots-golden-builder\n");
+    expect(builderMetaData("v1")).not.toBe(builderMetaData("v2"));
+  });
+
+  it("user-data mounts that same seed by label and runs the provisioner, failing loudly", async () => {
+    const userData = (await readGuestAsset(defaultAssetRoot(), BUILDER_USER_DATA)).toString("utf8");
+    expect(userData.startsWith("#cloud-config\n")).toBe(true);
+    expect(userData).toContain(`mount -o ro LABEL=${SEED_VOLUME_ID} /mnt/idots-build && bash /mnt/idots-build/provision.sh`);
+    expect(userData).toContain("IDOTS-BUILD-RESULT: failed");
+  });
+});

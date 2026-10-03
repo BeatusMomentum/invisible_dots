@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -252,9 +252,25 @@ describe("agent HTTP API", () => {
     await agent.shutdown();
     await boot();
     const stream = await openStream(`/events/stream?after=${lastSeq}`);
-    await stream.waitFor(1);
-    expect(stream.events[0]).toMatchObject({ seq: lastSeq + 1, type: "agent.state" });
+    await stream.waitFor(2);
+    expect(stream.events[0]).toMatchObject({ seq: lastSeq + 1, type: "agent.started" });
+    expect(stream.events[1]).toMatchObject({ seq: lastSeq + 2, type: "agent.state" });
     stream.close();
+  });
+
+  it("keeps identities in dot.db across a restart, and metadata.json follows a delete", async () => {
+    await call("PUT", "/config", config);
+    const kept = (await call("POST", "/browser-identities", { name: "Kept" })).json!.id as string;
+    const gone = (await call("POST", "/browser-identities", { name: "Gone" })).json!.id as string;
+    await agent.shutdown();
+    await boot();
+    const listed = (await call("GET", "/browser-identities")).json!.identities as { id: string; name: string }[];
+    expect(listed.map((i) => i.id).sort()).toEqual([kept, gone].sort());
+    expect((await call("DELETE", `/browser-identities/${gone}`)).status).toBe(204);
+    expect(existsSync(join(dir, "browsers", gone))).toBe(false);
+    const metadata = JSON.parse(readFileSync(join(dir, "browsers", kept, "metadata.json"), "utf8")) as { id: string; name: string };
+    expect(metadata).toMatchObject({ id: kept, name: "Kept" });
+    expect((await call("GET", "/browser-identities")).json!.identities).toEqual([expect.objectContaining({ id: kept, name: "Kept" })]);
   });
 
   it("answers 404 and 405 with the error shape", async () => {

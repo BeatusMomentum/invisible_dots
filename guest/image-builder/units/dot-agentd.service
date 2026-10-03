@@ -1,5 +1,5 @@
 [Unit]
-Description=invisible_dots computer daemon (vsock port 1024 and the local agentd socket)
+Description=invisible_dots computer daemon (TCP port 1024 and the local agentd socket)
 After=network-online.target dot-desktop.service
 Wants=network-online.target dot-desktop.service
 RequiresMountsFor=/opt/invisible-dots
@@ -14,6 +14,11 @@ Environment=HOME=/home/dot
 # invisible-playwright-mcp, which uv installed in ~/.local/bin.
 Environment=DISPLAY=:0
 Environment=PATH=/home/dot/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# dot-agentd's default listen address is all guest addresses on TCP 1024: QEMU's
+# user-mode NAT delivers the host's port forward to the guest's 10.0.2.15, not
+# to its loopback. The golden image enables no firewall, so nothing in the
+# guest stands between the forward and the port; every request still needs the
+# Dot's token (architecture 5.1).
 ExecStart=/opt/invisible-dots/bin/dot-agentd
 Restart=on-failure
 RestartSec=2

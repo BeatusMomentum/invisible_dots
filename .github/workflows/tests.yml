@@ -14,16 +14,160 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# `gate` is the ONLY context the branch protection requires: it depends on every
-# job, so its name never drifts when the matrix changes. Unlike its siblings it
-# accepts nothing but success, because no job here is ever skipped on purpose:
-# a skip would mean a job that did not run, which reads exactly like one that
-# passed.
 defaults:
   run:
     shell: bash
 
+# `gate` is the ONLY context the branch protection requires: it depends on every
+# job, so its name never drifts when the jobs change. It accepts nothing but
+# success, because no job here is ever skipped on purpose and none has a paths
+# filter: a skip would mean a job that did not run, which reads exactly like
+# one that passed.
 jobs:
+  node:
+    name: typecheck, vitest and bundles (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floors each host must reach live in .github/test-floors.json,
+        # which the pre-push hook reads too.
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run typecheck
+      - name: the pre-push hook parses
+        run: sh -n .githooks/pre-push
+      - name: vitest
+        run: npx vitest run --reporter=default --reporter=json --outputFile=vitest-report.json
+      # vitest's exit code cannot tell "everything passed" from "half of it
+      # was never collected" or "a suite skipped itself": count what ran.
+      - name: refuse a run with too few tests or an unexpected skip
+        if: always()
+        run: node .github/scripts/test-guard.mjs vitest-report.json --suite vitest
+      - name: bundles (guest agent and the command, which carries the server)
+        run: |
+          npm run build --workspace @invisible-dots/invisible-dots-agent
+          npm run build --workspace @invisible-dots/cli
+      # The bundled command on a fresh home: doctor must run end to end and
+      # create nothing. Its exit code is not 0 here (no QEMU, no images), so
+      # only "it ran and printed every check" is asserted.
+      - name: the bundled doctor runs and creates nothing
+        env:
+          INVISIBLE_DOTS_HOME: ${{ runner.temp }}/idots-home
+        run: |
+          set +e
+          node apps/cli/dist/invisible-dots.mjs doctor > doctor.txt 2>&1
+          code=$?
+          set -e
+          cat doctor.txt
+          echo "doctor exit code: $code"
+          grep -q "checks:" doctor.txt
+          test ! -e "$INVISIBLE_DOTS_HOME"
+
+  postgres:
+    name: the pg adapter against PostgreSQL
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.4-alpine3.23
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      # With DATABASE_URL set, every suite parametrized with testAdapters()
+      # runs on pg as well as on PGlite.
+      DATABASE_URL: postgres://postgres:test@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: vitest on both adapters
+        run: npx vitest run packages/database packages/events apps/api apps/scheduler --reporter=default --reporter=json --outputFile=vitest-report.json
+      - name: refuse a run in which the pg suites did not run
+        if: always()
+        run: node .github/scripts/test-guard.mjs vitest-report.json --suite postgres
+
+  iso:
+    name: the Linux kernel reads our ISO images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      # The unit tests read images back with our own parser; this is the
+      # reader a guest really uses. See packages/iso/scripts/kernel-check.ts.
+      - name: write, mount read-only, compare
+        run: |
+          npx tsx packages/iso/scripts/kernel-check.ts write "$RUNNER_TEMP/sample.iso"
+          blkid -p -o export "$RUNNER_TEMP/sample.iso" | tee blkid.txt
+          grep -qx "TYPE=iso9660" blkid.txt
+          grep -qx "LABEL=cidata" blkid.txt
+          mkdir -p "$RUNNER_TEMP/mnt"
+          sudo mount -o loop,ro "$RUNNER_TEMP/sample.iso" "$RUNNER_TEMP/mnt"
+          npx tsx packages/iso/scripts/kernel-check.ts verify "$RUNNER_TEMP/mnt"
+          sudo umount "$RUNNER_TEMP/mnt"
+
+  go:
+    name: dot-agentd (gofmt, go vet, go test, static build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: guest/dot-agentd
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: guest/dot-agentd/go.mod
+          # The module has no dependencies, so there is no go.sum to key a cache on.
+          cache: false
+      - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: GOOS=windows go vet ./...
+      # go test exits 0 when a test skipped itself or a build constraint left
+      # a file out, so what ran is counted against the same floors file.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: go test -json -count=1 ./... > go-test.json
+      - name: refuse a run with too few tests or an unexpected skip
+        if: always()
+        run: node ../../.github/scripts/test-guard.mjs go-test.json --suite go --floors ../../.github/test-floors.json
+      - run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/dot-agentd ./cmd/dot-agentd
+      - run: file bin/dot-agentd | tee /dev/stderr | grep -q "ELF 64-bit LSB executable, x86-64.*statically linked"
+
+  web:
+    name: the web client builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: next build
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm run build --workspace @invisible-dots/web
+
   english:
     name: the repository is English
     runs-on: ubuntu-latest
@@ -32,12 +176,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      # The gate ships inside the pinned browser layer; its settings are read
+      # The gate ships in the pinned invisible-core; its settings are read
       # from pyproject.toml ([tool.invisible.english]).
-      - name: install the pinned package, which carries the gate
+      - name: install the pinned gates
         run: |
           python -m pip install --upgrade pip
-          pip install "invisible-playwright-mcp==0.70.2"
+          pip install -r .github/gates-requirements.txt
       - name: check the prose
         run: |
           python -m invisible_core.english --selftest
@@ -51,109 +195,34 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: install the pinned package, which carries the gate
+      - name: install the pinned gates
         run: |
           python -m pip install --upgrade pip
-          pip install "invisible-playwright-mcp==0.70.2"
+          pip install -r .github/gates-requirements.txt
       - name: check the claims
         run: |
           python -m invisible_core.claims --selftest
           python -m invisible_core.claims
 
-  node:
-    name: typecheck, vitest and builds (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "24"
-          cache: npm
-      - run: npm ci --no-audit --no-fund
-      - run: npm run typecheck
-      # PostgreSQL runs on Linux only (service containers need a Linux runner).
-      # Its suites print a banner and skip without DATABASE_URL; the Linux run
-      # below refuses to count a run in which they skipped.
-      - name: start PostgreSQL
-        if: runner.os == 'Linux'
-        run: |
-          docker run -d --name pg -e POSTGRES_PASSWORD=test -p 127.0.0.1:55432:5432 postgres:18
-          for i in $(seq 1 60); do docker exec pg pg_isready -U postgres -h 127.0.0.1 && break; sleep 1; done
-          echo "DATABASE_URL=postgres://postgres:test@127.0.0.1:55432/postgres" >> "$GITHUB_ENV"
-      - name: vitest
-        run: |
-          set -o pipefail
-          npx vitest run --reporter=default --reporter=json --outputFile=vitest-report.json | tee vitest.txt
-      # vitest's exit code cannot tell "everything passed" from "everything was
-      # skipped": on Linux, where PostgreSQL and bash are present, nothing may skip.
-      - name: refuse a Linux run with skipped tests
-        if: runner.os == 'Linux'
-        run: |
-          node -e '
-            const r = require("./vitest-report.json");
-            const skipped = r.numPendingTests + r.numTodoTests;
-            console.log(`${r.numPassedTests} passed, ${r.numFailedTests} failed, ${skipped} skipped`);
-            if (skipped > 0 || r.numPassedTests === 0) process.exit(1);
-          '
-      - name: bundles
-        run: |
-          npm run build --workspace @invisible-dots/invisible-dots-agent
-          npm run build --workspace @invisible-dots/api
-          npm run build --workspace @invisible-dots/cli
-      - name: web client
-        env:
-          NEXT_TELEMETRY_DISABLED: "1"
-        run: npm run build --workspace @invisible-dots/web
-
-  go:
-    name: dot-agentd (go vet, go test, static build)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: guest/dot-agentd
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: guest/dot-agentd/go.mod
-          cache-dependency-path: guest/dot-agentd/go.sum
-      - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
-      - run: go vet ./...
-      - run: GOOS=windows go vet ./...
-      - run: go test -count=1 ./...
-      - run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o bin/dot-agentd ./cmd/dot-agentd
-
-  shell:
-    name: shell scripts parse
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - run: |
-          for f in $(git ls-files '*.sh') .githooks/pre-push; do
-            bash -n "$f" || exit 1
-            echo "ok $f"
-          done
-
   gate:
-    needs: [english, claims, node, go, shell]
+    needs: [node, postgres, iso, go, web, english, claims]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: refuse unless every job succeeded
+        env:
+          RESULTS: ${{ toJSON(needs) }}
         run: |
-          echo "english: ${{ needs.english.result }}"
-          echo "claims:  ${{ needs.claims.result }}"
-          echo "node:    ${{ needs.node.result }}"
-          echo "go:      ${{ needs.go.result }}"
-          echo "shell:   ${{ needs.shell.result }}"
-          for result in "${{ needs.english.result }}" "${{ needs.claims.result }}" "${{ needs.node.result }}" "${{ needs.go.result }}" "${{ needs.shell.result }}"; do
-            if [ "$result" != "success" ]; then
-              echo "a job did not succeed: $result"
-              exit 1
-            fi
-          done
-          echo "ok"
+          echo "$RESULTS"
+          node -e '
+            const needs = JSON.parse(process.env.RESULTS);
+            const names = Object.keys(needs);
+            if (names.length !== 7) { console.error(`expected 7 jobs, got ${names.length}`); process.exit(1); }
+            let ok = true;
+            for (const name of names) {
+              console.log(`${name}: ${needs[name].result}`);
+              if (needs[name].result !== "success") ok = false;
+            }
+            if (!ok) { console.error("a job did not succeed"); process.exit(1); }
+            console.log("ok");
+          '

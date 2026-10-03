@@ -1,7 +1,8 @@
 /**
  * The host to guest protocol of architecture section 5: dot-agentd routes
- * (5.2), invisible-dots-agent routes (5.3), the guest filesystem (4.2), the
- * host filesystem (3.2) and the environment variables every component reads.
+ * (5.2), invisible-dots-agent routes (5.3), the guest filesystem (4.2) and
+ * the environment variables every component reads. The host filesystem (3.2)
+ * is in paths.ts, which needs node:path and so stays out of the web client.
  */
 import type { DotRuntimeConfig } from "./config.js";
 import type { ApprovalRequestedData } from "./events.js";
@@ -15,8 +16,11 @@ function join(...parts: string[]): string {
   return parts.map((p, i) => (i === 0 ? p.replace(/\/+$/, "") : p.replace(/^\/+|\/+$/g, ""))).join("/");
 }
 
-/** dot-agentd listens on this vsock port (section 5.1). */
-export const VSOCK_PORT = 1024;
+/**
+ * dot-agentd listens on this TCP port inside the guest; QEMU forwards a free
+ * port on the host's 127.0.0.1 to it (sections 3.5 and 5.1).
+ */
+export const GUEST_PORT = 1024;
 
 /** stdout and stderr of `POST /v1/exec` are each capped at this many bytes. */
 export const EXEC_OUTPUT_CAP_BYTES = 1024 * 1024;
@@ -35,29 +39,13 @@ export const OPENROUTER_REFERER = "https://github.com/feder-cr/dots";
 export const OPENROUTER_TITLE = "invisible_dots";
 
 export const DEFAULT_LISTEN = "127.0.0.1:8787";
-export const DEFAULT_CID_BASE = 10_000;
-
-/** 0, 1 and 2 are reserved vsock CIDs (hypervisor, local, host); 0xFFFFFFFF is VMADDR_CID_ANY. */
-export const MIN_GUEST_CID = 3;
-export const MAX_GUEST_CID = 0xfffffffe;
-
-/** The first CID the control plane allocates, from INVISIBLE_DOTS_CID_BASE (section 3.5). */
-export function cidBaseFromEnv(env: Record<string, string | undefined> = globalThis.process?.env ?? {}): number {
-  const raw = env[ENV.CID_BASE];
-  if (raw === undefined || raw.trim() === "") return DEFAULT_CID_BASE;
-  const value = Number(raw);
-  if (!Number.isInteger(value) || value < MIN_GUEST_CID || value > MAX_GUEST_CID) {
-    throw new Error(`${ENV.CID_BASE}="${raw}" is not a valid vsock CID (an integer from ${MIN_GUEST_CID} to ${MAX_GUEST_CID})`);
-  }
-  return value;
-}
 
 /** Environment variable names. */
 export const ENV = {
-  STATE_DIR: "INVISIBLE_DOTS_STATE_DIR",
-  RUN_DIR: "INVISIBLE_DOTS_RUN_DIR",
-  CONFIG_DIR: "INVISIBLE_DOTS_CONFIG_DIR",
-  CID_BASE: "INVISIBLE_DOTS_CID_BASE",
+  /** The one host data directory (section 3.2); default `~/.invisible-dots`. */
+  HOME: "INVISIBLE_DOTS_HOME",
+  /** The one directory QEMU is looked for in, when set (section 3.1). */
+  QEMU_DIR: "INVISIBLE_DOTS_QEMU_DIR",
   LISTEN: "INVISIBLE_DOTS_LISTEN",
   /** The API token itself, instead of the api.token file: the server's token, or the one a client sends. */
   TOKEN: "INVISIBLE_DOTS_TOKEN",
@@ -110,43 +98,10 @@ export interface GuestBootConfig {
   token: string;
 }
 
-/** Host directories (section 3.2), honouring the INVISIBLE_DOTS_*_DIR overrides. */
-export function hostPaths(env: Record<string, string | undefined> = globalThis.process?.env ?? {}) {
-  const stateDir = env[ENV.STATE_DIR] || "/var/lib/invisible-dots";
-  const runDir = env[ENV.RUN_DIR] || "/run/invisible-dots";
-  const configDir = env[ENV.CONFIG_DIR] || "/etc/invisible-dots";
-  const vmsDir = join(stateDir, "vms");
-  const imagesDir = join(stateDir, "images");
-  return {
-    stateDir,
-    runDir,
-    configDir,
-    imagesDir,
-    vmsDir,
-    snapshotsDir: join(stateDir, "snapshots"),
-    artifactsDir: join(stateDir, "artifacts"),
-    backupsDir: join(stateDir, "backups"),
-    serverEnv: join(configDir, "server.env"),
-    masterKey: join(configDir, "master.key"),
-    apiToken: join(configDir, "api.token"),
-    goldenImage: (version: string) => join(imagesDir, `golden-${version}.qcow2`),
-    runtimeImage: (version: string) => join(imagesDir, `runtime-${version}.iso`),
-    vmDir: (dotId: string) => join(vmsDir, dotId),
-    vmDisk: (dotId: string) => join(vmsDir, dotId, "disk.qcow2"),
-    vmSeed: (dotId: string) => join(vmsDir, dotId, "seed.iso"),
-    vmSerialLog: (dotId: string) => join(vmsDir, dotId, "serial.log"),
-    bridgeSocket: (dotId: string) => join(runDir, `dot-${dotId}.sock`),
-  };
-}
-export type HostPaths = ReturnType<typeof hostPaths>;
-
-/** The libvirt domain name of a Dot (section 3.4). */
-export function domainName(dotId: string): string {
+/** The QEMU `-name` of a Dot's VM, also stored as `computers.vm_name` (sections 3.4 and 9.1). */
+export function vmName(dotId: string): string {
   return `invisible-dot-${dotId}`;
 }
-
-/** The libvirt network every Dot's NIC is attached to. */
-export const LIBVIRT_NETWORK = "invisible-dots";
 
 export const AGENTD_ROUTES = {
   health: "/v1/health",
@@ -155,9 +110,30 @@ export const AGENTD_ROUTES = {
   files: "/v1/files",
   filesList: "/v1/files/list",
   screenshot: "/v1/screenshot",
+  /**
+   * The one route without the token (section 5.1): `?nonce=<hex>` answers
+   * `{ proof }`, the HMAC-SHA256 of GUEST_PROOF_CONTEXT plus the nonce under
+   * the Dot token. The host asks it before it sends the token anywhere, so a
+   * process that took over a stale guest port never sees the token.
+   */
+  proof: "/v1/proof",
+  /**
+   * How the control plane stops a VM (section 3.4): the guest powers itself
+   * off and QEMU exits with it. Served on the TCP port only, never on the
+   * agent's socket: powering off is the control plane's decision.
+   */
+  poweroff: "/v1/system/poweroff",
   /** Prefix of the reverse proxy to the agent socket. */
   agent: "/v1/agent",
 } as const;
+
+/** What `GET /v1/proof` signs before the nonce; dot-agentd's Go code holds the same bytes. */
+export const GUEST_PROOF_CONTEXT = "invisible-dots guest proof v1\n";
+
+/** `GET /v1/proof` answer: lowercase hex. */
+export interface ProofAnswer {
+  proof: string;
+}
 
 export const AGENT_ROUTES = {
   health: "/health",

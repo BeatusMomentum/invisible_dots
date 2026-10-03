@@ -1,10 +1,10 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { EXIT, run, SAMPLE_DOT, type CliIo } from "../src/index.js";
+import { commandOf, EXIT, run, SAMPLE_DOT, type CliIo, type HostCommands } from "../src/index.js";
 
 const TOKEN = "cli-test-token-0123456789";
 
@@ -33,8 +33,9 @@ const dot = {
 };
 const computer = {
   dot_id: dot.id,
-  domain_name: "invisible-dot-dot_01abc",
-  cid: 10000,
+  vm_name: "invisible-dot-dot_01abc",
+  guest_port: 40123,
+  pid: 4242,
   state: "RUNNING",
   golden_image: null,
   runtime_image: null,
@@ -167,17 +168,22 @@ beforeEach(() => {
   stopped = false;
 });
 
-async function cli(argv: string[], options: { env?: Record<string, string>; stdin?: string; tty?: boolean; signal?: AbortSignal } = {}) {
+async function cli(
+  argv: string[],
+  options: { env?: Record<string, string>; stdin?: string; line?: string; tty?: boolean; signal?: AbortSignal; host?: HostCommands } = {},
+) {
   let stdout = "";
   let stderr = "";
   const io: CliIo = {
     stdout: (t) => (stdout += t),
     stderr: (t) => (stderr += t),
     readStdin: async () => options.stdin ?? "",
+    readLine: async () => options.line ?? "",
     stdinIsTTY: options.tty ?? false,
-    env: { INVISIBLE_DOTS_URL: base, INVISIBLE_DOTS_TOKEN: TOKEN, INVISIBLE_DOTS_CONFIG_DIR: configDir, ...options.env },
+    env: { INVISIBLE_DOTS_URL: base, INVISIBLE_DOTS_TOKEN: TOKEN, INVISIBLE_DOTS_HOME: configDir, ...options.env },
     cwd: configDir,
     ...(options.signal ? { signal: options.signal } : {}),
+    ...(options.host ? { host: options.host } : {}),
   };
   const code = await run(argv, io);
   return { code, stdout, stderr };
@@ -188,7 +194,7 @@ describe("usage", () => {
     expect((await cli(["--help"])).code).toBe(EXIT.ok);
     const none = await cli([]);
     expect(none.code).toBe(EXIT.usage);
-    expect(none.stdout).toContain("Usage:");
+    expect(none.stdout).toContain("invisible-dots setup");
     expect((await cli(["launch"])).stderr).toMatch(/unknown command "launch"/);
     expect((await cli(["list", "--bogus"])).code).toBe(EXIT.usage);
     expect((await cli(["status"])).stderr).toMatch(/missing <dot>/);
@@ -197,17 +203,18 @@ describe("usage", () => {
 });
 
 describe("server and token", () => {
-  it("reads the token from api.token in the config dir when INVISIBLE_DOTS_TOKEN is unset", async () => {
-    await writeFile(join(configDir, "api.token"), `${TOKEN}\n`);
+  it("reads the token from <INVISIBLE_DOTS_HOME>/config/api.token when INVISIBLE_DOTS_TOKEN is unset", async () => {
+    await mkdir(join(configDir, "config"), { recursive: true });
+    await writeFile(join(configDir, "config", "api.token"), `${TOKEN}\n`);
     const result = await cli(["list"], { env: { INVISIBLE_DOTS_TOKEN: "" } });
     expect(result.code).toBe(EXIT.ok);
-    await rm(join(configDir, "api.token"));
+    await rm(join(configDir, "config"), { recursive: true });
   });
 
   it("exit 4 without a token or with a refused one, exit 3 when the server is unreachable", async () => {
-    const missing = await cli(["list"], { env: { INVISIBLE_DOTS_TOKEN: "", INVISIBLE_DOTS_CONFIG_DIR: join(configDir, "none") } });
+    const missing = await cli(["list"], { env: { INVISIBLE_DOTS_TOKEN: "", INVISIBLE_DOTS_HOME: join(configDir, "none") } });
     expect(missing.code).toBe(EXIT.auth);
-    expect(missing.stderr).toMatch(/no API token/);
+    expect(missing.stderr).toMatch(/no API token: .*api\.token does not exist yet; start the server once/);
     const refused = await cli(["list"], { env: { INVISIBLE_DOTS_TOKEN: "wrong-token-123456789" } });
     expect(refused.code).toBe(EXIT.auth);
     expect(refused.stderr).toMatch(/refused the API token/);
@@ -305,6 +312,25 @@ describe("commands", () => {
     expect((await cli(["secret", "openrouter"], { stdin: "  " })).code).toBe(EXIT.usage);
   });
 
+  it("secret openrouter in a terminal reads one line, which Enter ends on every host", async () => {
+    // A terminal never reaches end of input by itself, and the key that ends it differs by host:
+    // only the line is read, so the command never waits for it.
+    const typed = await cli(["secret", "openrouter"], {
+      tty: true,
+      line: "sk-or-v1-typed",
+      stdin: "never read: a terminal does not end",
+    });
+    expect(typed.code).toBe(EXIT.ok);
+    expect(typed.stderr).toBe("paste the OpenRouter API key, then press Enter:\n");
+    expect(typed.stderr).not.toMatch(/Ctrl/);
+    expect(requests.at(-1)?.body).toEqual({ value: "sk-or-v1-typed" });
+    const empty = await cli(["secret", "openrouter"], { tty: true, line: "" });
+    expect(empty.code).toBe(EXIT.usage);
+    // The hint is a command that runs as printed in PowerShell too: no "<" redirection.
+    expect(empty.stderr).toContain('run "invisible-dots secret openrouter" in a terminal');
+    expect(empty.stderr).not.toContain("<");
+  });
+
   it("logs prints the tail without follow, and follows the stream until interrupted", async () => {
     const tail = await cli(["logs", "fare-watch", "--tail", "2", "--no-follow"]);
     expect(tail.code).toBe(EXIT.ok);
@@ -321,6 +347,7 @@ describe("commands", () => {
       },
       stderr: () => {},
       readStdin: async () => "",
+      readLine: async () => "",
       stdinIsTTY: false,
       env: { INVISIBLE_DOTS_URL: base, INVISIBLE_DOTS_TOKEN: TOKEN },
       cwd: configDir,
@@ -332,5 +359,66 @@ describe("commands", () => {
     const stream = requests.find((r) => r.path === "/api/stream");
     expect(stream?.query.get("after")).toBe("5");
     expect(stream?.query.get("dot_id")).toBe(dot.id);
+  });
+});
+
+describe("host commands", () => {
+  function fakeHost() {
+    const calls: string[] = [];
+    const host: HostCommands = {
+      doctor: async (options, io) => {
+        calls.push(`doctor json=${options.json}`);
+        io.stdout("all 9 checks ok\n");
+        return EXIT.ok;
+      },
+      setup: async () => {
+        calls.push("setup");
+        return EXIT.restart;
+      },
+      imageBuild: async () => {
+        calls.push("image build");
+        return EXIT.failed;
+      },
+      server: async () => {
+        calls.push("server");
+        return EXIT.ok;
+      },
+    };
+    return { host, calls };
+  }
+
+  it("routes setup, doctor, image build and server, and returns their exit codes", async () => {
+    const { host, calls } = fakeHost();
+    expect((await cli(["doctor"], { host })).stdout).toBe("all 9 checks ok\n");
+    expect((await cli(["doctor", "--json"], { host })).code).toBe(EXIT.ok);
+    expect((await cli(["setup"], { host })).code).toBe(EXIT.restart);
+    expect((await cli(["image", "build"], { host })).code).toBe(EXIT.failed);
+    expect((await cli(["server"], { host })).code).toBe(EXIT.ok);
+    expect(calls).toEqual(["doctor json=false", "doctor json=true", "setup", "image build", "server"]);
+    // None of them needs the API or its token.
+    expect(requests).toHaveLength(0);
+  });
+
+  it("refuses stray arguments with exit 2, and reports a host command that throws with exit 1", async () => {
+    const { host, calls } = fakeHost();
+    expect((await cli(["image"], { host })).stderr).toMatch(/missing build/);
+    expect((await cli(["image", "pull"], { host })).stderr).toMatch(/unknown image subcommand "pull"/);
+    expect((await cli(["image", "build", "now"], { host })).code).toBe(EXIT.usage);
+    expect((await cli(["setup", "x"], { host })).code).toBe(EXIT.usage);
+    expect((await cli(["doctor", "all"], { host })).stderr).toMatch(/doctor takes no arguments/);
+    expect(calls).toEqual([]);
+
+    host.server = async () => {
+      throw new Error("another invisible-dots server (pid 42) is already running");
+    };
+    const failed = await cli(["server"], { host });
+    expect(failed.code).toBe(EXIT.failed);
+    expect(failed.stderr).toBe("invisible-dots: another invisible-dots server (pid 42) is already running\n");
+  });
+
+  it("finds the command word for main.ts wherever the flags are", () => {
+    expect(commandOf(["--json", "doctor"])).toBe("doctor");
+    expect(commandOf(["logs", "fare-watch", "--tail", "3"])).toBe("logs");
+    expect(commandOf(["--help"])).toBeUndefined();
   });
 });

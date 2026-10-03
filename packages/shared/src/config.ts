@@ -34,7 +34,7 @@ const SIZE_UNITS: Record<string, number> = {
 
 /**
  * Parse a size such as "4gb", "512mb" or "1.5 GiB" into bytes. Units are
- * binary (1gb = 1024^3 bytes): the values end up as libvirt memory and
+ * binary (1gb = 1024^3 bytes): the values end up as QEMU `-m` MiB and
  * qemu-img sizes, which are binary too. A bare number is refused because
  * "4096" is ambiguous between bytes and MiB.
  */

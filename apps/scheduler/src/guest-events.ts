@@ -3,7 +3,7 @@
  * approval rows and the Dot's status.
  */
 import type { Repositories } from "@invisible-dots/database";
-import type { AgentState, DotState, OutboundEvent } from "@invisible-dots/shared";
+import { TERMINAL_TASK_STATES, type AgentState, type DotState, type OutboundEvent } from "@invisible-dots/shared";
 
 /**
  * The Dot status for an agent state. READY means the computer is up and the
@@ -47,10 +47,15 @@ export async function applyGuestEvent(tx: Repositories, dotId: string, event: Ou
       return { taskSettled: (await tx.tasks.transition(event.data.task_id, "COMPLETED", { summary: event.data.summary, dotId })) !== null };
     case "task.failed":
       return { taskSettled: (await tx.tasks.transition(event.data.task_id, "FAILED", { error: event.data.error, dotId })) !== null };
-    case "approval.requested":
-      await tx.approvals.insertRequested(dotId, event.data);
-      if (event.data.task_id) await tx.tasks.transition(event.data.task_id, "WAITING_APPROVAL", { dotId });
+    case "approval.requested": {
+      // A request for a task that already ended (cancelled while the guest
+      // was asking) is kept for the record but never listed as pending.
+      const task = event.data.task_id ? await tx.tasks.get(event.data.task_id) : null;
+      const ended = task !== null && task.dot_id === dotId && TERMINAL_TASK_STATES.includes(task.status);
+      await tx.approvals.insertRequested(dotId, event.data, ended ? "expired" : "pending");
+      if (event.data.task_id && !ended) await tx.tasks.transition(event.data.task_id, "WAITING_APPROVAL", { dotId });
       return { taskSettled: false };
+    }
     default:
       return { taskSettled: false };
   }

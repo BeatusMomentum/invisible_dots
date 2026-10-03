@@ -1,22 +1,21 @@
 import type { Database } from "@invisible-dots/database";
-import { createTestDatabase, warnIfNoDatabase, type TestDatabase } from "@invisible-dots/database/testing";
+import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-dots/database/testing";
 import type { StoredEvent } from "@invisible-dots/shared";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Scheduler, type SchedulerOptions } from "../src/index.js";
-import { FakeDriver, FakeGuestError, ManualClock, waitFor } from "../src/testing.js";
+import { FakeDriver, FakeGuestError, ManualClock, waitFor, waitUntilSettledReady } from "../src/testing.js";
 
-const skip = warnIfNoDatabase("apps/scheduler");
 
 const yaml = (name: string, idle = "15m") =>
   `name: ${name}\ngoal: keep watch\nmodel:\n  provider: openrouter\n  id: test/model\ncomputer:\n  idle_timeout: ${idle}\n`;
 
-describe.skipIf(skip)("Scheduler with a fake driver and a fake guest", () => {
+describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s)", (kind) => {
   let t: TestDatabase;
   let db: Database;
   const open: Scheduler[] = [];
 
   beforeAll(async () => {
-    t = await createTestDatabase();
+    t = await createTestDatabase(kind);
     db = t.db;
     await db.secrets.put("global", "openrouter_api_key", "sk-or-test");
   });
@@ -35,18 +34,21 @@ describe.skipIf(skip)("Scheduler with a fake driver and a fake guest", () => {
       db,
       driver,
       clock,
-      cidBase: 30_000,
       lifecycle: { healthPollMs: 5, readyTimeoutMs: 3_000, pumpRetryMs: 10, pumpMaxRetryMs: 50 },
       dispatcher: { retryDelayMs: 0, maxDeliveryAttempts: 2 },
       ...extra,
     });
     open.push(scheduler);
+    drivers.set(scheduler, driver);
     return { scheduler, driver, clock };
   }
 
+  const drivers = new Map<Scheduler, FakeDriver>();
+  const driverOf = (s: Scheduler) => drivers.get(s)!;
+
   async function readyDot(s: Scheduler, name: string, idle?: string) {
     const dot = await s.createDot(yaml(name, idle));
-    await waitFor(async () => (await db.dots.get(dot.id))?.status === "READY" && !s.lifecycle.isBusy(dot.id), `${name} READY`);
+    await waitUntilSettledReady(s, driverOf(s), dot.id, name);
     return dot;
   }
 
@@ -63,8 +65,9 @@ describe.skipIf(skip)("Scheduler with a fake driver and a fake guest", () => {
     expect(guest.config?.name).toBe("ready-one");
     expect(guest.config).not.toHaveProperty("computer");
     const computer = await scheduler.computer(dot.id);
-    expect(computer).toMatchObject({ state: "RUNNING", ready: true, golden_image: driver.goldenImage });
-    expect(computer.cid).toBeGreaterThanOrEqual(30_000);
+    expect(computer).toMatchObject({ state: "RUNNING", ready: true, golden_image: driver.goldenImage, vm_name: `invisible-dot-${dot.id}` });
+    expect(computer.guest_port).toBe(driver.vms.get(dot.id)?.guestPort);
+    expect(computer.pid).toBe(driver.vms.get(dot.id)?.pid);
     const events = await db.events.list({ dotId: dot.id });
     expect(types(events)).toEqual(
       expect.arrayContaining(["dot.created", "computer.state", "computer.started"]),
@@ -88,9 +91,9 @@ describe.skipIf(skip)("Scheduler with a fake driver and a fake guest", () => {
     expect(runs).toHaveLength(1);
     expect(runs[0]?.delivered_at).not.toBeNull();
     expect(runs[0]?.outcome).toBe("completed");
-    await waitFor(async () => (await db.computers.get(dot.id))?.event_cursor === 4, "every guest event stored");
+    await waitFor(async () => (await db.computers.get(dot.id))?.event_cursor === 5, "every guest event stored");
     const guestEvents = (await db.events.list({ dotId: dot.id })).filter((e) => e.source === "guest");
-    expect(types(guestEvents)).toEqual(["agent.state", "task.started", "task.completed", "agent.state"]);
+    expect(types(guestEvents)).toEqual(["agent.started", "agent.state", "task.started", "task.completed", "agent.state"]);
     expect((await db.dots.get(dot.id))?.status).toBe("READY");
   });
 
@@ -98,13 +101,13 @@ describe.skipIf(skip)("Scheduler with a fake driver and a fake guest", () => {
     const { scheduler, driver } = make();
     const dot = await readyDot(scheduler, "replay-one");
     const guest = driver.guestOf(dot.id);
-    guest.emit("memory.written", { key: "a" });
-    await waitFor(async () => (await db.computers.get(dot.id))?.event_cursor === 1, "first event");
+    const a = guest.emit("memory.written", { key: "a" });
+    await waitFor(async () => (await db.computers.get(dot.id))?.event_cursor === a.seq, "first event");
     guest.disconnectStreams();
-    guest.emit("memory.written", { key: "b" });
-    await waitFor(async () => (await db.computers.get(dot.id))?.event_cursor === 2, "second event after reconnect");
+    const b = guest.emit("memory.written", { key: "b" });
+    await waitFor(async () => (await db.computers.get(dot.id))?.event_cursor === b.seq, "second event after reconnect");
     const stored = (await db.events.list({ dotId: dot.id })).filter((e) => e.source === "guest");
-    expect(stored.map((e) => e.guest_seq)).toEqual([1, 2]);
+    expect(stored.map((e) => e.guest_seq)).toEqual(guest.outbox.map((e) => e.seq));
   });
 
   it("a guest cannot complete another Dot's task", async () => {
@@ -237,16 +240,24 @@ describe.skipIf(skip)("Scheduler with a fake driver and a fake guest", () => {
     expect((await db.dots.get(dot.id))?.error).toMatch(/browser layer not installed/);
   });
 
-  it("a CID held by another program on the host is replaced and recorded", async () => {
-    const driver = new FakeDriver();
-    const { scheduler } = make(driver);
-    const first = await db.computers.nextFreeCid(30_000);
-    driver.hostTakenCids.add(first);
-    const dot = await readyDot(scheduler, "cid-clash");
-    const cid = (await db.computers.get(dot.id))?.cid;
-    expect(cid).not.toBe(first);
+  it("every start records a new guest port and pid; a stop clears them", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "port-mover");
+    const before = await db.computers.get(dot.id);
+    expect(before?.guest_port).toEqual(expect.any(Number));
+    await scheduler.lifecycle.stop(dot.id, "user");
+    expect(await db.computers.get(dot.id)).toMatchObject({ state: "STOPPED", guest_port: null, pid: null });
+    await expect(scheduler.lifecycle.guest(dot.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+
+    await scheduler.lifecycle.ensureReady(dot.id);
+    const after = await db.computers.get(dot.id);
+    expect(after?.guest_port).not.toBe(before?.guest_port);
+    expect(after?.pid).toBe(driver.vms.get(dot.id)?.pid);
     const started = await db.events.list({ dotId: dot.id, types: ["computer.started"] });
-    expect(started[0]?.data.cid).toBe(cid);
+    expect(started.map((e) => e.data.guest_port)).toEqual([before?.guest_port, after?.guest_port]);
+    // The old port reaches nothing any more: only the recorded one leads to the guest.
+    const token = await db.computers.token(dot.id);
+    await expect(driver.guest({ dotId: dot.id, port: before!.guest_port! }, token).health()).rejects.toMatchObject({ status: 0 });
   });
 
   it("a failed delivery is retried, then the task fails with the reason", async () => {
@@ -256,9 +267,10 @@ describe.skipIf(skip)("Scheduler with a fake driver and a fake guest", () => {
     guest.failNextPost = new FakeGuestError(0, "connection reset");
     const ok = await scheduler.createTask(dot.id, { description: "eventually" });
     await waitFor(async () => (await db.tasks.get(ok.id))?.status === "COMPLETED", "retried task");
-    expect((await db.tasks.runs(ok.id)).map((r) => r.outcome)).toEqual(["undelivered: connection reset", "completed"]);
+    // The same event went again: one run, never back to PENDING in between.
+    expect((await db.tasks.runs(ok.id)).map((r) => r.outcome)).toEqual(["completed"]);
 
-    driver.failNext("start", new Error("virsh start: boom"), 2);
+    driver.failNext("start", new Error("qemu-system-x86_64 exited: boom"), 2);
     await scheduler.lifecycle.stop(dot.id, "user");
     const doomed = await scheduler.createTask(dot.id, { description: "never" });
     await waitFor(async () => (await db.tasks.get(doomed.id))?.status === "FAILED", "failed task", 8_000);
@@ -313,19 +325,45 @@ describe.skipIf(skip)("Scheduler with a fake driver and a fake guest", () => {
     expect(scheduler.lifecycle.isReady(dot.id)).toBe(true);
   });
 
+  it("recovery: a VM whose disk is gone is ERROR; a running VM's port and pid come from QEMU, not the row", async () => {
+    const driver = new FakeDriver();
+    const first = make(driver).scheduler;
+    const lost = await readyDot(first, "disk-lost");
+    const unrecorded = await readyDot(first, "port-lost");
+    await first.close();
+    open.splice(open.indexOf(first), 1);
+
+    driver.vms.delete(lost.id);
+    // As if the control plane stopped between spawning QEMU and recording its port.
+    await db.computers.setProcess(unrecorded.id, null);
+
+    const { scheduler } = make(driver, { dispatchIntervalMs: 60_000, idleCheckIntervalMs: 60_000 });
+    await scheduler.start();
+    await scheduler.settle();
+    expect(await db.dots.get(lost.id)).toMatchObject({ status: "ERROR", error: "the VM disk is missing" });
+    expect((await db.computers.get(lost.id))?.state).toBe("ERROR");
+    expect(scheduler.lifecycle.isReady(unrecorded.id)).toBe(true);
+    expect(await db.computers.get(unrecorded.id)).toMatchObject({
+      guest_port: driver.vms.get(unrecorded.id)?.guestPort,
+      pid: driver.vms.get(unrecorded.id)?.pid,
+    });
+    // Adopted, not restarted.
+    expect(driver.guestOf(unrecorded.id).boots).toBe(1);
+  });
+
   it("delete destroys the VM and removes the rows but keeps the history", async () => {
     const { scheduler, driver } = make();
     const dot = await readyDot(scheduler, "goner");
     await scheduler.deleteDot("goner");
     await scheduler.settle();
-    expect(driver.domains.has(dot.id)).toBe(false);
+    expect(driver.vms.has(dot.id)).toBe(false);
     expect(await db.dots.get(dot.id)).toBeNull();
     const history = await scheduler.listEvents(dot.id);
     expect(history.at(-1)?.type).toBe("dot.deleted");
     await expect(scheduler.requireDot("goner")).rejects.toMatchObject({ status: 404 });
   });
 
-  it("recovery: reattaches to running VMs, marks powered-off ones STOPPED and requeues undelivered tasks", async () => {
+  it("recovery: reattaches to running VMs, marks powered-off ones STOPPED and delivers undelivered tasks", async () => {
     const driver = new FakeDriver();
     const first = make(driver).scheduler;
     const alive = await readyDot(first, "survivor");
@@ -334,8 +372,7 @@ describe.skipIf(skip)("Scheduler with a fake driver and a fake guest", () => {
     open.splice(open.indexOf(first), 1);
 
     // While the control plane was down: one VM powered off, one task claimed but never delivered.
-    driver.domains.get(dead.id)!.state = "STOPPED";
-    driver.guestOf(dead.id).powerOff();
+    driver.crash(dead.id);
     const orphan = await db.tasks.insert({ id: `task_orphan${Date.now()}`, dotId: alive.id, description: "orphan" });
     await db.transaction((tx) => tx.tasks.claimNext());
     driver.guestOf(alive.id).emit("memory.written", { key: "while-away" });
@@ -343,12 +380,15 @@ describe.skipIf(skip)("Scheduler with a fake driver and a fake guest", () => {
     const { scheduler } = make(driver, { dispatchIntervalMs: 60_000, idleCheckIntervalMs: 60_000 });
     await scheduler.start();
     await waitFor(async () => (await db.tasks.get(orphan.id))?.status === "COMPLETED", "orphan task completed");
-    expect(driver.calls).toContain(`attach:${alive.id}`);
+    // Reattached through the recorded port: no second QEMU was spawned for the survivor.
+    expect(driver.calls.filter((c) => c === `start:${alive.id}`)).toHaveLength(1);
     expect(scheduler.lifecycle.isReady(alive.id)).toBe(true);
-    expect((await db.computers.get(dead.id))?.state).toBe("STOPPED");
+    expect(await db.computers.get(dead.id)).toMatchObject({ state: "STOPPED", guest_port: null, pid: null });
     expect((await db.dots.get(dead.id))?.status).toBe("IDLE");
+    // Claimed before the restart, sent after it from the outbox: one run, one task.created.
     const runs = await db.tasks.runs(orphan.id);
-    expect(runs[0]?.outcome).toBe("interrupted by a control plane restart");
+    expect(runs.map((r) => r.outcome)).toEqual(["completed"]);
+    expect(driver.guestOf(alive.id).inbound.filter((e) => e.type === "task.created" && e.data.task_id === orphan.id)).toHaveLength(1);
     const memory = await db.events.list({ dotId: alive.id, types: ["memory.written"] });
     expect(memory.map((e) => e.data.key)).toEqual(["while-away"]);
   });

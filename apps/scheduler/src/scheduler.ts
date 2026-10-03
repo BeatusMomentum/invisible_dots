@@ -4,7 +4,7 @@
  * database, the VM layer or a guest happens here.
  */
 import { randomBytes } from "node:crypto";
-import { DotNameTakenError, isUniqueViolation, type Database } from "@invisible-dots/database";
+import { DotNameTakenError, GLOBAL_SCOPE, OPENROUTER_KEY_NAME, type Database } from "@invisible-dots/database";
 import { EventLog, USER_MESSAGE_EVENT } from "@invisible-dots/events";
 import type {
   AcceptedAnswer,
@@ -19,14 +19,13 @@ import type {
 } from "@invisible-dots/shared";
 import {
   computerResources,
-  DEFAULT_CID_BASE,
-  domainName,
   DotConfigError,
   newId,
   parseDotConfig,
   parseSize,
   TASK_CANCELLED_SYSTEM_EVENT,
   TERMINAL_TASK_STATES,
+  vmName,
   type ApprovalStatus,
   type BrowserIdentity,
   type CreateBrowserIdentityRequest,
@@ -35,8 +34,9 @@ import {
   type StoredEvent,
   type SystemAnswer,
 } from "@invisible-dots/shared";
-import { Dispatcher, type DispatcherOptions } from "./dispatcher.js";
+import { Dispatcher } from "./dispatcher.js";
 import { guestErrorCode, guestErrorStatus, type ComputerDriver, type GuestApi } from "./driver.js";
+import { InboundDelivery, type InboundDeliveryOptions } from "./inbound.js";
 import { Lifecycle, MISSING_KEY_MESSAGE, type LifecycleOptions } from "./lifecycle.js";
 import {
   ControlPlaneError,
@@ -54,32 +54,29 @@ export interface SchedulerOptions {
   events?: EventLog;
   clock?: Clock;
   logger?: Logger;
-  /** First vsock CID to allocate (INVISIBLE_DOTS_CID_BASE, default 10000). */
-  cidBase?: number;
   /** How often PENDING tasks are looked for besides the immediate pass on every change. Default 5 s. */
   dispatchIntervalMs?: number;
   /** How often idle Dots are looked for. Default 30 s. */
   idleCheckIntervalMs?: number;
   lifecycle?: Partial<LifecycleOptions>;
-  dispatcher?: Partial<DispatcherOptions>;
+  /** How inbound events (tasks, messages, approvals) are retried, and when a task's delivery gives up. */
+  dispatcher?: Partial<InboundDeliveryOptions>;
 }
 
 const TOKEN_BYTES = 32;
-const MAX_CID_RACE_RETRIES = 5;
 
 export class Scheduler {
   readonly db: Database;
   readonly events: EventLog;
   readonly lifecycle: Lifecycle;
   readonly dispatcher: Dispatcher;
+  /** Sends what is stored for the guests in `inbound_events`, waking Dots that sleep. */
+  readonly inbound: InboundDelivery;
   readonly #clock: Clock;
   readonly #log: Logger;
-  readonly #cidBase: number;
   readonly #dispatchIntervalMs: number;
   readonly #idleCheckIntervalMs: number;
   readonly #background = new Set<Promise<unknown>>();
-  /** Inbound events per Dot, delivered in order once the Dot is READY. */
-  readonly #inbound = new Map<string, Promise<void>>();
   readonly #provisioning = new Map<string, Promise<void>>();
   readonly #timers: NodeJS.Timeout[] = [];
   #started = false;
@@ -90,7 +87,6 @@ export class Scheduler {
     this.#log = options.logger ?? silentLogger;
     this.events =
       options.events ?? new EventLog(options.db.events, (line) => this.#log.warn(line));
-    this.#cidBase = options.cidBase ?? DEFAULT_CID_BASE;
     this.#dispatchIntervalMs = options.dispatchIntervalMs ?? 5_000;
     this.#idleCheckIntervalMs = options.idleCheckIntervalMs ?? 30_000;
     this.lifecycle = new Lifecycle({
@@ -101,32 +97,60 @@ export class Scheduler {
       logger: this.#log,
       options: options.lifecycle,
       onWorkPossible: () => void this.dispatcher.dispatch(),
+      onReady: (dotId) => void this.inbound.kick(dotId),
     });
-    this.dispatcher = new Dispatcher(options.db, this.lifecycle, this.#clock, this.#log, options.dispatcher);
+    this.inbound = new InboundDelivery({
+      db: options.db,
+      lifecycle: this.lifecycle,
+      clock: this.#clock,
+      logger: this.#log,
+      provisioned: async (dotId) => {
+        await this.#provisioning.get(dotId)?.catch(() => {});
+      },
+      onTaskSettled: () => void this.dispatcher.dispatch(),
+      options: options.dispatcher,
+    });
+    this.dispatcher = new Dispatcher(options.db, this.#clock, this.#log, (dotId) => void this.inbound.kick(dotId));
   }
 
-  /** Recover from the previous run, then start the dispatch and idle timers. */
+  /**
+   * Recover from the previous run, then start the timers. Nothing is
+   * requeued: a task claimed before the restart still has its task.created
+   * in the outbox, and the guest ignores it if an earlier send reached it.
+   */
   async start(): Promise<void> {
     if (this.#started) return;
     this.#started = true;
-    for (const run of await this.db.tasks.interruptedRuns()) {
-      this.#log.warn("recovery: task was claimed but never delivered, back to the queue", { taskId: run.task_id });
-      await this.db.tasks.requeue(run.task_id, run.id, "interrupted by a control plane restart", null);
-    }
     for (const work of await this.lifecycle.recover()) this.#track(work);
-    this.#track(this.dispatcher.dispatch());
+    this.#track(this.pass());
     const every = (ms: number, fn: () => Promise<unknown>) => {
       const timer = setInterval(() => void fn().catch((e) => this.#log.error("timer failed", { error: errorMessage(e) })), ms);
       timer.unref();
       this.#timers.push(timer);
     };
-    every(this.#dispatchIntervalMs, () => this.dispatcher.dispatch());
+    every(this.#dispatchIntervalMs, () => this.pass());
     every(this.#idleCheckIntervalMs, () => this.idleCheck());
+  }
+
+  /**
+   * One round of looking for work (section 9.5): claim due tasks, send the
+   * inbound rows whose retry time came, and wake stopped Dots whose new work
+   * waits behind a task their guest has not finished.
+   */
+  async pass(): Promise<void> {
+    await this.dispatcher.dispatch();
+    await this.inbound.kickDue();
+    for (const dotId of await this.db.tasks.stoppedDotsWithBlockedWork()) {
+      if (this.lifecycle.isBusy(dotId)) continue;
+      this.#log.info("waking a stopped Dot: new work waits behind its unfinished task", { dotId });
+      this.#runInBackground("wake for blocked work", dotId, () => this.lifecycle.ensureReady(dotId));
+    }
   }
 
   /** Stop the timers and the event pumps and wait for in-flight work. VMs keep running. */
   async close(): Promise<void> {
     for (const timer of this.#timers.splice(0)) clearInterval(timer);
+    this.inbound.close();
     await this.settle().catch(() => {});
     await this.lifecycle.close();
   }
@@ -135,8 +159,14 @@ export class Scheduler {
   async settle(): Promise<void> {
     for (;;) {
       await this.dispatcher.settle();
-      const pending = [...this.#background, ...this.#inbound.values()];
-      if (pending.length === 0) return;
+      await this.inbound.settle();
+      await this.lifecycle.settle();
+      const pending = [...this.#background];
+      if (pending.length === 0) {
+        // Each of the three may have started work in another while it settled.
+        if (!this.dispatcher.busy && !this.inbound.busy && !this.lifecycle.busy) return;
+        continue;
+      }
       await Promise.allSettled(pending);
     }
   }
@@ -181,28 +211,25 @@ export class Scheduler {
     }
   }
 
-  /** Section 9.4: insert the Dot as CREATING with its CID and token, then provision it in the background. */
+  /**
+   * Section 9.4: insert the Dot as CREATING with its computer row and a new
+   * token in one transaction, then provision it in the background (overlay,
+   * seed, port, QEMU, READY).
+   */
   async createDot(configInput: unknown): Promise<DotRecord> {
     const config = this.#parseConfig(configInput);
     const id = newId("dot");
     const token = randomBytes(TOKEN_BYTES).toString("base64url");
-    let dot: DotRecord | undefined;
-    const excluded: number[] = [];
-    for (let attempt = 1; !dot; attempt++) {
-      try {
-        dot = await this.db.transaction(async (tx) => {
-          const record = await tx.dots.insert({ id, config, status: "CREATING" });
-          const cid = await tx.computers.nextFreeCid(this.#cidBase, excluded);
-          excluded.push(cid);
-          await tx.computers.insert({ dotId: id, domainName: domainName(id), cid, state: "PROVISIONING", token });
-          return record;
-        });
-      } catch (error) {
-        if (error instanceof DotNameTakenError) throw new ControlPlaneError(409, "name_taken", error.message);
-        // Another Dot took the same CID between our read and our insert: take the next one.
-        if (isUniqueViolation(error, "computers_cid_key") && attempt < MAX_CID_RACE_RETRIES) continue;
-        throw error;
-      }
+    let dot: DotRecord;
+    try {
+      dot = await this.db.transaction(async (tx) => {
+        const record = await tx.dots.insert({ id, config, status: "CREATING" });
+        await tx.computers.insert({ dotId: id, vmName: vmName(id), state: "PROVISIONING", token });
+        return record;
+      });
+    } catch (error) {
+      if (error instanceof DotNameTakenError) throw new ControlPlaneError(409, "name_taken", error.message);
+      throw error;
     }
     await this.events.appendHost(id, "dot.created", { name: config.name });
     await this.events.appendHost(id, "computer.state", { state: "PROVISIONING" });
@@ -237,7 +264,7 @@ export class Scheduler {
     if (!updated) throw notFound("Dot", idOrName);
     let pushed = false;
     try {
-      pushed = await this.lifecycle.pushConfig(current.id);
+      pushed = await this.lifecycle.syncGuest(current.id);
     } catch (error) {
       this.#log.warn("config saved but the push to the guest failed; it is pushed again on the next READY", {
         dotId: current.id,
@@ -257,20 +284,31 @@ export class Scheduler {
 
   // Messages
 
+  /**
+   * Log the message and store it for the guest in one transaction, so a
+   * message the person saw accepted always reaches the Dot, also across a
+   * failed wake or a control plane restart.
+   */
   async sendMessage(idOrName: string, text: string): Promise<MessageAnswer> {
     if (typeof text !== "string" || text.trim() === "") {
       throw new ControlPlaneError(400, "invalid_request", "text must be a non-empty string");
     }
     const dot = await this.requireDot(idOrName);
     const messageId = newId("msg");
-    const stored = await this.events.appendUserMessage(dot.id, { message_id: messageId, text });
     const event: InboundEvent<"user.message"> = {
       id: messageId,
       type: "user.message",
       ts: this.#clock.now().toISOString(),
       data: { text },
     };
-    const delivery = await this.#deliverInbound(dot.id, event);
+    const stored = await this.db.transaction(async (tx) => {
+      // The event first: its insert takes the event-order lock (database events.ts).
+      const logged = await this.events.appendUserMessageIn(tx, dot.id, { message_id: messageId, text });
+      await tx.inbound.enqueue(dot.id, event);
+      return logged;
+    });
+    this.events.publish(stored);
+    const delivery = await this.#deliver(dot.id, event.id);
     return { message_id: messageId, event_id: stored.id, delivery };
   }
 
@@ -292,50 +330,17 @@ export class Scheduler {
   }
 
   /**
-   * Deliver an inbound event: at once when the Dot is READY and nothing is
-   * queued before it, otherwise in the background after waking it, in the
-   * order the events arrived.
+   * Send what is stored for the Dot. A READY Dot gets it before this
+   * returns ("delivered"); otherwise it is sent once the Dot is woken, in the
+   * background ("queued"), and stays stored until then.
    */
-  async #deliverInbound(dotId: string, event: InboundEvent): Promise<"delivered" | "queued"> {
-    if (!this.#inbound.has(dotId) && this.lifecycle.isReady(dotId)) {
-      try {
-        await this.#post(dotId, event);
-        return "delivered";
-      } catch (error) {
-        this.#log.warn("direct delivery failed, queueing", { dotId, type: event.type, error: errorMessage(error) });
-      }
+  async #deliver(dotId: string, eventId: string): Promise<"delivered" | "queued"> {
+    if (!this.lifecycle.isReady(dotId)) {
+      void this.inbound.kick(dotId);
+      return "queued";
     }
-    const previous = this.#inbound.get(dotId) ?? Promise.resolve();
-    const next = previous.then(async () => {
-      try {
-        await this.#provisioning.get(dotId)?.catch(() => {});
-        await this.lifecycle.ensureReady(dotId);
-        await this.#post(dotId, event);
-        this.#log.info("queued event delivered", { dotId, type: event.type, id: event.id });
-      } catch (error) {
-        this.#log.error("queued event could not be delivered and was dropped", {
-          dotId,
-          type: event.type,
-          id: event.id,
-          error: errorMessage(error),
-        });
-      }
-    });
-    this.#inbound.set(dotId, next);
-    void next.finally(() => {
-      if (this.#inbound.get(dotId) === next) this.#inbound.delete(dotId);
-    });
-    return "queued";
-  }
-
-  async #post(dotId: string, event: InboundEvent): Promise<void> {
-    try {
-      await (await this.lifecycle.guest(dotId)).postEvent(event);
-    } catch (error) {
-      this.lifecycle.markSuspect(dotId);
-      throw error;
-    }
-    await this.db.computers.touch(dotId, this.#clock.now());
+    await this.inbound.kick(dotId);
+    return (await this.db.inbound.get(eventId))?.delivered_at ? "delivered" : "queued";
   }
 
   // Tasks
@@ -383,29 +388,39 @@ export class Scheduler {
   }
 
   /**
-   * Cancel a task. A PENDING one simply never runs. For one the guest already
-   * has, the contract has no dedicated inbound event, so the guest is told
-   * with `system.event { name: "task.cancelled" }` when it is reachable.
+   * Cancel a task. A PENDING one simply never runs. Otherwise, in the same
+   * transaction: when no send of its task.created ever began, that event is
+   * dropped and the guest never hears of the task; when one began, the
+   * guest may hold the task, so `system.event { name: "task.cancelled" }`
+   * is stored behind it and reaches the guest even if it sleeps now (the
+   * contract has no dedicated inbound cancel). The previous state comes from
+   * the update itself, never from an earlier read.
    */
   async cancelTask(id: string): Promise<TaskRecord> {
     const task = await this.getTask(id);
     if (TERMINAL_TASK_STATES.includes(task.status)) {
       throw new ControlPlaneError(409, "task_finished", `task ${id} is already ${task.status}`);
     }
-    const cancelled = await this.db.tasks.transition(id, "CANCELLED", { error: "cancelled by the user" });
-    if (!cancelled) throw new ControlPlaneError(409, "task_finished", `task ${id} finished meanwhile`);
-    await this.events.appendHost(task.dot_id, "task.cancelled", { task_id: id });
-    if (task.status !== "PENDING" && this.lifecycle.isReady(task.dot_id)) {
-      const event: InboundEvent<"system.event"> = {
-        id: newId("evt"),
-        type: "system.event",
-        ts: this.#clock.now().toISOString(),
-        data: { name: TASK_CANCELLED_SYSTEM_EVENT, data: { task_id: id } },
-      };
-      await this.#post(task.dot_id, event).catch((error) =>
-        this.#log.warn("could not tell the guest about a cancelled task", { taskId: id, error: errorMessage(error) }),
-      );
-    }
+    const { logged, cancelled, tellGuest } = await this.db.transaction(async (tx) => {
+      // The event first: its insert takes the event-order lock (database events.ts).
+      const logged = await this.events.appendHostIn(tx, task.dot_id, "task.cancelled", { task_id: id });
+      const moved = await tx.tasks.transition(id, "CANCELLED", { error: "cancelled by the user" });
+      if (!moved) throw new ControlPlaneError(409, "task_finished", `task ${id} finished meanwhile`);
+      let tellGuest = false;
+      if (moved.previous !== "PENDING" && !(await tx.inbound.dropUnsent(id, "the task was cancelled before it was delivered"))) {
+        const event: InboundEvent<"system.event"> = {
+          id: newId("evt"),
+          type: "system.event",
+          ts: this.#clock.now().toISOString(),
+          data: { name: TASK_CANCELLED_SYSTEM_EVENT, data: { task_id: id } },
+        };
+        await tx.inbound.enqueue(task.dot_id, event, { taskId: id });
+        tellGuest = true;
+      }
+      return { logged, cancelled: moved.task, tellGuest };
+    });
+    this.events.publish(logged);
+    if (tellGuest) void this.inbound.kick(task.dot_id);
     void this.dispatcher.dispatch();
     return cancelled;
   }
@@ -522,27 +537,42 @@ export class Scheduler {
     return this.db.approvals.list({ status });
   }
 
+  /**
+   * Record the decision, move the task back to RUNNING and store the
+   * `approval.received` for the guest, in one transaction: a decision the
+   * person saw accepted always reaches the guest, also when the Dot sleeps
+   * and its wake fails or the control plane restarts first.
+   */
   async resolveApproval(id: string, decision: "approve" | "reject", note?: string): Promise<ApprovalRecord> {
     if (note !== undefined && typeof note !== "string") {
       throw new ControlPlaneError(400, "invalid_request", "note must be a string");
     }
     const existing = await this.db.approvals.get(id);
     if (!existing) throw notFound("approval", id);
-    const resolved = await this.db.approvals.resolve(id, decision === "approve" ? "approved" : "rejected", note ?? null);
-    if (!resolved) throw new ControlPlaneError(409, "already_resolved", `approval ${id} is already ${existing.status}`);
-    if (resolved.task_id) await this.db.tasks.transition(resolved.task_id, "RUNNING", { dotId: resolved.dot_id });
-    await this.events.appendHost(resolved.dot_id, "approval.resolved", {
-      approval_id: id,
-      decision,
-      ...(note !== undefined ? { note } : {}),
-    });
     const event: InboundEvent<"approval.received"> = {
       id: newId("evt"),
       type: "approval.received",
       ts: this.#clock.now().toISOString(),
       data: { approval_id: id, decision, ...(note !== undefined ? { note } : {}) },
     };
-    await this.#deliverInbound(resolved.dot_id, event);
+    const { logged, resolved } = await this.db.transaction(async (tx) => {
+      // The event first: its insert takes the event-order lock (database events.ts).
+      const logged = await this.events.appendHostIn(tx, existing.dot_id, "approval.resolved", {
+        approval_id: id,
+        decision,
+        ...(note !== undefined ? { note } : {}),
+      });
+      const resolved = await tx.approvals.resolve(id, decision === "approve" ? "approved" : "rejected", note ?? null);
+      if (!resolved) {
+        const current = await tx.approvals.get(id);
+        throw new ControlPlaneError(409, "already_resolved", `approval ${id} is already ${current?.status ?? existing.status}`);
+      }
+      if (resolved.task_id) await tx.tasks.transition(resolved.task_id, "RUNNING", { dotId: resolved.dot_id });
+      await tx.inbound.enqueue(resolved.dot_id, event);
+      return { logged, resolved };
+    });
+    this.events.publish(logged);
+    await this.#deliver(resolved.dot_id, event.id);
     return resolved;
   }
 
@@ -561,17 +591,18 @@ export class Scheduler {
     if (typeof value !== "string" || value.trim() === "") {
       throw new ControlPlaneError(400, "invalid_request", "value must be a non-empty string");
     }
-    let scope = "global";
+    let scope = GLOBAL_SCOPE;
     if (dotIdOrName !== undefined && dotIdOrName !== null) {
       if (typeof dotIdOrName !== "string") throw new ControlPlaneError(400, "invalid_request", "dot_id must be a string");
       scope = (await this.requireDot(dotIdOrName)).id;
     }
-    await this.db.secrets.put(scope, "openrouter_api_key", value.trim());
+    await this.db.secrets.put(scope, OPENROUTER_KEY_NAME, value.trim());
     let pushed = 0;
-    const targets = scope === "global" ? this.lifecycle.readyDots() : [scope];
+    // Every Dot it applies to, READY or not: one whose READY is under way must notice the change too.
+    const targets = scope === GLOBAL_SCOPE ? (await this.db.dots.list()).map((d) => d.id) : [scope];
     for (const dotId of targets) {
       try {
-        if (await this.lifecycle.pushSecret(dotId)) pushed++;
+        if (await this.lifecycle.syncGuest(dotId)) pushed++;
       } catch (error) {
         this.#log.warn("could not push the new OpenRouter key", { dotId, error: errorMessage(error) });
         this.lifecycle.markSuspect(dotId);
@@ -580,7 +611,7 @@ export class Scheduler {
     // Dots that failed READY only for want of a key can be retried now.
     for (const dot of await this.db.dots.list()) {
       const missedKey = dot.error?.includes(MISSING_KEY_MESSAGE) ?? false;
-      if (dot.status === "ERROR" && missedKey && (scope === "global" || scope === dot.id)) {
+      if (dot.status === "ERROR" && missedKey && (scope === GLOBAL_SCOPE || scope === dot.id)) {
         this.#runInBackground("READY after a new key", dot.id, () => this.lifecycle.ensureReady(dot.id));
       }
     }
@@ -590,15 +621,17 @@ export class Scheduler {
   // Idle sleep (section 9.5)
 
   /**
-   * Put every Dot to sleep that is READY with an IDLE agent, has no due or
-   * active task, and was not active for its `idle_timeout`. Returns the ids
-   * of the Dots it started stopping.
+   * Put every Dot to sleep that is READY with an IDLE agent, has no work
+   * (no due or active task, nothing waiting to reach its guest), and was not
+   * active for its `idle_timeout`. Returns the ids of the Dots it started
+   * stopping; the stop checks all of it again under the Dot's lock and is
+   * called off when work arrived meanwhile.
    */
   async idleCheck(): Promise<string[]> {
     const now = this.#clock.now();
     const sleeping: string[] = [];
     for (const dotId of this.lifecycle.readyDots()) {
-      if (this.lifecycle.isBusy(dotId) || this.#inbound.has(dotId)) continue;
+      if (this.lifecycle.isBusy(dotId) || this.inbound.isFlushing(dotId)) continue;
       const [dot, computer] = await Promise.all([this.db.dots.get(dotId), this.db.computers.get(dotId)]);
       if (!dot || !computer || computer.state !== "RUNNING" || dot.status !== "READY") continue;
       const timeout = computerResources(dot.config).idleTimeoutMs;
@@ -613,12 +646,14 @@ export class Scheduler {
     return sleeping;
   }
 
-  async health(): Promise<{ database: "ok" }> {
+  /** The database answers, and whether the global OpenRouter key is stored (and decrypts). */
+  async health(): Promise<{ database: "ok"; openrouter_configured: boolean }> {
+    let key: string | null;
     try {
-      await this.db.ping();
+      key = await this.db.secrets.get(GLOBAL_SCOPE, OPENROUTER_KEY_NAME);
     } catch (error) {
       throw new ControlPlaneError(503, "database_unavailable", `the database did not answer: ${errorMessage(error)}`);
     }
-    return { database: "ok" };
+    return { database: "ok", openrouter_configured: key !== null };
   }
 }

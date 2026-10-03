@@ -9,7 +9,9 @@
   "exports": {
     ".": "./src/index.ts",
     "./browser": "./src/browser.ts",
-    "./api": "./src/api.ts"
+    "./api": "./src/api.ts",
+    "./paths": "./src/paths.ts",
+    "./api-token": "./src/api-token.ts"
   },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json"

@@ -1,10 +1,15 @@
 /**
  * The life of a Dot's computer on the host: create (section 9.4), the READY
  * procedure (9.3), sleep and wake (9.5), reboot, delete, the guest event
- * pump, and reconciliation with libvirt after a control plane restart.
+ * pump, and reconciliation with the running QEMU processes (found through
+ * their pid files) after a control plane restart.
  *
  * Every operation that changes a computer's state runs under a per-Dot lock,
- * so a wake and an idle sleep of the same Dot can never interleave.
+ * so a wake and an idle sleep of the same Dot can never interleave. A Dot is
+ * in `#ready` only between a completed READY procedure and the moment an
+ * operation under that lock takes it out again, so anything that skips the
+ * lock because the Dot is READY (a delivery, a push) can only meet a stop
+ * that has not started yet: every stop takes the Dot out of `#ready` first.
  */
 import type { Database } from "@invisible-dots/database";
 import type { EventLog } from "@invisible-dots/events";
@@ -17,7 +22,7 @@ import {
   type StoredEvent,
   type VmState,
 } from "@invisible-dots/shared";
-import type { ComputerDriver, ComputerSpecInput, GuestApi } from "./driver.js";
+import { guestErrorCode, guestErrorStatus, type ComputerDriver, type ComputerSpecInput, type ComputerState, type GuestApi } from "./driver.js";
 import { applyGuestEvent, dotStatusForAgent } from "./guest-events.js";
 import { ControlPlaneError, errorMessage, KeyedMutex, sleep, type Clock, type Logger } from "./support.js";
 
@@ -53,6 +58,8 @@ export interface LifecycleDeps {
   options?: Partial<LifecycleOptions>;
   /** Called when a task reached a terminal state or a Dot became READY: the dispatcher may have work to hand out. */
   onWorkPossible?: () => void;
+  /** Called every time a Dot becomes READY: what waits in its inbound outbox can go now. */
+  onReady?: (dotId: string) => void;
 }
 
 export type StopReason = "idle" | "user";
@@ -68,6 +75,17 @@ export class NotReadyError extends ControlPlaneError {
   }
 }
 
+/**
+ * A failed guest call described by its status and code only. Used where the
+ * request carried a secret: the error text of a guest or a proxy may echo
+ * the body, and this message goes into logs, `dots.error` and the event log.
+ */
+function describeWithoutBody(error: unknown): string {
+  const status = guestErrorStatus(error);
+  const code = guestErrorCode(error) ?? (error as { code?: unknown })?.code;
+  return status === 0 ? `the guest was not reached${typeof code === "string" ? ` (${code})` : ""}` : `status ${status}${typeof code === "string" ? `, ${code}` : ""}`;
+}
+
 export class Lifecycle {
   readonly #db: Database;
   readonly #events: EventLog;
@@ -76,11 +94,17 @@ export class Lifecycle {
   readonly #log: Logger;
   readonly #opts: LifecycleOptions;
   readonly #onWorkPossible: () => void;
+  readonly #onReady: (dotId: string) => void;
   readonly #mutex = new KeyedMutex();
+  /** Pushes of the key and the config to a READY guest, one at a time per Dot, so the last one sent is the newest. */
+  readonly #pushes = new KeyedMutex();
+  /** Bumped by every change of what a guest must hold; READY completes only on an unchanged generation. */
+  readonly #generation = new Map<string, number>();
   /** Dots whose READY procedure completed since their computer last started. */
   readonly #ready = new Set<string>();
   readonly #pumps = new Map<string, AbortController>();
   readonly #pumpDone = new Map<string, Promise<void>>();
+  readonly #background = new Set<Promise<unknown>>();
   #closed = false;
 
   constructor(deps: LifecycleDeps) {
@@ -91,6 +115,7 @@ export class Lifecycle {
     this.#log = deps.logger;
     this.#opts = { ...DEFAULT_LIFECYCLE_OPTIONS, ...deps.options };
     this.#onWorkPossible = deps.onWorkPossible ?? (() => {});
+    this.#onReady = deps.onReady ?? (() => {});
   }
 
   isReady(dotId: string): boolean {
@@ -102,8 +127,17 @@ export class Lifecycle {
     return this.#mutex.isBusy(dotId);
   }
 
+  /**
+   * The guest of a running computer, reached through the port recorded at its
+   * start. The port is read for every call: it changes with every start.
+   */
   async guest(dotId: string): Promise<GuestApi> {
-    return this.#driver.guest(dotId, await this.#db.computers.token(dotId));
+    const computer = await this.#db.computers.get(dotId);
+    if (!computer) throw new ControlPlaneError(404, "not_found", `Dot ${dotId} has no computer`);
+    if (computer.guest_port === null) {
+      throw new ControlPlaneError(409, "computer_stopped", `the computer of Dot ${dotId} is ${computer.state}, it has no guest port`);
+    }
+    return this.#driver.guest({ dotId, port: computer.guest_port }, await this.#db.computers.token(dotId));
   }
 
   async #setVmState(dotId: string, state: VmState, lastError?: string | null): Promise<void> {
@@ -133,7 +167,6 @@ export class Lifecycle {
     if (!dot || !computer) throw new ControlPlaneError(404, "not_found", `Dot ${dotId} has no computer`);
     return {
       dotId,
-      cid: computer.cid,
       token: await this.#db.computers.token(dotId),
       resources: computerResources(dot.config),
       goldenImage: computer.golden_image,
@@ -145,7 +178,7 @@ export class Lifecycle {
   provision(dotId: string): Promise<void> {
     return this.#mutex.run(dotId, async () => {
       const spec = await this.#spec(dotId);
-      this.#log.info("provisioning computer", { dotId, cid: spec.cid });
+      this.#log.info("provisioning computer", { dotId });
       let created;
       try {
         created = await this.#driver.create(spec);
@@ -172,9 +205,9 @@ export class Lifecycle {
       if (computer.state === "PROVISIONING") {
         throw new ControlPlaneError(409, "dot_provisioning", `Dot ${dotId} is still being provisioned`);
       }
-      const domain = await this.#driver.state(dotId);
-      if (domain.defined && domain.state === "RUNNING") {
-        await this.#adoptRunning(dotId, computer.cid);
+      const vm = await this.#driver.state(dotId);
+      if (vm.state === "RUNNING" && vm.guestPort !== null) {
+        await this.#adoptRunning(dotId, { ...vm, guestPort: vm.guestPort });
       } else {
         await this.#startLocked(dotId);
       }
@@ -187,32 +220,66 @@ export class Lifecycle {
       return this.#fail(dotId, "start", new Error("the computer has no golden image recorded; it was never created"));
     }
     await this.#setVmState(dotId, "STARTING");
-    const reserved = (await this.#db.computers.list()).filter((c) => c.dot_id !== dotId).map((c) => c.cid);
     let started;
     try {
-      started = await this.#driver.start({ ...spec, goldenImage: spec.goldenImage }, reserved);
+      started = await this.#driver.start({ ...spec, goldenImage: spec.goldenImage });
     } catch (error) {
+      await this.#db.computers.setProcess(dotId, null).catch(() => {});
       return this.#fail(dotId, "start", error);
     }
-    if (started.cid !== spec.cid) {
-      this.#log.warn("computer started on another vsock CID", { dotId, requested: spec.cid, cid: started.cid });
-      await this.#db.computers.setCid(dotId, started.cid);
-    }
+    // Recorded before anything else: from here on the guest is reached through this port.
+    await this.#db.computers.setProcess(dotId, { guestPort: started.guestPort, pid: started.pid });
     await this.#db.computers.setImages(dotId, spec.goldenImage, started.runtimeImage);
     await this.#setVmState(dotId, "RUNNING", null);
-    await this.#events.appendHost(dotId, "computer.started", { cid: started.cid, runtime_image: started.runtimeImage });
+    await this.#events.appendHost(dotId, "computer.started", {
+      guest_port: started.guestPort,
+      runtime_image: started.runtimeImage,
+      ...(started.alreadyRunning ? { already_running: true } : {}),
+    });
     await this.#readyProcedure(dotId);
   }
 
-  /** A running domain the control plane is not attached to (after a restart, or after a failed READY). */
-  async #adoptRunning(dotId: string, cid: number): Promise<void> {
-    try {
-      await this.#driver.attach(dotId, cid);
-    } catch (error) {
-      return this.#fail(dotId, "attach to the running computer", error);
+  /**
+   * A running VM this process did not start (after a control plane restart,
+   * or after a failed READY). Its port and pid are what QEMU and its pid
+   * file say now; the row is brought in line with them when it differs.
+   */
+  async #adoptRunning(dotId: string, vm: ComputerState & { guestPort: number }): Promise<void> {
+    const computer = await this.#db.computers.get(dotId);
+    const pid = vm.pid ?? computer?.pid ?? null;
+    if (pid === null) {
+      return this.#fail(dotId, "attach to the running computer", new Error("QEMU runs but neither its pid file nor the database names its pid"));
+    }
+    if (computer?.guest_port !== vm.guestPort || computer?.pid !== pid) {
+      this.#log.info("recording the running VM's process", { dotId, guestPort: vm.guestPort, pid });
+      await this.#db.computers.setProcess(dotId, { guestPort: vm.guestPort, pid });
     }
     await this.#setVmState(dotId, "RUNNING", null);
     await this.#readyProcedure(dotId);
+  }
+
+  #generationOf(dotId: string): number {
+    return this.#generation.get(dotId) ?? 0;
+  }
+
+  /**
+   * Push what the guest must hold: the OpenRouter key (memory only in the
+   * guest, so lost with every agent restart) and the runtime config, both
+   * read from the database now. The one place that does this, for READY,
+   * for a changed key or config, and after an agent restart.
+   */
+  async #push(dotId: string, guest: GuestApi): Promise<void> {
+    const key = await this.#db.secrets.openRouterKey(dotId);
+    if (!key) throw new NotReadyError(dotId, `${MISSING_KEY_MESSAGE}; set one with PUT /api/secrets/openrouter`);
+    const dot = await this.#db.dots.get(dotId);
+    if (!dot) throw new ControlPlaneError(404, "not_found", `Dot ${dotId} not found`);
+    try {
+      await guest.pushSecrets(key);
+    } catch (error) {
+      // Never the guest's own words here: whatever answered may have echoed the key.
+      throw new Error(`the guest did not take the OpenRouter key (${describeWithoutBody(error)})`);
+    }
+    await guest.putConfig(toRuntimeConfig(dot.config));
   }
 
   /**
@@ -220,80 +287,64 @@ export class Lifecycle {
    * push the runtime config, then require the agent to report the key and
    * every self-check. Only then is the Dot READY and its events pumped.
    */
-  async #readyProcedure(dotId: string, bootedAfter?: { uptimeBelow: number }): Promise<void> {
-    const deadline = Date.now() + this.#opts.readyTimeoutMs;
-    const guest = await this.guest(dotId);
-    let health: HealthAnswer | undefined;
-    let lastProblem = "no answer yet";
-    // After a reboot, an answer only counts once it comes from the new boot:
-    // the guest was unreachable in between, or its uptime went down.
-    let wentDown = false;
-    for (;;) {
-      try {
-        health = await guest.health({ timeoutMs: this.#opts.healthRequestTimeoutMs });
-        if (bootedAfter && !wentDown && health.uptime_s >= bootedAfter.uptimeBelow) {
-          lastProblem = `the guest has not rebooted yet (uptime ${health.uptime_s} s)`;
-        } else if (health.agentd === "ok" && health.agent.status === "ok") {
-          break;
-        } else {
-          lastProblem = `agentd ${health.agentd}, agent ${health.agent.status}`;
-        }
-      } catch (error) {
-        if ((error as { status?: unknown }).status === 401) {
-          return this.#fail(dotId, "READY", new Error("the guest refused the Dot token (401)"));
-        }
-        lastProblem = errorMessage(error);
-        wentDown = true;
-      }
-      if (Date.now() + this.#opts.healthPollMs > deadline) {
-        return this.#fail(
-          dotId,
-          "READY",
-          new Error(`the guest was not healthy within ${this.#opts.readyTimeoutMs} ms; last problem: ${lastProblem}`),
-        );
-      }
-      this.#log.debug("waiting for guest health", { dotId, problem: lastProblem });
-      await sleep(this.#opts.healthPollMs);
+  async #readyProcedure(dotId: string): Promise<void> {
+    const computer = await this.#db.computers.get(dotId);
+    if (computer?.guest_port == null) {
+      return this.#fail(dotId, "READY", new Error("the computer has no guest port recorded"));
     }
-
-    const key = await this.#db.secrets.openRouterKey(dotId);
-    if (!key) {
-      return this.#fail(
-        dotId,
-        "READY",
-        new NotReadyError(dotId, `${MISSING_KEY_MESSAGE}; set one with PUT /api/secrets/openrouter`),
-      );
-    }
-    const dot = await this.#db.dots.get(dotId);
-    if (!dot) throw new ControlPlaneError(404, "not_found", `Dot ${dotId} not found`);
+    // A pump of an earlier start reads a port that is gone and never comes back on its own.
+    await this.#stopPump(dotId);
+    const endpoint = { dotId, port: computer.guest_port };
+    const token = await this.#db.computers.token(dotId);
+    const guest = this.#driver.guest(endpoint, token);
+    let health: HealthAnswer;
     try {
-      await guest.pushSecrets(key);
-      await guest.putConfig(toRuntimeConfig(dot.config));
-      health = await guest.health({ timeoutMs: this.#opts.healthRequestTimeoutMs });
+      health = await this.#driver.waitForHealth(endpoint, token, {
+        timeoutMs: this.#opts.readyTimeoutMs,
+        intervalMs: this.#opts.healthPollMs,
+        requestTimeoutMs: this.#opts.healthRequestTimeoutMs,
+      });
     } catch (error) {
-      return this.#fail(dotId, "READY (secret and config push)", error);
-    }
-    const problems: string[] = [];
-    if (health.agent.status !== "ok") problems.push(`agent status ${health.agent.status}`);
-    else {
-      if (!health.agent.openrouter_configured) problems.push("the agent does not report the OpenRouter key as configured");
-      const checks = health.agent.checks;
-      if (!checks) problems.push("the agent reports no self-checks");
-      else {
-        if (!checks.filesystem_writable) problems.push("filesystem not writable");
-        if (!checks.network_reachable) problems.push("network not reachable");
-        if (!checks.browser_installed) problems.push("browser layer not installed");
+      if ((error as { status?: unknown }).status === 401) {
+        return this.#fail(dotId, "READY", new Error("the guest refused the Dot token (401)"));
       }
-    }
-    if (problems.length > 0) {
-      return this.#fail(dotId, "READY", new NotReadyError(dotId, problems.join("; ")));
+      return this.#fail(dotId, "READY (waiting for the guest)", error);
     }
 
     let agentState;
-    try {
-      agentState = await guest.state();
-    } catch (error) {
-      return this.#fail(dotId, "READY (agent state)", error);
+    for (;;) {
+      const generation = this.#generationOf(dotId);
+      try {
+        await this.#push(dotId, guest);
+        health = await guest.health({ timeoutMs: this.#opts.healthRequestTimeoutMs });
+      } catch (error) {
+        return this.#fail(dotId, error instanceof NotReadyError ? "READY" : "READY (secret and config push)", error);
+      }
+      const problems: string[] = [];
+      if (health.agent.status !== "ok") problems.push(`agent status ${health.agent.status}`);
+      else {
+        if (!health.agent.openrouter_configured) problems.push("the agent does not report the OpenRouter key as configured");
+        const checks = health.agent.checks;
+        if (!checks) problems.push("the agent reports no self-checks");
+        else {
+          if (!checks.filesystem_writable) problems.push("filesystem not writable");
+          if (!checks.network_reachable) problems.push("network not reachable");
+          if (!checks.browser_installed) problems.push("browser layer not installed");
+        }
+      }
+      if (problems.length > 0) {
+        return this.#fail(dotId, "READY", new NotReadyError(dotId, problems.join("; ")));
+      }
+      try {
+        agentState = await guest.state();
+      } catch (error) {
+        return this.#fail(dotId, "READY (agent state)", error);
+      }
+      // A key or a config stored while this procedure pushed was refused by
+      // syncGuest (the Dot was not READY yet): push again, then decide.
+      // The comparison and the add below run without an await between them.
+      if (this.#generationOf(dotId) === generation) break;
+      this.#log.info("key or config changed during READY, pushing again", { dotId });
     }
     this.#ready.add(dotId);
     await this.#db.computers.touch(dotId, this.#clock.now());
@@ -302,7 +353,32 @@ export class Lifecycle {
     await this.#setDotStatus(dotId, dotStatusForAgent(agentState.state));
     this.#startPump(dotId);
     this.#log.info("dot ready", { dotId, agent: agentState.state });
+    this.#onReady(dotId);
     this.#onWorkPossible();
+  }
+
+  /**
+   * Take the Dot out of READY before anything that ends its computer's run:
+   * from here on every delivery and every push goes through the per-Dot
+   * lock, which the caller holds. A push already on its way is waited for.
+   * Returns whether the Dot was READY.
+   */
+  async #leaveReady(dotId: string): Promise<boolean> {
+    const wasReady = this.#ready.delete(dotId);
+    await this.#pushes.run(dotId, async () => {});
+    return wasReady;
+  }
+
+  /**
+   * Whether an idle sleep may still go ahead, read again under the per-Dot
+   * lock: the Dot is READY with an IDLE agent and has no work. Work that
+   * arrived after the idle check (a claimed task, a message, an approval)
+   * is pending in the database by now, also when its send is in flight.
+   */
+  async #stillIdle(dotId: string): Promise<boolean> {
+    const [dot, computer] = await Promise.all([this.#db.dots.get(dotId), this.#db.computers.get(dotId)]);
+    if (dot?.status !== "READY" || computer?.state !== "RUNNING") return false;
+    return !(await this.#db.tasks.hasWork(dotId, this.#clock.now()));
   }
 
   /** Put the Dot to sleep, or stop it on the user's request (section 9.5). */
@@ -314,9 +390,15 @@ export class Lifecycle {
       if (computer.state === "DELETING" || computer.state === "PROVISIONING") {
         throw new ControlPlaneError(409, "invalid_state", `Dot ${dotId} cannot be stopped while ${computer.state}`);
       }
+      const wasReady = await this.#leaveReady(dotId);
+      if (reason === "idle" && !(await this.#stillIdle(dotId))) {
+        if (wasReady) this.#ready.add(dotId);
+        this.#log.info("idle sleep called off: work arrived meanwhile", { dotId });
+        return;
+      }
       this.#log.info("stopping computer", { dotId, reason });
       await this.#setVmState(dotId, "STOPPING");
-      if (this.#ready.has(dotId)) {
+      if (wasReady) {
         try {
           const guest = await this.guest(dotId);
           await guest.prepareSleep(this.#opts.prepareSleepTimeoutMs);
@@ -325,21 +407,26 @@ export class Lifecycle {
           this.#log.warn("prepare-sleep failed, shutting down anyway", { dotId, error: errorMessage(error) });
         }
       }
-      this.#ready.delete(dotId);
       await this.#stopPump(dotId);
       let result;
       try {
-        result = await this.#driver.stop(dotId);
+        result = await this.#driver.stop(dotId, await this.#db.computers.token(dotId));
       } catch (error) {
         return this.#fail(dotId, "stop", error);
       }
+      await this.#db.computers.setProcess(dotId, null);
       await this.#setVmState(dotId, "STOPPED", null);
       await this.#events.appendHost(dotId, "computer.stopped", { reason, forced: result.forced });
       await this.#setDotStatus(dotId, "IDLE");
     });
   }
 
-  /** `virsh reboot`, then the READY procedure against the new boot. */
+  /**
+   * A reboot is a clean stop and a start of the same VM (the agent flushes
+   * its state first, as before a sleep), so a new runtime ISO and new
+   * resources apply. The port changes; the READY procedure runs against the
+   * new one.
+   */
   reboot(dotId: string): Promise<void> {
     return this.#mutex.run(dotId, async () => {
       const computer = await this.#db.computers.get(dotId);
@@ -347,23 +434,35 @@ export class Lifecycle {
       if (computer.state !== "RUNNING") {
         throw new ControlPlaneError(409, "computer_stopped", `Dot ${dotId} cannot be rebooted while ${computer.state}`);
       }
-      const guest = await this.guest(dotId);
-      // The uptime tells the new boot from the old one, which may still answer for a moment.
-      const uptime = await guest.health({ timeoutMs: this.#opts.healthRequestTimeoutMs }).then(
-        (h) => h.uptime_s,
-        () => undefined,
-      );
-      this.#ready.delete(dotId);
+      const spec = await this.#spec(dotId);
+      if (!spec.goldenImage) {
+        return this.#fail(dotId, "reboot", new Error("the computer has no golden image recorded; it was never created"));
+      }
+      if (await this.#leaveReady(dotId)) {
+        try {
+          await (await this.guest(dotId)).prepareSleep(this.#opts.prepareSleepTimeoutMs);
+        } catch (error) {
+          this.#log.warn("prepare-sleep before reboot failed, rebooting anyway", { dotId, error: errorMessage(error) });
+        }
+      }
       await this.#stopPump(dotId);
       await this.#setVmState(dotId, "STARTING");
+      let started;
       try {
-        await this.#driver.reboot(dotId);
+        started = await this.#driver.reboot({ ...spec, goldenImage: spec.goldenImage });
       } catch (error) {
+        await this.#db.computers.setProcess(dotId, null).catch(() => {});
         return this.#fail(dotId, "reboot", error);
       }
+      await this.#db.computers.setProcess(dotId, { guestPort: started.guestPort, pid: started.pid });
+      await this.#db.computers.setImages(dotId, spec.goldenImage, started.runtimeImage);
       await this.#setVmState(dotId, "RUNNING", null);
-      await this.#events.appendHost(dotId, "computer.started", { cid: computer.cid, reboot: true });
-      await this.#readyProcedure(dotId, uptime === undefined ? undefined : { uptimeBelow: uptime });
+      await this.#events.appendHost(dotId, "computer.started", {
+        guest_port: started.guestPort,
+        runtime_image: started.runtimeImage,
+        reboot: true,
+      });
+      await this.#readyProcedure(dotId);
     });
   }
 
@@ -373,7 +472,7 @@ export class Lifecycle {
       const dot = await this.#db.dots.get(dotId);
       if (!dot) return;
       await this.#setVmState(dotId, "DELETING");
-      this.#ready.delete(dotId);
+      await this.#leaveReady(dotId);
       await this.#stopPump(dotId);
       try {
         await this.#driver.destroy(dotId);
@@ -386,22 +485,21 @@ export class Lifecycle {
     });
   }
 
-  /** Push the current runtime config to a READY guest (after PATCH). */
-  async pushConfig(dotId: string): Promise<boolean> {
+  /**
+   * The key or the config the guest must hold changed (a PATCH, a new key,
+   * an agent that restarted and lost its key): push both to a READY guest
+   * now. A Dot that is not READY gets them from its READY procedure, which
+   * sees the change through the generation and pushes again if it was
+   * already past its own push. True when this call pushed.
+   */
+  async syncGuest(dotId: string): Promise<boolean> {
+    this.#generation.set(dotId, this.#generationOf(dotId) + 1);
     if (!this.#ready.has(dotId)) return false;
-    const dot = await this.#db.dots.get(dotId);
-    if (!dot) return false;
-    await (await this.guest(dotId)).putConfig(toRuntimeConfig(dot.config));
-    return true;
-  }
-
-  /** Push the OpenRouter key again to a READY guest (after it changed). */
-  async pushSecret(dotId: string): Promise<boolean> {
-    if (!this.#ready.has(dotId)) return false;
-    const key = await this.#db.secrets.openRouterKey(dotId);
-    if (!key) return false;
-    await (await this.guest(dotId)).pushSecrets(key);
-    return true;
+    return this.#pushes.run(dotId, async () => {
+      if (!this.#ready.has(dotId)) return false;
+      await this.#push(dotId, await this.guest(dotId));
+      return true;
+    });
   }
 
   readyDots(): string[] {
@@ -413,13 +511,31 @@ export class Lifecycle {
     this.#ready.delete(dotId);
   }
 
+  #runInBackground(what: string, dotId: string, work: () => Promise<unknown>): void {
+    if (this.#closed) return;
+    const tracked: Promise<unknown> = work()
+      .catch((error) => this.#log.error(`${what} failed`, { dotId, error: errorMessage(error) }))
+      .finally(() => this.#background.delete(tracked));
+    this.#background.add(tracked);
+  }
+
+  /** Whether work this class started in the background is still running. */
+  get busy(): boolean {
+    return this.#background.size > 0;
+  }
+
+  /** Wait for the work this class started in the background (tests and shutdown). */
+  async settle(): Promise<void> {
+    while (this.#background.size > 0) await Promise.allSettled([...this.#background]);
+  }
+
   #startPump(dotId: string): void {
     if (this.#pumps.has(dotId) || this.#closed) return;
     const controller = new AbortController();
     this.#pumps.set(dotId, controller);
     const done = this.#pump(dotId, controller.signal).finally(() => {
       if (this.#pumps.get(dotId) === controller) this.#pumps.delete(dotId);
-      this.#pumpDone.delete(dotId);
+      if (this.#pumpDone.get(dotId) === done) this.#pumpDone.delete(dotId);
     });
     this.#pumpDone.set(dotId, done);
   }
@@ -433,7 +549,8 @@ export class Lifecycle {
    * Consume the guest's outbound stream from the stored cursor. Every event
    * is stored, applied and the cursor advanced in ONE transaction, so a crash
    * between two events loses nothing and applies nothing twice. On a failure
-   * the loop starts over from the cursor in the database.
+   * the loop starts over from the cursor in the database, unless the VM's
+   * QEMU is gone: then the pump ends and the computer is recorded as stopped.
    */
   async #pump(dotId: string, signal: AbortSignal): Promise<void> {
     let delay = this.#opts.pumpRetryMs;
@@ -454,8 +571,46 @@ export class Lifecycle {
         if (signal.aborted) return;
         this.#log.warn("event pump failed, retrying", { dotId, error: errorMessage(error), retryMs: delay });
       }
+      if (await this.#qemuGone(dotId)) {
+        this.#runInBackground("recording a VM that stopped by itself", dotId, () => this.#exited(dotId));
+        return;
+      }
       await sleep(delay, signal);
       delay = Math.min(delay * 2, this.#opts.pumpMaxRetryMs);
+    }
+  }
+
+  async #qemuGone(dotId: string): Promise<boolean> {
+    try {
+      return (await this.#driver.state(dotId)).state === "STOPPED";
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * The QEMU of a READY Dot exited without a stop from the control plane: the
+   * guest powered itself off, or QEMU crashed or was killed. The computer is
+   * recorded as stopped; when the Dot still has work, it is started again so
+   * its guest picks that work up (section 9.5).
+   */
+  async #exited(dotId: string): Promise<void> {
+    const recorded = await this.#mutex.run(dotId, async () => {
+      const computer = await this.#db.computers.get(dotId);
+      // A stop, reboot or start under the lock already dealt with it.
+      if (computer?.state !== "RUNNING" || !(await this.#qemuGone(dotId))) return false;
+      this.#ready.delete(dotId);
+      await this.#stopPump(dotId);
+      this.#log.warn("the VM stopped without being asked to", { dotId });
+      await this.#db.computers.setProcess(dotId, null);
+      await this.#setVmState(dotId, "STOPPED", null);
+      await this.#events.appendHost(dotId, "computer.stopped", { reason: "exited", forced: false });
+      await this.#setDotStatus(dotId, "IDLE");
+      return true;
+    });
+    if (recorded && (await this.#db.tasks.hasWork(dotId, this.#clock.now()))) {
+      this.#log.info("the Dot still has work, starting its computer again", { dotId });
+      this.#runInBackground("restart after an unexpected stop", dotId, () => this.ensureReady(dotId));
     }
   }
 
@@ -463,6 +618,7 @@ export class Lifecycle {
   async handleGuestEvent(dotId: string, event: OutboundEvent): Promise<StoredEvent | null> {
     const now = this.#clock.now();
     const { stored, applied } = await this.#db.transaction(async (tx) => {
+      // The event first: its insert takes the event-order lock (events.ts).
       const stored = await this.#events.appendGuest(tx, dotId, event);
       await tx.computers.advanceCursor(dotId, event.seq, now);
       const applied = stored ? await applyGuestEvent(tx, dotId, event) : { taskSettled: false };
@@ -470,14 +626,27 @@ export class Lifecycle {
     });
     if (stored) this.#events.publish(stored);
     if (applied.taskSettled) this.#onWorkPossible();
+    if (stored && event.type === "agent.started") {
+      // The agent process restarted inside a running VM: it lost the key it keeps in memory.
+      this.#runInBackground("pushing the key again after an agent restart", dotId, async () => {
+        try {
+          await this.syncGuest(dotId);
+        } catch (error) {
+          this.markSuspect(dotId);
+          throw error;
+        }
+      });
+    }
     return stored;
   }
 
   /**
-   * After a control plane restart: bring the database in line with what
-   * libvirt says, finish interrupted operations, and run the READY procedure
-   * for every computer that is still running. Returns once each Dot's
-   * recovery has started; the slow parts continue in the background.
+   * After a control plane restart: bring the database in line with the QEMU
+   * processes that are actually running (pid files and process liveness,
+   * never the rows),
+   * finish interrupted operations, and run the READY procedure for every
+   * computer that is still running. Returns once each Dot's recovery has
+   * started; the slow parts continue in the background.
    */
   async recover(): Promise<Promise<void>[]> {
     const background: Promise<void>[] = [];
@@ -496,38 +665,47 @@ export class Lifecycle {
         track(dotId, "deletion", this.remove(dotId));
         continue;
       }
-      let domain;
+      let vm;
       try {
-        domain = await this.#driver.state(dotId);
+        vm = await this.#driver.state(dotId);
       } catch (error) {
-        this.#log.error("recovery: cannot read the domain state", { dotId, error: errorMessage(error) });
+        this.#log.error("recovery: cannot read the VM state", { dotId, error: errorMessage(error) });
         continue;
       }
-      if (!domain.defined) {
-        await this.#setVmState(dotId, "ERROR", "the libvirt domain is missing");
-        await this.#setDotStatus(dotId, "ERROR", "the libvirt domain is missing");
+      if (!vm.exists) {
+        const message = "the VM disk is missing";
+        await this.#db.computers.setProcess(dotId, null);
+        await this.#setVmState(dotId, "ERROR", message);
+        await this.#setDotStatus(dotId, "ERROR", message);
         continue;
       }
-      if (domain.state === "RUNNING") {
+      if (vm.state === "RUNNING") {
         if (computer.state === "STOPPING") {
           this.#log.info("recovery: finishing an interrupted stop", { dotId });
           await this.#db.computers.setState(dotId, "RUNNING");
           track(dotId, "stop", this.stop(dotId, "user"));
+        } else if (vm.guestPort === null) {
+          const message = "QEMU runs but has no forward to the guest port, so the guest cannot be reached";
+          await this.#setVmState(dotId, "ERROR", message);
+          await this.#setDotStatus(dotId, "ERROR", message);
         } else {
-          this.#log.info("recovery: reattaching to a running computer", { dotId, was: computer.state });
-          track(dotId, "reattach", this.#mutex.run(dotId, () => this.#adoptRunning(dotId, computer.cid)));
+          // The port comes from the pid file, so a row that missed it (the
+          // control plane stopped between the spawn and the update) is
+          // corrected here; the READY procedure then checks the guest.
+          const running = { ...vm, guestPort: vm.guestPort };
+          this.#log.info("recovery: reattaching to a running computer", { dotId, was: computer.state, pid: vm.pid });
+          track(dotId, "reattach", this.#mutex.run(dotId, () => this.#adoptRunning(dotId, running)));
         }
-      } else if (domain.state === "STOPPING") {
-        track(dotId, "stop", this.stop(dotId, "user"));
-      } else if (domain.state === "STOPPED") {
-        if (computer.state !== "STOPPED") {
+      } else if (vm.state === "STOPPED") {
+        if (computer.state !== "STOPPED" || computer.guest_port !== null || computer.pid !== null) {
           this.#log.info("recovery: computer is off", { dotId, was: computer.state });
+          await this.#db.computers.setProcess(dotId, null);
           await this.#setVmState(dotId, "STOPPED");
           const dot = await this.#db.dots.get(dotId);
           if (dot && dot.status !== "DISABLED" && dot.status !== "ERROR") await this.#setDotStatus(dotId, "IDLE");
         }
       } else {
-        const message = `libvirt reports the domain as "${domain.detail ?? domain.state}"`;
+        const message = `the VM is ${vm.state}${vm.detail ? `: ${vm.detail}` : ""}`;
         await this.#setVmState(dotId, "ERROR", message);
         await this.#setDotStatus(dotId, "ERROR", message);
       }
@@ -540,6 +718,7 @@ export class Lifecycle {
     this.#closed = true;
     for (const controller of this.#pumps.values()) controller.abort();
     await Promise.all(this.#pumpDone.values());
+    await this.settle();
     await this.#driver.close();
   }
 }

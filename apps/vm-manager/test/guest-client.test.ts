@@ -1,7 +1,8 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { testSocketPath, type OutboundEvent } from "@invisible-dots/shared";
+import type { AddressInfo } from "node:net";
+import { GUEST_UNPROVEN, type HealthAnswer, type OutboundEvent } from "@invisible-dots/shared";
 import { afterEach, describe, expect, it } from "vitest";
-import { GuestClient, GuestRequestError } from "../src/index.js";
+import { GuestClient, GuestHealthTimeoutError, GuestRequestError, guestProof, waitForGuestHealth } from "../src/index.js";
 
 const TOKEN = "dot-token-123";
 
@@ -19,14 +20,29 @@ afterEach(async () => {
   server = undefined;
 });
 
-async function serve(handler: (req: IncomingMessage, res: ServerResponse, seen: Seen) => void): Promise<{ socket: string; seen: Seen[] }> {
-  const socket = testSocketPath("guest");
+/**
+ * A dot-agentd stand-in. It answers `GET /v1/proof` the guest's way (the
+ * HMAC of the nonce under TOKEN), or, as `impostor`, with a proof it cannot
+ * compute. Proof requests are kept apart from `seen`, which lists every
+ * other request.
+ */
+async function serve(
+  handler: (req: IncomingMessage, res: ServerResponse, seen: Seen) => void,
+  options: { impostor?: boolean } = {},
+): Promise<{ port: number; seen: Seen[]; proofs: Seen[] }> {
   const seen: Seen[] = [];
+  const proofs: Seen[] = [];
   server = createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on("data", (chunk: Buffer) => chunks.push(chunk));
     req.on("end", () => {
       const entry = { method: req.method!, url: req.url!, auth: req.headers.authorization, body: Buffer.concat(chunks).toString() };
+      const url = new URL(req.url!, "http://guest");
+      if (url.pathname === "/v1/proof") {
+        proofs.push(entry);
+        const nonce = url.searchParams.get("nonce") ?? "";
+        return json(res, 200, { proof: options.impostor ? "0".repeat(64) : guestProof(TOKEN, nonce) });
+      }
       seen.push(entry);
       if (req.headers.authorization !== `Bearer ${TOKEN}`) {
         res.writeHead(401, { "content-type": "application/json" }).end(JSON.stringify({ error: "unauthorized", message: "bad token" }));
@@ -35,8 +51,8 @@ async function serve(handler: (req: IncomingMessage, res: ServerResponse, seen: 
       handler(req, res, entry);
     });
   });
-  await new Promise<void>((resolve) => server!.listen(socket, resolve));
-  return { socket, seen };
+  await new Promise<void>((resolve) => server!.listen(0, "127.0.0.1", resolve));
+  return { port: (server!.address() as AddressInfo).port, seen, proofs };
 }
 
 function json(res: ServerResponse, status: number, body: unknown) {
@@ -49,22 +65,24 @@ function event(seq: number): OutboundEvent {
 
 describe("GuestClient", () => {
   it("calls every dot-agentd route with the bearer token", async () => {
-    const { socket, seen } = await serve((req, res) => {
+    const { port, seen } = await serve((req, res) => {
       if (req.url === "/v1/system") return json(res, 200, { hostname: "h", uptime_s: 1, cpus: 2, mem_total_bytes: 1, mem_available_bytes: 1, disk_total_bytes: 1, disk_free_bytes: 1 });
       if (req.url === "/v1/exec") return json(res, 200, { exit_code: 0, stdout: "hi\n", stderr: "", timed_out: false });
       if (req.url!.startsWith("/v1/files/list")) return json(res, 200, { entries: [] });
       if (req.url!.startsWith("/v1/files") && req.method === "GET") return res.writeHead(200).end(Buffer.from([1, 2, 3]));
       if (req.url!.startsWith("/v1/files") && req.method === "PUT") return res.writeHead(204).end();
       if (req.url === "/v1/screenshot") return res.writeHead(200, { "content-type": "image/png" }).end(Buffer.from("PNG"));
+      if (req.url === "/v1/system/poweroff" && req.method === "POST") return json(res, 202, { status: "powering_off" });
       json(res, 404, { error: "not_found", message: req.url });
     });
-    const client = new GuestClient(socket, TOKEN);
+    const client = new GuestClient(port, TOKEN);
     expect((await client.system()).hostname).toBe("h");
     expect(await client.exec({ command: "echo hi", timeout_ms: 1000 })).toMatchObject({ exit_code: 0, stdout: "hi\n" });
     expect(await client.readFile("workspace/a b.txt")).toEqual(Buffer.from([1, 2, 3]));
     await client.writeFile("/home/dot/x&y", "content");
     expect(await client.listFiles(".")).toEqual({ entries: [] });
     expect((await client.screenshot()).toString()).toBe("PNG");
+    await client.powerOff();
 
     expect(seen.map((s) => `${s.method} ${s.url}`)).toEqual([
       "GET /v1/system",
@@ -73,6 +91,7 @@ describe("GuestClient", () => {
       "PUT /v1/files?path=%2Fhome%2Fdot%2Fx%26y",
       "GET /v1/files/list?path=.",
       "GET /v1/screenshot",
+      "POST /v1/system/poweroff",
     ]);
     expect(seen.every((s) => s.auth === `Bearer ${TOKEN}`)).toBe(true);
     expect(JSON.parse(seen[1]!.body)).toEqual({ command: "echo hi", timeout_ms: 1000 });
@@ -80,7 +99,7 @@ describe("GuestClient", () => {
   });
 
   it("calls the agent routes under /v1/agent", async () => {
-    const { socket, seen } = await serve((req, res) => {
+    const { port, seen } = await serve((req, res) => {
       switch (`${req.method} ${req.url}`) {
         case "POST /v1/agent/secrets":
         case "PUT /v1/agent/config":
@@ -99,7 +118,7 @@ describe("GuestClient", () => {
           return json(res, 404, { error: "not_found", message: req.url });
       }
     });
-    const client = new GuestClient(socket, TOKEN);
+    const client = new GuestClient(port, TOKEN);
     await client.pushSecrets("sk-or-test");
     await client.putConfig({ name: "n" } as never);
     expect(await client.postEvent({ id: "e1", type: "user.message", ts: "2026-10-02T10:00:00Z", data: { text: "hi" } })).toEqual({ accepted: true });
@@ -113,19 +132,46 @@ describe("GuestClient", () => {
   });
 
   it("turns error bodies into GuestRequestError", async () => {
-    const { socket } = await serve((_req, res) => json(res, 409, { error: "computer_busy", message: "try later" }));
-    const error = await new GuestClient(socket, TOKEN).state().catch((e: unknown) => e);
+    const { port } = await serve((_req, res) => json(res, 409, { error: "computer_busy", message: "try later" }));
+    const error = await new GuestClient(port, TOKEN).state().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(GuestRequestError);
     expect(error).toMatchObject({ status: 409, code: "computer_busy" });
     expect((error as Error).message).toContain("computer_busy: try later");
 
-    const unauthorized = await new GuestClient(socket, "wrong").health().catch((e: unknown) => e);
-    expect(unauthorized).toMatchObject({ status: 401, code: "unauthorized" });
+    // A client holding another token cannot check the guest's proof: it never sends that token.
+    const unproven = await new GuestClient(port, "wrong").health().catch((e: unknown) => e);
+    expect(unproven).toMatchObject({ code: GUEST_UNPROVEN });
+  });
+
+  it("computes the proof dot-agentd computes (the known answer its Go test checks too)", () => {
+    expect(guestProof("dot-token-123", "00112233445566778899aabbccddeeff")).toBe("b1cb86aa470fe878a6366f62ea4493011c01d22736a9c89d3e7f88582920d1b9");
+  });
+
+  it("asks a listener for its proof before the token goes anywhere, once per client", async () => {
+    const { port, seen, proofs } = await serve((_req, res) => json(res, 200, health("ok")));
+    const client = new GuestClient(port, TOKEN);
+    await client.health();
+    await client.health();
+    expect(proofs).toHaveLength(1);
+    expect(proofs[0]!.auth).toBeUndefined();
+    expect(proofs[0]!.url).toMatch(/^\/v1\/proof\?nonce=[0-9a-f]{32}$/);
+    expect(seen).toHaveLength(2);
+  });
+
+  it("never sends the token to a listener that cannot prove it holds it", async () => {
+    // What takes over a stale guest port after a host restart or a QEMU that died.
+    const { port, seen, proofs } = await serve((_req, res) => json(res, 200, health("ok")), { impostor: true });
+    const client = new GuestClient(port, TOKEN);
+    await expect(client.pushSecrets("sk-or-must-not-leak")).rejects.toMatchObject({ code: GUEST_UNPROVEN });
+    await expect(waitForGuestHealth(client, { intervalMs: 5, timeoutMs: 5000 })).rejects.toMatchObject({ code: GUEST_UNPROVEN });
+    expect(proofs.length).toBeGreaterThan(0);
+    expect(proofs.every((p) => p.auth === undefined)).toBe(true);
+    expect(seen).toEqual([]);
   });
 
   it("streams events, reconnecting with ?after= and never repeating one", async () => {
     let connection = 0;
-    const { socket, seen } = await serve((req, res) => {
+    const { port, seen } = await serve((req, res) => {
       connection++;
       res.writeHead(200, { "content-type": "text/event-stream" });
       if (connection === 1) {
@@ -139,7 +185,7 @@ describe("GuestClient", () => {
         for (let seq = after; seq <= after + 2; seq++) res.write(`id: ${seq}\ndata: ${JSON.stringify(event(seq))}\n\n`);
       }
     });
-    const client = new GuestClient(socket, TOKEN);
+    const client = new GuestClient(port, TOKEN);
     const controller = new AbortController();
     const got: number[] = [];
     const reconnects: number[] = [];
@@ -153,11 +199,11 @@ describe("GuestClient", () => {
   });
 
   it("resumes from the given cursor and stops when the consumer breaks", async () => {
-    const { socket, seen } = await serve((_req, res) => {
+    const { port, seen } = await serve((_req, res) => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       res.write(`id: 8\ndata: ${JSON.stringify(event(8))}\n\n`);
     });
-    for await (const evt of new GuestClient(socket, TOKEN).events({ after: 7 })) {
+    for await (const evt of new GuestClient(port, TOKEN).events({ after: 7 })) {
       expect(evt.seq).toBe(8);
       break;
     }
@@ -165,8 +211,112 @@ describe("GuestClient", () => {
   });
 
   it("does not retry the stream on a refused token", async () => {
-    const { socket } = await serve(() => {});
-    const stream = new GuestClient(socket, "wrong").events({ reconnectDelayMs: 1 });
+    const { port } = await serve((_req, res) => json(res, 401, { error: "unauthorized", message: "bad token" }));
+    const stream = new GuestClient(port, TOKEN).events({ reconnectDelayMs: 1 });
     await expect(stream.next()).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("ends the stream when nothing listens on the guest port: the VM is gone, waiting there cannot help", async () => {
+    const port = await closedPort();
+    const reconnects: number[] = [];
+    const stream = new GuestClient(port, TOKEN).events({ reconnectDelayMs: 1, onReconnect: (info) => reconnects.push(info.attempt) });
+    await expect(stream.next()).rejects.toMatchObject({ code: "ECONNREFUSED" });
+    expect(reconnects).toEqual([]);
+  });
+});
+
+function health(agent: "ok" | "starting" | "down"): HealthAnswer {
+  return {
+    agentd: "ok",
+    uptime_s: 3,
+    agent:
+      agent === "down"
+        ? { status: "down" }
+        : {
+            status: agent,
+            state: "IDLE",
+            openrouter_configured: false,
+            browser: { identities: 0, open: 0 },
+            checks: { filesystem_writable: true, network_reachable: true, browser_installed: true },
+          },
+  };
+}
+
+/** A port nothing listens on: bound by the kernel, then released. */
+async function closedPort(): Promise<number> {
+  const probe = createServer();
+  await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const port = (probe.address() as AddressInfo).port;
+  await new Promise<void>((resolve) => probe.close(() => resolve()));
+  return port;
+}
+
+describe("GuestClient transport", () => {
+  it("talks to 127.0.0.1 on the given port and reads one identity", async () => {
+    const { port, seen } = await serve((req, res) =>
+      json(res, 200, { id: "a b", name: "a", createdAt: "x", lastUsedAt: null, status: "available", profilePath: "/p" }),
+    );
+    const client = new GuestClient(port, TOKEN);
+    expect(client.address).toBe(`127.0.0.1:${port}`);
+    expect((await client.getBrowserIdentity("a b")).name).toBe("a");
+    expect(seen[0]!.url).toBe("/v1/agent/browser-identities/a%20b");
+  });
+
+  it("names the guest port when nothing listens there", async () => {
+    const port = await closedPort();
+    const error = await new GuestClient(port, TOKEN).system().catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(GuestRequestError);
+    expect((error as Error).message).toContain(`127.0.0.1:${port}`);
+    expect((error as GuestRequestError).code).toBe("ECONNREFUSED");
+  });
+
+  it("times out a request that gets no answer", async () => {
+    const { port } = await serve(() => {});
+    // The handler above only answers 401s; this request carries the right token and hangs.
+    const error = await new GuestClient(port, TOKEN, { timeoutMs: 100 }).system().catch((e: unknown) => e);
+    expect((error as Error).message).toContain("within 100 ms");
+  });
+
+  it("refuses a port that is not a TCP port", () => {
+    expect(() => new GuestClient(0, TOKEN)).toThrow(/TCP port/);
+    expect(() => new GuestClient(70000, TOKEN)).toThrow(/TCP port/);
+    expect(() => new GuestClient(1234, "")).toThrow(/token/);
+  });
+});
+
+describe("waitForGuestHealth", () => {
+  it("retries while the guest boots and returns once the agent is ok", async () => {
+    const answers = [health("down"), health("starting"), health("ok")];
+    const { port, seen } = await serve((_req, res) => json(res, 200, answers.shift() ?? health("ok")));
+    const answer = await waitForGuestHealth(new GuestClient(port, TOKEN), { intervalMs: 5, timeoutMs: 5000 });
+    expect(answer.agent.status).toBe("ok");
+    expect(seen.length).toBe(3);
+  });
+
+  it("stops at dot-agentd when asked to", async () => {
+    const { port } = await serve((_req, res) => json(res, 200, health("down")));
+    const answer = await waitForGuestHealth(new GuestClient(port, TOKEN), { until: "agentd", intervalMs: 5 });
+    expect(answer.agentd).toBe("ok");
+  });
+
+  it("keeps trying through refused connections, then reports the last error", async () => {
+    const port = await closedPort();
+    const error = await waitForGuestHealth(new GuestClient(port, TOKEN), { intervalMs: 5, timeoutMs: 60 }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(GuestHealthTimeoutError);
+    expect((error as Error).message).toMatch(/not healthy within 60 ms.*ECONNREFUSED|not healthy within 60 ms.*connect/);
+  });
+
+  it("fails at once on a refused token", async () => {
+    const { port } = await serve((_req, res) => json(res, 401, { error: "unauthorized", message: "bad token" }));
+    await expect(waitForGuestHealth(new GuestClient(port, TOKEN), { intervalMs: 5 })).rejects.toMatchObject({ status: 401 });
+  });
+
+  it("stops when the check says the VM is gone", async () => {
+    const port = await closedPort();
+    let calls = 0;
+    const check = () => {
+      if (++calls === 3) throw new Error("QEMU exited");
+    };
+    await expect(waitForGuestHealth(new GuestClient(port, TOKEN), { intervalMs: 5, check })).rejects.toThrow("QEMU exited");
   });
 });

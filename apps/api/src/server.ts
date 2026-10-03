@@ -104,8 +104,8 @@ export function buildServer(options: ServerOptions): FastifyInstance {
   });
 
   app.get("/api/health", async (): Promise<HealthResponse> => {
-    const { database } = await scheduler.health();
-    return { status: "ok", database, version: API_VERSION };
+    const { database, openrouter_configured } = await scheduler.health();
+    return { status: "ok", database, version: API_VERSION, openrouter_configured };
   });
 
   // Dots

@@ -1,12 +1,21 @@
 /**
- * Applies the plain SQL migrations in `migrations/` in file name order. Each
- * file runs in its own transaction and is recorded in `schema_migrations`, so
- * a failed migration leaves nothing half applied. A session advisory lock
- * keeps two servers starting at once from applying the same file twice.
+ * Applies the plain SQL migrations in `migrations/` in file name order
+ * (architecture section 9.1). Each file runs in its own transaction and is
+ * recorded in `schema_migrations` in that same transaction, so a failed
+ * migration leaves nothing half applied.
+ *
+ * Every transaction first takes a transaction-scoped advisory lock and only
+ * then checks whether its file is already recorded. Two servers migrating
+ * one external PostgreSQL at once therefore apply each file once; on PGlite
+ * the lock is uncontended because its transactions already run one at a
+ * time, but it is the same statement on both. A transaction-scoped lock is
+ * used rather than a session lock because it needs no dedicated connection
+ * and cannot be left held by a failure between lock and unlock.
  */
 import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { Pool } from "pg";
+import type { Db } from "./db.js";
 
 /**
  * Arbitrary but fixed: every process that migrates this schema must use the
@@ -39,7 +48,7 @@ export async function loadMigrations(dir: string = defaultMigrationsDir()): Prom
     if (!MIGRATION_NAME.test(name)) {
       throw new Error(`migration file "${name}" does not match NNNN_name.sql`);
     }
-    out.push({ version: name.replace(/\.sql$/, ""), sql: await readFile(`${dir.replace(/[\\/]+$/, "")}/${name}`, "utf8") });
+    out.push({ version: name.replace(/\.sql$/, ""), sql: await readFile(join(dir, name), "utf8") });
   }
   if (out.length === 0) throw new Error(`no migrations found in ${dir}`);
   return out;
@@ -51,44 +60,35 @@ export interface MigrateResult {
 }
 
 export async function migrate(
-  pool: Pool,
+  db: Db,
   options: { dir?: string; log?: (line: string) => void } = {},
 ): Promise<MigrateResult> {
   const migrations = await loadMigrations(options.dir);
   const log = options.log ?? (() => {});
-  const client = await pool.connect();
-  try {
-    await client.query("SELECT pg_advisory_lock($1)", [MIGRATION_LOCK_KEY.toString()]);
+  const result: MigrateResult = { applied: [], alreadyApplied: [] };
+  for (const migration of migrations) {
+    let applied: boolean;
     try {
-      await client.query(
-        "CREATE TABLE IF NOT EXISTS schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())",
-      );
-      const done = new Set(
-        (await client.query<{ version: string }>("SELECT version FROM schema_migrations")).rows.map((r) => r.version),
-      );
-      const result: MigrateResult = { applied: [], alreadyApplied: [] };
-      for (const migration of migrations) {
-        if (done.has(migration.version)) {
-          result.alreadyApplied.push(migration.version);
-          continue;
-        }
-        await client.query("BEGIN");
-        try {
-          await client.query(migration.sql);
-          await client.query("INSERT INTO schema_migrations (version) VALUES ($1)", [migration.version]);
-          await client.query("COMMIT");
-        } catch (error) {
-          await client.query("ROLLBACK");
-          throw new Error(`migration ${migration.version} failed: ${(error as Error).message}`, { cause: error });
-        }
-        log(`applied migration ${migration.version}`);
-        result.applied.push(migration.version);
-      }
-      return result;
-    } finally {
-      await client.query("SELECT pg_advisory_unlock($1)", [MIGRATION_LOCK_KEY.toString()]);
+      applied = await db.transaction(async (tx) => {
+        await tx.query("SELECT pg_advisory_xact_lock($1)", [MIGRATION_LOCK_KEY.toString()]);
+        await tx.exec(
+          "CREATE TABLE IF NOT EXISTS schema_migrations (version text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())",
+        );
+        const done = await tx.query("SELECT 1 FROM schema_migrations WHERE version = $1", [migration.version]);
+        if (done.rows.length > 0) return false;
+        await tx.exec(migration.sql);
+        await tx.query("INSERT INTO schema_migrations (version) VALUES ($1)", [migration.version]);
+        return true;
+      });
+    } catch (error) {
+      throw new Error(`migration ${migration.version} failed: ${(error as Error).message}`, { cause: error });
     }
-  } finally {
-    client.release();
+    if (applied) {
+      log(`applied migration ${migration.version}`);
+      result.applied.push(migration.version);
+    } else {
+      result.alreadyApplied.push(migration.version);
+    }
   }
+  return result;
 }

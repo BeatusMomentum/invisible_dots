@@ -5,7 +5,9 @@ import {
   errorResponse,
   forwardRequestHeaders,
   forwardResponseHeaders,
+  hasSession,
   loadApiToken,
+  loginRequired,
   upstreamUrl,
 } from "../../../lib/proxy";
 
@@ -38,6 +40,8 @@ async function proxy(request: Request, context: RouteContext): Promise<Response>
     }
     throw error;
   }
+  // The credential of this server: nothing is forwarded with the API token for a caller without it.
+  if (!hasSession(request.headers.get("cookie"), token)) return loginRequired();
 
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
   let upstream: Response;

@@ -10,7 +10,7 @@ import { AgentRuntime, type Logger, type ToolRegistry } from "@invisible-dots/ag
 import { BrowserIdentityManager } from "@invisible-dots/browser-manager";
 import { DotStore } from "@invisible-dots/memory";
 import { OpenRouterClient } from "@invisible-dots/openrouter-client";
-import type { DotRuntimeConfig, GuestChecks } from "@invisible-dots/shared";
+import { socketIsAFile, type DotRuntimeConfig, type GuestChecks } from "@invisible-dots/shared";
 import { createToolRegistry, SocketAgentdClient, type MemoryToolStore } from "@invisible-dots/tools";
 import { createGuestChecks } from "./checks.js";
 import type { IdentityLimits } from "./identities.js";
@@ -160,7 +160,7 @@ export function createAgent(options: AgentOptions): Agent {
         http.server.closeIdleConnections();
         await closed;
         store.close();
-        if ("socketPath" in options.listen && process.platform !== "win32") {
+        if ("socketPath" in options.listen && socketIsAFile(options.listen.socketPath)) {
           await rm(options.listen.socketPath, { force: true });
         }
         log.info("shut down cleanly");
@@ -172,7 +172,10 @@ export function createAgent(options: AgentOptions): Agent {
 
 async function listen(server: Server, target: ListenTarget): Promise<string> {
   if ("socketPath" in target) {
-    if (process.platform !== "win32") {
+    // Only a unix socket is a file; the named pipe a test on a Windows host
+    // listens on has no directory, no leftover and no permission bits.
+    const isFile = socketIsAFile(target.socketPath);
+    if (isFile) {
       await mkdir(dirname(target.socketPath), { recursive: true });
       // A socket file left by a crash makes listen fail with EADDRINUSE.
       await rm(target.socketPath, { force: true });
@@ -185,7 +188,7 @@ async function listen(server: Server, target: ListenTarget): Promise<string> {
       });
     });
     // dot-agentd runs as the same user; nobody else may talk to the agent.
-    if (process.platform !== "win32") await chmod(target.socketPath, 0o600);
+    if (isFile) await chmod(target.socketPath, 0o600);
     return target.socketPath;
   }
   await new Promise<void>((resolve, reject) => {

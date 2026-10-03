@@ -4,9 +4,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
+  checkIdentityRequest,
   GUEST_DISPLAY,
+  IdentityRequestError,
   isValidIdentityId,
   newIdentityId,
+  redactProxy,
   type BrowserIdentity,
   type BrowserIdentityEventData,
   type BrowserIdentityStatus,
@@ -83,8 +86,6 @@ const MAIN_BROWSER = "main";
 const OPENED = /\bbrowser is open\b/i;
 /** What the MCP server answers when its browser closed under it while the process lives on. */
 const BROWSER_LOST = /\bbrowser is (?:gone|not open)\b/i;
-const PROXY_SCHEMES = new Set(["http:", "https:", "socks4:", "socks5:"]);
-const NAME_MAX = 80;
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -109,31 +110,6 @@ export function resultText(result: CallToolResult): string {
     .join("\n");
 }
 
-/** `http://user:secret@host` with the password replaced, for logs and for anything shown to a model. */
-export function redactProxy(proxy: string): string {
-  try {
-    const url = new URL(proxy);
-    if (url.password) url.password = "***";
-    return url.toString().replace(/\/$/, "");
-  } catch {
-    return "<unparseable proxy>";
-  }
-}
-
-function validateProxy(proxy: string): void {
-  let url: URL;
-  try {
-    url = new URL(proxy);
-  } catch {
-    throw new BrowserIdentityError("invalid", "proxy must be a URL such as http://user:pass@host:port or socks5://host:port");
-  }
-  if (!PROXY_SCHEMES.has(url.protocol) || !url.hostname) {
-    throw new BrowserIdentityError(
-      "invalid",
-      `proxy must use http, https, socks4 or socks5 and name a host; got "${redactProxy(proxy)}"`,
-    );
-  }
-}
 
 /**
  * Browser identities and the `invisible-playwright-mcp` process of each open
@@ -274,19 +250,15 @@ export class BrowserIdentityManager {
 
   create(input: CreateIdentityInput): Promise<BrowserIdentity> {
     return this.locked(async () => {
-      const name = typeof input.name === "string" ? input.name.trim() : "";
-      if (!name) throw new BrowserIdentityError("invalid", "an identity needs a non-empty name");
-      if (name.length > NAME_MAX) throw new BrowserIdentityError("invalid", `an identity name is at most ${NAME_MAX} characters`);
-      const proxy = input.proxy?.trim() || undefined;
-      if (proxy) validateProxy(proxy);
-
       const existing = await this.persistence.listIdentities();
-      if (existing.length >= this.maxIdentities) {
-        throw new BrowserIdentityError(
-          "limit",
-          `this Dot already has ${existing.length} browser identities, the most its configuration allows (max_identities ${this.maxIdentities}); delete one first`,
-        );
+      let checked: { name: string; proxy?: string };
+      try {
+        checked = checkIdentityRequest(input, existing.length, this.maxIdentities);
+      } catch (error) {
+        if (error instanceof IdentityRequestError) throw new BrowserIdentityError(error.code, error.message);
+        throw error;
       }
+      const { name, proxy } = checked;
       const taken = new Set(existing.map((r) => r.id));
       let id = newIdentityId(name);
       while (taken.has(id)) id = newIdentityId(name);

@@ -1,5 +1,5 @@
 import type { EventQuery } from "@invisible-dots/database";
-import { createTestDatabase, warnIfNoDatabase } from "@invisible-dots/database/testing";
+import { createTestDatabase, testAdapters } from "@invisible-dots/database/testing";
 import type { StoredEvent } from "@invisible-dots/shared";
 import { describe, expect, it } from "vitest";
 import { EventLog, StreamOverflowError, type EventStore } from "../src/index.js";
@@ -126,13 +126,9 @@ describe("EventLog fan-out", () => {
   });
 });
 
-const skip = warnIfNoDatabase("packages/events");
-
-// CREATE DATABASE and DROP DATABASE force checkpoints, which take seconds on a
-// busy or virtualized disk while other test files create theirs in parallel.
-describe.skipIf(skip)("EventLog on PostgreSQL", { timeout: 30_000 }, () => {
+describe.each(testAdapters())("EventLog on %s", { timeout: 60_000 }, (kind) => {
   it("guest events are stored once and published by the caller after commit", async () => {
-    const t = await createTestDatabase();
+    const t = await createTestDatabase(kind);
     try {
       const { db } = t;
       const log = new EventLog(db.events);

@@ -2,7 +2,7 @@
   "name": "@invisible-dots/cli",
   "version": "0.0.0",
   "private": true,
-  "description": "The invisible-dots command line client.",
+  "description": "The invisible-dots command: setup, doctor, image build, server, and the API client commands.",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -14,8 +14,11 @@
     "dev": "tsx src/main.ts"
   },
   "dependencies": {
+    "@invisible-dots/api": "0.0.0",
+    "@invisible-dots/image-builder": "0.0.0",
+    "@invisible-dots/sdk": "0.0.0",
     "@invisible-dots/shared": "0.0.0",
-    "@invisible-dots/sdk": "0.0.0"
+    "@invisible-dots/vm-manager": "0.0.0"
   },
   "bin": {
     "invisible-dots": "dist/invisible-dots.mjs"

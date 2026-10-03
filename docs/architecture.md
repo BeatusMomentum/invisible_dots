@@ -23,7 +23,8 @@ step by step. The reasoning happens inside the Dot's VM.
 
 invisible_dots runs on Linux and on Windows with the SAME code path: the same
 QEMU command line, the same networking, the same host to guest channel, the
-same database, the same data directory layout, the same commands. A
+same way of starting, watching and stopping QEMU, the same database, the same
+data directory layout, the same commands. A
 difference between the two is allowed only where the operating system makes
 sameness impossible, and every such difference lives in ONE function that a
 test covers. The complete list today:
@@ -31,8 +32,38 @@ test covers. The complete list today:
 | what | Linux | Windows | where |
 |---|---|---|---|
 | QEMU accelerator | `-accel kvm` | `-accel whpx` | `apps/vm-manager/src/host.ts` `accelerator()` |
-| how `invisible-dots setup` installs QEMU and enables the accelerator | `sudo apt-get install` (or the distribution's equivalent, printed) | one UAC prompt: enables the Windows Hypervisor Platform feature and runs the official QEMU installer silently | `apps/cli/src/setup/` |
-| file permission bits on secrets | `0600` | not enforced by the OS (documented limitation) | `packages/shared/src/files.ts` |
+| how `invisible-dots doctor` reads the accelerator before probing it | `/dev/kvm` opens read-write | the `HypervisorPlatform` feature state through `Get-CimInstance` | `apps/cli/src/setup/install.ts` `checkAcceleratorAccess()` |
+| how `invisible-dots setup` installs QEMU and enables the accelerator | `sudo apt-get install` (or the distribution's equivalent, printed) | one UAC prompt: enables the Windows Hypervisor Platform feature and runs the official QEMU installer silently | `apps/cli/src/setup/install.ts` `installHostPrerequisites()`, given the host's platform by `apps/cli/src/host.ts` |
+| `setup` run as root | refused: it would check `/dev/kvm` as root and add root to the `kvm` group, not the person who runs the server; it calls `sudo` itself | there is no root; setup always runs as the normal user and elevates its one step | `apps/cli/src/setup/install.ts` `setupRefusal()` |
+| a file or directory private to the user (`config/`, `master.key`, `api.token`, `db/`, the data directory) | mode `0600` / `0700` | an ACL with the current user alone, inheritance removed (`icacls`), because Windows ignores the mode bits and a directory under a drive root inherits "Authenticated Users: Modify" | `packages/shared/src/files.ts` `permissionBitsEnforced()` and `restrictToOwner()` |
+
+One more branch exists only to let tests run on a Windows developer host:
+`packages/shared/src/sockets.ts` `testSocketPath()` hands out a named pipe
+there, because Node cannot serve a unix socket on Windows. The guest
+code that serves sockets decides from the path (`socketIsAFile()`), never
+from the platform. dot-agentd ships for linux/amd64 only, and the build
+constraints of six of its files let its package compile and its tests run on a
+Windows developer host; no shipped binary contains the `!unix` side:
+
+- `setProcessGroup`: `guest/dot-agentd/internal/agentd/exec_unix.go`, `guest/dot-agentd/internal/agentd/exec_other.go`
+- `listenUnixPrivate`: `guest/dot-agentd/internal/agentd/listen_unix.go`, `guest/dot-agentd/internal/agentd/listen_other.go`
+- `diskUsage`: `guest/dot-agentd/internal/agentd/platform_unix.go`, `guest/dot-agentd/internal/agentd/platform_other.go`
+
+`tests/repo/platform-branches.test.ts` reads every product source file
+(TypeScript and JavaScript, the build scripts, the guest's shell scripts and
+dot-agentd's Go) and fails on a platform check outside this list: Node's
+platform and OS probes, `getuid`, the Windows path module, a platform name
+as a string, Go's `runtime.GOOS`, build constraints and platform file name
+suffixes.
+
+QEMU has no monitor (no QMP, no HMP) on either host. The control plane sees a
+VM's QEMU only as a process, through `process.kill(pid, 0)` and the guest
+port its user networking listens on, and reaches the guest only through
+dot-agentd (section 5.1); both behave the same on Linux and Windows. That is
+what removed the one host-side branch a monitor needed: Node has no AF_UNIX
+client on Windows, QEMU's `pipe` chardev there blocks the start until a client
+connects and serves one client for the life of the process, and a monitor on
+TCP would be reachable from every guest (section 3.6).
 
 Never fall back silently: when the accelerator is missing, starting a VM fails
 with a message that says which command fixes it. Software emulation (TCG) is
@@ -43,9 +74,9 @@ image and an arm64 browser build, which are not wired.
 
 ```text
 apps/
-  api/             control-plane HTTP API + SSE; the server entry point
+  api/             control-plane HTTP API + SSE, and the control plane composed as one process (`invisible-dots server` runs it)
   scheduler/       task dispatcher, wake on work, sleep on idle
-  vm-manager/      QEMU driver: overlays, seed and runtime ISOs, QEMU argv, QMP, port forwards
+  vm-manager/      QEMU driver: overlays, seed and runtime ISOs, QEMU argv, port forwards, the guest client, the host's one process runner
   web/             Next.js web client
   cli/             `invisible-dots`: setup, doctor, image build, server, and the API client commands
 packages/
@@ -71,6 +102,7 @@ virtualization/
   cloud-init/      NoCloud templates
   images/          pinned base image metadata
 tests/
+  repo/            checks over the whole repository (the platform branches of section 1.1)
   e2e/             end-to-end run against real VMs (local only, needs an accelerator)
 docs/
 ```
@@ -78,8 +110,9 @@ docs/
 There is no host installer script, no service unit and no container: the host
 needs Node 24 and QEMU, and `invisible-dots setup` gets QEMU (section 11).
 
-Everything under `apps/`, `packages/`, `guest-runtime/` and
-`guest/invisible-dots-agent/` is TypeScript in one npm workspace. `dot-agentd`
+Everything under `apps/`, `packages/`, `guest-runtime/`,
+`guest/invisible-dots-agent/` and `guest/image-builder/` is TypeScript in one
+npm workspace. `dot-agentd`
 is a Go module. Node 24 or newer everywhere (the guest uses the built-in
 `node:sqlite`). Go 1.25 or newer.
 
@@ -92,16 +125,27 @@ way on every host; running it as a service is left to the person.
 
 ### 3.1 Requirements
 
-Linux or Windows on x86-64, Node 24, and QEMU 9.2 or newer
+Linux or Windows on x86-64, Node 24, and QEMU 8.2 or newer (Ubuntu 24.04's
+own package; the number lives in `MIN_QEMU_VERSION`, `apps/vm-manager/src/host.ts`)
 (`qemu-system-x86_64` and `qemu-img`) with its hardware accelerator usable:
 `/dev/kvm` readable and writable by the user on Linux, the Windows Hypervisor
 Platform feature enabled on Windows. No administrator rights are needed at run
 time. `invisible-dots doctor` checks each item and names the command that fixes
 it; `invisible-dots setup` performs those commands (section 11).
 
-QEMU is found, in this order, at `INVISIBLE_DOTS_QEMU_DIR`, on `PATH`, and at
-the default install location of the official Windows installer
-(`C:\Program Files\qemu`). It is always invoked by absolute path once found.
+QEMU is found in `INVISIBLE_DOTS_QEMU_DIR` alone when that is set (a QEMU from
+there mixed with a `qemu-img` from somewhere else would run two versions on the
+same disks); otherwise first in the default install location of the official
+Windows installer, `%ProgramW6432%\qemu` (read from the variable Windows sets,
+so a Program Files on another drive is found; Linux has no such variable and
+nothing to check), then on `PATH`. The installer's directory comes first so
+the QEMU `setup` just installed wins over an older one on `PATH`; when the
+installer reused an earlier install directory, `setup` prints the
+`INVISIBLE_DOTS_QEMU_DIR` line that points at it. QEMU is always invoked by
+absolute path once found, with the server's home as its working directory
+(a Windows process holds its working directory open, so inheriting the
+directory the server was started from would keep that directory from being
+moved or deleted while any Dot runs).
 
 ### 3.2 Host filesystem
 
@@ -112,31 +156,88 @@ host (`%USERPROFILE%\.invisible-dots` on Windows):
 ~/.invisible-dots/
   config/
     master.key                          32 random bytes: encrypts secrets in the database
-    api.token                           bearer token for the API
+    api.token                           bearer token for the API (its first line)
   db/                                   the embedded PostgreSQL (PGlite) data directory
+  server.lock                           { pid, host_uptime_s } of the one server running on this home
   images/
     noble-server-cloudimg-amd64.img     pinned by SHA-256 (virtualization/images/base.json)
     golden-<version>.qcow2              immutable, read-only
+    golden-<version>.json               its manifest: inputs, versions, SHA-256
     runtime-<version>.iso               our code: agent bundle + dot-agentd + units
+    runtime-<version>.json              its manifest
+    .cache/                             verified downloads (re-hashed on every build)
+    .golden-<version>.work/             a golden build in progress, kept when it fails
+    .golden-build.lock .runtime-build.lock
   vms/<dot_id>/
     disk.qcow2                          overlay, backing file = a golden image
     seed.iso                            NoCloud seed
-    qmp.sock                            QMP control socket of the running VM
-    qemu.pid                            pid file of the running VM
-    serial.log                          the guest serial console
+    qemu.json                           pid file of the running VM: { pid, guest_port, host_uptime_s }, written at spawn
+    serial.log                          the guest serial console, truncated at each start
   logs/
+    qemu-<dot_id>.log                   QEMU's own output
 ```
 
 Both hosts use the same layout and the same names; only the root differs, and
-only because home directories differ.
+only because home directories differ. `<version>` is `<UTC build time>-<digest
+of the inputs>`, so the newest build sorts last and rebuilding unchanged inputs
+is a no-op; `packages/shared/src/paths.ts` is the one place that names these
+files. A path under `INVISIBLE_DOTS_HOME` that contains a comma or any
+character outside plain ASCII is refused (`qemuPathProblem()`,
+`apps/vm-manager/src/qemu-args.ts`), and `doctor` reports such a home before a
+build or a Dot fails on it: QEMU's option syntax cannot carry a comma in every
+flag, and the pinned Windows QEMU 11.1, measured, cannot open a `-drive` file
+whose path holds a non-ASCII character (an accented Latin letter as much as a
+Cyrillic one). Linux would accept UTF-8, but the default home sits under the
+account name, and a home that works on one host and not on the other is the
+divergence section 1.1 rules out. Nothing under it is a unix socket, so its
+length is not limited.
+
+The data directory, `config/` and `db/` are private to the user who runs the
+server, and so are `master.key` and `api.token` (section 1.1 says how on each
+host); every start brings an existing directory back to that.
+
+`server.lock`, the two build locks and every `qemu.json` record the host's
+uptime when they were written (`host_uptime_s`). It only grows within one boot
+and starts from zero at the next, so a record from before a host restart is
+recognized as stale without trusting a pid, which the operating system may
+have handed to another process since. (Windows Fast Startup keeps counting
+across a shutdown; such a record falls back to the pid checks of section 3.4.)
+The locks are one helper, `acquirePidLock()` in `packages/shared/src/process.ts`:
+a lock is taken over only when it is stale (the host restarted, or its pid and
+the child process it records are gone, or it names this process's own pid,
+which can only be an earlier holder's), only by the one process that creates
+`<lock>.takeover` first, and only after reading the lock again unchanged; it is
+released only by its holder. The golden build records its builder VM as that
+child, so a build killed outright never has its work directory deleted under
+a QEMU that still runs. A refusal names the holder and the file to remove.
+
+`qemu.json` is written by the vm-manager (to a temporary name, then renamed)
+right after it spawns QEMU, from the spawned process's pid and the guest port
+it passed to QEMU. It is the one record of which process and which port belong
+to the Dot: QEMU's own `-pidfile` is not used, and the `computers` row (section
+9.1) is corrected from it on reconciliation, never the other way round. A file
+that does not parse makes the VM's state ERROR, never STOPPED, because a second
+QEMU on the same disk would corrupt it.
 
 ### 3.3 Two images, two lifetimes
 
 - The **golden image** carries the operating system and third-party software:
-  Ubuntu 24.04, qemu-guest-agent, Xvfb and a minimal XFCE session, the libraries
-  the browser needs, Node 24, `uv`, `invisible-playwright-mcp` at an exact
-  version, and the browser engine already downloaded. It changes rarely. It is
-  never modified once a VM uses it: a new one gets a new version in its name.
+  Ubuntu 24.04, Xvfb and a minimal XFCE session, the libraries
+  the browser needs, Node 24, `uv`, `invisible-playwright-mcp` in its own
+  Python environment, and the browser engine already downloaded. It changes
+  rarely. It is never modified once a VM uses it: a new one gets a new version
+  in its name.
+- Every input of the golden image is pinned by content: the cloud image, Node
+  and `uv` by SHA-256 (`virtualization/images/base.json`,
+  `guest/image-builder/pins.json`), and the whole Python environment of
+  `invisible-playwright-mcp`, transitive packages included, by
+  `guest/image-builder/builder/mcp-requirements.lock`, every package at an
+  exact version with the SHA-256 of its files. The builder installs it with
+  `uv pip install --require-hashes`, so nothing is resolved from the index at
+  build time; the lock is the one place the two top-level versions are
+  written, and it is part of the inputs digest, so a changed transitive
+  package is a new image. apt packages are not pinned by version; apt checks
+  their signatures.
 - The **runtime disk** (`runtime-<version>.iso`, attached read-only to every VM
   and mounted at `/opt/invisible-dots`) carries our code: the bundled
   `invisible-dots-agent`, the `dot-agentd` binary and the systemd units. A new
@@ -145,7 +246,12 @@ only because home directories differ.
 
 Neither image is ever published by this project: the host builds both from
 public sources (`invisible-dots image build`, code in `guest/image-builder/`),
-with the same QEMU it runs Dots with. Both ISOs are written by
+with the same QEMU it runs Dots with and the same machine: the builder VM's
+command line is built from the vm-manager's `machineArgs()`, drive and device
+functions, the ones `qemuArgs()` uses, plus only what a builder needs, so a
+golden image is provisioned on the machine type, accelerator and CPU model a
+Dot boots it on. The seed and runtime ISO labels are each defined once, in
+`apps/vm-manager/src/seed.ts`. Both ISOs are written by
 `packages/iso`, so no ISO tool is needed on any host.
 
 ### 3.4 VM definition
@@ -165,22 +271,86 @@ qemu-system-x86_64
   -netdev user,id=net0,hostfwd=tcp:127.0.0.1:<guest_port>-:1024
   -device virtio-net-pci,netdev=net0
   -device virtio-rng-pci
-  -qmp unix:<vms/id/qmp.sock>,server=on,wait=off
   -serial file:<vms/id/serial.log>
-  -display none -pidfile <vms/id/qemu.pid>
+  -display none
 ```
 
+- No monitor and nothing that pauses: no `-qmp`, no `-monitor`, no `-S`, no
+  `-no-shutdown`. QEMU starts running the guest at once and exits when the
+  guest powers off. A test fails on any of these flags.
 - No fallback: if `-accel` fails, the start fails and the error names the
   fix. If `-cpu host` is rejected by an accelerator, the error says so; it is
   not replaced by a guessed model without an explicit decision recorded here.
-- QMP is a unix socket on every host (QEMU supports AF_UNIX on Windows), never
-  TCP: QMP has no authentication, and a guest can reach the host's loopback
-  through user networking (section 3.6).
-- The VM process is spawned detached, so the control plane can restart without
-  stopping Dots; on start it finds running VMs through their pid files and QMP
-  sockets.
-- Stop: QMP `system_powerdown`, then QMP `quit` after 60 s. State: QMP
-  `query-status` when the socket answers, STOPPED when there is no live process.
+- Start: spawn QEMU detached (so the control plane can restart without
+  stopping Dots), with an allowlist of the server's environment
+  (`allowlistedEnvironment()`, `packages/shared/src/environment.ts`: what a
+  program needs to start and find its files, never `INVISIBLE_DOTS_TOKEN` or a
+  `DATABASE_URL`, which a QEMU that outlives the server would otherwise keep),
+  write `qemu.json`, then wait until QEMU listens on the guest
+  port and is still running 1 s later. The listening port means QEMU parsed
+  its command line, opened the accelerator and set up networking; the second
+  look catches what fails just after (QEMU checks the CPU model when it builds
+  the machine). A QEMU that exits is reported with what it wrote to
+  `logs/qemu-<dot_id>.log` during this start; one that never listens within
+  30 s is killed and reported the same way.
+- A QEMU that starts but never brings the guest up (a vCPU the accelerator
+  stopped, a guest stuck in its firmware or kernel) is caught by the READY
+  procedure (section 9.3): waiting for `GET /v1/health` fails after its timeout
+  with the end of `logs/qemu-<dot_id>.log` and of `vms/<dot_id>/serial.log` in
+  the error, and at once when QEMU exits meanwhile.
+- State: STOPPED when there is no `qemu.json`, its process is gone, or it was
+  written before the host last restarted; RUNNING when its process is this
+  Dot's QEMU (the rule below); ERROR when a live pid cannot be proven to be (it
+  is reported and never killed). Whether the guest inside is up is guest
+  health, which the READY procedure checks; the state of a Dot is both
+  (section 9.3).
+- Which process may be killed, the one rule: a process this control plane
+  spawned and whose exit Node has not reported (Node holds that process, so
+  its pid cannot be recycled meanwhile), or a pid from a `qemu.json` written
+  in this boot that is alive and this user's (`process.kill(pid, 0)`
+  succeeds; EPERM means another user's process, and a QEMU this control plane
+  spawned always runs as its own user) AND whose guest port from the same file
+  accepts a TCP connection on 127.0.0.1. QEMU's user networking listens on that
+  port from the moment it is set up until the process exits, whether or not the
+  guest is up; a process that inherited a recycled pid after a crash or a host
+  restart does not listen on that one port. The rule is checked again right
+  before every kill. Anything else is never killed. A listener that passes it
+  is still not trusted with the Dot's token: the guest must prove it holds the
+  token first (section 5.1).
+- Stop: `POST /v1/system/poweroff` through the guest channel with the Dot's
+  token (section 5.2), then wait up to 60 s for QEMU to exit, then kill it
+  (SIGKILL on Linux, TerminateProcess on Windows, both through
+  `process.kill`) and wait up to 10 s for it to go. A guest that does not
+  accept the poweroff (it is not up, or the request fails) cannot power itself
+  off, so its QEMU is killed at once. Destroy kills without a poweroff: the
+  disk goes too. The VM's files are rewritten or removed right after its QEMU
+  stopped (the seed at the next start, everything at a destroy) through one
+  retry while a file is in use (`retryWhileInUse()`,
+  `apps/vm-manager/src/runner.ts`): Windows can report a process gone before
+  its handles are closed, and an antivirus may hold a file for a moment; on
+  Linux the first try succeeds.
+- Reboot is a stop and a start, not a reset: a reset skips the guest's
+  shutdown and would not apply a new runtime ISO, CPU count or memory size.
+  The guest port changes on reboot.
+- Reconciliation, the one path for it: reading a VM's state (the vm-manager's
+  `state()`, which the control plane's recovery after a restart calls for
+  every Dot) removes a `qemu.json` whose process is gone the moment it reads
+  it, under the Dot's lock, so a pid recycled later cannot make it look alive.
+  A VM whose process is its QEMU is adopted with the pid and port from the
+  file, and the READY procedure then checks its guest.
+- The seed is rewritten at every start. Its cloud-init instance-id is
+  `iid-<dot_id>-<digest of the seed>`, so cloud-init re-runs its per-instance
+  steps only when the seed's content changes.
+- Measured with QEMU 8.2.2 (Ubuntu 24.04) and KVM: this argv starts, the
+  forward listens about 0.2 s after the spawn, and a taken port exits with
+  `Could not set up host forwarding rule`, the message the start retries on.
+- OPEN: measured on QEMU 11.1 with the Windows Hypervisor Platform feature
+  disabled, `-accel whpx -cpu host` starts and then pauses the VM with
+  `WHPX: Unexpected VP exit code 4` (QEMU keeps running, so the start succeeds
+  and READY fails with that line from QEMU's log); `-cpu qemu64` ran the whole
+  lifecycle. Whether `-cpu host` works once `invisible-dots setup` has enabled
+  the feature is not measured yet. If it does not, the CPU model under WHPX
+  needs a decision recorded here.
 
 ### 3.5 Port forwards
 
@@ -194,11 +364,15 @@ every request to a guest carries the Dot's token (section 5.1).
 QEMU user-mode networking gives every Dot its own NAT with no bridge, no
 administrator rights and the same behaviour on every host. Dots cannot reach
 each other's guest addresses. A guest CAN reach services on the host's
-loopback through `10.0.2.2`, which includes the control plane API and the other
-Dots' forwarded ports: both require a bearer token the guest does not have,
-and QMP is not on TCP. Nothing else should listen unauthenticated on the
-host's loopback while Dots run; `invisible-dots doctor` cannot check that, and
-this document says so.
+loopback through `10.0.2.2`, which includes the control plane API, the web
+client and the other Dots' forwarded ports. All of them require a credential
+the guest does not have: the API's bearer token, the web client's session
+(section 9.7; its Host and Origin checks are written by the client and so
+cannot be what lets a request through), and each Dot's own token, which a
+forwarded port answers only after proving it holds it (section 5.1). QEMU has
+no monitor anywhere. Nothing else should listen unauthenticated on the host's
+loopback while Dots run; `invisible-dots doctor` cannot check that, and this
+document says so.
 
 ## 4. Guest
 
@@ -206,13 +380,24 @@ this document says so.
 
 | unit | what |
 |---|---|
-| `qemu-guest-agent.service` | stock, root |
 | `dot-desktop.service` | `Xvfb :0 -nolisten tcp` plus a minimal XFCE session on it |
 | `dot-agentd.service` | the computer daemon; TCP port 1024 (reached only through the host's port forward) and a local unix socket |
 | `invisible-dots-agent.service` | the Dot itself |
 
 There is no long-running browser service. The agent starts one
-`invisible-playwright-mcp` process per launched browser identity (section 6).
+`invisible-playwright-mcp` process per launched browser identity (section 6),
+with an allowlist of its own environment (`allowlistedEnvironment()`, the same
+filter as QEMU's on the host) plus the variables of section 6.
+
+`dot` may run exactly one command as root, `/usr/bin/systemctl poweroff`
+without a password, which is what dot-agentd starts when the host stops the
+VM (section 5.2). The Dot's seed writes that rule; the golden image's builder
+seed gives `dot` none and the provisioner removes any rule the image had,
+because a Dot's seed only adds its rule to that file. Everything the model
+runs (`computer_exec`, `POST /v1/exec`) therefore runs as `dot`. `dot` is in
+the `systemd-journal` group, so it can read its computer's system journal;
+the group is given where the user is created, by the image builder's seed,
+because cloud-init adds no group to a user that exists already.
 
 ### 4.2 Guest filesystem
 
@@ -232,14 +417,35 @@ There is no long-running browser service. The agent starts one
   agent.sock                        the agent's API, reached by dot-agentd's proxy
 ```
 
+dot-agentd reads the Dot's home from `DOT_HOME` (default `/home/dot`; the
+units do not set it). `INVISIBLE_DOTS_HOME` is the host's data directory
+(section 3.2) and is never read in the guest: one name, one place.
+
 ### 4.3 Secrets
 
 The OpenRouter key is never written into the golden image, the runtime ISO or
 the seed. After the guest reports healthy, the control plane pushes it over
 the guest channel (`POST /v1/agent/secrets`) and the agent keeps it in memory only. A VM
 that restarts asks for nothing: the control plane pushes it again on every
-READY transition. The Dot's own token is the one secret in the seed; it only
+READY transition, and an agent process that restarts inside a running VM
+(systemd restarts it after a crash) announces itself with an `agent.started`
+outbound event, on which the control plane pushes the key and the config
+again. The Dot's own token is the one secret in the seed; it only
 authorizes requests to this one VM.
+
+"Memory only" keeps the key off every disk; it is not on its own what keeps
+it from the commands the model runs, which run as the same user `dot`. What
+does: `dot` cannot become root (section 4.1), so it cannot read another
+process's memory through root; Ubuntu's Yama `ptrace_scope=1` lets a process
+trace only its own descendants, and the model's commands descend from
+dot-agentd, not from the agent; and the agent runs with `--disable-sigusr1`,
+so no process of the same user can open Node's inspector in it. A change to
+any of the three reopens the question.
+
+A secret also never travels in an error: a failed push of the key is reported
+by route, status and code only (`the guest did not take the OpenRouter key
+(status 502, ...)`), never with the text the guest or a proxy answered, which
+could echo the key into a Dot's error, the log or the event log.
 
 ## 5. Host to guest protocol
 
@@ -253,10 +459,21 @@ Every request carries
 Connections go host to guest only: the guest never connects to the host. Events
 flow back over a stream the host opens (5.3).
 
+A port is not a credential (section 3.5), so the host does not send the token
+to whatever listens on one: after a host restart or a QEMU that died, another
+local process can listen on a port the host still has on record. Before the
+first request that carries the token, the guest client asks
+`GET /v1/proof?nonce=<16 random bytes in hex>`, the one route without a token,
+and requires `{ proof: HMAC-SHA256(token, "invisible-dots guest proof v1\n" +
+nonce) }`, compared in constant time. A listener that cannot answer it never
+sees the token, the key or the config; the call fails with
+`guest_unproven`, which is not retried.
+
 ### 5.2 dot-agentd routes (TCP port 1024, token required)
 
 | method and path | body / query | answer |
 |---|---|---|
+| `GET /v1/proof` | `?nonce=` (32 to 128 lowercase hex characters); no token | `{ proof }`, section 5.1 |
 | `GET /v1/health` | | `{ agentd: "ok", agent: <agent /health or {status:"down"}>, uptime_s }` |
 | `GET /v1/system` | | `{ hostname, uptime_s, cpus, mem_total_bytes, mem_available_bytes, disk_total_bytes, disk_free_bytes }` |
 | `POST /v1/exec` | `{ command, cwd?, timeout_ms? }` | `{ exit_code, stdout, stderr, timed_out }` (bash -lc, output capped at 1 MiB each) |
@@ -264,11 +481,19 @@ flow back over a stream the host opens (5.3).
 | `PUT /v1/files` | `?path=`, body = bytes | `204` |
 | `GET /v1/files/list` | `?path=` | `{ entries: [{ name, type: "file"\|"dir"\|"other", size, mtime }] }` |
 | `GET /v1/screenshot` | | `image/png` of display `:0` |
+| `POST /v1/system/poweroff` | | `202 { status: "powering_off" }` after starting `sudo -n systemctl poweroff` detached (the seed lets `dot` run exactly that without a password, section 4.1); `500 poweroff_failed` when it cannot be started. How the control plane stops a VM (section 3.4) |
 | `* /v1/agent/<rest>` | | reverse proxy to `unix:/run/invisible-dots/agent.sock` at `/<rest>` |
 
-The same routes, without `/v1/agent`, are served on `agentd.sock` for the agent
-(no token: the socket is owned by `dot`, mode 0600). Paths in file routes are
-resolved against `/home/dot` when relative.
+The same routes, without `/v1/agent`, `/v1/proof` and `/v1/system/poweroff`,
+are served on `agentd.sock` for the agent (no token: the socket is owned by
+`dot`, mode 0600). Sleep, stop and reboot are the control plane's decisions,
+and the agent's socket offers no poweroff. That is not a guarantee that a Dot
+cannot power its own computer off: the model runs commands as `dot`, which
+may run the same `systemctl poweroff`, and can read the token in
+`/etc/invisible-dots/config.json`. A Dot owns its computer. What the control
+plane guarantees is the outcome: a VM that stops without being asked is
+recorded as STOPPED, and started again when its Dot has work (section 9.5).
+Paths in file routes are resolved against `/home/dot` when relative.
 
 ### 5.3 invisible-dots-agent routes (reached as `/v1/agent/...`)
 
@@ -284,7 +509,7 @@ resolved against `/home/dot` when relative.
 | `POST /browser-identities` | `{ name, proxy? }` | `201 BrowserIdentity` |
 | `GET /browser-identities/:id` | | `BrowserIdentity` |
 | `DELETE /browser-identities/:id` | | `204` |
-| `POST /prepare-sleep` | | `204` after the state is flushed and browser sessions are closed |
+| `POST /prepare-sleep` | | `204` after the state is flushed and browser sessions are closed; the agent then starts no new work. A `POST /secrets` (the READY procedure of a VM whose stop failed, so no shutdown followed) lifts that, and so does a new inbound event |
 
 Outbound events are written to an outbox table in `dot.db` before they are
 streamed, with a monotonically increasing `seq`. The host stores the last `seq`
@@ -302,15 +527,32 @@ interface InboundEvent  { id: string; type: InboundEventType; ts: string; data: 
 
 Inbound types: `user.message {text}`, `task.created {task_id, description,
 priority}`, `approval.received {approval_id, decision: "approve"|"reject",
-note?}`, `system.event {name, data}`.
+note?}`, `system.event {name, data}`. A task cancelled after its
+`task.created` may have reached the guest is cancelled there with
+`system.event { name: "task.cancelled", data: { task_id } }`. The guest keeps
+the id of every inbound event it accepted and ignores one it already has, so
+the host may send an event again whenever the outcome of a send is unknown
+(section 9.2).
 
-Outbound types: `agent.state {state}`, `message.assistant {text,
+Outbound types: `agent.started {}` (the first event of every start of the
+agent process, section 4.3), `agent.state {state}`, `message.assistant {text,
 in_reply_to?}`, `task.started {task_id}`, `task.progress {task_id, text}`,
 `task.completed {task_id, summary}`, `task.failed {task_id, error}`,
 `approval.requested {approval_id, task_id?, tool, permission, arguments,
 reason}`, `tool.called {task_id?, tool, permission, decision, ok,
 duration_ms}`, `browser.identity.created|deleted|launched|closed {identity_id,
 name}`, `memory.written {key}`.
+
+The `arguments` of `approval.requested` are what the person decides on, and
+they leave the guest: a tool argument that carries a secret is redacted there
+by the tool's own rule (`redactToolArguments()`, `packages/shared/src/tools.ts`;
+today the password in a `browser_identity_create` proxy URL). The pending call
+in `dot.db` keeps the full arguments, so an approval runs the call as asked.
+
+An outbound event is handed to the event stream only after the transaction
+that wrote it to the outbox committed: one written inside a transaction that
+rolls back is never streamed, so its `seq` cannot reach the host and then be
+reused for another event.
 
 The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
 `computer.state {state}`, `computer.started`, `computer.stopped`,
@@ -327,11 +569,14 @@ The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
   or passes a seed: the first launch of a profile picks one and every later
   launch of the same profile gets the same one back.
 - Launching an identity starts one `invisible-playwright-mcp` process over
-  stdio with:
-  `INVISIBLE_MCP_HOME=<identity>/mcp`, `INVISIBLE_MCP_SESSION_ID=<identity_id>`,
-  `STEALTHFOX_PROFILE_DIR=<identity>/profile`, `STEALTHFOX_HEADLESS=0`,
-  `DISPLAY=:0`, and `STEALTHFOX_PROXY` when the identity has a proxy. The
-  browser therefore runs on the Dot's desktop and shows up in its screenshots.
+  stdio. Its environment is the allowlist of section 4.1 plus, through the MCP
+  server's documented settings: its home (`INVISIBLE_MCP_HOME=<identity>/mcp`)
+  and session id (`INVISIBLE_MCP_SESSION_ID=<identity_id>`), the identity's
+  profile directory (`<identity>/profile`), headed mode, `DISPLAY=:0`, and the
+  identity's proxy when it has one. The names of the browser layer's own
+  settings are written in one place, `packages/shared/src/protocol.ts`
+  (`ENV.PROFILE_DIR`, `ENV.HEADLESS`, `ENV.PROXY`). The browser therefore runs
+  on the Dot's desktop and shows up in its screenshots.
 - The model never calls `browser_open` directly and never sees the MCP tools
   by their own names. It calls invisible_dots tools that take an
   `identity_id`; the browser manager opens the identity's `main` browser with
@@ -477,19 +722,46 @@ compiled to WebAssembly, `@electric-sql/pglite`) running inside the server
 process with its data in `~/.invisible-dots/db`, so nothing has to be
 installed. With `DATABASE_URL` set, the same migrations and the same queries
 run against an external PostgreSQL 16 or newer through `pg`. The repositories
-talk to one small interface (`query`, `transaction`) with two adapters; no SQL
-differs between them, and the test suite runs against both.
+talk to one small interface (`query` for one statement, `exec` for a script
+of several such as a migration file, `transaction`, `close`, and `kind`) with
+two adapters; no SQL differs between them, and the test suite runs against
+both. int8 comes back as a number (a value above 2^53 is an error, never
+rounded) and bytea as `Uint8Array`, on both.
+
+PGlite has one connection and does not lock its data directory, so one server
+runs per `INVISIBLE_DOTS_HOME` (`server.lock`, section 3.2), transactions run
+one at a time, and nothing else opens the database: `invisible-dots doctor`
+asks the running server instead. Each migration file runs in its own
+transaction, which first takes a transaction-scoped advisory lock, so two
+servers migrating one external database apply every file once.
+
+One database serves one control plane. `server.lock` only guards one
+`INVISIBLE_DOTS_HOME`, and two servers with different homes on one external
+database would each reconcile, dispatch and stop the other's Dots (one finds
+no disk for the other's VMs and marks them ERROR). So the server also holds a
+session-level advisory lock on its database for its whole life
+(`Database.holdInstanceLock()`) and refuses to start without it; the lock goes
+with the session, so a server that died leaves nothing to clean up.
+
+Event ids are visible in id order: every insert into `events` takes a
+transaction-scoped advisory lock before its `bigserial` id is drawn, held
+until its transaction commits. Without it, on PostgreSQL a transaction that
+drew id 10 could commit after one that drew 11, and a client that resumed
+`GET /api/stream` after 11 would never see 10. A transaction that inserts an
+event and changes other rows inserts the event first, so the lock is never
+taken while holding a row lock another event writer waits for.
 
 Tables: `dots`, `computers`, `tasks`, `task_runs`, `events`, `approvals`,
-`secrets`, `schema_migrations`. Migrations are plain SQL files applied in order
-at start.
+`inbound_events`, `secrets`, `schema_migrations`. Migrations are plain SQL
+files applied in order at start.
 
 - `dots(id text pk, name text unique, config jsonb, status text, created_at, updated_at)`
-- `computers(dot_id pk fk, vm_name, guest_port int, pid int, state text, golden_image text, runtime_image text, token_enc bytea, event_cursor bigint default 0, last_active_at, updated_at)`
+- `computers(dot_id pk fk, vm_name, guest_port int null, pid int null, state text, golden_image text, runtime_image text, token_enc bytea, event_cursor bigint default 0, last_active_at, last_error, updated_at)`: `guest_port` and `pid` are null while no QEMU runs, and `guest_port` is not unique (a crashed VM's row may name a port since reused); both are copies of `qemu.json` (section 3.2), which wins on reconciliation
 - `tasks(id text pk, dot_id fk, description, priority int, status, created_at, scheduled_at, started_at, finished_at, summary, error)`
-- `task_runs(id pk, task_id fk, started_at, finished_at, outcome)`
+- `task_runs(id pk, task_id fk, started_at, delivered_at, finished_at, outcome)`: `delivered_at` is set when the guest accepted the run's `task.created`
 - `events(id bigserial pk, dot_id, type, data jsonb, source 'host'|'guest', guest_seq bigint, created_at)`, unique `(dot_id, guest_seq)`
-- `approvals(id text pk, dot_id, task_id, tool, permission, arguments jsonb, reason, status 'pending'|'approved'|'rejected', note, created_at, resolved_at)`
+- `approvals(id text pk, dot_id, task_id, tool, permission, arguments jsonb, reason, status 'pending'|'approved'|'rejected'|'expired', note, created_at, resolved_at)`: an approval whose task reached a terminal state before anyone decided is `expired`, in the same statement that ends the task, and an `approval.requested` for a task that is already terminal is stored as `expired`, never `pending`
+- `inbound_events(seq bigserial pk, id text unique, dot_id fk, type, data jsonb, ts, task_id, run_id, created_at, sent_at, delivered_at, dropped_at, drop_reason, failures int, last_error, retry_at)`: the outbox of host to guest events (section 9.2)
 - `secrets(scope text, name text, value_enc bytea, updated_at, pk(scope, name))`: `scope` is `global` or a dot id
 
 Secrets are encrypted with AES-256-GCM under `master.key`. The OpenRouter key
@@ -501,7 +773,36 @@ is looked up as `(<dot_id>, openrouter_api_key)` first, then
 The dispatcher claims work with
 `SELECT ... FROM tasks WHERE status = 'PENDING' AND (scheduled_at IS NULL OR scheduled_at <= now()) ... FOR UPDATE SKIP LOCKED`,
 one task per Dot at a time (a Dot with a `RUNNING` or `WAITING_APPROVAL` task
-is skipped).
+is skipped). One dispatcher runs per database (section 9.1); the row locks
+make a claim and the rest of its transaction one unit, and are not what would
+keep two dispatchers from claiming two tasks of one Dot.
+
+Everything the control plane tells a guest goes through one durable outbox,
+`inbound_events`, written in the same transaction that decided it: a claim
+stores its task's `task.created` (and opens a run), a resolved approval its
+`approval.received`, a message its `user.message`, a cancel its
+`system.event`. Nothing is kept only in memory, so a failed wake or a control
+plane restart loses nothing a person saw accepted. One deliverer
+(`apps/scheduler/src/inbound.ts`) sends a Dot's undelivered rows in order,
+waking the Dot first when it sleeps, and stops at the first failure so a later
+event never overtakes an earlier one:
+
+- A row is delivered when the guest answers 202. Every READY transition
+  sends the Dot's rows again, and a periodic pass retries rows whose retry
+  time came.
+- Whether a `task.created` may still go out is decided in the statement that
+  marks its send begun: a task that stopped being active meanwhile (a cancel
+  that won the race with a wake) is dropped there and never sent. A cancel of
+  a task whose send never began drops that `task.created` in its own
+  transaction; otherwise the guest may hold the task, so the cancel stores a
+  `system.event` behind it.
+- A send whose outcome is unknown (a timeout, a reset connection) may have
+  reached the guest: it is sent again with the same id, which the guest
+  ignores if it has it, and it never counts as a failure. Only failures
+  with a known outcome count: the guest refused the event (it is dropped),
+  or nothing listened. After 3 such failures a `task.created` gives its task
+  up as FAILED; a message or a decision is never given up and waits for the
+  next READY.
 
 ### 9.3 Lifecycles
 
@@ -518,26 +819,51 @@ the QEMU process is running, `GET /v1/health` answers through the port forward w
 writable, network reachable, browser layer installed) as reported in the
 health answer.
 
+The READY procedure runs under the Dot's lock, like every operation that
+changes a computer's state, and is the one place that starts a Dot's event
+pump; it first stops a pump of an earlier start, which would read a guest
+port that is gone. The key and the config are read from the database when
+they are pushed. A key or a config stored while the procedure runs bumps the
+Dot's generation, and the procedure pushes again until it completes on an
+unchanged generation, so a tightened permission or a rotated key is never
+lost in that window; pushes to a READY guest run one at a time per Dot, so the
+last one sent is the newest. Every stop, reboot and delete takes the Dot out
+of READY before anything else, so a delivery that skipped the lock because
+the Dot was READY can only meet a stop that has not begun.
+
 ### 9.4 Create
 
 `POST /api/dots` -> insert `dots` (CREATING) -> generate a token ->
 `qemu-img create -f qcow2 -F qcow2 -b <golden> disk.qcow2 <disk>` -> write
-`seed.iso` -> pick a guest port -> spawn QEMU (section 3.4) -> wait for health
--> push the secret -> `PUT /config` -> open the event stream -> READY.
+`seed.iso` -> pick a guest port -> spawn QEMU and write `qemu.json` (section
+3.4) -> wait for the forward -> wait for health -> push the secret -> `PUT
+/config` -> open the event stream -> READY.
 
 ### 9.5 Sleep and wake
 
-When a Dot has no PENDING or RUNNING task, its agent state is IDLE, and nothing
-happened for `idle_timeout`: `POST /v1/agent/prepare-sleep` -> QMP
-`system_powerdown` (QMP `quit` after 60 s) -> STOPPED. Disk, identities and
-memory stay. A new task or message for a STOPPED Dot starts the
-VM, waits for READY and then delivers it.
+When a Dot has no PENDING task that is due, no RUNNING or WAITING_APPROVAL
+task and nothing undelivered in its outbox, its agent state is IDLE, and
+nothing happened for `idle_timeout`: `POST /v1/agent/prepare-sleep` ->
+`POST /v1/system/poweroff` -> QEMU exits (killed after 60 s, section 3.4) ->
+STOPPED. The idle stop checks all of it again under the Dot's lock, after
+taking the Dot out of READY, and is called off when work arrived meanwhile.
+Disk, identities and memory stay. A new task or message for a STOPPED Dot
+starts the VM, waits for READY and then delivers it; so does a scheduled task
+when its `scheduled_at` comes. A STOPPED Dot whose due work waits behind a task
+its guest has not finished (it was stopped mid-task) is started too, so its
+guest finishes that task and the next one can be claimed. A VM that stops
+without being asked (the guest powered itself off, QEMU crashed) is recorded
+as STOPPED, and started again at once when its Dot still has work.
 
 ### 9.6 API
 
 All routes require `Authorization: Bearer <api token>` (from
 `~/.invisible-dots/config/api.token`, created at first start). The server
-binds `127.0.0.1:8787` by default (`INVISIBLE_DOTS_LISTEN`).
+binds `127.0.0.1:8787` by default (`INVISIBLE_DOTS_LISTEN`). Every reader of
+the token (the server, the command, the web server) reads it through one
+function, `readApiToken()` in `packages/shared/src/api-token.ts`:
+`INVISIBLE_DOTS_TOKEN` when set, otherwise the first line of `api.token`,
+trimmed, and at least 16 characters.
 
 ```text
 POST   /api/dots                     body: { config: <yaml string> | <object> }
@@ -564,7 +890,7 @@ POST   /api/dots/:id/browser-identities
 GET    /api/dots/:id/browser-identities/:identityId
 DELETE /api/dots/:id/browser-identities/:identityId
 
-GET    /api/approvals                ?status=pending
+GET    /api/approvals                ?status=pending|approved|rejected|expired
 POST   /api/approvals/:id/approve    body: { note? }
 POST   /api/approvals/:id/reject     body: { note? }
 
@@ -574,10 +900,37 @@ PUT    /api/secrets/openrouter       body: { value, dot_id? }
 GET    /api/health
 ```
 
+`GET /api/health` answers `{ status: "ok", database: "ok", version,
+openrouter_configured }`; the last field is whether a global OpenRouter key is
+stored, which `invisible-dots doctor` reports.
+
 Browser identity routes need the Dot's computer running: on a stopped Dot they
 answer `409 { error: "computer_stopped" }`.
 
 Errors are `{ error: <code>, message }` with a 4xx or 5xx status.
+
+### 9.7 Web client
+
+`apps/web` is a Next.js server on `127.0.0.1:3000`. It answers `/api/...` with
+the control plane's own paths, so the browser uses the SDK unchanged, and
+adds the API token on the way, so the browser never sees it. It holds that
+token and listens on the host's loopback, which every guest reaches as
+`10.0.2.2` (section 3.6), so it has a credential of its own:
+
+- The person signs in once at `/login` with the API token. `POST /session`
+  compares it with the token `readApiToken()` reads (in constant time) and
+  answers with the cookie `idots_session`: an HMAC of the token, never the
+  token itself, so it changes when the token does. It is `HttpOnly` (no
+  script reads it) and `SameSite=Strict` (no other site's page makes the
+  browser send it). `DELETE /session` clears it.
+- Every proxied request without that session answers
+  `401 { error: "login_required" }` with the header
+  `x-invisible-dots-login: required`, before the API is contacted; the page
+  then goes to `/login`.
+- The Host, Origin and `Sec-Fetch-Site` checks stay in front of it, as a
+  defence against DNS rebinding and cross-site pages only: they are written
+  by the client, so they never let a request through on their own. The Host
+  must be loopback or listed in `INVISIBLE_DOTS_WEB_ALLOWED_HOSTS`.
 
 ## 10. Out of scope for this version
 
@@ -598,17 +951,52 @@ invisible-dots image build   build the golden image and the runtime ISO (section
 invisible-dots server        run the control plane in the foreground
 ```
 
+`invisible-dots server` is the one entry point of the control plane; no
+other program starts it. It stops cleanly (closes the database, releases
+`server.lock`) on Ctrl+C, a service manager's SIGTERM, a closed terminal
+(SIGHUP, which Node also raises on Windows when the console window closes)
+and Ctrl+Break on Windows (SIGBREAK): the same handler for all four.
+
+The OpenRouter key is then stored with `invisible-dots secret openrouter`,
+the same line on every host and in every shell: in a terminal it asks for the
+key and reads one line, and piped it reads standard input. The key is never an
+argument, so it never lands in a shell history or a process list.
+
 ### 11.1 doctor
 
 Checks, in this order, each with `ok` / `missing` / `failed` and a fix line:
-Node version; QEMU found (and its version, 9.2 or newer); `qemu-img` found;
+Node version; QEMU found (and its version, 8.2 or newer); `qemu-img` found;
 the accelerator usable (Linux: `/dev/kvm` opens read-write; Windows: the
 `HypervisorPlatform` optional feature is enabled, read without administrator
 rights through `Get-CimInstance Win32_OptionalFeature`), confirmed by actually
-starting QEMU with `-accel <kvm|whpx> -machine none` and reading its exit; disk
-space in `INVISIBLE_DOTS_HOME`; the golden image and runtime ISO present and
-matching their manifests; the OpenRouter key stored. `doctor` never changes
-anything. Exit code 0 only when every check is `ok`.
+running QEMU with `-nodefaults -no-user-config -machine q35 -accel <kvm|whpx>
+-cpu host -display none -no-reboot -boot reboot-timeout=0` and seeing it exit
+with code 0; the data directory, `INVISIBLE_DOTS_HOME`, a path QEMU can be
+given (plain ASCII, no comma, section 3.2) with enough free space;
+the golden image and runtime ISO present and matching their manifests; the
+OpenRouter key stored. `doctor` never changes anything and creates nothing.
+Exit code 0 only when every check is `ok`. On a host invisible_dots does not
+run on, the accelerator rows say so, and the report still prints.
+
+- The probe runs guest code instead of holding the machine before its first
+  instruction: the empty machine's firmware finds nothing to boot,
+  `reboot-timeout=0` makes it reset at once, and `-no-reboot` turns the reset
+  into QEMU exiting with code 0. So exit code 0 means the accelerator opened
+  AND ran the CPU model the Dots use; there is no monitor, the same as for a
+  Dot. Measured with QEMU 8.2.2 and KVM: exit 0 after 0.2 s, and the firmware's
+  debug port reads "No bootable device. Retrying in 0 seconds." then
+  "Rebooting."; without either flag QEMU never exits. A probe still running
+  after 30 s is killed and reported as a virtual CPU that does not run, with
+  QEMU's first line of error output. Not measured with WHPX yet.
+- The probe uses the Dots' machine type, not `-machine none`: QEMU 11.1 with
+  WHPX aborts on `-machine none` (`X86_MACHINE` assertion, measured).
+- The probe has the last word: when the host-side check says `missing` but
+  QEMU starts with the accelerator, the accelerator row is `ok` and `setup`
+  enables nothing. Measured on Windows 11: WHPX initialised while the
+  `HypervisorPlatform` feature read as disabled (Virtual Machine Platform on).
+- The OpenRouter key is read from the running server's `GET /api/health`,
+  because only the server may open the embedded database (section 9.1). While
+  the server is down that row is `failed`, with the command that starts it.
 
 ### 11.2 setup
 
@@ -620,14 +1008,45 @@ anything. Exit code 0 only when every check is `ok`.
   ONCE (`Start-Process -Verb RunAs` on a generated PowerShell script) to run,
   in that single elevated session: `dism /online /enable-feature
   /featurename:HypervisorPlatform /all /norestart` when the feature is off, and
-  the QEMU installer silently (`/S`) when QEMU is missing. Exit code 3010 from
-  dism means a restart is required: `setup` says so and stops. The person
-  restarts and runs `invisible-dots doctor`.
+  the QEMU installer silently (its arguments, `/S`, come from the pin) when
+  QEMU is missing. Nothing the elevated session runs or writes is in a place
+  the normal user can change, because a program running as that user could
+  swap an installer between its hash check and its start, plant a DLL next to
+  it, or turn the result file into a link to anywhere. So the session creates
+  a new directory directly under ProgramData whose ACL, set in the same call
+  that creates it, lets only Administrators and SYSTEM write (the person may
+  read), and refuses to go on if it existed or is not empty; it copies the
+  installer there, hashes the COPY and runs the copy from that directory; it
+  finds dism through the system directory Windows reports, never through an
+  environment variable the user can set; and it writes the exit codes to a
+  result file in that directory, which the normal session reads and then
+  removes with the directory. Exit code 3010 from dism means a restart is
+  required: `setup` says so and stops with exit code 5. The person restarts
+  and runs `invisible-dots doctor`. The installer's Authenticode certificate is
+  outside its validity period, so the pinned hash is the only trust anchor.
 - **Linux**: prints and runs `sudo apt-get install -y qemu-system-x86
   qemu-utils` on apt-based systems (and prints the equivalent `dnf` / `pacman`
   line elsewhere instead of guessing), then checks `/dev/kvm`; if it is not
   accessible it prints `sudo usermod -aG kvm $USER` and that a new login is
-  needed.
+  needed. `setup` refuses to run as root: it would check `/dev/kvm` as root and
+  name root in that line, not the person who runs the server. It calls `sudo`
+  itself for the one step that needs it, as Windows elevates its one step.
+- The minimum of section 3.1 is 8.2 because Ubuntu 24.04's own
+  `qemu-system-x86` is 8.2.2, so `setup` on the most common LTS installs a QEMU
+  that `doctor` accepts; 8.2.2 was measured against the argv of section 3.4
+  and the probe of section 11.1 (with KVM). Debian 13 ships 10.0.
 
 The project never redistributes QEMU binaries: Windows gets the official
 installer, Linux gets the distribution's package.
+
+### 11.3 Licensing
+
+The MIT license covers this repository's code. QEMU (GPL-2.0) is installed
+from the official Windows installer or the distribution's package and is only
+ever run as a separate program; it is never linked into, bundled with or
+shipped by this project. The guest operating system (the Ubuntu cloud image),
+Node, `uv`, the browser engine and `invisible-playwright-mcp` with its Python
+packages are downloaded from their publishers when a host builds its golden
+image, each under its own license. This project publishes no image (section
+3.3); whoever copies a golden image to another machine takes on the license
+terms of the components inside it.

@@ -1,24 +1,24 @@
 import type { EventSource, OutboundEvent, StoredEvent } from "@invisible-dots/shared";
-import { isoRequired, num, type Queryable } from "./rows.js";
+import { isoRequired, type Queryable } from "./rows.js";
 
 interface EventRow {
-  id: string;
+  id: number;
   dot_id: string;
   type: string;
   data: Record<string, unknown>;
   source: EventSource;
-  guest_seq: string | null;
+  guest_seq: number | null;
   created_at: Date;
 }
 
 function toStored(row: EventRow): StoredEvent {
   return {
-    id: num(row.id)!,
+    id: row.id,
     dot_id: row.dot_id,
     type: row.type as StoredEvent["type"],
     data: row.data,
     source: row.source,
-    guest_seq: num(row.guest_seq),
+    guest_seq: row.guest_seq,
     created_at: isoRequired(row.created_at),
   };
 }
@@ -36,12 +36,31 @@ export interface EventQuery {
 
 export const MAX_EVENT_PAGE = 1000;
 
+/**
+ * Key of the transaction-scoped advisory lock every event insert takes
+ * before its id is drawn ("idots-ev" in ASCII). A bigserial id is assigned
+ * at insert but becomes visible at commit, so without it a transaction that
+ * drew id 10 could commit after another that drew 11, and a stream resumed
+ * with `after=11` would never replay 10. Holding the lock from the draw to
+ * the commit makes ids visible in id order on PostgreSQL; PGlite runs one
+ * transaction at a time anyway and takes the same lock uncontended.
+ *
+ * The lock is held until the surrounding transaction ends, so a transaction
+ * that inserts an event and changes other rows inserts the event FIRST:
+ * taking this lock while holding a row lock another event writer waits for
+ * would deadlock.
+ */
+export const EVENT_ORDER_LOCK_KEY = 0x69646f74732d6576n;
+
+/** The lock, taken inside the INSERT itself so it holds in autocommit and in a transaction alike. */
+const LOCKED = `FROM (SELECT pg_advisory_xact_lock(${EVENT_ORDER_LOCK_KEY.toString()})) AS event_order_lock`;
+
 export class EventsRepository {
   constructor(private readonly q: Queryable) {}
 
   async insertHost(dotId: string, type: string, data: Record<string, unknown>): Promise<StoredEvent> {
     const { rows } = await this.q.query<EventRow>(
-      "INSERT INTO events (dot_id, type, data, source) VALUES ($1, $2, $3, 'host') RETURNING *",
+      `INSERT INTO events (dot_id, type, data, source) SELECT $1::text, $2::text, $3::jsonb, 'host' ${LOCKED} RETURNING *`,
       [dotId, type, JSON.stringify(data)],
     );
     return toStored(rows[0]!);
@@ -56,7 +75,7 @@ export class EventsRepository {
     // The guest's own event id and timestamp are kept inside data, so nothing it sent is lost.
     const data = { ...event.data, guest_event_id: event.id, guest_ts: event.ts };
     const { rows } = await this.q.query<EventRow>(
-      `INSERT INTO events (dot_id, type, data, source, guest_seq) VALUES ($1, $2, $3, 'guest', $4)
+      `INSERT INTO events (dot_id, type, data, source, guest_seq) SELECT $1::text, $2::text, $3::jsonb, 'guest', $4::bigint ${LOCKED}
        ON CONFLICT (dot_id, guest_seq) DO NOTHING RETURNING *`,
       [dotId, event.type, JSON.stringify(data), event.seq],
     );
@@ -87,7 +106,7 @@ export class EventsRepository {
   }
 
   async latestId(): Promise<number> {
-    const { rows } = await this.q.query<{ id: string | null }>("SELECT max(id) AS id FROM events");
-    return num(rows[0]?.id) ?? 0;
+    const { rows } = await this.q.query<{ id: number | null }>("SELECT max(id) AS id FROM events");
+    return rows[0]?.id ?? 0;
   }
 }

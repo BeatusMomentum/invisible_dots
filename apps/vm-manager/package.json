@@ -2,7 +2,7 @@
   "name": "@invisible-dots/vm-manager",
   "version": "0.0.0",
   "private": true,
-  "description": "libvirt driver: overlays, seeds, domain XML, vsock bridge, CID allocation.",
+  "description": "QEMU driver: overlays, seed ISOs, the QEMU command line, port forwards, the guest client and the host's process runner.",
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -12,6 +12,10 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@invisible-dots/iso": "0.0.0",
     "@invisible-dots/shared": "0.0.0"
+  },
+  "devDependencies": {
+    "yaml": "^2.9.1"
   }
 }

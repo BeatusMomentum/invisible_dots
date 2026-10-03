@@ -1,12 +1,21 @@
-/** Process settings of invisible-dots-server: listen address, API token, server.env. */
-import { readFile } from "node:fs/promises";
-import { DEFAULT_LISTEN, ENV, hostPaths } from "@invisible-dots/shared";
+/**
+ * Process settings of the control plane: the listen address, the API token
+ * and the master key (architecture sections 3.2 and 9.6). Both secrets live
+ * in INVISIBLE_DOTS_HOME/config and are created at the first start, so a new
+ * host needs no installer step before `invisible-dots server`.
+ */
+import { randomBytes } from "node:crypto";
+import { MASTER_KEY_BYTES } from "@invisible-dots/database";
+import { DEFAULT_LISTEN, ENV, MIN_API_TOKEN_LENGTH, readApiToken, readSecretFile, writeSecretFile, type HostPaths } from "@invisible-dots/shared";
 
 /** The same variable the CLI and the web server read, so one value configures all three. */
 export const API_TOKEN_ENV = ENV.TOKEN;
 
-/** Tokens shorter than this are refused: the API controls VMs and secrets. */
-export const MIN_TOKEN_LENGTH = 16;
+/** Tokens shorter than this are refused (the one rule of shared readApiToken). */
+export const MIN_TOKEN_LENGTH = MIN_API_TOKEN_LENGTH;
+
+/** A generated token: 32 random bytes as hex, so it survives copy and paste and any shell quoting. */
+const GENERATED_TOKEN_BYTES = 32;
 
 export interface ListenAddress {
   host: string;
@@ -34,53 +43,51 @@ export function parseListen(value: string = DEFAULT_LISTEN): ListenAddress {
   return { host, port };
 }
 
-function checkToken(token: string, origin: string): string {
-  if (token.length < MIN_TOKEN_LENGTH) {
-    throw new Error(`the API token from ${origin} is shorter than ${MIN_TOKEN_LENGTH} characters`);
-  }
-  return token;
-}
-
-/** `INVISIBLE_DOTS_TOKEN`, else the first line of `<config dir>/api.token`. */
-export async function loadApiToken(env: Record<string, string | undefined> = process.env): Promise<string> {
-  const fromEnv = env[API_TOKEN_ENV]?.trim();
-  if (fromEnv) return checkToken(fromEnv, API_TOKEN_ENV);
-  const path = hostPaths(env).apiToken;
-  let text: string;
-  try {
-    text = await readFile(path, "utf8");
-  } catch (error) {
-    throw new Error(
-      `cannot read the API token at ${path} (${(error as NodeJS.ErrnoException).code ?? (error as Error).message}); ` +
-        `create it with "openssl rand -hex 32 > ${path} && chmod 600 ${path}" or set ${API_TOKEN_ENV}`,
-      { cause: error },
-    );
-  }
-  return checkToken(text.split(/\r?\n/)[0]!.trim(), path);
+export interface LoadedSecret<T> {
+  value: T;
+  /** Where it came from: a file path or an environment variable name. */
+  origin: string;
+  /** True when this call generated it and wrote the file. */
+  created: boolean;
 }
 
 /**
- * KEY=VALUE lines of `server.env` (the systemd EnvironmentFile), for a server
- * started by hand. Values already in the environment win. Quotes around a
- * value are removed; `#` starts a comment line.
+ * The API token as readApiToken reads it (INVISIBLE_DOTS_TOKEN, else the
+ * first line of `config/api.token`); the file is generated (0600) when it
+ * does not exist yet.
  */
-export async function readServerEnv(path: string): Promise<Record<string, string>> {
-  let text: string;
-  try {
-    text = await readFile(path, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
-    throw error;
-  }
-  const out: Record<string, string> = {};
-  for (const raw of text.split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const match = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
-    if (!match) continue;
-    let value = match[2]!;
-    if (/^(['"]).*\1$/.test(value)) value = value.slice(1, -1);
-    out[match[1]!] = value;
-  }
-  return out;
+export async function loadOrCreateApiToken(
+  paths: HostPaths,
+  env: Record<string, string | undefined> = process.env,
+): Promise<LoadedSecret<string>> {
+  const existing = await readApiToken(env, paths);
+  if (existing) return { ...existing, created: false };
+  const path = paths.apiTokenPath;
+  const token = randomBytes(GENERATED_TOKEN_BYTES).toString("hex");
+  await writeSecretFile(path, `${token}\n`);
+  return { value: token, origin: path, created: true };
+}
+
+/**
+ * The master key that encrypts secrets in the database: `config/master.key`,
+ * 32 raw bytes (64 hex characters are accepted too, so a key restored by
+ * hand works). When the file does not exist a new key is generated but NOT
+ * written: `created` tells the caller to check first that the database
+ * holds nothing encrypted under a key that was lost, and only then to call
+ * `saveMasterKey`. Writing it earlier would turn a missing key into a wrong
+ * one that the next start accepts without a word.
+ */
+export async function loadOrGenerateMasterKey(paths: HostPaths): Promise<LoadedSecret<Buffer>> {
+  const path = paths.masterKeyPath;
+  const raw = await readSecretFile(path);
+  if (raw === undefined) return { value: randomBytes(MASTER_KEY_BYTES), origin: path, created: true };
+  if (raw.length === MASTER_KEY_BYTES) return { value: raw, origin: path, created: false };
+  const hex = raw.toString("utf8").trim();
+  if (new RegExp(`^[0-9a-fA-F]{${MASTER_KEY_BYTES * 2}}$`).test(hex)) return { value: Buffer.from(hex, "hex"), origin: path, created: false };
+  throw new Error(`${path} must hold ${MASTER_KEY_BYTES} bytes (or ${MASTER_KEY_BYTES * 2} hexadecimal characters), found ${raw.length} bytes`);
+}
+
+/** Write a key from `loadOrGenerateMasterKey` (0600, atomically). */
+export async function saveMasterKey(paths: HostPaths, key: Uint8Array): Promise<void> {
+  await writeSecretFile(paths.masterKeyPath, key);
 }

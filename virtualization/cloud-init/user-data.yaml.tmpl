@@ -1,25 +1,36 @@
 #cloud-config
-# NoCloud user-data of one Dot, rendered by apps/vm-manager. Every value
-# between double braces is inserted as a quoted YAML scalar.
+# NoCloud user-data of one Dot, rendered by apps/vm-manager/src/seed.ts and
+# written into seed.iso (volume label "cidata"). Every value between double
+# braces is inserted as a quoted YAML scalar. The meta-data instance-id is a
+# digest of this rendered file, so these modules run again only when the seed
+# content changes (a new token), not on every restart.
 hostname: {{hostname}}
 preserve_hostname: false
 manage_etc_hosts: true
 
-# The golden image already has the user (it owns the browser engine cache);
-# this keeps its settings authoritative on every instance.
+# The golden image already has the user (it owns the browser engine cache),
+# created by the image builder's seed with the same groups as here; cloud-init
+# does not add groups to a user that exists, so that seed is where they take
+# effect, and a test keeps the two lists equal. The sudo rule is written here,
+# per instance: dot may run exactly one command as root, the poweroff
+# dot-agentd starts when the host stops the VM (section 5.2); everything the
+# agent runs is otherwise dot's own.
 users:
   - name: dot
     gecos: invisible_dots agent
     shell: /bin/bash
     lock_passwd: true
-    sudo: "ALL=(ALL) NOPASSWD:ALL"
-    groups: [audio, video]
+    sudo: "ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff"
+    groups: [audio, video, systemd-journal]
 disable_root: true
 ssh_pwauth: false
 
 write_files:
   # The Dot's identity and the one secret in the seed (architecture 4.2, 4.3).
-  # Deferred so it runs after the users module has created `dot`.
+  # dot-agentd listens on TCP port 1024, which QEMU forwards from a port on
+  # the host's 127.0.0.1 (section 5.1); it answers 401 to any request whose
+  # bearer token is not this one. Deferred so it runs after the users module
+  # has created `dot`.
   - path: /etc/invisible-dots/config.json
     owner: dot:dot
     permissions: "0600"
@@ -36,6 +47,7 @@ write_files:
       mountpoint -q /opt/invisible-dots || mount /opt/invisible-dots
       exec /opt/invisible-dots/install.sh
 
-# The runtime ISO, found by its volume label so the device name does not matter.
+# The runtime ISO is the second CD-ROM drive (section 3.4). It is found by its
+# volume label, written by packages/iso, so the device name does not matter.
 mounts:
   - [ {{runtimeDevice}}, /opt/invisible-dots, iso9660, "ro,nofail,x-systemd.device-timeout=30s", "0", "0" ]

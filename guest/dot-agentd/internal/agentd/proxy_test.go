@@ -96,10 +96,10 @@ func TestProxyStreamsSSEIncrementally(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, f.remote.URL+"/v1/agent/events/stream?after=41", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, f.baseURL+"/v1/agent/events/stream?after=41", nil)
 	req.Header.Set("Authorization", "Bearer "+testToken)
 	req.Header.Set("Accept", "text/event-stream")
-	resp, err := f.remote.Client().Do(req)
+	resp, err := f.client.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}

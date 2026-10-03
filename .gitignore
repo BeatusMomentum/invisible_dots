@@ -7,13 +7,22 @@ coverage/
 .env
 .env.*
 
-# Go build output of guest/dot-agentd
-guest/dot-agentd/bin/
+# Go build output (guest/dot-agentd/bin/dot-agentd)
+bin/
 
-# Python leftovers (pyproject.toml is still in the tree)
+# Images written by local checks and builds; the real ones live in
+# INVISIBLE_DOTS_HOME, never in the tree.
+*.iso
+*.qcow2
+*.img
+
+# Scratch output of local checks, and the virtual environment the pre-push
+# hook creates there for the English and claims gates
+/tmp/
+
+# vitest's JSON report, as CI and the pre-push hook write it
+vitest-report.json
+
+# Editor and Python leftovers of the gates
 __pycache__/
-*.py[cod]
 .venv/
-build/
-*.egg-info/
-.pytest_cache/

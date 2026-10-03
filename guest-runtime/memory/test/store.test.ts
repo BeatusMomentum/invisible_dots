@@ -64,6 +64,34 @@ describe("DotStore", () => {
     store.close();
   });
 
+  it("hands events written in a transaction to subscribers only after COMMIT, and never a rolled back one", () => {
+    const store = new DotStore({ path: ":memory:" });
+    const seen: { seq: number; committed: boolean }[] = [];
+    store.subscribe((e) => seen.push({ seq: e.seq, committed: store.readAfter(e.seq - 1)[0]?.seq === e.seq }));
+    expect(() =>
+      store.transaction(() => {
+        store.appendEvent("task.completed", { task_id: "t1", summary: "never happened" });
+        throw new Error("a later statement of the transaction failed");
+      }),
+    ).toThrow("a later statement");
+    // Nothing streamed, and the seq the rolled back event had goes to the next one.
+    expect(seen).toEqual([]);
+    store.transaction(() => {
+      store.appendEvent("approval.requested", {
+        approval_id: "a1",
+        tool: "files_write",
+        permission: "files.write",
+        arguments: {},
+        reason: "r",
+      });
+      // Inside the transaction nothing is handed over yet.
+      expect(seen).toEqual([]);
+    });
+    expect(seen).toEqual([{ seq: 1, committed: true }]);
+    expect(store.readAfter(0).map((e) => e.type)).toEqual(["approval.requested"]);
+    store.close();
+  });
+
   it("stores thread messages and returns the last N in order", () => {
     const store = new DotStore({ path: ":memory:" });
     for (let i = 0; i < 5; i++) store.appendMessage(CONVERSATION_THREAD, { role: "user", content: `m${i}` });

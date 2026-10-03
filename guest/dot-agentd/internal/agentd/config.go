@@ -15,8 +15,8 @@ type BootConfig struct {
 }
 
 // LoadBootConfig reads the guest boot configuration. A missing or empty token
-// is an error: serving vsock without one would leave the VM open to anything
-// on the host that can reach its CID.
+// is an error: serving the TCP port without one would leave the VM open to
+// anything on the host's loopback, other Dots included.
 func LoadBootConfig(path string) (BootConfig, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {

@@ -76,13 +76,14 @@ function canConnect(target: string, timeoutMs: number): Promise<boolean> {
 
 /** Whether `command` names an executable file, directly or through PATH. */
 export async function isInstalled(command: string, env: Record<string, string | undefined>): Promise<boolean> {
-  const mode = process.platform === "win32" ? constants.F_OK : constants.X_OK;
   const candidates = isAbsolute(command) || command.includes("/")
     ? [command]
     : (env.PATH ?? "").split(delimiter).filter(Boolean).map((dir) => join(dir, command));
   for (const candidate of candidates) {
     try {
-      await access(candidate, mode);
+      // X_OK is an existence check on Windows (Node documents it so), which is
+      // all a test on a Windows developer host needs; the guest is Linux.
+      await access(candidate, constants.X_OK);
       return true;
     } catch {
       // try the next PATH entry

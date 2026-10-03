@@ -1,15 +1,24 @@
 /**
  * The host's client for one Dot: every dot-agentd route (architecture 5.2) and
- * every agent route behind `/v1/agent` (5.3), over the Dot's bridge socket and
- * with the Dot's bearer token.
+ * every agent route behind `/v1/agent` (5.3), over HTTP/1.1 to
+ * 127.0.0.1:<guest port>, which QEMU forwards to dot-agentd's TCP port 1024
+ * (5.1). Every request carries the Dot's bearer token: the port is not a
+ * credential, any local process and any guest can reach it.
  */
-import { request } from "node:http";
+import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { request, type IncomingMessage, type OutgoingHttpHeaders } from "node:http";
 import {
+  abortableSleep,
   AGENTD_ROUTES,
   AGENT_ROUTES,
-  httpOverSocket,
+  GUEST_PROOF_CONTEXT,
+  GUEST_UNPROVEN,
+  GuestHealthTimeoutError,
+  isFatalGuestError,
   parseOutboundEvent,
+  pollGuestHealth,
   SseParser,
+  type AgentHealthAnswer,
   type AgentStateAnswer,
   type BrowserIdentity,
   type BrowserIdentityListAnswer,
@@ -19,20 +28,23 @@ import {
   type ExecRequest,
   type FileListAnswer,
   type HealthAnswer,
-  type AgentHealthAnswer,
   type InboundEvent,
   type OutboundEvent,
+  type PollGuestHealthOptions,
   type PostEventAnswer,
-  type SocketResponse,
+  type ProofAnswer,
   type SystemAnswer,
 } from "@invisible-dots/shared";
 import { GuestRequestError } from "./errors.js";
 import { silentLogger, type Logger } from "./logger.js";
+import { GUEST_PORT_HOST } from "./ports.js";
 
 export interface GuestClientOptions {
   /** Per-request timeout. Default 30 s; exec adds its own timeout on top. */
   timeoutMs?: number;
   logger?: Logger;
+  /** Default 127.0.0.1, where QEMU binds the forward. */
+  host?: string;
 }
 
 export interface EventStreamOptions {
@@ -46,7 +58,14 @@ export interface EventStreamOptions {
   onReconnect?: (info: { after: number; attempt: number; error: Error }) => void;
 }
 
+/** The proof a guest holding `token` gives for `nonce` (`GET /v1/proof`, section 5.1). */
+export function guestProof(token: string, nonce: string): string {
+  return createHmac("sha256", token).update(`${GUEST_PROOF_CONTEXT}${nonce}`).digest("hex");
+}
+
 interface Call {
+  /** Sent without the token; only the proof route is. */
+  unauthenticated?: boolean;
   method?: string;
   path: string;
   body?: unknown;
@@ -56,18 +75,23 @@ interface Call {
   signal?: AbortSignal;
 }
 
+interface Answer {
+  status: number;
+  body: Buffer;
+}
+
 function filesQuery(path: string): string {
   return `?path=${encodeURIComponent(path)}`;
 }
 
-function parseError(route: string, response: SocketResponse): GuestRequestError {
-  const text = response.body.toString("utf8");
+function parseError(route: string, answer: Answer): GuestRequestError {
+  const text = answer.body.toString("utf8");
   try {
     const parsed = JSON.parse(text) as { error?: unknown; message?: unknown };
     if (typeof parsed.error === "string") {
       return new GuestRequestError(
         route,
-        response.status,
+        answer.status,
         typeof parsed.message === "string" ? `${parsed.error}: ${parsed.message}` : parsed.error,
         parsed.error,
       );
@@ -75,54 +99,129 @@ function parseError(route: string, response: SocketResponse): GuestRequestError 
   } catch {
     // Not JSON: the raw text is the most useful message.
   }
-  const hint = response.status === 401 ? " (the Dot token was refused)" : "";
-  return new GuestRequestError(route, response.status, `${text.trim().slice(0, 500) || "no body"}${hint}`);
+  const hint = answer.status === 401 ? " (the Dot token was refused)" : "";
+  return new GuestRequestError(route, answer.status, `${text.trim().slice(0, 500) || "no body"}${hint}`);
 }
 
 export class GuestClient {
-  readonly socketPath: string;
+  readonly host: string;
+  readonly port: number;
   private readonly token: string;
   private readonly timeoutMs: number;
   private readonly logger: Logger;
+  /** Settles once whatever listens on the port proved it holds the token; until then the token is never sent. */
+  private proven: Promise<void> | undefined;
 
-  constructor(socketPath: string, token: string, options: GuestClientOptions = {}) {
+  constructor(port: number, token: string, options: GuestClientOptions = {}) {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`GuestClient needs a TCP port, got ${port}`);
     if (!token) throw new Error("GuestClient needs the Dot token");
-    this.socketPath = socketPath;
+    this.host = options.host ?? GUEST_PORT_HOST;
+    this.port = port;
     this.token = token;
     this.timeoutMs = options.timeoutMs ?? 30_000;
     this.logger = options.logger ?? silentLogger;
   }
 
-  private async send(call: Call): Promise<SocketResponse> {
+  /** Where this client sends requests, for logs and errors. */
+  get address(): string {
+    return `${this.host}:${this.port}`;
+  }
+
+  private open(method: string, path: string, headers: OutgoingHttpHeaders, signal: AbortSignal | undefined) {
+    // No keep-alive agent: after a VM restart the same port may lead to a new guest, and a pooled socket would not.
+    return request({ host: this.host, port: this.port, method, path, headers, agent: false, signal });
+  }
+
+  /**
+   * Make whatever listens on the port prove it holds the Dot token before
+   * the token is sent there (section 5.1). A port is not a credential: after
+   * a host restart or a QEMU that died, another process can listen on a
+   * port the host still has on record. A failed proof is GUEST_UNPROVEN,
+   * which no caller retries; a guest that is not up yet is retried as usual.
+   */
+  async prove(options: { timeoutMs?: number; signal?: AbortSignal } = {}): Promise<void> {
+    const nonce = randomBytes(16).toString("hex");
+    const path = `${AGENTD_ROUTES.proof}?nonce=${nonce}`;
+    const answer = await this.json<ProofAnswer>({ path, unauthenticated: true, ...options });
+    const expected = Buffer.from(guestProof(this.token, nonce), "utf8");
+    const given = Buffer.from(typeof answer?.proof === "string" ? answer.proof : "", "utf8");
+    if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
+      throw new GuestRequestError(
+        `GET ${AGENTD_ROUTES.proof}`,
+        0,
+        `${this.address} is not this Dot's guest: it could not prove it holds the Dot token, so the token was not sent to it`,
+        GUEST_UNPROVEN,
+      );
+    }
+  }
+
+  private ensureProven(signal: AbortSignal | undefined): Promise<void> {
+    this.proven ??= this.prove({ signal }).catch((error: unknown) => {
+      // A guest still booting fails the same way; the next request asks again.
+      this.proven = undefined;
+      throw error;
+    });
+    return this.proven;
+  }
+
+  private async send(call: Call): Promise<Answer> {
+    if (!call.unauthenticated) await this.ensureProven(call.signal);
+    return this.sendRaw(call);
+  }
+
+  private sendRaw(call: Call): Promise<Answer> {
     const method = call.method ?? "GET";
-    const headers: Record<string, string> = { authorization: `Bearer ${this.token}` };
-    let body: string | Uint8Array | undefined;
+    const route = `${method} ${call.path}`;
+    const headers: OutgoingHttpHeaders = call.unauthenticated ? {} : { authorization: `Bearer ${this.token}` };
+    let body: Buffer | undefined;
     if (call.rawBody !== undefined) {
-      body = call.rawBody;
+      body = Buffer.from(call.rawBody);
       headers["content-type"] = call.contentType ?? "application/octet-stream";
     } else if (call.body !== undefined) {
-      body = JSON.stringify(call.body);
+      body = Buffer.from(JSON.stringify(call.body), "utf8");
       headers["content-type"] = "application/json";
     }
-    const response = await httpOverSocket(this.socketPath, {
-      method,
-      path: call.path,
-      headers,
-      body,
-      timeoutMs: call.timeoutMs ?? this.timeoutMs,
-      signal: call.signal,
+    if (body !== undefined) headers["content-length"] = body.length;
+    const timeoutMs = call.timeoutMs ?? this.timeoutMs;
+
+    return new Promise<Answer>((resolve, reject) => {
+      let settled = false;
+      const finish = (error: Error | undefined, answer?: Answer) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        if (error) {
+          req.destroy();
+          reject(error);
+        } else if (answer!.status < 200 || answer!.status >= 300) {
+          reject(parseError(route, answer!));
+        } else {
+          resolve(answer!);
+        }
+      };
+      const req = this.open(method, call.path, headers, call.signal);
+      const timer = setTimeout(() => finish(new GuestRequestError(route, 0, `no answer from ${this.address} within ${timeoutMs} ms`)), timeoutMs);
+      req.on("response", (res: IncomingMessage) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        res.on("error", (error) => finish(new GuestRequestError(route, 0, `answer interrupted: ${error.message}`)));
+        res.on("end", () => finish(undefined, { status: res.statusCode ?? 0, body: Buffer.concat(chunks) }));
+      });
+      req.on("error", (error: NodeJS.ErrnoException) => {
+        const hint = error.code === "ECONNREFUSED" ? " (nothing listens on the guest port: is the VM running?)" : "";
+        finish(new GuestRequestError(route, 0, `${this.address}: ${error.message}${hint}`, error.code));
+      });
+      req.end(body);
     });
-    if (response.status < 200 || response.status >= 300) throw parseError(`${method} ${call.path}`, response);
-    return response;
   }
 
   private async json<T>(call: Call): Promise<T> {
-    const response = await this.send(call);
-    const text = response.body.toString("utf8");
+    const answer = await this.send(call);
+    const text = answer.body.toString("utf8");
     try {
       return JSON.parse(text) as T;
     } catch {
-      throw new GuestRequestError(`${call.method ?? "GET"} ${call.path}`, response.status, `answer is not JSON: ${text.slice(0, 200)}`);
+      throw new GuestRequestError(`${call.method ?? "GET"} ${call.path}`, answer.status, `answer is not JSON: ${text.slice(0, 200)}`);
     }
   }
 
@@ -161,6 +260,15 @@ export class GuestClient {
 
   listFiles(path: string): Promise<FileListAnswer> {
     return this.json({ path: `${AGENTD_ROUTES.filesList}${filesQuery(path)}` });
+  }
+
+  /**
+   * Ask the guest to power itself off (`sudo -n systemctl poweroff`). The 202
+   * comes back before the shutdown begins; QEMU exits when the guest is off,
+   * which is what the vm-manager then waits for.
+   */
+  powerOff(timeoutMs?: number): Promise<void> {
+    return this.noContent({ method: "POST", path: AGENTD_ROUTES.poweroff, timeoutMs });
   }
 
   /** PNG bytes of display :0. */
@@ -217,10 +325,13 @@ export class GuestClient {
 
   /**
    * The outbound event stream, as an async iterator that survives disconnects:
-   * on any network error or end of stream it reconnects with `?after=<last
-   * seq seen>`, so an event is neither lost nor delivered twice. It ends only
-   * when `signal` aborts or the consumer stops iterating. A 401 is not
-   * retried: a wrong token does not get better by waiting.
+   * on a network error or end of stream it reconnects with `?after=<last
+   * seq seen>`, so an event is neither lost nor delivered twice. It ends when
+   * `signal` aborts or the consumer stops iterating. Not retried: a 401 or
+   * 404 (a wrong token or a wrong guest does not get better by waiting), a
+   * failed proof, and a refused connection: QEMU listens on the guest port
+   * for as long as it runs, so nothing listening means the VM is gone and
+   * the caller has to look at the VM, not at this port.
    */
   async *events(options: EventStreamOptions = {}): AsyncGenerator<OutboundEvent, void, undefined> {
     let after = options.after ?? 0;
@@ -241,6 +352,7 @@ export class GuestClient {
         lastError = new Error("event stream ended");
       } catch (error) {
         if (error instanceof GuestRequestError && (error.status === 401 || error.status === 404)) throw error;
+        if (isFatalGuestError(error) || (error as { code?: unknown }).code === "ECONNREFUSED") throw error;
         lastError = error as Error;
       } finally {
         await stream.return(undefined);
@@ -248,7 +360,7 @@ export class GuestClient {
       if (signal?.aborted) return;
       attempt++;
       options.onReconnect?.({ after, attempt, error: lastError });
-      this.logger.warn("guest event stream reconnecting", { socket: this.socketPath, after, attempt, reason: lastError.message });
+      this.logger.warn("guest event stream reconnecting", { guest: this.address, after, attempt, reason: lastError.message });
       await abortableSleep(Math.min(firstDelay * 2 ** (attempt - 1), maxDelay), signal);
     }
   }
@@ -257,24 +369,20 @@ export class GuestClient {
   private async *openStream(after: number, signal: AbortSignal | undefined): AsyncGenerator<OutboundEvent, void, undefined> {
     const path = `${this.agentPath(AGENT_ROUTES.eventsStream)}?after=${after}`;
     const route = `GET ${path}`;
-    const req = request({
-      socketPath: this.socketPath,
-      method: "GET",
-      path,
-      agent: false,
-      headers: { host: "localhost", authorization: `Bearer ${this.token}`, accept: "text/event-stream" },
-      signal,
-    });
-    const response = await new Promise<import("node:http").IncomingMessage>((resolve, reject) => {
-      req.once("response", resolve);
-      req.once("error", reject);
-      req.end();
-    });
+    await this.ensureProven(signal);
+    const req = this.open("GET", path, { authorization: `Bearer ${this.token}`, accept: "text/event-stream" }, signal);
     try {
+      const response = await new Promise<IncomingMessage>((resolve, reject) => {
+        req.once("response", resolve);
+        req.once("error", (error: NodeJS.ErrnoException) =>
+          reject(new GuestRequestError(route, 0, `${this.address}: ${error.message}`, error.code)),
+        );
+        req.end();
+      });
       if ((response.statusCode ?? 0) !== 200) {
         const chunks: Buffer[] = [];
         for await (const chunk of response) chunks.push(chunk as Buffer);
-        throw parseError(route, { status: response.statusCode ?? 0, headers: response.headers, body: Buffer.concat(chunks) });
+        throw parseError(route, { status: response.statusCode ?? 0, body: Buffer.concat(chunks) });
       }
       response.setEncoding("utf8");
       const parser = new SseParser();
@@ -298,14 +406,16 @@ export class GuestClient {
   }
 }
 
-function abortableSleep(ms: number, signal: AbortSignal | undefined): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(done, ms);
-    function done() {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", done);
-      resolve();
-    }
-    signal?.addEventListener("abort", done, { once: true });
-  });
+export type WaitForGuestHealthOptions = PollGuestHealthOptions;
+
+export { GuestHealthTimeoutError };
+
+/**
+ * Poll `GET /v1/health` until the guest is up: the shared rule and loop of
+ * `pollGuestHealth`, over this client. The first request of a client asks
+ * the listener for its proof, so a port taken over by another process fails
+ * at once, without the token ever being sent to it.
+ */
+export function waitForGuestHealth(client: GuestClient, options: WaitForGuestHealthOptions = {}): Promise<HealthAnswer> {
+  return pollGuestHealth(client, options);
 }

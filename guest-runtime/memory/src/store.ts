@@ -110,6 +110,8 @@ export class DotStore {
   readonly #db: DatabaseSync;
   readonly #now: () => Date;
   readonly #listeners = new Set<OutboxListener>();
+  /** Events appended inside the open transaction: handed to listeners after COMMIT, dropped on ROLLBACK. */
+  #uncommitted: OutboundEvent[] | null = null;
   #closed = false;
 
   constructor(options: DotStoreOptions) {
@@ -147,18 +149,30 @@ export class DotStore {
     this.#db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   }
 
-  /** Run `fn` in one transaction; nested calls join the outer one. */
+  /**
+   * Run `fn` in one transaction; nested calls join the outer one. Outbound
+   * events appended inside it reach the live subscribers only after COMMIT:
+   * a rolled back event takes its seq back, and the next one gets it again,
+   * so an event streamed before COMMIT could be replaced on the host by
+   * another with the same seq that the host would then drop as a replay.
+   */
   transaction<T>(fn: () => T): T {
     if (this.#db.isTransaction) return fn();
     this.#db.exec("BEGIN IMMEDIATE");
+    this.#uncommitted = [];
+    let result: T;
     try {
-      const result = fn();
+      result = fn();
       this.#db.exec("COMMIT");
-      return result;
     } catch (error) {
-      this.#db.exec("ROLLBACK");
+      this.#uncommitted = null;
+      if (this.#db.isTransaction) this.#db.exec("ROLLBACK");
       throw error;
     }
+    const committed = this.#uncommitted ?? [];
+    this.#uncommitted = null;
+    for (const event of committed) this.#notify(event);
+    return result;
   }
 
   schemaVersion(): number {
@@ -372,8 +386,8 @@ export class DotStore {
 
   /**
    * Persist an outbound event and then hand it to live subscribers. The row is
-   * committed before anyone sees it, so a stream never shows an event a
-   * restart could take back.
+   * committed before anyone sees it: outside a transaction the insert commits
+   * by itself; inside one, `transaction` hands it over after COMMIT.
    */
   appendEvent<T extends OutboundEventType>(type: T, data: OutboundEventDataMap[T]): OutboundEvent<T> {
     const id = newId("evt");
@@ -382,14 +396,19 @@ export class DotStore {
       .prepare("INSERT INTO outbox (id, type, ts, data) VALUES (?, ?, ?, ?)")
       .run(id, type, ts, JSON.stringify(data));
     const event = { seq: Number(result.lastInsertRowid), id, type, ts, data } as OutboundEvent<T>;
+    if (this.#uncommitted) this.#uncommitted.push(event as OutboundEvent);
+    else this.#notify(event as OutboundEvent);
+    return event;
+  }
+
+  #notify(event: OutboundEvent): void {
     for (const listener of this.#listeners) {
       try {
-        listener(event as OutboundEvent);
+        listener(event);
       } catch {
         // A broken subscriber (a closed SSE socket) must not fail the writer.
       }
     }
-    return event;
   }
 
   /** Events with `seq` greater than `after`, oldest first. */

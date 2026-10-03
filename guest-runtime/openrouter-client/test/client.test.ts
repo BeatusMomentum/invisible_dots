@@ -200,10 +200,13 @@ describe("OpenRouterClient", () => {
   });
 
   it("stops when the caller aborts", async () => {
-    fake.push({ body: completion({ content: "late" }).body, delayMs: 500 });
+    // Held until the end: the abort comes while the request is surely in flight, on a loaded machine too.
+    let release!: () => void;
+    fake.push({ body: completion({ content: "late" }).body, hold: new Promise<void>((resolve) => (release = resolve)) });
     const controller = new AbortController();
-    setTimeout(() => controller.abort(), 50);
+    void fake.waitForRequests(1).then(() => controller.abort());
     const error = await client().chat({ model: "m", messages: [] }, { signal: controller.signal }).catch((e: unknown) => e);
+    release();
     expect((error as OpenRouterError).code).toBe("aborted");
     expect(fake.requests).toHaveLength(1);
   });
