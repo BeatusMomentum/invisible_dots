@@ -28,6 +28,25 @@ export const EXEC_OUTPUT_CAP_BYTES = 1024 * 1024;
 /** Tool results longer than this are cut with a marker before they reach the model (section 8.5). */
 export const TOOL_RESULT_MAX_CHARS = 12_000;
 
+/**
+ * The one truncation function: cut a text to at most `max` characters, the
+ * marker included, saying how much the reader does not see. `head` keeps the
+ * beginning; `head-tail` keeps about 70% from the beginning and 30% from the
+ * end, for text whose last lines matter as much as its first.
+ */
+export function truncateText(text: string, max: number = TOOL_RESULT_MAX_CHARS, mode: "head" | "head-tail" = "head"): string {
+  if (text.length <= max) return text;
+  const marker = (omitted: number) =>
+    mode === "head" ? `\n[... truncated: ${omitted} more characters not shown]` : `\n[... truncated: ${omitted} characters not shown ...]\n`;
+  // The marker's length depends on the count it states, so size it for the worst case.
+  const keep = max - marker(text.length).length;
+  if (keep <= 0) return text.slice(0, max);
+  if (mode === "head") return text.slice(0, keep) + marker(text.length - keep);
+  const head = Math.ceil(keep * 0.7);
+  const tail = keep - head;
+  return text.slice(0, head) + marker(text.length - keep) + (tail > 0 ? text.slice(text.length - tail) : "");
+}
+
 /** Working memory keeps this many messages plus the system prompt (section 8.6). */
 export const WORKING_MEMORY_MESSAGES = 40;
 

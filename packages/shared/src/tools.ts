@@ -54,6 +54,13 @@ export interface ToolDefinition {
   /** Offered only when `browser.identities.managed_by_dot` is true. */
   requiresManagedIdentities: boolean;
   /**
+   * Running the call twice with the same arguments has the effect of running
+   * it once (a read, or a write of the same content to the same place). Only
+   * such a call is run again when a crash leaves its outcome unknown
+   * (architecture section 8.7); everything else is reported as interrupted.
+   */
+  replaySafe: boolean;
+  /**
    * Arguments that are URLs which may carry a password (a proxy). Wherever a
    * call's arguments leave the guest (`approval.requested`), the password is
    * replaced: `redactToolArguments` is the one place that does it.
@@ -76,7 +83,12 @@ function tool<const N extends string>(
   permission: Permission,
   description: string,
   parameters: ToolDefinition["parameters"],
-  options: { returnsImage?: boolean; requiresManagedIdentities?: boolean; secretUrlArguments?: readonly string[] } = {},
+  options: {
+    returnsImage?: boolean;
+    requiresManagedIdentities?: boolean;
+    secretUrlArguments?: readonly string[];
+    replaySafe?: boolean;
+  } = {},
 ): ToolDefinition & { name: N } {
   return {
     name,
@@ -85,6 +97,7 @@ function tool<const N extends string>(
     parameters,
     returnsImage: options.returnsImage ?? false,
     requiresManagedIdentities: options.requiresManagedIdentities ?? false,
+    replaySafe: options.replaySafe ?? false,
     secretUrlArguments: options.secretUrlArguments ?? [],
   };
 }
@@ -113,13 +126,14 @@ export const TOOLS = [
     "computer.screenshot",
     "Take a screenshot of your computer's desktop. The image is shown to you.",
     args({}, []),
-    { returnsImage: true },
+    { returnsImage: true, replaySafe: true },
   ),
   tool(
     "files_read",
     "files.read",
     "Read a file on your computer. Relative paths resolve against /home/dot.",
     args({ path: { type: "string", minLength: 1, description: "Path of the file to read." } }, ["path"]),
+    { replaySafe: true },
   ),
   tool(
     "files_write",
@@ -132,12 +146,14 @@ export const TOOLS = [
       },
       ["path", "content"],
     ),
+    { replaySafe: true },
   ),
   tool(
     "files_list",
     "files.read",
     "List a directory on your computer. Relative paths resolve against /home/dot.",
     args({ path: { type: "string", minLength: 1, description: "Directory to list." } }, ["path"]),
+    { replaySafe: true },
   ),
   tool(
     "memory_remember",
@@ -150,14 +166,18 @@ export const TOOLS = [
       },
       ["key", "content"],
     ),
+    { replaySafe: true },
   ),
   tool(
     "memory_search",
     "memory.read",
     "Full-text search over your long-term memories.",
     args({ query: { type: "string", minLength: 1, description: "Words to search for." } }, ["query"]),
+    { replaySafe: true },
   ),
-  tool("browser_identity_list", "browser.identity.list", "List your browser identities and whether each is open.", args({}, [])),
+  tool("browser_identity_list", "browser.identity.list", "List your browser identities and whether each is open.", args({}, []), {
+    replaySafe: true,
+  }),
   tool(
     "browser_identity_create",
     "browser.identity.create",
@@ -186,12 +206,14 @@ export const TOOLS = [
     "browser.identity.launch",
     "Open the browser of an identity on your desktop.",
     args({ identity_id: identityId }, ["identity_id"]),
+    { replaySafe: true },
   ),
   tool(
     "browser_identity_close",
     "browser.identity.close",
     "Close the browser of an identity. Its profile stays on disk.",
     args({ identity_id: identityId }, ["identity_id"]),
+    { replaySafe: true },
   ),
   tool(
     "browser_navigate",
@@ -207,6 +229,7 @@ export const TOOLS = [
     "browser.read",
     "Describe the interactive elements of the current page, with a selector and viewport coordinates for each.",
     args({ identity_id: identityId }, ["identity_id"]),
+    { replaySafe: true },
   ),
   tool(
     "browser_read_text",
@@ -219,6 +242,7 @@ export const TOOLS = [
       },
       ["identity_id"],
     ),
+    { replaySafe: true },
   ),
   tool(
     "browser_click",
@@ -283,7 +307,7 @@ export const TOOLS = [
     "browser.read",
     "Take a screenshot of the browser of an identity. The image is shown to you.",
     args({ identity_id: identityId }, ["identity_id"]),
-    { returnsImage: true },
+    { returnsImage: true, replaySafe: true },
   ),
 ] as const;
 

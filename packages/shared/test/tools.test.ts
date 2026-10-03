@@ -58,4 +58,28 @@ describe("offeredTools", () => {
     expect(names).not.toContain("browser_identity_delete");
     expect(names).toContain("browser_identity_launch");
   });
+
+  it("declares which tools may run again after a crash (section 8.7)", () => {
+    const replaySafe = TOOLS.filter((t) => t.replaySafe).map((t) => t.name);
+    expect(replaySafe.sort()).toEqual(
+      [
+        "computer_screenshot",
+        "files_read",
+        "files_list",
+        "files_write",
+        "memory_remember",
+        "memory_search",
+        "browser_identity_list",
+        "browser_identity_launch",
+        "browser_identity_close",
+        "browser_snapshot",
+        "browser_read_text",
+        "browser_screenshot",
+      ].sort(),
+    );
+    // A navigation can consume a one-time link, and the rest act on the world.
+    for (const name of ["computer_exec", "browser_identity_create", "browser_identity_delete", "browser_navigate", "browser_click", "browser_type"]) {
+      expect(getTool(name)?.replaySafe, name).toBe(false);
+    }
+  });
 });

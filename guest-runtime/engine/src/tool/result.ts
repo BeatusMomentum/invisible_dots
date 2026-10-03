@@ -5,7 +5,7 @@
  * Tool results as they enter the conversation: one tool message per call,
  * text for the model and the images next to it.
  */
-import { truncateToolResult } from "@invisible-dots/openrouter-client";
+import { truncateText } from "@invisible-dots/shared";
 import type { StoredToolMessage } from "../types.js";
 import type { ToolResult } from "./framework.js";
 
@@ -14,7 +14,7 @@ export function toolResultMessage(toolCallId: string, result: ToolResult): Store
   return {
     role: "tool",
     tool_call_id: toolCallId,
-    content: truncateToolResult(result.ok ? result.text : `Error: ${result.text}`),
+    content: truncateText(result.ok ? result.text : `Error: ${result.text}`),
     ...(result.images && result.images.length > 0 ? { images: result.images } : {}),
   };
 }

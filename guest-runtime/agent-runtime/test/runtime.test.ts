@@ -193,8 +193,8 @@ describe("AgentRuntime: tasks and tools", () => {
     h.runtime.accept(inbound("user.message", { text: "read it" }));
     await h.runtime.idle();
     const tool = sentMessages(h.fake, 1).at(-1)!;
-    expect((tool.content as string).length).toBeLessThan(12_100);
-    expect(tool.content).toContain("truncated: 8000 more characters");
+    expect((tool.content as string).length).toBeLessThanOrEqual(12_000);
+    expect(tool.content).toMatch(/truncated: \d+ more characters not shown\]$/);
   });
 
   it("turns a throwing tool and bad arguments into error results", async () => {

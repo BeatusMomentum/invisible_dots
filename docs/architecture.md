@@ -541,8 +541,10 @@ in_reply_to?}`, `task.started {task_id}`, `task.progress {task_id, text}`,
 `task.completed {task_id, summary}`, `task.failed {task_id, error}`,
 `approval.requested {approval_id, task_id?, tool, permission, arguments,
 reason}`, `tool.called {task_id?, tool, permission, decision, ok,
-duration_ms}`, `browser.identity.created|deleted|launched|closed {identity_id,
-name}`, `memory.written {key}`.
+duration_ms, interrupted?}`, `browser.identity.created|deleted|launched|closed
+{identity_id, name}`, `memory.written {key}`. `interrupted: true` marks a call
+the agent stopped during: its outcome is unknown and it was not run again, so
+`ok` is false and `duration_ms` is 0.
 
 The `arguments` of `approval.requested` are what the person decides on, and
 they leave the guest: a tool argument that carries a secret is redacted there
@@ -654,32 +656,36 @@ model gives up.
 ### 8.3 Tools
 
 Function names use `_` because OpenAI-style function names cannot contain
-dots. Each tool declares the permission it needs.
+dots. Each tool declares the permission it needs, and whether it is
+replay-safe: running it twice with the same arguments has the effect of
+running it once. Only a replay-safe call may run again when a crash leaves its
+outcome unknown. `browser_navigate` is not: a GET can consume a one-time link
+or confirm an action, and the profile keeps its cookies across a restart.
 
-| tool | permission | arguments |
-|---|---|---|
-| `computer_exec` | `computer.exec` | `command, cwd?, timeout_seconds?` |
-| `computer_screenshot` | `computer.screenshot` | none (the image is sent to the model) |
-| `files_read` | `files.read` | `path` |
-| `files_write` | `files.write` | `path, content` |
-| `files_list` | `files.read` | `path` |
-| `memory_remember` | `memory.write` | `key, content` |
-| `memory_search` | `memory.read` | `query` |
-| `browser_identity_list` | `browser.identity.list` | none |
-| `browser_identity_create` | `browser.identity.create` | `name, proxy?` |
-| `browser_identity_delete` | `browser.identity.delete` | `identity_id` |
-| `browser_identity_launch` | `browser.identity.launch` | `identity_id` |
-| `browser_identity_close` | `browser.identity.close` | `identity_id` |
-| `browser_navigate` | `browser.navigate` | `identity_id, url` |
-| `browser_snapshot` | `browser.read` | `identity_id` |
-| `browser_read_text` | `browser.read` | `identity_id, selector?` |
-| `browser_click` | `browser.act` | `identity_id, selector` |
-| `browser_click_at` | `browser.act` | `identity_id, x, y` |
-| `browser_type` | `browser.act` | `identity_id, selector, text` |
-| `browser_press_key` | `browser.act` | `identity_id, key` |
-| `browser_scroll` | `browser.act` | `identity_id, direction: "up"\|"down"` (PageUp / PageDown) |
-| `browser_back` / `browser_forward` / `browser_reload` | `browser.act` | `identity_id` (Alt+Left, Alt+Right, F5) |
-| `browser_screenshot` | `browser.read` | `identity_id` (the image is sent to the model) |
+| tool | permission | replay | arguments |
+|---|---|---|---|
+| `computer_exec` | `computer.exec` | no | `command, cwd?, timeout_seconds?` |
+| `computer_screenshot` | `computer.screenshot` | yes | none (the image is sent to the model) |
+| `files_read` | `files.read` | yes | `path` |
+| `files_write` | `files.write` | yes | `path, content` |
+| `files_list` | `files.read` | yes | `path` |
+| `memory_remember` | `memory.write` | yes | `key, content` |
+| `memory_search` | `memory.read` | yes | `query` |
+| `browser_identity_list` | `browser.identity.list` | yes | none |
+| `browser_identity_create` | `browser.identity.create` | no | `name, proxy?` |
+| `browser_identity_delete` | `browser.identity.delete` | no | `identity_id` |
+| `browser_identity_launch` | `browser.identity.launch` | yes | `identity_id` |
+| `browser_identity_close` | `browser.identity.close` | yes | `identity_id` |
+| `browser_navigate` | `browser.navigate` | no | `identity_id, url` |
+| `browser_snapshot` | `browser.read` | yes | `identity_id` |
+| `browser_read_text` | `browser.read` | yes | `identity_id, selector?` |
+| `browser_click` | `browser.act` | no | `identity_id, selector` |
+| `browser_click_at` | `browser.act` | no | `identity_id, x, y` |
+| `browser_type` | `browser.act` | no | `identity_id, selector, text` |
+| `browser_press_key` | `browser.act` | no | `identity_id, key` |
+| `browser_scroll` | `browser.act` | no | `identity_id, direction: "up"\|"down"` (PageUp / PageDown) |
+| `browser_back` / `browser_forward` / `browser_reload` | `browser.act` | no | `identity_id` (Alt+Left, Alt+Right, F5) |
+| `browser_screenshot` | `browser.read` | yes | `identity_id` (the image is sent to the model) |
 
 Browser actions on an identity that is not open launch it first. When
 `managed_by_dot` is false, the `browser_identity_create` and

@@ -1,4 +1,4 @@
-import { TOOL_RESULT_MAX_CHARS, type ToolDefinition } from "@invisible-dots/shared";
+import type { ToolDefinition } from "@invisible-dots/shared";
 import type { FunctionTool, ImagePart, Usage } from "./types.js";
 
 /** Tool definitions in the OpenAI function format. */
@@ -12,16 +12,6 @@ export function toFunctionTools(definitions: readonly ToolDefinition[]): Functio
 /** An `image_url` part carrying base64 image bytes as a data URL (section 8.5). */
 export function imagePart(mimeType: string, base64: string): ImagePart {
   return { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } };
-}
-
-/**
- * Cut a tool result to `max` characters with a marker that tells the model how
- * much it did not see, so it can ask for a narrower read instead of guessing.
- */
-export function truncateToolResult(text: string, max: number = TOOL_RESULT_MAX_CHARS): string {
-  if (text.length <= max) return text;
-  const omitted = text.length - max;
-  return `${text.slice(0, max)}\n[... truncated: ${omitted} more characters not shown]`;
 }
 
 /** Usage summed over several requests, e.g. every model turn of one task. */

@@ -10,7 +10,6 @@ import {
   imagePart,
   parseRetryAfter,
   toFunctionTools,
-  truncateToolResult,
 } from "../src/index.js";
 import { getTool, OPENROUTER_REFERER, OPENROUTER_TITLE } from "@invisible-dots/shared";
 import { completion, startFakeOpenRouter, type FakeOpenRouter } from "./fake-openrouter.js";
@@ -220,13 +219,6 @@ describe("helpers", () => {
     const now = Date.parse("2026-01-01T00:00:00Z");
     expect(parseRetryAfter("Thu, 01 Jan 2026 00:00:05 GMT", now)).toBe(5000);
     expect(parseRetryAfter("Wed, 31 Dec 2025 00:00:05 GMT", now)).toBe(0);
-  });
-
-  it("cuts long tool results with a marker", () => {
-    expect(truncateToolResult("short")).toBe("short");
-    const cut = truncateToolResult("x".repeat(12_050));
-    expect(cut.startsWith("x".repeat(12_000))).toBe(true);
-    expect(cut).toContain("truncated: 50 more characters");
   });
 
   it("accumulates usage and keeps cost null until one is reported", () => {

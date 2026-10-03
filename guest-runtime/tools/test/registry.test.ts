@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { getTool, TOOLS, type BrowserIdentity, type ExecRequest } from "@invisible-dots/shared";
 import type { CallToolResult } from "@invisible-dots/browser-manager";
 import {
-  capText,
   createToolRegistry,
   type AgentdClient,
   type MemoryToolStore,
@@ -241,7 +240,7 @@ describe("computer and files", () => {
     expect(binary).toEqual({ ok: false, text: "bin is a binary file of 3 bytes; it cannot be shown as text" });
     const big = await registry.call("files_read", { path: "big.txt" }, ctx);
     expect(big.text.length).toBeLessThanOrEqual(12_000);
-    expect(big.text).toMatch(/\[\.\.\. \d+ more characters cut \.\.\.\]$/);
+    expect(big.text).toMatch(/\[\.\.\. truncated: \d+ more characters not shown\]$/);
     const failed = await registry.call("files_read", { path: "boom" }, ctx);
     expect(failed).toEqual({ ok: false, text: "files_read failed: dot-agentd GET /v1/files answered 404 not_found: no such file" });
   });
@@ -337,7 +336,7 @@ describe("browser tools", () => {
     const huge = await registry.call("browser_read_text", { identity_id: "a", selector: "#huge" }, ctx);
     expect(huge.ok).toBe(true);
     expect(huge.text.length).toBeLessThanOrEqual(12_000);
-    expect(huge.text).toContain("more characters cut");
+    expect(huge.text).toContain("more characters not shown");
   });
 
   it("manages identities and never shows a proxy password", async () => {
@@ -354,15 +353,6 @@ describe("browser tools", () => {
     expect((await registry.call("browser_identity_close", { identity_id: "shop-abc123" }, ctx)).ok).toBe(true);
     const missing = await registry.call("browser_identity_delete", { identity_id: "nope" }, ctx);
     expect(missing).toEqual({ ok: false, text: 'browser_identity_delete failed: no browser identity "nope"' });
-  });
-});
-
-describe("capText", () => {
-  it("keeps short text and cuts long text to the limit, marker included", () => {
-    expect(capText("abc", 10)).toBe("abc");
-    const cut = capText("a".repeat(1000), 100);
-    expect(cut.length).toBeLessThanOrEqual(100);
-    expect(cut).toMatch(/^a+\n\[\.\.\. \d+ more characters cut \.\.\.\]$/);
   });
 });
 

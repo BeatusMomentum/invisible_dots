@@ -15,7 +15,6 @@ import {
   UsageAccumulator,
   parseToolCall,
   toFunctionTools,
-  truncateToolResult,
   type ChatModel,
   type ParsedToolCall,
   type ToolCall,
@@ -29,6 +28,7 @@ import {
   newId,
   parseRuntimeConfig,
   redactToolArguments,
+  truncateText,
   type AgentState,
   type AgentStateAnswer,
   type BrowserIdentity,
@@ -496,7 +496,7 @@ export class AgentRuntime {
       const message: StoredToolMessage = {
         role: "tool",
         tool_call_id: call.id,
-        content: truncateToolResult(result.ok ? result.text : `Error: ${result.text}`),
+        content: truncateText(result.ok ? result.text : `Error: ${result.text}`),
         ...(result.images && result.images.length > 0 ? { images: result.images } : {}),
       };
       this.#store.transaction(() => {

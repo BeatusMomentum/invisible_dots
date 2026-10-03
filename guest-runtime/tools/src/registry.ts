@@ -1,5 +1,14 @@
 import type { BrowserIdentityManager, CallToolResult } from "@invisible-dots/browser-manager";
-import { getTool, offeredTools, redactProxy, TOOL_RESULT_MAX_CHARS, type BrowserIdentity, type ToolDefinition, type ToolName } from "@invisible-dots/shared";
+import {
+  getTool,
+  offeredTools,
+  redactProxy,
+  truncateText,
+  TOOL_RESULT_MAX_CHARS,
+  type BrowserIdentity,
+  type ToolDefinition,
+  type ToolName,
+} from "@invisible-dots/shared";
 import type { AgentdClient } from "./agentd.js";
 import type { MemoryToolStore, ToolContext, ToolImage, ToolOfferConfig, ToolRegistry, ToolResult } from "./types.js";
 import { validateArguments } from "./validate.js";
@@ -22,15 +31,6 @@ export interface ToolRegistryDeps {
   maxTextChars?: number;
   /** Hits returned by memory_search. Default 10. */
   memorySearchLimit?: number;
-}
-
-/** Cuts a text to at most `max` characters, the marker included, saying how much was left out. */
-export function capText(text: string, max: number = TOOL_RESULT_MAX_CHARS): string {
-  if (text.length <= max) return text;
-  const marker = (omitted: number) => `\n[... ${omitted} more characters cut ...]`;
-  // The marker's length depends on the count it states, so size it for the worst case.
-  const keep = Math.max(0, max - marker(text.length).length);
-  return text.slice(0, keep) + marker(text.length - keep);
 }
 
 function fail(text: string): ToolResult {
@@ -249,11 +249,11 @@ export function createToolRegistry(deps: ToolRegistryDeps): ToolRegistry {
 
       try {
         const result = await handlers[name as ToolName](args as Args, ctx, definition);
-        return { ...result, text: capText(result.text, maxText) };
+        return { ...result, text: truncateText(result.text, maxText) };
       } catch (error) {
         if (ctx.signal.aborted) return fail(`${name} was cancelled`);
         const message = error instanceof Error ? error.message : String(error);
-        return fail(capText(`${name} failed: ${message}`, maxText));
+        return fail(truncateText(`${name} failed: ${message}`, maxText));
       }
     },
   };

@@ -97,6 +97,12 @@ export interface OutboundEventDataMap {
     decision: PolicyDecision;
     ok: boolean;
     duration_ms: number;
+    /**
+     * The agent stopped while the call ran, so its outcome is unknown and it
+     * was not run again (architecture section 8.7). `ok` is false and
+     * `duration_ms` is 0.
+     */
+    interrupted?: true;
   };
   "browser.identity.created": BrowserIdentityEventData;
   "browser.identity.deleted": BrowserIdentityEventData;
@@ -235,6 +241,7 @@ export const outboundEventSchema = z.discriminatedUnion("type", [
       decision: z.enum(["allow", "ask", "deny"]),
       ok: z.boolean(),
       duration_ms: z.number().nonnegative(),
+      interrupted: z.literal(true).optional(),
     }),
   }),
   z.object({ ...outboundBase, type: z.literal("browser.identity.created"), data: identityData }),

@@ -87,4 +87,12 @@ describe("parseOutboundEvent", () => {
     expect(parseOutboundEvent(event).type).toBe("approval.requested");
     expect(() => parseOutboundEvent({ ...event, data: { ...event.data, permission: "root" } })).toThrow(/permission/);
   });
+
+  it("keeps the interrupted mark of a tool call, so the host records that its outcome is unknown", () => {
+    const data = { task_id: "t1", tool: "computer_exec", permission: "computer.exec", decision: "allow", ok: false, duration_ms: 0 };
+    const parsed = parseOutboundEvent({ seq: 4, id: "e", type: "tool.called", ts, data: { ...data, interrupted: true } });
+    expect(parsed.data).toEqual({ ...data, interrupted: true });
+    expect(parseOutboundEvent({ seq: 5, id: "e", type: "tool.called", ts, data }).data).toEqual(data);
+    expect(() => parseOutboundEvent({ seq: 6, id: "e", type: "tool.called", ts, data: { ...data, interrupted: false } })).toThrow(/interrupted/);
+  });
 });

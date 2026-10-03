@@ -5,7 +5,7 @@ export {
   type AgentdRequestOptions,
   type SocketAgentdClientOptions,
 } from "./agentd.js";
-export { capText, createToolRegistry, type RegistryBrowsers, type ToolRegistryDeps } from "./registry.js";
+export { createToolRegistry, type RegistryBrowsers, type ToolRegistryDeps } from "./registry.js";
 export type {
   MemorySearchHit,
   MemoryToolStore,
