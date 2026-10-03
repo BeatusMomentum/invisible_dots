@@ -90,7 +90,8 @@ describe("private files and directories", () => {
         .map((line) => line.trim())
         .filter((line) => line.includes(":("));
       // One entry, inherited from nothing: the owner. No group, no other account.
-      expect(entries).toHaveLength(1);
+      // The whole listing goes with a failure: an ACL that differs on another machine is only diagnosable from it.
+      expect(entries, `icacls ${path}:\n${listing}`).toHaveLength(1);
       expect(entries[0]).toMatch(/:(?:\(OI\)\(CI\))?\(F\)$/);
       expect(entries.join(" ")).not.toMatch(/Users|Everyone|Authenticated|\(I\)/i);
     }
