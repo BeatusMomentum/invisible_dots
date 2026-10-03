@@ -89,6 +89,38 @@ of tasks inside one run; a Dot's task queue is `guest-runtime/task-runtime`,
 persisted in `dot.db`), and `agent/agent.ts` (the agent object around the
 runner, built on the provider adapters and structured output).
 
+## What was adapted
+
+The commit "engine: run on this repository's client, messages, tools and
+store" made the remaining files compile and run here, which ended their
+exclusion from the typecheck:
+
+- the model client is `@invisible-dots/openrouter-client`, the only LLM
+  client of a Dot; upstream's provider adapter interface is gone;
+- there is one message model, the OpenAI chat shape the client sends and
+  `dot.db` stores: upstream's content blocks and the conversion between them
+  are gone;
+- there is no Zod: the tools, their JSON Schemas and their argument
+  validation are the ones of `@invisible-dots/tools` and the tool table of
+  `@invisible-dots/shared`; `tool/framework.ts` is the contract with them;
+- the stores are `dot.db`, synchronously: the checkpoint is the thread
+  itself, one transaction per boundary with its outbox rows
+  (`memory/checkpoint.ts`); an approval is a `pending_approvals` row decided
+  by one compare-and-set that keeps the person's note
+  (`approval/durable.ts`); the run record is the unit in flight
+  (`run/record.ts`, `run/ledger.ts`). The key-value `MemoryStore`, its
+  in-memory implementation, the run store and its barrel
+  (`memory/store.ts`, `run/store.ts`, `run/index.ts`) are deleted, and so is
+  `utils/abort.ts`, which Node's `AbortSignal.any` replaces;
+- every file is ASCII: upstream's punctuation (em dashes, arrows) became
+  plain text.
+
+The runner keeps upstream's shape: a loop whose phase is derived from what is
+committed, a parallel round of tool calls, the optional loop detector, the
+optional compression of consumed tool results and the optional summary
+strategy. Code of this repository's own lives in `src/dot/` and carries no
+header.
+
 ## Ported later
 
 Nothing outside the list above is planned. A later need for sub-agents, teams

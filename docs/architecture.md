@@ -90,7 +90,7 @@ guest/
   dot-agentd/             the computer daemon (Go): the guest endpoint, exec, files, screenshots
   image-builder/          golden image and runtime disk builders (TypeScript), guest systemd units
 guest-runtime/
-  engine/             the agent engine, derived in part from Open Multi-Agent (MIT): being adapted, not used yet
+  engine/             the agent engine, derived in part from Open Multi-Agent (MIT); the agent does not run on it yet
   openrouter-client/  the only LLM client
   agent-runtime/      state machine and the reasoning loop
   memory/             local SQLite state: conversation, memories, outbox

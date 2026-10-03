@@ -16,8 +16,5 @@
     "tests/repo/**/*.ts",
     "tests/e2e/**/*.ts"
   ],
-  // The engine's sources are upstream's files as imported, which do not
-  // compile against this repository until they are adapted to it; the
-  // exclusion ends with that adaptation (guest-runtime/engine/UPSTREAM.md).
-  "exclude": ["node_modules", "apps/web", "guest-runtime/engine/src"]
+  "exclude": ["node_modules", "apps/web"]
 }

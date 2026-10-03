@@ -80,6 +80,25 @@ describe("the vendored engine", () => {
     }
   });
 
+  it("is plain ASCII, so no upstream punctuation or other script hides in it", () => {
+    for (const file of [...engineSources("src"), ...engineSources("test")]) {
+      const text = readFileSync(join(engine, file), "utf8");
+      const line = text.split("\n").findIndex((l) => /[^\x00-\x7f]/.test(l));
+      expect(line, `${file}:${line + 1}`).toBe(-1);
+    }
+  });
+
+  it("imports nothing but node built-ins, this workspace's packages and its own files", () => {
+    for (const file of [...engineSources("src"), ...engineSources("test")]) {
+      const text = readFileSync(join(engine, file), "utf8");
+      for (const match of text.matchAll(/^\s*(?:import|export)\b[^"';]*?from\s+["']([^"']+)["']/gm)) {
+        const specifier = match[1]!;
+        const allowed = specifier.startsWith("node:") || specifier.startsWith("@invisible-dots/") || specifier.startsWith(".") || specifier === "vitest";
+        expect(allowed, `${file} imports ${specifier}`).toBe(true);
+      }
+    }
+  });
+
   it("has no npm dependency outside this workspace", () => {
     const pkg = JSON.parse(readFileSync(join(engine, "package.json"), "utf8")) as Record<string, Record<string, string> | undefined>;
     const names = [...Object.keys(pkg.dependencies ?? {}), ...Object.keys(pkg.devDependencies ?? {}), ...Object.keys(pkg.peerDependencies ?? {})];
