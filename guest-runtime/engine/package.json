@@ -1,0 +1,8 @@
+{
+  "name": "@invisible-dots/engine",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The Dot's agent engine, derived in part from Open Multi-Agent (MIT, see LICENSE and UPSTREAM.md).",
+  "license": "MIT",
+  "type": "module"
+}

@@ -90,6 +90,7 @@ guest/
   dot-agentd/             the computer daemon (Go): the guest endpoint, exec, files, screenshots
   image-builder/          golden image and runtime disk builders (TypeScript), guest systemd units
 guest-runtime/
+  engine/             the agent engine, derived in part from Open Multi-Agent (MIT): being adapted, not used yet
   openrouter-client/  the only LLM client
   agent-runtime/      state machine and the reasoning loop
   memory/             local SQLite state: conversation, memories, outbox
@@ -1041,7 +1042,11 @@ installer, Linux gets the distribution's package.
 
 ### 11.3 Licensing
 
-The MIT license covers this repository's code. QEMU (GPL-2.0) is installed
+The root LICENSE (MIT) covers this repository, except the files under
+`guest-runtime/engine/` imported from Open Multi-Agent, which are under
+`guest-runtime/engine/LICENSE` (MIT as well); `THIRD_PARTY_NOTICES.md` at the
+root carries that notice, and `guest-runtime/engine/UPSTREAM.md` records the
+version and commit they come from. QEMU (GPL-2.0) is installed
 from the official Windows installer or the distribution's package and is only
 ever run as a separate program; it is never linked into, bundled with or
 shipped by this project. The guest operating system (the Ubuntu cloud image),

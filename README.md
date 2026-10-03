@@ -71,6 +71,7 @@ How it works, and the contract every part is written against:
 
 ---
 
-MIT licensed. QEMU, the guest operating system, the browser engine and the
-packages a host downloads keep their own licenses (docs/architecture.md,
-section 11.3).
+MIT licensed. Parts of the agent engine come from Open Multi-Agent, also MIT,
+with its notice in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). QEMU, the
+guest operating system, the browser engine and the packages a host downloads
+keep their own licenses (docs/architecture.md, section 11.3).
