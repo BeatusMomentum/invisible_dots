@@ -86,7 +86,10 @@ describe("private files and directories", () => {
     // SYSTEM (SY) and the local Administrators (BA) are allowed: like root on Linux they can open
     // any file anyway, and some machines (CI runners among them) grant them explicitly on every
     // new directory, where removing inheritance does not remove them.
-    const owner = await currentUserSid();
+    const ownerSid = await currentUserSid();
+    // SDDL writes a few accounts by alias instead of SID: the built-in Administrator (RID 500, the
+    // account CI runners use) is LA.
+    const owners = ownerSid.endsWith("-500") ? [ownerSid, "LA"] : [ownerSid];
     const icacls = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "icacls.exe");
     for (const path of [home, file]) {
       const saved = join(dir, "acl.txt");
@@ -98,10 +101,10 @@ describe("private files and directories", () => {
       expect(dacl?.[1], context).toContain("P");
       for (const [type, flags, , , , sid] of aces) {
         expect(flags, context).not.toContain("ID");
-        expect([owner, "SY", "BA", "S-1-5-18", "S-1-5-32-544"], context).toContain(sid);
+        expect([...owners, "SY", "BA", "S-1-5-18", "S-1-5-32-544"], context).toContain(sid);
         expect(type, context).toBe("A");
       }
-      expect(aces.some(([, , rights, , , sid]) => sid === owner && rights === "FA"), context).toBe(true);
+      expect(aces.some(([, , rights, , , sid]) => owners.includes(sid ?? "") && rights === "FA"), context).toBe(true);
     }
   });
 });
