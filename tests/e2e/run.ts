@@ -575,7 +575,8 @@ const GUEST_PROOF_CONTEXT = "invisible-dots guest proof v1\n";
  */
 async function dotToken(dotId: string): Promise<string> {
   const seed = await readFile(join(HOME, "vms", dotId, "seed.iso"));
-  const match = /"dotId":\s*"[^"]+",\s*"token":\s*"([^"]+)"/.exec(seed.toString("latin1"));
+  // The seed's user-data carries the boot config as a JSON string, so its own quotes are escaped there.
+  const match = /\\?"token\\?":\s*\\?"([A-Za-z0-9_-]{20,})\\?"/.exec(seed.toString("latin1"));
   assert(match, `could not read the Dot token from vms/${dotId}/seed.iso`);
   return match[1]!;
 }
@@ -826,13 +827,14 @@ async function main(): Promise<void> {
     const computer = await api<Computer>("GET", `/api/dots/${enc(dotId)}/computer`);
     assert(computer.guest_port, "the computer has no guest port");
     const guestPort = computer.guest_port;
-    const counter = "~/workspace/approval-counter.txt";
-    await guestExec(dotId, guestPort, `rm -f ${counter.replace("~", "$HOME")}`);
+    const counter = "$HOME/workspace/approval-counter.txt";
+    await guestExec(dotId, guestPort, `rm -f ${counter}`);
     await api("PATCH", `/api/dots/${enc(dotId)}`, { config: dotYaml("  computer.exec: ask") });
     const queued = await cli([
       "task",
       DOT_NAME,
-      `Run this exact command with the computer_exec tool: printf x >> ${counter}\nThen answer with only the word DONE.`,
+      `Run this exact command with the computer_exec tool: printf x >> ~/workspace/approval-counter.txt\n` +
+        "Then answer with only the note the user attached when approving the call, or NONE if there was none.",
       "--json",
     ]);
     assert(queued.code === 0, `invisible-dots task failed (${queued.code}): ${queued.stderr.trim()}`);
@@ -842,30 +844,34 @@ async function main(): Promise<void> {
       assert(!["COMPLETED", "FAILED", "CANCELLED"].includes(task.status), `the task ended ${task.status} without asking: ${task.summary ?? task.error}`);
       return (await api<{ approvals: Approval[] }>("GET", "/api/approvals?status=pending")).approvals.find((a) => a.task_id === taskId);
     }, 3000);
+    const startedBefore = (await events(dotId)).filter((e) => e.type === "agent.started").length;
 
     // End the agent process while it holds the approval; systemd (Restart=on-failure) starts it again.
-    const killed = await guestExec(dotId, guestPort, "pkill -9 -f invisible-dots-agent; sleep 1; echo restarting");
-    assert(killed.exit_code === 0, `could not end the agent process: ${killed.stderr}`);
-    // The host sees the restart (agent.started) and re-pushes key and config; the same approval is still pending.
-    const restored = await waitFor("the agent to restart and show the same pending approval", TIMEOUTS.task, async () => {
-      const pending = (await api<{ approvals: Approval[] }>("GET", "/api/approvals?status=pending")).approvals;
-      const same = pending.find((a) => a.id === approval.id);
-      return same ? true : undefined;
+    // The pattern is written so that it does not match the shell that runs it.
+    await guestExec(dotId, guestPort, "pkill -9 -f 'invisible-dots-agent[.]mjs'; echo sent");
+    await waitFor("agent.started from the restarted agent", TIMEOUTS.task, async () => {
+      const started = (await events(dotId)).filter((e) => e.type === "agent.started").length;
+      return started > startedBefore ? true : undefined;
     }, 2000);
-    assert(restored, "the pending approval was lost across the restart");
-    const startedEvents = (await events(dotId)).filter((e) => e.type === "agent.started").length;
-    assert(startedEvents >= 2, "no agent.started event after the restart");
+    // The guest's own state, read through its socket: the same approval waits, and the host pushed the key again.
+    const guestState = await waitFor("the restarted agent to hold the approval and the key", TIMEOUTS.task, async () => {
+      const read = (path: string) => guestExec(dotId, guestPort, `curl -s --unix-socket /run/invisible-dots/agent.sock http://agent${path}`);
+      const health = JSON.parse((await read("/health")).stdout || "{}") as { openrouter_configured?: boolean };
+      const answer = JSON.parse((await read("/state")).stdout || "{}") as { pending_approval?: { approval_id: string } | null };
+      return health.openrouter_configured === true && answer.pending_approval ? answer : undefined;
+    }, 2000);
+    assert(guestState.pending_approval!.approval_id === approval.id, `after the restart the guest waits on ${guestState.pending_approval!.approval_id}, not ${approval.id}`);
 
-    const approved = await cli(["approve", approval.id, "--note", "only once", "--json"]);
+    const note = `once-${randomBytes(3).toString("hex")}`;
+    const approved = await cli(["approve", approval.id, "--note", note, "--json"]);
     assert(approved.code === 0, `invisible-dots approve exited with ${approved.code}: ${approved.stderr.trim()}`);
-    await waitTask(taskId);
+    const done = await waitTask(taskId);
     // The tool ran exactly once, which the counter file proves.
-    const count = await guestExec(dotId, guestPort, `wc -c < ${counter.replace("~", "$HOME")}`);
+    const count = await guestExec(dotId, guestPort, `wc -c < ${counter}`);
     assert(count.stdout.trim() === "1", `the approved command ran ${count.stdout.trim()} time(s), not once`);
-    // The note reached the model: it is in the tool result of the next request.
-    const request = (await events(dotId)).some((e) => e.type === "task.completed" && e.data.task_id === taskId);
-    assert(request, "the task did not complete after the approval");
-    return `agent restarted under systemd, approval ${approval.id} kept; the approved command ran once (counter = ${count.stdout.trim()})`;
+    // The note followed the call's result into the model's next request: the model relays it.
+    assert((done.summary ?? "").includes(note), `the note did not reach the model: the answer is ${JSON.stringify(done.summary)}`);
+    return `agent restarted under systemd (agent.started seen); the guest still waited on ${approval.id} with the key pushed again; approved with a note, the command ran once and the note reached the model`;
   });
 
   await step("j", "the agent is restarted during a command; the interrupted call is reported", async () => {
@@ -874,34 +880,39 @@ async function main(): Promise<void> {
     assert(computer.guest_port, "the computer has no guest port");
     const guestPort = computer.guest_port;
     await api("PATCH", `/api/dots/${enc(dotId)}`, { config: dotYaml() });
-    const marker = "~/workspace/exec-marker.txt";
-    await guestExec(dotId, guestPort, `rm -f ${marker.replace("~", "$HOME")}`);
-    // A command long enough that the restart lands while it runs; it appends one line once.
+    const marker = "$HOME/workspace/exec-marker.txt";
+    await guestExec(dotId, guestPort, `rm -f ${marker}`);
+    // A command long enough that the restart lands while it runs; it appends one line, once.
     const queued = await cli([
       "task",
       DOT_NAME,
-      `Run this exact command with the computer_exec tool: sleep 8; printf 'ran\\n' >> ${marker}\nThen answer with only the word DONE.`,
+      "Run this exact command with the computer_exec tool: sleep 8; echo ran >> ~/workspace/exec-marker.txt\n" +
+        "If the call is reported as interrupted, do not run it again: answer with only the word INTERRUPTED. Otherwise answer with only the word DONE.",
       "--json",
     ]);
     assert(queued.code === 0, `invisible-dots task failed (${queued.code}): ${queued.stderr.trim()}`);
     const taskId = (JSON.parse(queued.stdout) as Task).id;
     // Wait until the command is in flight (computer.exec is not replay-safe), then end the agent.
-    await waitFor("the exec to be in flight", TIMEOUTS.task, async () => {
-      const running = (await api<Dot>("GET", `/api/dots/${enc(dotId)}`)).status;
-      assert(running !== "ERROR", "the Dot went to ERROR while the command ran");
-      const list = await guestExec(dotId, guestPort, "pgrep -f 'sleep 8' >/dev/null && echo yes || echo no");
-      return list.stdout.trim() === "yes" ? true : undefined;
-    }, 1000);
-    const killed = await guestExec(dotId, guestPort, "pkill -9 -f invisible-dots-agent; echo done");
-    assert(killed.exit_code === 0, `could not end the agent process: ${killed.stderr}`);
+    // The brackets keep pgrep from matching the shell that runs it.
+    await waitFor("the command to be in flight", TIMEOUTS.task, async () => {
+      const task = await api<Task>("GET", `/api/tasks/${enc(taskId)}`);
+      assert(!["COMPLETED", "FAILED", "CANCELLED"].includes(task.status), `the task ended ${task.status} before the command ran`);
+      const probe = await guestExec(dotId, guestPort, "pgrep -f 'sleep [8]' >/dev/null && echo yes || echo no");
+      return probe.stdout.trim() === "yes" ? true : undefined;
+    }, 500);
+    await guestExec(dotId, guestPort, "pkill -9 -f 'invisible-dots-agent[.]mjs'; echo sent");
     const done = await waitTask(taskId);
     const all = await events(dotId);
     const interrupted = taskEvents(all, taskId).find((e) => e.type === "tool.called" && e.data.tool === "computer_exec" && e.data.interrupted === true);
     assert(interrupted, `no interrupted computer_exec event for the task (tools: ${describeTools(all, taskId)})`);
-    // The command itself ran once: the agent cancelled its request to agentd, but the command ran to its own end.
-    const ran = await guestExec(dotId, guestPort, `wc -l < ${marker.replace("~", "$HOME")} 2>/dev/null || echo 0`);
-    assert(ran.stdout.trim() === "1", `the command left ${ran.stdout.trim()} line(s), not one`);
-    return `agent restarted during computer_exec; tool.called interrupted=true recorded; the command ran once; task ended ${done.status}`;
+    // The command itself ran once: agentd ran it to its end after the agent was gone, and nothing ran it again.
+    const ran = await waitFor("the command to finish in the guest", 60_000, async () => {
+      const lines = await guestExec(dotId, guestPort, `pgrep -f 'sleep [8]' >/dev/null && echo running || (wc -l < ${marker} 2>/dev/null || echo 0)`);
+      const text = lines.stdout.trim();
+      return text === "running" ? undefined : text;
+    }, 1000);
+    assert(ran === "1", `the command left ${ran} line(s), not one`);
+    return `agent restarted during computer_exec; tool.called with interrupted: true for the call; the command ran once; the model answered ${JSON.stringify(done.summary)}`;
   });
 
   await step("k", "the key is in none of the Dot's own files and rows", async () => {
