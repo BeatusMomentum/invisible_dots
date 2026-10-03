@@ -38,6 +38,16 @@ export const silentLogger: Logger = {
   error() {},
 };
 
+/**
+ * Test seam: called at named points of a commit, where a test throws to fail
+ * the transaction or kills the process. The product never sets one.
+ */
+export interface FaultSeam {
+  at(point: string): void;
+}
+
+export const NO_FAULTS: FaultSeam = { at() {} };
+
 /** Configuration for agent loop detection. */
 export interface LoopDetectionConfig {
   /**

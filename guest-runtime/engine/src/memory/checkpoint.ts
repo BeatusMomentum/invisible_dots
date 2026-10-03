@@ -8,16 +8,29 @@
  * the runner crosses is one synchronous SQLite transaction that appends what
  * happened and writes the outbox rows describing it, so a crash leaves either
  * all of a boundary or none of it, and an event reaches the host only after
- * its transaction committed.
+ * its transaction committed. No `await` happens inside a transaction.
+ *
+ * The commit points (architecture section 8.7):
+ *  - assistant: the model's message, the step and its usage, `task.progress`;
+ *  - intent (A): the call about to run, before it starts;
+ *  - result (B): the tool message, the intent and the approval deleted,
+ *    `tool.called`, once the call returned;
+ *  - completion or failure of the unit.
  */
-import { CONVERSATION_THREAD, type DotStore } from "@invisible-dots/memory";
+import { CONVERSATION_THREAD, type DotStore, type StoredMessage, type ToolIntentRecord } from "@invisible-dots/memory";
 import type { AssistantMessage, Usage } from "@invisible-dots/openrouter-client";
 import type { OutboundEventDataMap } from "@invisible-dots/shared";
 import type { TaskQueue } from "@invisible-dots/task-runtime";
 import type { DurableApprovalLedger } from "../approval/durable.js";
 import type { RunLedger } from "../run/ledger.js";
 import { threadOf, type RunRecord } from "../run/record.js";
-import type { StoredToolMessage, ThreadMessage } from "../types.js";
+import type { FaultSeam, StoredToolMessage, ThreadMessage } from "../types.js";
+
+/** Where a call sits: its assistant message and its index in that message's calls. */
+export interface CallPosition {
+  messageId: number;
+  callIndex: number;
+}
 
 export class Checkpoint {
   constructor(
@@ -25,14 +38,15 @@ export class Checkpoint {
     private readonly queue: TaskQueue,
     private readonly ledger: RunLedger,
     private readonly approvals: DurableApprovalLedger,
+    private readonly faults: FaultSeam,
   ) {}
 
-  /** The newest `limit` messages of a thread, oldest first. */
-  recent(thread: string, limit: number): ThreadMessage[] {
-    return this.store.listMessages<ThreadMessage>(thread, { limit }).map((m) => m.message);
+  /** The newest `limit` messages of a thread, oldest first, with their ids. */
+  recent(thread: string, limit: number): StoredMessage<ThreadMessage>[] {
+    return this.store.listMessages<ThreadMessage>(thread, { limit });
   }
 
-  /** The model answered: its message, the step and its usage, and the progress text of a task. */
+  /** The model answered: its message, the step and its usage (which ends the step's request attempts), the progress text of a task. */
   assistant(record: RunRecord, message: AssistantMessage, usage: Usage): void {
     this.store.transaction(() => {
       this.store.appendMessage<ThreadMessage>(threadOf(record), message);
@@ -44,13 +58,48 @@ export class Checkpoint {
     });
   }
 
-  /** A tool call has its result: the tool message, its approval consumed, `tool.called`. */
-  toolResult(record: RunRecord, message: StoredToolMessage, called: OutboundEventDataMap["tool.called"]): void {
+  /** The intent of a call, if one was committed and not yet answered. */
+  intentOf(thread: string, position: CallPosition): ToolIntentRecord | undefined {
+    return this.store.getIntent(thread, position.messageId, position.callIndex);
+  }
+
+  /** Transaction A: the call is about to run. Returns the intent, whose `attempts` counts this start. */
+  intent(record: RunRecord, position: CallPosition, call: { toolCallId: string; tool: string; permission: string; decision: string }): ToolIntentRecord {
+    return this.store.transaction(() => {
+      this.faults.at("intent:writing");
+      return this.store.recordIntent({ thread: threadOf(record), ...position, ...call });
+    });
+  }
+
+  /** Transaction B: the call has its result. Written whenever the call returned, even if the unit was aborted meanwhile. */
+  toolResult(record: RunRecord, position: CallPosition, message: StoredToolMessage, called: OutboundEventDataMap["tool.called"]): void {
+    const thread = threadOf(record);
     this.store.transaction(() => {
-      this.store.appendMessage<ThreadMessage>(threadOf(record), message);
-      const approval = this.approvals.forCall(message.tool_call_id);
+      this.store.appendMessage<ThreadMessage>(thread, message);
+      this.faults.at("result:writing");
+      this.store.deleteIntent(thread, position.messageId, position.callIndex);
+      const approval = this.approvals.forCall(thread, position.messageId, position.callIndex);
       if (approval) this.approvals.consume(approval.approvalId);
       this.store.appendEvent("tool.called", called);
+    });
+  }
+
+  /** A call a crash interrupted: its result says so, its intent and approval go, and `tool.called` carries what was decided when it started. */
+  interrupted(record: RunRecord, intent: ToolIntentRecord, text: string): void {
+    this.store.transaction(() => {
+      this.store.appendMessage<ThreadMessage>(intent.thread, { role: "tool", tool_call_id: intent.toolCallId, content: text });
+      this.store.deleteIntent(intent.thread, intent.messageId, intent.callIndex);
+      const approval = this.approvals.forCall(intent.thread, intent.messageId, intent.callIndex);
+      if (approval) this.approvals.consume(approval.approvalId);
+      this.store.appendEvent("tool.called", {
+        ...(record.kind === "task" ? { task_id: record.taskId } : {}),
+        tool: intent.tool,
+        permission: intent.permission,
+        decision: intent.decision as OutboundEventDataMap["tool.called"]["decision"],
+        ok: false,
+        duration_ms: 0,
+        interrupted: true,
+      });
     });
   }
 

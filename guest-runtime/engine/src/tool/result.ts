@@ -3,9 +3,10 @@
 // See guest-runtime/engine/LICENSE and UPSTREAM.md.
 /**
  * Tool results as they enter the conversation: one tool message per call,
- * text for the model and the images next to it.
+ * text for the model and the images next to it. The registry already cut the
+ * text to its limit; it is not cut a second time here, so a note that follows
+ * the result is never lost to a cut.
  */
-import { truncateText } from "@invisible-dots/shared";
 import type { StoredToolMessage } from "../types.js";
 import type { ToolResult } from "./framework.js";
 
@@ -14,7 +15,7 @@ export function toolResultMessage(toolCallId: string, result: ToolResult): Store
   return {
     role: "tool",
     tool_call_id: toolCallId,
-    content: truncateText(result.ok ? result.text : `Error: ${result.text}`),
+    content: result.ok ? result.text : `Error: ${result.text}`,
     ...(result.images && result.images.length > 0 ? { images: result.images } : {}),
   };
 }

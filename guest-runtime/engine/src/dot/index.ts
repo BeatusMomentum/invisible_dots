@@ -1,13 +1,14 @@
 export { DotRuntime } from "./driver.js";
-export type { DotRuntimeOptions, FaultSeam } from "./driver.js";
+export type { DotRuntimeOptions } from "./driver.js";
 export { decideTool } from "./gate.js";
 export type { ToolDecision } from "./gate.js";
 export { buildSystemPrompt, taskSeedMessage } from "./prompt.js";
 export type { PromptInput } from "./prompt.js";
-export { IMAGES_KEPT, toRequestMessages, trimThread, unansweredToolCalls } from "./request.js";
+export { IMAGES_KEPT, openCalls, toRequestMessages, trimThread } from "./request.js";
+export type { OpenCall } from "./request.js";
 export { AgentRunner, THREAD_READ_LIMIT } from "../agent/runner.js";
 export type { RunnerDeps, RunnerOptions, RunOutcome, UnitRun } from "../agent/runner.js";
 export { UnitAbort } from "../errors.js";
 export type { ToolContext, ToolDefinition, ToolEmittedEvent, ToolRegistry, ToolResult } from "../tool/framework.js";
 export { silentLogger } from "../types.js";
-export type { Logger, StoredToolMessage, ThreadMessage, ToolImage } from "../types.js";
+export type { FaultSeam, Logger, StoredToolMessage, ThreadMessage, ToolImage } from "../types.js";

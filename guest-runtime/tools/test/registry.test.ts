@@ -121,7 +121,7 @@ function context(signal: AbortSignal = new AbortController().signal) {
   return { ctx, events };
 }
 
-function setup(config?: ToolOfferConfig) {
+function setup() {
   const agentd = fakeAgentd();
   const browsers = fakeBrowsers();
   const memory = fakeStore();
@@ -129,7 +129,6 @@ function setup(config?: ToolOfferConfig) {
     agentd: agentd.agentd,
     browsers: browsers.browsers,
     store: memory.store,
-    ...(config ? { config: () => config } : {}),
   });
   return { registry, agentd, browsers, memory };
 }
@@ -195,12 +194,9 @@ describe("argument validation", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("refuses unknown tools and tools the current config does not offer", async () => {
-    const { registry } = setup({ ...full, browser: { identities: { managed_by_dot: false } } });
+  it("refuses unknown tools", async () => {
+    const { registry } = setup();
     expect(await registry.call("browser_open", {}, context().ctx)).toEqual({ ok: false, text: 'unknown tool "browser_open"' });
-    const hidden = await registry.call("browser_identity_delete", { identity_id: "a" }, context().ctx);
-    expect(hidden.ok).toBe(false);
-    expect(hidden.text).toContain("not available");
   });
 
   it("does not run a call whose signal is already aborted", async () => {

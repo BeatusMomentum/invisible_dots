@@ -31,7 +31,7 @@ import { RunLedger } from "../run/ledger.js";
 import { describeRun, type RunRecord } from "../run/record.js";
 import { ToolExecutor } from "../tool/executor.js";
 import type { ToolRegistry } from "../tool/framework.js";
-import { silentLogger, type Logger, type ThreadMessage } from "../types.js";
+import { NO_FAULTS, silentLogger, type FaultSeam, type Logger, type ThreadMessage } from "../types.js";
 import { applyInbound, type InboundContext, type PostCommitAction } from "./inbound.js";
 import { buildSystemPrompt, taskSeedMessage } from "./prompt.js";
 import { toRequestMessages, trimThread } from "./request.js";
@@ -44,18 +44,9 @@ export interface DotRuntimeOptions {
   now?: () => Date;
   /** Identities listed in the system prompt; defaults to the store's table. */
   identities?: () => readonly BrowserIdentity[];
-  /**
-   * Test seam: called at named points of a commit, where a test throws to
-   * fail the transaction or kills the process. Never set in the product.
-   */
+  /** Test seam at named points of the commits (see `FaultSeam`); never set in the product. */
   faults?: FaultSeam;
 }
-
-export interface FaultSeam {
-  at(point: string): void;
-}
-
-const NO_FAULTS: FaultSeam = { at() {} };
 
 type UnitOutcome = "finished" | "suspended";
 
@@ -97,8 +88,8 @@ export class DotRuntime {
     this.#queue = new TaskQueue(this.#store, { now: this.#now });
     this.#ledger = new RunLedger(this.#store, this.#queue);
     this.#approvals = new DurableApprovalLedger(this.#store, this.#queue);
-    this.#checkpoint = new Checkpoint(this.#store, this.#queue, this.#ledger, this.#approvals);
     this.#faults = options.faults ?? NO_FAULTS;
+    this.#checkpoint = new Checkpoint(this.#store, this.#queue, this.#ledger, this.#approvals, this.#faults);
     this.#inbound = {
       store: this.#store,
       queue: this.#queue,
@@ -114,6 +105,8 @@ export class DotRuntime {
       approvals: this.#approvals,
       ledger: this.#ledger,
       log: this.#log,
+      faults: this.#faults,
+      executing: new Set<string>(),
       emit: (event) => {
         this.#store.appendEvent(event.type, event.data as never);
       },

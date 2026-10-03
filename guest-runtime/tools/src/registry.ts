@@ -21,12 +21,6 @@ export interface ToolRegistryDeps {
   browsers: RegistryBrowsers;
   /** Absent when memory is disabled; the memory tools then answer that it is. */
   store?: MemoryToolStore;
-  /**
-   * The current configuration. When given, a call to a tool this config does
-   * not offer is refused, so a model that remembers a tool from an older
-   * config cannot reach it.
-   */
-  config?: () => ToolOfferConfig;
   /** Text results are cut to this many characters. Default 12000 (section 8.5). */
   maxTextChars?: number;
   /** Hits returned by memory_search. Default 10. */
@@ -238,10 +232,8 @@ export function createToolRegistry(deps: ToolRegistryDeps): ToolRegistry {
 
     async call(name: string, rawArgs: unknown, ctx: ToolContext): Promise<ToolResult> {
       const definition = getTool(name);
+      // Whether the current config offers the tool is the policy gate's decision, made before a call gets here.
       if (!definition) return fail(`unknown tool "${name}"`);
-      if (deps.config && !this.definitions(deps.config()).some((t) => t.name === name)) {
-        return fail(`the tool "${name}" is not available to this Dot with its current configuration`);
-      }
       const args = rawArgs === undefined || rawArgs === null ? {} : rawArgs;
       const errors = validateArguments(definition.parameters, args);
       if (errors.length > 0) return fail(`invalid arguments for ${name}: ${errors.join("; ")}`);

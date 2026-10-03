@@ -329,7 +329,7 @@ describe("DotRuntime: policy", () => {
     await h.runtime.idle();
 
     expect(h.registry.calls).toEqual([]);
-    expect(sentMessages(h.fake, 1).at(-1)!.content).toBe("Error: The call was rejected by the user: keep it for now");
+    expect(sentMessages(h.fake, 1).at(-1)!.content).toBe("Error: Rejected by the user: keep it for now");
     expect(h.events("tool.called")[0]!.data).toMatchObject({ decision: "ask", ok: false });
     expect(h.events("task.completed")[0]!.data).toMatchObject({ summary: "The user does not want it deleted; leaving it." });
   });

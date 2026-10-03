@@ -18,7 +18,7 @@ import { Checkpoint } from "../src/memory/checkpoint.js";
 import { RunLedger } from "../src/run/ledger.js";
 import type { RunRecord } from "../src/run/record.js";
 import { ToolExecutor } from "../src/tool/executor.js";
-import { silentLogger, type ThreadMessage } from "../src/types.js";
+import { NO_FAULTS, silentLogger, type ThreadMessage } from "../src/types.js";
 import { FakeRegistry, baseConfig } from "./helpers.js";
 
 /** A model that answers from a script and records every request. */
@@ -69,7 +69,7 @@ function bench(config: Record<string, unknown> = baseConfig): Bench {
   const queue = new TaskQueue(store);
   const ledger = new RunLedger(store, queue);
   const approvals = new DurableApprovalLedger(store, queue);
-  const checkpoint = new Checkpoint(store, queue, ledger, approvals);
+  const checkpoint = new Checkpoint(store, queue, ledger, approvals, NO_FAULTS);
   const model = new ScriptedModel();
   const registry = new FakeRegistry();
   const parsed = parseRuntimeConfig(config);
@@ -84,7 +84,17 @@ function bench(config: Record<string, unknown> = baseConfig): Bench {
     record,
     run(options = {}) {
       const runner = new AgentRunner(
-        { model, executor: new ToolExecutor(registry, silentLogger), checkpoint, approvals, ledger, log: silentLogger, emit: () => {} },
+        {
+          model,
+          executor: new ToolExecutor(registry, silentLogger),
+          checkpoint,
+          approvals,
+          ledger,
+          log: silentLogger,
+          faults: NO_FAULTS,
+          executing: new Set<string>(),
+          emit: () => {},
+        },
         { maxTurns: 20, ...options },
       );
       return runner.run({
@@ -114,7 +124,7 @@ afterEach(() => {
 });
 
 describe("AgentRunner", () => {
-  it("runs the calls of one answer at the same time", async () => {
+  it("runs the calls of one answer one at a time, in the model's order", async () => {
     b = bench();
     let running = 0;
     let overlap = 0;
@@ -129,7 +139,9 @@ describe("AgentRunner", () => {
     b.registry.handlers.set("files_list", slow);
     b.model.script.push(() => ({ calls: [call("a", "files_read", { path: "x" }), call("b", "files_list", { path: "." })] }), () => ({ text: "ok" }));
     expect(await b.run()).toEqual({ status: "completed", output: "ok" });
-    expect(overlap).toBe(2);
+    expect(overlap).toBe(1);
+    expect(b.registry.calls.map((c) => c.name)).toEqual(["files_read", "files_list"]);
+    expect(b.thread().filter((m) => m.role === "tool").map((m) => (m as { tool_call_id: string }).tool_call_id)).toEqual(["a", "b"]);
   });
 
   it("warns once about a repeated call, then fails the unit when loop detection is on", async () => {

@@ -12,12 +12,37 @@
 import { CONVERSATION_THREAD } from "@invisible-dots/memory";
 import type { UsageTotals } from "@invisible-dots/openrouter-client";
 
-export type RunRecord =
-  | { kind: "chat"; eventId: string; text: string; steps: number; usage: UsageTotals }
-  | { kind: "task"; taskId: string };
+interface RunRecordBase {
+  /**
+   * The message the unit started from: the task seed, or the chat turn's
+   * user message. Kept whole in every request; 0 on a record written before
+   * this field existed, which means the start of the thread.
+   */
+  startMessageId: number;
+  /**
+   * Model requests started since the last assistant or summary commit. A
+   * request that kills the process never reaches the persisted usage, so this
+   * is what bounds the cost of a crash loop (architecture section 8.7).
+   */
+  requestAttempts: number;
+}
 
-/** Throw when a stored value is not a run record, so a corrupt row is reported instead of guessed at. */
-export function assertRunRecord(value: unknown): asserts value is RunRecord {
+export type RunRecord =
+  | (RunRecordBase & { kind: "chat"; eventId: string; text: string; steps: number; usage: UsageTotals })
+  | (RunRecordBase & { kind: "task"; taskId: string });
+
+/**
+ * Read a stored run record, so a corrupt row is reported instead of guessed
+ * at. A record written before `startMessageId` and `requestAttempts` existed
+ * gets their neutral values.
+ */
+export function parseRunRecord(value: unknown): RunRecord {
+  assertRunRecord(value);
+  const record = value as RunRecord & Partial<RunRecordBase>;
+  return { ...record, startMessageId: record.startMessageId ?? 0, requestAttempts: record.requestAttempts ?? 0 };
+}
+
+function assertRunRecord(value: unknown): asserts value is Omit<RunRecord, keyof RunRecordBase> {
   if (value === null || typeof value !== "object") throw new Error("the active unit record is not an object");
   const record = value as Record<string, unknown>;
   if (record.kind === "task" && typeof record.taskId === "string" && record.taskId !== "") return;

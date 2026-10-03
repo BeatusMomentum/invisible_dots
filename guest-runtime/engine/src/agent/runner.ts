@@ -7,16 +7,19 @@
  * {@link AgentRunner} drives one unit of work (a chat turn or a task) on its
  * thread in `dot.db`. It handles:
  *  - sending the thread to the model
- *  - executing the tool calls of the answer, in parallel, through the policy
- *    gate, the approval ledger and the {@link ToolExecutor}
+ *  - executing the tool calls of the answer one at a time, in the model's
+ *    order, through the policy gate, the approval ledger and the
+ *    {@link ToolExecutor}, each with its intent committed before it starts
  *  - appending tool results and looping back until the model answers without
  *    tool calls
- *  - counting turns and usage
+ *  - counting turns, usage and the attempts of each model request
  *
  * The phase is never held in memory: it is derived from the thread. A newest
  * assistant message with calls that have no result yet means "executing
  * tools"; anything else means "awaiting the model". Every boundary is a
- * checkpoint, so a restart resumes exactly where the last commit left off.
+ * checkpoint, so a restart resumes exactly where the last commit left off,
+ * and a call whose intent survived a crash is classified before anything else
+ * runs (architecture section 8.7).
  */
 import {
   OpenRouterError,
@@ -25,21 +28,22 @@ import {
   type ChatMessage,
   type ChatModel,
   type ParsedToolCall,
-  type ToolCall,
   type Usage,
 } from "@invisible-dots/openrouter-client";
+import type { StoredMessage } from "@invisible-dots/memory";
 import type { AgentState, DotRuntimeConfig, OutboundEventDataMap, Permission, PolicyDecision } from "@invisible-dots/shared";
 import type { DurableApprovalLedger } from "../approval/durable.js";
 import { decideTool } from "../dot/gate.js";
-import { unansweredToolCalls } from "../dot/request.js";
-import { throwIfAborted } from "../errors.js";
-import type { Checkpoint } from "../memory/checkpoint.js";
+import { callKey, classifyIntent, interruptedText } from "../dot/intents.js";
+import { openCalls, type OpenCall } from "../dot/request.js";
+import { UnitAbort, throwIfAborted } from "../errors.js";
+import type { CallPosition, Checkpoint } from "../memory/checkpoint.js";
 import { describeRun, threadOf, type RunRecord } from "../run/record.js";
 import type { RunLedger } from "../run/ledger.js";
 import type { ToolExecutor } from "../tool/executor.js";
 import type { ToolContext, ToolDefinition, ToolEmittedEvent, ToolResult } from "../tool/framework.js";
 import { toolResultMessage } from "../tool/result.js";
-import type { Logger, LoopDetectionConfig, ThreadMessage } from "../types.js";
+import type { FaultSeam, Logger, LoopDetectionConfig, ThreadMessage } from "../types.js";
 import { estimateTokens } from "../utils/tokens.js";
 import { LoopDetector, loopWarningText } from "./loop-detector.js";
 
@@ -69,6 +73,9 @@ export interface RunnerDeps {
   readonly approvals: DurableApprovalLedger;
   readonly ledger: RunLedger;
   readonly log: Logger;
+  readonly faults: FaultSeam;
+  /** Keys (`callKey`) of the calls executing in this process right now; their intents are not interrupted calls. */
+  readonly executing: Set<string>;
   /** Write an outbound event emitted by a tool. */
   readonly emit: (event: ToolEmittedEvent) => void;
 }
@@ -93,6 +100,9 @@ export type RunOutcome =
   | { readonly status: "suspended" };
 
 type CallOutcome = "answered" | "suspended";
+
+/** Model requests a step may start; see `RunLedger.beginRequest`. */
+const REQUEST_ATTEMPTS_TEXT = "stopped: the model request failed to complete 3 times";
 
 /**
  * Drives one unit: model requests, tool execution, and looping.
@@ -124,12 +134,13 @@ export class AgentRunner {
 
     for (;;) {
       throwIfAborted(unit.signal);
-      const recent = this.deps.checkpoint.recent(thread, THREAD_READ_LIMIT);
+      const stored = this.deps.checkpoint.recent(thread, THREAD_READ_LIMIT);
+      const recent = stored.map((m) => m.message);
 
       // Executing tools: the newest assistant message has calls without a result.
-      const open = unansweredToolCalls(recent);
-      if (open.length > 0) {
-        const outcome = await this.executeRound(unit, recent, open);
+      const open = openCalls(stored);
+      if (open) {
+        const outcome = await this.executeRound(unit, stored, open.messageId, open.calls);
         if (outcome === "suspended") return { status: "suspended" };
         if (pendingWarning !== undefined) {
           this.deps.checkpoint.notice(unit.record, pendingWarning);
@@ -154,16 +165,27 @@ export class AgentRunner {
       if (this.options.compressToolResults) history = this.compressConsumedToolResults(history);
       if (this.options.contextStrategy) history = await this.summarizeMessages(history, unit);
 
+      // One transaction before the request: a response whose commit kills the
+      // process is paid for at most three times.
+      if (!this.deps.ledger.beginRequest()) return { status: "failed", error: REQUEST_ATTEMPTS_TEXT };
       const started = Date.now();
-      const result = await this.deps.model.chat(
-        {
-          model: unit.config.model.id,
-          messages: [{ role: "system", content: unit.systemPrompt() }, ...unit.requestMessages(history)],
-          ...(unit.tools.length > 0 ? { tools: toFunctionTools(unit.tools) } : {}),
-        },
-        { signal: unit.signal },
-      );
-      throwIfAborted(unit.signal);
+      let result: Awaited<ReturnType<ChatModel["chat"]>>;
+      try {
+        result = await this.deps.model.chat(
+          {
+            model: unit.config.model.id,
+            messages: [{ role: "system", content: unit.systemPrompt() }, ...unit.requestMessages(history)],
+            ...(unit.tools.length > 0 ? { tools: toFunctionTools(unit.tools) } : {}),
+          },
+          { signal: unit.signal },
+        );
+        throwIfAborted(unit.signal);
+      } catch (error) {
+        // A request the agent abandoned on purpose was not a failed attempt.
+        if (error instanceof UnitAbort || unit.signal.aborted) this.deps.ledger.abandonRequest();
+        throw error;
+      }
+      this.deps.faults.at("model:answered");
       this.deps.log.info("model answered", {
         ...describeRun(unit.record),
         model: result.model,
@@ -205,33 +227,60 @@ export class AgentRunner {
     }
   }
 
-  /** Execute the open calls of the newest assistant message, all at once. */
-  private async executeRound(unit: UnitRun, recent: readonly ThreadMessage[], calls: readonly ToolCall[]): Promise<CallOutcome> {
-    const assistantText = lastAssistantText(recent);
-    const settled = await Promise.allSettled(calls.map((call) => this.executeToolCall(unit, call, assistantText)));
-    const rejected = settled.find((s): s is PromiseRejectedResult => s.status === "rejected");
-    if (rejected) throw rejected.reason;
-    return settled.some((s) => s.status === "fulfilled" && s.value === "suspended") ? "suspended" : "answered";
+  /**
+   * Execute the open calls of the newest assistant message one at a time, in
+   * the model's order. A call that waits for the person stops the round: the
+   * calls after it wait for the decision too.
+   */
+  private async executeRound(
+    unit: UnitRun,
+    stored: readonly StoredMessage<ThreadMessage>[],
+    messageId: number,
+    calls: readonly OpenCall[],
+  ): Promise<CallOutcome> {
+    const assistantText = lastAssistantText(stored.map((m) => m.message));
+    const thread = threadOf(unit.record);
+    for (const open of calls) {
+      const position: CallPosition = { messageId, callIndex: open.index };
+      // A call whose intent survived the process that started it.
+      const intent = this.deps.checkpoint.intentOf(thread, position);
+      if (intent && !this.deps.executing.has(callKey(thread, messageId, open.index))) {
+        const verdict = classifyIntent(intent);
+        if (verdict !== "run again") {
+          const approval = this.deps.approvals.forCall(thread, messageId, open.index);
+          this.deps.log.warn("a call was interrupted by the last stop", { tool: intent.tool, attempts: intent.attempts, ...describeRun(unit.record) });
+          this.deps.checkpoint.interrupted(unit.record, intent, interruptedText(verdict, approval?.status === "approved"));
+          continue;
+        }
+        this.deps.log.info("running again a replay-safe call the last stop interrupted", { tool: intent.tool, ...describeRun(unit.record) });
+      }
+      const outcome = await this.executeToolCall(unit, position, open, assistantText);
+      if (outcome === "suspended") return "suspended";
+    }
+    return "answered";
   }
 
-  private async executeToolCall(unit: UnitRun, call: ToolCall, assistantText: string): Promise<CallOutcome> {
+  private async executeToolCall(unit: UnitRun, position: CallPosition, open: OpenCall, assistantText: string): Promise<CallOutcome> {
+    const call = open.call;
     const parsed = parseToolCall(call);
     const verdict = decideTool(unit.config, unit.tools, parsed.name);
+    const thread = threadOf(unit.record);
     let result: ToolResult;
     let durationMs = 0;
-
     if (verdict.decision === "deny") {
       result = { ok: false, text: `Denied by policy: ${verdict.reason}.` };
     } else if (parsed.arguments === null) {
       result = { ok: false, text: `Invalid arguments for ${parsed.name}: ${parsed.argumentsError}. Send a JSON object.` };
-    } else if (verdict.decision === "ask") {
-      const approval = this.deps.approvals.forCall(call.id);
-      if (!approval) {
+    } else {
+      // The approval row is the record of the person's decision, keyed by the call's position.
+      const approval = verdict.decision === "ask" ? this.deps.approvals.forCall(thread, position.messageId, position.callIndex) : undefined;
+      if (verdict.decision === "ask" && !approval) {
         const reason = assistantText.trim() === "" ? verdict.reason : `${verdict.reason}. The agent said: ${assistantText.trim()}`;
         const taskId = unit.record.kind === "task" ? unit.record.taskId : null;
         const record = this.deps.approvals.request({
-          thread: threadOf(unit.record),
+          thread,
           taskId,
+          ...position,
           toolCallId: call.id,
           tool: parsed.name,
           permission: verdict.permission as Permission,
@@ -242,18 +291,17 @@ export class AgentRunner {
         unit.onState("WAITING_APPROVAL");
         return "suspended";
       }
-      if (approval.status === "pending") {
+      if (approval?.status === "pending") {
         unit.onState("WAITING_APPROVAL");
         return "suspended";
       }
-      if (approval.status === "rejected") {
-        result = { ok: false, text: `The call was rejected by the user${approval.note ? `: ${approval.note}` : "."}` };
+      if (approval?.status === "rejected") {
+        result = { ok: false, text: approval.note ? `Rejected by the user: ${approval.note}` : "Rejected by the user." };
       } else {
-        ({ result, durationMs } = await this.execute(unit, parsed));
-        if (approval.note) result = { ...result, text: `${result.text}\n(The user approved this call with a note: ${approval.note})` };
+        ({ result, durationMs } = await this.execute(unit, parsed, position, verdict.permission, verdict.decision));
+        // After the registry's cut, so a long result never loses the note.
+        if (approval?.note) result = { ...result, text: `${result.text}\n(The user approved this call with a note: ${approval.note})` };
       }
-    } else {
-      ({ result, durationMs } = await this.execute(unit, parsed));
     }
 
     const called: OutboundEventDataMap["tool.called"] = {
@@ -264,21 +312,41 @@ export class AgentRunner {
       ok: result.ok,
       duration_ms: durationMs,
     };
-    this.deps.checkpoint.toolResult(unit.record, toolResultMessage(call.id, result), called);
+    this.deps.checkpoint.toolResult(unit.record, position, toolResultMessage(call.id, result), called);
     return "answered";
   }
 
-  private async execute(unit: UnitRun, call: ParsedToolCall): Promise<{ result: ToolResult; durationMs: number }> {
+  /**
+   * The side effect: the last abort check, Transaction A, the call. Its result
+   * is committed by the caller whatever happened to the unit meanwhile; the
+   * abort is looked at again only before the next call.
+   */
+  private async execute(
+    unit: UnitRun,
+    call: ParsedToolCall,
+    position: CallPosition,
+    permission: string,
+    decision: string,
+  ): Promise<{ result: ToolResult; durationMs: number }> {
+    throwIfAborted(unit.signal);
+    const thread = threadOf(unit.record);
+    this.deps.checkpoint.intent(unit.record, position, { toolCallId: call.id, tool: call.name, permission, decision });
+    this.deps.faults.at("intent:committed");
     unit.onState("EXECUTING");
     const context: ToolContext = {
       ...(unit.record.kind === "task" ? { taskId: unit.record.taskId } : {}),
       signal: unit.signal,
       emit: this.deps.emit,
     };
-    const execution = await this.deps.executor.execute(call, context);
-    // A call cut by an abort is not recorded: it runs again after the next start.
-    throwIfAborted(unit.signal);
-    return execution;
+    const key = callKey(thread, position.messageId, position.callIndex);
+    this.deps.executing.add(key);
+    try {
+      const execution = await this.deps.executor.execute(call, context);
+      this.deps.faults.at("tool:executed");
+      return execution;
+    } finally {
+      this.deps.executing.delete(key);
+    }
   }
 
   /**

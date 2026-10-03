@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DotStore } from "@invisible-dots/memory";
 import { OpenRouterClient } from "@invisible-dots/openrouter-client";
-import { offeredTools, type DotRuntimeConfig, type InboundEvent, type OutboundEvent } from "@invisible-dots/shared";
+import { offeredTools, truncateText, type DotRuntimeConfig, type InboundEvent, type OutboundEvent } from "@invisible-dots/shared";
 import { DotRuntime, type FaultSeam, type ToolContext, type ToolRegistry, type ToolResult } from "../src/dot/index.js";
 import { startFakeOpenRouter, type FakeOpenRouter } from "../../openrouter-client/test/fake-openrouter.js";
 
@@ -30,11 +30,13 @@ export class FakeRegistry implements ToolRegistry {
     return offeredTools(config);
   }
 
+  /** Like the real registry, a result's text is cut to the limit here, once. */
   async call(name: string, args: unknown, ctx: ToolContext): Promise<ToolResult> {
     this.calls.push({ name, args, taskId: ctx.taskId });
     const handler = this.handlers.get(name);
     if (!handler) return { ok: true, text: `${name} ran` };
-    return handler(args, ctx);
+    const result = await handler(args, ctx);
+    return { ...result, text: truncateText(result.text) };
   }
 }
 
@@ -53,10 +55,28 @@ export interface Harness {
   close(): Promise<void>;
 }
 
+/** Thrown by a simulated crash; what the dying process would have done next never happens. */
+export class SimulatedCrash extends Error {
+  constructor(point: string) {
+    super(`simulated crash at ${point}`);
+  }
+}
+
+/**
+ * A crash at `point`, the first `times` times it is reached (counted across
+ * restarts): the store closes at once, as the kernel would release a dead
+ * process's database, so nothing the old process does afterwards reaches it.
+ */
+export interface CrashPlan {
+  point: string;
+  times?: number;
+}
+
 export async function harness(
   config: Record<string, unknown> = baseConfig,
-  options: { apiKey?: boolean; faults?: FaultSeam } = {},
+  options: { apiKey?: boolean; faults?: FaultSeam; crash?: CrashPlan } = {},
 ): Promise<Harness> {
+  let crashes = 0;
   const dir = mkdtempSync(join(tmpdir(), "idots-agent-"));
   const dbPath = join(dir, "dot.db");
   const fake = await startFakeOpenRouter();
@@ -69,7 +89,21 @@ export async function harness(
       url: fake.url,
       sleep: async () => {},
     });
-    const runtime = new DotRuntime({ store, registry, model, ...(options.faults ? { faults: options.faults } : {}) });
+    const crash = options.crash;
+    const faults: FaultSeam | undefined = crash
+      ? {
+          at(point) {
+            if (point !== crash.point || crashes >= (crash.times ?? 1)) return;
+            crashes++;
+            // Closed once the throw has unwound the open transaction (which
+            // rolls back, as a dead process's would), and before the dying
+            // runtime can react to the error: it never writes again.
+            queueMicrotask(() => store.close());
+            throw new SimulatedCrash(point);
+          },
+        }
+      : options.faults;
+    const runtime = new DotRuntime({ store, registry, model, ...(faults ? { faults } : {}) });
     return { store, model, runtime };
   };
 

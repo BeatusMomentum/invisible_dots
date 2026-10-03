@@ -91,20 +91,14 @@ export function createAgent(options: AgentOptions): Agent {
       store.searchMemories(query, limit).map((hit) => ({ key: hit.key, content: hit.content, updated_at: hit.updatedAt })),
   };
 
-  let runtime: AgentRuntime | undefined;
   const registry =
     options.registry ??
     createToolRegistry({
       agentd: new SocketAgentdClient({ socketPath: options.agentdSocket }),
       browsers: identities,
       store: memory,
-      config: () => {
-        const config = runtime?.config;
-        return config ?? { browser: { identities: { managed_by_dot: true } }, memory: { enabled: true } };
-      },
     });
-  runtime = new AgentRuntime({ store, registry, model, logger: log });
-  const agentRuntime = runtime;
+  const agentRuntime = new AgentRuntime({ store, registry, model, logger: log });
 
   const checks =
     options.checks ??

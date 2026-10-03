@@ -20,6 +20,9 @@ export interface ApprovalRequestInput {
   /** The thread the suspended call belongs to: the conversation or a task id. */
   thread: string;
   taskId: string | null;
+  /** The assistant message of the call and its position in it: the key the approval is found by. */
+  messageId: number;
+  callIndex: number;
   toolCallId: string;
   tool: string;
   permission: Permission;
@@ -64,9 +67,13 @@ export class DurableApprovalLedger {
     return this.store.getApproval(approvalId);
   }
 
-  /** The approval of a tool call, by the provider's call id. */
-  forCall(toolCallId: string): PendingApprovalRecord | undefined {
-    return this.store.getApprovalByToolCall(toolCallId);
+  /**
+   * The approval of the call at `callIndex` of assistant message
+   * `messageId`. Calls are found by position, not by the provider's call id,
+   * because providers do not guarantee unique ids across rounds.
+   */
+  forCall(thread: string, messageId: number, callIndex: number): PendingApprovalRecord | undefined {
+    return this.store.getApprovalByCall(thread, messageId, callIndex);
   }
 
   /** The oldest approval still waiting for the person. */

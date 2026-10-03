@@ -13,9 +13,12 @@ import { CONVERSATION_THREAD, type DotStore } from "@invisible-dots/memory";
 import { UsageAccumulator, type Usage } from "@invisible-dots/openrouter-client";
 import type { TaskQueue, TaskRecord } from "@invisible-dots/task-runtime";
 import type { ThreadMessage } from "../types.js";
-import { assertRunRecord, type RunRecord } from "./record.js";
+import { parseRunRecord, type RunRecord } from "./record.js";
 
 const KEY_ACTIVE_UNIT = "active_unit";
+
+/** Model requests one step may start before the unit fails (architecture section 8.7). */
+export const MAX_REQUEST_ATTEMPTS = 3;
 
 export class RunLedger {
   constructor(
@@ -26,9 +29,7 @@ export class RunLedger {
   /** The unit in flight, if any. */
   get(): RunRecord | undefined {
     const value = this.store.getConfig<unknown>(KEY_ACTIVE_UNIT);
-    if (value === undefined) return undefined;
-    assertRunRecord(value);
-    return value;
+    return value === undefined ? undefined : parseRunRecord(value);
   }
 
   /**
@@ -40,31 +41,40 @@ export class RunLedger {
     if (current) return current;
     const orphan = this.queue.inFlight();
     if (!orphan) return undefined;
-    const record: RunRecord = { kind: "task", taskId: orphan.id };
+    const seed = this.store.listMessages(orphan.id)[0];
+    const record: RunRecord = { kind: "task", taskId: orphan.id, startMessageId: seed?.id ?? 0, requestAttempts: 0 };
     this.store.setConfig(KEY_ACTIVE_UNIT, record);
     return record;
   }
 
   /** Start a chat turn: its user message joins the conversation in the same transaction. */
   startChat(eventId: string, text: string): RunRecord {
-    const record: RunRecord = { kind: "chat", eventId, text, steps: 0, usage: new UsageAccumulator().toJSON() };
-    this.store.transaction(() => {
-      this.store.appendMessage<ThreadMessage>(CONVERSATION_THREAD, { role: "user", content: text });
+    return this.store.transaction(() => {
+      const message = this.store.appendMessage<ThreadMessage>(CONVERSATION_THREAD, { role: "user", content: text });
+      const record: RunRecord = {
+        kind: "chat",
+        eventId,
+        text,
+        steps: 0,
+        usage: new UsageAccumulator().toJSON(),
+        startMessageId: message.id,
+        requestAttempts: 0,
+      };
       this.store.setConfig(KEY_ACTIVE_UNIT, record);
+      return record;
     });
-    return record;
   }
 
   /** Start a queued task with its seed message, and announce it. */
   startTask(task: TaskRecord, seed: string): RunRecord {
-    const record: RunRecord = { kind: "task", taskId: task.id };
-    this.store.transaction(() => {
+    return this.store.transaction(() => {
       this.queue.start(task.id);
-      this.store.appendMessage<ThreadMessage>(task.id, { role: "user", content: seed });
+      const message = this.store.appendMessage<ThreadMessage>(task.id, { role: "user", content: seed });
+      const record: RunRecord = { kind: "task", taskId: task.id, startMessageId: message.id, requestAttempts: 0 };
       this.store.setConfig(KEY_ACTIVE_UNIT, record);
       this.store.appendEvent("task.started", { task_id: task.id });
+      return record;
     });
-    return record;
   }
 
   /** Model turns the unit has taken. */
@@ -76,20 +86,49 @@ export class RunLedger {
     return this.queue.get(record.taskId)?.steps ?? 0;
   }
 
+  /**
+   * One more model request of the current step, in its own transaction
+   * before the request is sent. Returns false, writing nothing, when the
+   * step already started `MAX_REQUEST_ATTEMPTS` requests: the unit fails
+   * instead of paying for the same response again.
+   */
+  beginRequest(): boolean {
+    const current = this.get();
+    if (!current) return true;
+    if (current.requestAttempts >= MAX_REQUEST_ATTEMPTS) return false;
+    this.store.setConfig(KEY_ACTIVE_UNIT, { ...current, requestAttempts: current.requestAttempts + 1 });
+    return true;
+  }
+
+  /** Give back the attempt of a request the agent abandoned on purpose (a sleep, a cancel). */
+  abandonRequest(): void {
+    const current = this.get();
+    if (current && current.requestAttempts > 0) {
+      this.store.setConfig(KEY_ACTIVE_UNIT, { ...current, requestAttempts: current.requestAttempts - 1 });
+    }
+  }
+
+  /** A response was committed: the next step starts with no attempts. */
+  resetRequests(): void {
+    const current = this.get();
+    if (current && current.requestAttempts !== 0) this.store.setConfig(KEY_ACTIVE_UNIT, { ...current, requestAttempts: 0 });
+  }
+
   /** Count one more model turn and its usage; part of the assistant commit. */
   countStep(record: RunRecord, usage: Usage): void {
+    const current = this.get();
     if (record.kind === "chat") {
-      const current = this.get();
       const base = current?.kind === "chat" ? current : record;
       const total = new UsageAccumulator(base.usage);
       total.add(usage);
-      this.store.setConfig(KEY_ACTIVE_UNIT, { ...base, steps: base.steps + 1, usage: total.toJSON() });
+      this.store.setConfig(KEY_ACTIVE_UNIT, { ...base, steps: base.steps + 1, usage: total.toJSON(), requestAttempts: 0 });
       return;
     }
     const task = this.queue.get(record.taskId);
     const total = new UsageAccumulator(task?.usage ?? undefined);
     total.add(usage);
     this.queue.countStep(record.taskId, total.toJSON());
+    this.resetRequests();
   }
 
   /** The unit ended: forget it. */

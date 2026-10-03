@@ -4,6 +4,7 @@
  */
 import { imagePart, type ChatMessage, type ContentPart, type ToolCall } from "@invisible-dots/openrouter-client";
 import { WORKING_MEMORY_MESSAGES } from "@invisible-dots/shared";
+import type { StoredMessage } from "@invisible-dots/memory";
 import type { ThreadMessage, ToolImage } from "../types.js";
 
 /** Only the newest images are re-sent; older screenshots cost tokens and say little. */
@@ -63,21 +64,32 @@ export function toRequestMessages(messages: readonly ThreadMessage[], imagesKept
   return out;
 }
 
-/** Tool calls of the newest assistant message that have no result yet, in order. */
-export function unansweredToolCalls(messages: readonly ThreadMessage[]): ToolCall[] {
+/** A call of an assistant message that has no result yet, with its position in that message. */
+export interface OpenCall {
+  call: ToolCall;
+  index: number;
+}
+
+/**
+ * The open calls of a thread: the calls of the newest assistant message that
+ * have no result yet, in the model's order, with that message's id. Null
+ * when the newest assistant message was answered.
+ */
+export function openCalls(messages: readonly StoredMessage<ThreadMessage>[]): { messageId: number; calls: OpenCall[] } | null {
   for (let i = messages.length - 1; i >= 0; i--) {
-    const m = messages[i]!;
+    const m = messages[i]!.message;
     if (m.role === "assistant") {
       const answered = new Set(
         messages
           .slice(i + 1)
+          .map((x) => x.message)
           .filter((x): x is Extract<ThreadMessage, { role: "tool" }> => x.role === "tool")
           .map((x) => x.tool_call_id),
       );
-      return (m.tool_calls ?? []).filter((c) => !answered.has(c.id));
+      const calls = (m.tool_calls ?? []).map((call, index) => ({ call, index })).filter((c) => !answered.has(c.call.id));
+      return calls.length === 0 ? null : { messageId: messages[i]!.id, calls };
     }
-    // Anything after the newest assistant message other than its tool results means it was answered.
-    if (m.role !== "tool") return [];
+    if (m.role !== "tool") return null;
   }
-  return [];
+  return null;
 }

@@ -701,13 +701,26 @@ Browser actions on an identity that is not open launch it first. When
 `managed_by_dot` is false, the `browser_identity_create` and
 `browser_identity_delete` tools are not offered at all.
 
+The tool calls of one response run one at a time, in the order the model
+gave them. Only the response's `tool_calls` count: a call written in the
+assistant's text runs nothing. The registry validates a call's arguments and
+cuts its text at 12000 characters, once.
+
 ### 8.4 Policy
 
-Every tool call goes through the policy engine before it runs. `allow` runs
-it, `deny` returns an error result to the model, `ask` emits
-`approval.requested`, moves to `WAITING_APPROVAL` and persists the pending call
-in `dot.db`. `approval.received` with `approve` runs the call and resumes the
-loop; `reject` returns "rejected by the user" (plus the note) to the model.
+Every tool call goes through the policy gate before it runs: a pure function
+of the current config, and the only place that denies a tool the config does
+not offer. `allow` runs it, `deny` returns an error result to the model, `ask`
+emits `approval.requested`, moves to `WAITING_APPROVAL` and persists the
+pending call in `dot.db`, keyed by its position (the assistant message and the
+call's index in it). A call that needs approval stops the round: later calls
+of the same response wait for the decision. `approval.received` with `approve`
+runs the call, with the arguments of the pending row, and resumes the loop;
+with a note, the note follows the call's result. `reject` returns `Rejected by
+the user: <note>` (or `Rejected by the user.`) to the model. A decision is
+recorded once: a second one for the same approval is ignored. An approved call
+runs at most once, or at most twice when its tool is replay-safe and the agent
+crashed during it (section 8.7).
 
 ### 8.5 OpenRouter
 
@@ -729,6 +742,38 @@ OpenRouter reports it) is accumulated per task.
   recently updated keys.
 - Workspace memory: `/home/dot/workspace` and `/home/dot/memory`, reached
   through the file tools.
+
+### 8.7 Crash recovery
+
+The agent can die at any point (a crash, a kill, a power cut) and systemd
+starts it again. What it guarantees:
+
+- One process owns `dot.db` (section 4.2).
+- Every commit point is one transaction that includes the outbox rows
+  describing it: the assistant's message with the step and its usage; a
+  call's intent, before the call starts; a call's result with its
+  `tool.called`, once the call returned; the end of a unit.
+- An intent left without a result is a call the agent stopped during. When a
+  unit is entered (a start, a resume after `POST /secrets` or after an
+  approval), such a call is run again only if its tool is replay-safe
+  (section 8.3) and it was started once; otherwise it gets the result "This
+  call was interrupted before its result was recorded. It may have taken
+  effect, and it may still be running. Check the current state before calling
+  it again." (plus, for an approved call, that the approval was used), and
+  `tool.called` with `interrupted: true` and the permission and decision of
+  its time. "May still be running" is literal: `computer_exec` keeps running
+  in dot-agentd until its own timeout.
+- So a call that is not replay-safe runs at most once, and the model is told
+  whenever its outcome is unknown; a replay-safe call runs at least once and
+  at most twice. `tool.called` is written exactly once per call. `agent.state`
+  and the events a tool emits itself (`memory.written`, `browser.identity.*`)
+  are at-least-once: a call run again emits them again.
+- Each model request of a step is counted, in its own transaction, before it
+  is sent; the assistant's commit resets the count. A step whose fourth
+  request would start fails its unit with "stopped: the model request failed
+  to complete 3 times", so a response whose commit kills the process is paid
+  for at most three times. A request the agent abandons on purpose (a sleep,
+  a cancel) does not count.
 
 ## 9. Control plane
 

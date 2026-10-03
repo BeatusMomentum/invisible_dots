@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseRuntimeConfig } from "@invisible-dots/shared";
-import { buildSystemPrompt, toRequestMessages, trimThread, unansweredToolCalls, type ThreadMessage } from "../src/dot/index.js";
+import { buildSystemPrompt, openCalls, toRequestMessages, trimThread, type ThreadMessage } from "../src/dot/index.js";
 
 const call = (id: string) => ({ id, type: "function" as const, function: { name: "files_read", arguments: "{}" } });
 
@@ -22,15 +22,21 @@ describe("the request of a step", () => {
     expect(trimThread(withTools, 4)[0]!.role).toBe("assistant");
   });
 
-  it("finds the tool calls of the newest assistant message that have no result", () => {
+  it("finds the tool calls of the newest assistant message that have no result, with their positions", () => {
+    const stored = (messages: ThreadMessage[]) => messages.map((message, i) => ({ id: 10 + i, thread: "t", message, createdAt: "" }));
     const thread: ThreadMessage[] = [
       { role: "user", content: "go" },
       { role: "assistant", content: null, tool_calls: [call("a"), call("b"), call("c")] },
       { role: "tool", tool_call_id: "a", content: "A" },
     ];
-    expect(unansweredToolCalls(thread).map((c) => c.id)).toEqual(["b", "c"]);
-    expect(unansweredToolCalls([...thread, { role: "user", content: "new" }])).toEqual([]);
-    expect(unansweredToolCalls([{ role: "assistant", content: "plain" }])).toEqual([]);
+    const open = openCalls(stored(thread))!;
+    expect(open.messageId).toBe(11);
+    expect(open.calls.map((c) => [c.call.id, c.index])).toEqual([
+      ["b", 1],
+      ["c", 2],
+    ]);
+    expect(openCalls(stored([...thread, { role: "user", content: "new" }]))).toBeNull();
+    expect(openCalls(stored([{ role: "assistant", content: "plain" }]))).toBeNull();
   });
 
   it("sends only the newest images and notes the dropped ones", () => {
