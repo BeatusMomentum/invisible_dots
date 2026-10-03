@@ -1043,7 +1043,7 @@ installer, Linux gets the distribution's package.
 ### 11.3 Licensing
 
 The root LICENSE (MIT) covers this repository, except the files under
-`guest-runtime/engine/` imported from Open Multi-Agent, which are under
+`guest-runtime/engine/` that carry the Open Multi-Agent header, which are under
 `guest-runtime/engine/LICENSE` (MIT as well); `THIRD_PARTY_NOTICES.md` at the
 root carries that notice, and `guest-runtime/engine/UPSTREAM.md` records the
 version and commit they come from. QEMU (GPL-2.0) is installed

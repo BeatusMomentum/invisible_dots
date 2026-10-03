@@ -1,14 +1,14 @@
 # Third-party notices
 
 The MIT license in `LICENSE` covers this repository, except the files under
-`guest-runtime/engine/src/` imported from Open Multi-Agent, which are under
-`guest-runtime/engine/LICENSE`. Those files, and the text this repository's
-history holds through them, come with the notices below.
+`guest-runtime/engine/` that carry the Open Multi-Agent header, which are
+under `guest-runtime/engine/LICENSE`. Those files, and the text this
+repository's history holds through them, come with the notices below.
 
 ## Open Multi-Agent
 
-Imported files: listed in `guest-runtime/engine/UPSTREAM.md`, with the
-source, version and commit.
+Derived files: those under `guest-runtime/engine/src/` whose first lines say
+so. Source, version and commit: `guest-runtime/engine/UPSTREAM.md`.
 
 ```text
 MIT License

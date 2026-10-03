@@ -1,3 +1,6 @@
+// Derived from Open Multi-Agent (MIT), Copyright (c) Shenzhen YuanASI Technology
+// Co., Ltd. and open-multi-agent contributors. Modified for invisible_dots.
+// See guest-runtime/engine/LICENSE and UPSTREAM.md.
 /**
  * @fileoverview The orchestration loop: dispatch dependency-ready tasks in
  * parallel, run each assignee (with retry, model routing, streaming, tracing),

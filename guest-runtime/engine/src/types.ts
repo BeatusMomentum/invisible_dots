@@ -1,3 +1,6 @@
+// Derived from Open Multi-Agent (MIT), Copyright (c) Shenzhen YuanASI Technology
+// Co., Ltd. and open-multi-agent contributors. Modified for invisible_dots.
+// See guest-runtime/engine/LICENSE and UPSTREAM.md.
 /**
  * @fileoverview Core type definitions for the open-multi-agent orchestration framework.
  *

@@ -1,3 +1,6 @@
+// Derived from Open Multi-Agent (MIT), Copyright (c) Shenzhen YuanASI Technology
+// Co., Ltd. and open-multi-agent contributors. Modified for invisible_dots.
+// See guest-runtime/engine/LICENSE and UPSTREAM.md.
 /**
  * @fileoverview The {@link RunStore} seam and its {@link MemoryStore}-backed
  * adapter.

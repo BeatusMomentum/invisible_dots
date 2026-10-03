@@ -7,8 +7,8 @@
  * this workspace.
  */
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
@@ -17,6 +17,20 @@ const engine = join(repo, "guest-runtime", "engine");
 
 const UPSTREAM_COMMIT = "3563a9312b304fffca49873c0dcf6c3b259a0f58";
 const LICENSE_BLOB = "31f4e3eb40fecbc73d1a14a7f3cda0de278f1069";
+
+/** The first lines of every file derived from upstream; the version and commit live in UPSTREAM.md only. */
+const HEADER =
+  "// Derived from Open Multi-Agent (MIT), Copyright (c) Shenzhen YuanASI Technology\n" +
+  "// Co., Ltd. and open-multi-agent contributors. Modified for invisible_dots.\n" +
+  "// See guest-runtime/engine/LICENSE and UPSTREAM.md.\n";
+
+/** TypeScript files under `engine/<dir>`, as paths relative to the engine with `/` separators. */
+function engineSources(dir: string): string[] {
+  return readdirSync(join(engine, dir), { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith(".ts"))
+    .map((entry) => relative(engine, join(entry.parentPath, entry.name)).split(sep).join("/"))
+    .sort();
+}
 
 function lf(text: string): string {
   return text.replace(/\r\n/g, "\n");
@@ -45,6 +59,16 @@ describe("the vendored engine", () => {
     const upstream = readFileSync(join(engine, "UPSTREAM.md"), "utf8");
     expect(upstream).toContain(UPSTREAM_COMMIT);
     expect(upstream).toContain(LICENSE_BLOB);
+  });
+
+  it("marks every derived file with the header, and none of our own", () => {
+    const files = engineSources("src");
+    expect(files.length).toBeGreaterThan(0);
+    for (const file of files) {
+      const text = lf(readFileSync(join(engine, file), "utf8"));
+      // src/dot/ is this repository's own code; everything else under src/ is derived from upstream.
+      expect(text.startsWith(HEADER), file).toBe(!file.startsWith("src/dot/"));
+    }
   });
 
   it("has no npm dependency outside this workspace", () => {
