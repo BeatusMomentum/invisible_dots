@@ -604,7 +604,7 @@ async function guestExec(dotId: string, guestPort: number, command: string): Pro
     body: JSON.stringify({ command, timeout_ms: 30_000 }),
     signal: AbortSignal.timeout(60_000),
   });
-  assert(response.ok, `POST /v1/exec: ${response.status} ${await response.text()}`);
+  if (!response.ok) throw new Error(`POST /v1/exec: ${response.status} ${await response.text()}`);
   return (await response.json()) as { exit_code: number; stdout: string; stderr: string; timed_out: boolean };
 }
 
@@ -900,19 +900,20 @@ async function main(): Promise<void> {
       const probe = await guestExec(dotId, guestPort, "pgrep -f 'sleep [8]' >/dev/null && echo yes || echo no");
       return probe.stdout.trim() === "yes" ? true : undefined;
     }, 500);
+    const inFlightAt = Date.now();
     await guestExec(dotId, guestPort, "pkill -9 -f 'invisible-dots-agent[.]mjs'; echo sent");
     const done = await waitTask(taskId);
     const all = await events(dotId);
-    const interrupted = taskEvents(all, taskId).find((e) => e.type === "tool.called" && e.data.tool === "computer_exec" && e.data.interrupted === true);
-    assert(interrupted, `no interrupted computer_exec event for the task (tools: ${describeTools(all, taskId)})`);
-    // The command itself ran once: agentd ran it to its end after the agent was gone, and nothing ran it again.
-    const ran = await waitFor("the command to finish in the guest", 60_000, async () => {
-      const lines = await guestExec(dotId, guestPort, `pgrep -f 'sleep [8]' >/dev/null && echo running || (wc -l < ${marker} 2>/dev/null || echo 0)`);
-      const text = lines.stdout.trim();
-      return text === "running" ? undefined : text;
-    }, 1000);
-    assert(ran === "1", `the command left ${ran} line(s), not one`);
-    return `agent restarted during computer_exec; tool.called with interrupted: true for the call; the command ran once; the model answered ${JSON.stringify(done.summary)}`;
+    const calls = taskEvents(all, taskId).filter((e) => e.type === "tool.called" && e.data.tool === "computer_exec");
+    assert(calls.some((e) => e.data.interrupted === true), `no interrupted computer_exec event for the task (tools: ${describeTools(all, taskId)})`);
+    assert(calls.length === 1, `computer_exec was called ${calls.length} times in the task, not once (tools: ${describeTools(all, taskId)})`);
+    // The command died with the agent that started it (dot-agentd kills a
+    // command whose caller went away) and nothing ran it again: once its
+    // 8 seconds are over, no sleep is left and the marker was never written.
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, inFlightAt + 10_000 - Date.now())));
+    const after = await guestExec(dotId, guestPort, `pgrep -f 'sleep [8]' >/dev/null && echo running || (wc -l < ${marker} 2>/dev/null || echo 0)`);
+    assert(after.stdout.trim() === "0", `after the restart the command left "${after.stdout.trim()}", not 0 lines: it outlived its caller or ran again`);
+    return `agent restarted during computer_exec; tool.called with interrupted: true for the call, which was not run again; the command died with its caller; the model answered ${JSON.stringify(done.summary)}`;
   });
 
   await step("k", "the key is in none of the Dot's own files and rows", async () => {

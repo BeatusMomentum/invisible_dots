@@ -3,6 +3,9 @@
 package agentd
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -95,6 +98,63 @@ func TestExecTimeoutKillsTheProcessGroup(t *testing.T) {
 		if time.Now().After(deadline) {
 			_ = syscall.Kill(pid, syscall.SIGKILL)
 			t.Fatalf("background child %d survived the timeout", pid)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// A caller that goes away (a cancelled call, an agent that died) takes its
+// command with it: the whole process group is killed, long before the
+// command's own timeout.
+func TestExecCallerGoneKillsTheProcessGroup(t *testing.T) {
+	requireBash(t)
+	f := newFixture(t)
+	pidFile := filepath.Join(f.home, "child.pid")
+	raw, err := json.Marshal(map[string]any{
+		"command":    "sleep 30 & echo $! > " + pidFile + "; wait",
+		"timeout_ms": 60_000,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.baseURL+"/v1/exec", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("Content-Type", "application/json")
+	done := make(chan error, 1)
+	go func() {
+		resp, err := f.client.Do(req)
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+		done <- err
+	}()
+
+	var pid int
+	deadline := time.Now().Add(10 * time.Second)
+	for pid == 0 {
+		if raw, err := os.ReadFile(pidFile); err == nil {
+			pid, _ = strconv.Atoi(strings.TrimSpace(string(raw)))
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the command never started")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	cancel()
+	if err := <-done; err == nil {
+		t.Fatal("the request answered although its caller went away")
+	}
+
+	deadline = time.Now().Add(5 * time.Second)
+	for syscall.Kill(pid, 0) == nil && !isZombie(pid) {
+		if time.Now().After(deadline) {
+			_ = syscall.Kill(pid, syscall.SIGKILL)
+			t.Fatalf("child %d outlived its caller", pid)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

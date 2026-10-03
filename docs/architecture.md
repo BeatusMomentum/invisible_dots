@@ -502,6 +502,12 @@ plane guarantees is the outcome: a VM that stops without being asked is
 recorded as STOPPED, and started again when its Dot has work (section 9.5).
 Paths in file routes are resolved against `/home/dot` when relative.
 
+A command of `POST /v1/exec` runs in its own process group, and dot-agentd
+kills the whole group when the command reaches its timeout and when the
+request that started it goes away: a cancelled call, a tool cut at the stop
+grace and an agent that died all take their command with them. Only what the
+command detached into another session outlives it.
+
 ### 5.3 invisible-dots-agent routes (reached as `/v1/agent/...`)
 
 | method and path | body | answer |
@@ -803,8 +809,9 @@ starts it again. What it guarantees:
   effect, and it may still be running. Check the current state before calling
   it again." (plus, for an approved call, that the approval was used), and
   `tool.called` with `interrupted: true` and the permission and decision of
-  its time. "May still be running" is literal: `computer_exec` keeps running
-  in dot-agentd until its own timeout.
+  its time. A `computer_exec` command dies with the agent that started it
+  (section 5.2), so "may still be running" covers what the command detached;
+  "may have taken effect" covers everything it did before it was killed.
 - So a call that is not replay-safe runs at most once, and the model is told
   whenever its outcome is unknown; a replay-safe call runs at least once and
   at most twice. `tool.called` is written exactly once per call. `agent.state`
