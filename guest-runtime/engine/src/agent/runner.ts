@@ -35,17 +35,19 @@ import type { RunLedger } from "../run/ledger.js";
 import type { ToolExecutor } from "../tool/executor.js";
 import type { ToolContext, ToolDefinition, ToolEmittedEvent, ToolResult } from "../tool/framework.js";
 import { toolResultMessage } from "../tool/result.js";
-import type { FaultSeam, Logger, LoopDetectionConfig, ThreadMessage } from "../types.js";
+import type { FaultSeam, Logger, ThreadMessage } from "../types.js";
 import type { TokenEstimator } from "../utils/tokens.js";
 import { REQUEST_ATTEMPTS_TEXT, type ContextManager } from "./compression.js";
-import { LoopDetector, loopWarningText } from "./loop-detector.js";
+import { LOOP_NOTICE, LOOP_STOP_TEXT, detectLoop } from "./loop-detector.js";
+
+/** What follows a response the output limit cut, in place of its calls. */
+export const TRUNCATED_NOTICE =
+  "[Notice from the agent runtime] Your previous reply was cut off by the output token limit, so none of its tool calls were executed. Reply again, more briefly.";
 
 /** Static configuration for an {@link AgentRunner}. */
 export interface RunnerOptions {
   /** Model turns before the unit fails. */
   readonly maxTurns: number;
-  /** Loop detection configuration. When set, detects stuck agent loops. */
-  readonly loopDetection?: LoopDetectionConfig;
 }
 
 /** What the runner uses of the rest of the engine. */
@@ -107,9 +109,7 @@ export class AgentRunner {
    */
   async run(unit: UnitRun): Promise<RunOutcome> {
     const thread = threadOf(unit.record);
-    const detector = this.options.loopDetection ? new LoopDetector(this.options.loopDetection) : null;
-    let loopWarned = false;
-    let pendingWarning: string | undefined;
+    let costUnknownLogged = false;
 
     for (;;) {
       throwIfAborted(unit.signal);
@@ -120,10 +120,6 @@ export class AgentRunner {
       if (open) {
         const outcome = await this.executeRound(unit, stored, open.messageId, open.calls);
         if (outcome === "suspended") return { status: "suspended" };
-        if (pendingWarning !== undefined) {
-          this.deps.checkpoint.notice(unit.record, pendingWarning);
-          pendingWarning = undefined;
-        }
         continue;
       }
 
@@ -136,6 +132,18 @@ export class AgentRunner {
           error: `stopped after ${turns} model turns without a final answer (limits.max_steps_per_task is ${this.options.maxTurns})`,
         };
       }
+
+      // The same calls returning the same results: told once, then stopped.
+      const loop = detectLoop(stored.filter((m) => m.id >= unit.record.startMessageId).map((m) => m.message));
+      if (loop === "stop") {
+        this.deps.log.warn("loop detected", describeRun(unit.record));
+        return { status: "failed", error: LOOP_STOP_TEXT };
+      }
+      if (loop === "notice") this.deps.checkpoint.notice(unit.record, LOOP_NOTICE);
+
+      // The unit's spend, as persisted with every response.
+      const capReached = this.deps.ledger.costCapReached(unit.record, unit.config.limits.max_cost_per_task_usd);
+      if (capReached) return { status: "failed", error: capReached };
 
       unit.onState("THINKING");
       // One transaction before the step's requests (a flush, a summary, the
@@ -159,6 +167,10 @@ export class AgentRunner {
         throw error;
       }
       this.deps.faults.at("model:answered");
+      if (result.usage.cost === undefined && !costUnknownLogged) {
+        costUnknownLogged = true;
+        this.deps.log.warn("the model reported no cost: the cost cap cannot hold this unit, the step limit still does", describeRun(unit.record));
+      }
       this.deps.estimator.calibrate(unit.config.model.id, request.messages, request.tools, result.usage.prompt_tokens);
       this.deps.log.info("model answered", {
         ...describeRun(unit.record),
@@ -173,30 +185,15 @@ export class AgentRunner {
       });
 
       unit.onState("PLANNING");
+      // A response cut by the output limit may carry truncated arguments: none of its calls runs.
+      if (result.finishReason === "length" && result.toolCalls.length > 0) {
+        this.deps.log.warn("the response was cut by the output limit; its calls are not run", describeRun(unit.record));
+        this.deps.checkpoint.assistant(unit.record, { role: "assistant", content: result.text }, result.usage, TRUNCATED_NOTICE);
+        continue;
+      }
       this.deps.checkpoint.assistant(unit.record, result.message, result.usage);
 
-      // Loop detection, before any tool runs, so that a stop never leaves a
-      // call without its result.
-      if (detector) {
-        const toolInfo = result.toolCalls.length > 0 ? detector.recordToolCalls(result.toolCalls.map((c) => ({ name: c.name, input: c.arguments }))) : null;
-        const textInfo = result.text.length > 0 ? detector.recordText(result.text) : null;
-        const info = toolInfo ?? textInfo;
-        if (info) {
-          if (loopWarned) return { status: "failed", error: info.detail };
-          loopWarned = true;
-          pendingWarning = loopWarningText(info.kind);
-        } else {
-          // The agent has recovered: a future loop gets a fresh warning.
-          loopWarned = false;
-        }
-      }
-
       if (result.toolCalls.length === 0) {
-        if (pendingWarning !== undefined) {
-          this.deps.checkpoint.notice(unit.record, pendingWarning);
-          pendingWarning = undefined;
-          continue;
-        }
         return { status: "completed", output: result.text.trim() === "" ? "(no answer)" : result.text };
       }
     }

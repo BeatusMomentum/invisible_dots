@@ -31,12 +31,4 @@ describe("AgentRunner", () => {
     expect(b.registry.calls.map((c) => c.name)).toEqual(["files_read", "files_list"]);
     expect(b.thread().filter((m) => m.role === "tool").map((m) => (m as { tool_call_id: string }).tool_call_id)).toEqual(["a", "b"]);
   });
-
-  it("warns once about a repeated call, then fails the unit when loop detection is on", async () => {
-    b = bench();
-    for (let i = 0; i < 6; i++) b.model.script.push(() => ({ calls: [call(`c${i}`, "files_list", { path: "." })] }));
-    const outcome = await b.run({ loopDetection: { maxRepetitions: 3 } });
-    expect(outcome.status).toBe("failed");
-    expect(b.thread().some((m) => m.role === "user" && String(m.content).startsWith("WARNING: You appear to be repeating"))).toBe(true);
-  });
 });

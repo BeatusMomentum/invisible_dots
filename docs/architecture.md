@@ -634,6 +634,7 @@ memory:
 limits:
   max_steps_per_task: 60               # model turns before a task is failed
   context_tokens: 32000                # prompt tokens a request may use, 4000..1000000 (section 8.6)
+  max_cost_per_task_usd: 1.00          # model spend of a task or a chat turn, 0.01..100 (section 8.2)
 ```
 
 Defaults for permissions not listed: everything under `computer.*`,
@@ -660,9 +661,19 @@ The runtime is event driven. There is no polling loop. Work arrives as
 `user.message` (a chat turn in the Dot's single persistent conversation) or
 `task.created` (queued locally, run one at a time in priority order, then
 creation order). A task ends when the model answers without tool calls
-(`task.completed`, the answer is the summary), when it exceeds
-`max_steps_per_task` (`task.failed`), or when an approval is rejected and the
-model gives up.
+(`task.completed`, the answer is the summary), or when an approval is
+rejected and the model gives up. It fails (`task.failed`, with a reason the
+owner can read) when it exceeds `max_steps_per_task`; when its spend reaches
+`max_cost_per_task_usd` (checked before every model request, the usage of
+summary and flush calls included, and persisted with every response, so the
+cap holds across a restart; a model that reports no cost is logged once and
+the step limit still holds); when the same tool calls return the same
+results three rounds in a row a second time (the first time, the model gets
+a notice; the streak and the notices are read from the unit's own messages);
+when its context budget is too small for the current step (section 8.6); or
+after three failed attempts at one step (section 8.7). A chat turn has the
+same limits, its cost counted per turn; a failed chat turn answers "I could
+not answer: ...".
 
 ### 8.3 Tools
 
@@ -727,7 +738,10 @@ crashed during it (section 8.7).
 
 `POST https://openrouter.ai/api/v1/chat/completions` with
 `HTTP-Referer: https://github.com/feder-cr/dots` and `X-Title: invisible_dots`.
-Tool calling in the OpenAI format, `tool_choice: "auto"`, no streaming.
+Tool calling in the OpenAI format, `tool_choice: "auto"`, no streaming. A
+response cut by the output limit (`finish_reason: "length"`) has none of its
+tool calls executed: it is stored without them, followed by a notice asking
+the model to reply again more briefly, and it counts as a step.
 Retries with exponential backoff on 429 and 5xx (at most 4 attempts, honouring
 `Retry-After`). Images (screenshots) are sent as `image_url` parts with a
 `data:image/png;base64,` URL. Tool results longer than 12000 characters are cut

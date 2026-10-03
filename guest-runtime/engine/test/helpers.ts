@@ -70,6 +70,8 @@ export class SimulatedCrash extends Error {
 export interface CrashPlan {
   point: string;
   times?: number;
+  /** Pass the point this many times before the first crash. */
+  after?: number;
 }
 
 export async function harness(
@@ -77,6 +79,7 @@ export async function harness(
   options: { apiKey?: boolean; faults?: FaultSeam; crash?: CrashPlan } = {},
 ): Promise<Harness> {
   let crashes = 0;
+  let passed = 0;
   const dir = mkdtempSync(join(tmpdir(), "idots-agent-"));
   const dbPath = join(dir, "dot.db");
   const fake = await startFakeOpenRouter();
@@ -94,6 +97,10 @@ export async function harness(
       ? {
           at(point) {
             if (point !== crash.point || crashes >= (crash.times ?? 1)) return;
+            if (passed < (crash.after ?? 0)) {
+              passed++;
+              return;
+            }
             crashes++;
             // Closed once the throw has unwound the open transaction (which
             // rolls back, as a dead process's would), and before the dying

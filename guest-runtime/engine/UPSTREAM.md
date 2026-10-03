@@ -131,7 +131,11 @@ contract they implement is `docs/architecture.md` (sections 8.4, 8.6 and
   `agent/runner.ts` for `agent/compression.ts`, where they became steps of a
   request built under a ceiling instead of a trigger;
 - the parallel round of tool calls became one call at a time, each with its
-  intent committed first (`agent/runner.ts`, `memory/checkpoint.ts`).
+  intent committed first (`agent/runner.ts`, `memory/checkpoint.ts`);
+- the loop detector (`agent/loop-detector.ts`) keeps upstream's canonical
+  signature of a round, but compares the results too, warns once and then
+  stops, and reads its streak from the unit's messages instead of memory;
+  its text-repetition check and its window are gone.
 
 ## Ported later
 

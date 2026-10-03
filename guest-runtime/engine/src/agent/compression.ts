@@ -425,6 +425,8 @@ export class ContextManager {
 
   /** A model request that is not a step (part of the step's attempt): its usage counts toward cost, not steps. */
   private async request(unit: ContextUnit, request: Parameters<ChatModel["chat"]>[0]) {
+    const capReached = this.deps.ledger.costCapReached(unit.record, unit.config.limits.max_cost_per_task_usd);
+    if (capReached) throw new Error(capReached);
     const response = await this.deps.model.chat(request, { signal: unit.signal });
     throwIfAborted(unit.signal);
     this.deps.ledger.addUsage(unit.record, response.usage);

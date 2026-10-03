@@ -205,9 +205,11 @@ export const dotConfigSchema = z
         max_steps_per_task: z.number().int().min(1).max(1000).default(60),
         // Prompt tokens a request may use; what is sent is kept under it (section 8.6).
         context_tokens: z.number().int().min(4000).max(1_000_000).default(32_000),
+        // USD a task, or a chat turn, may spend on the model before it stops (section 8.2).
+        max_cost_per_task_usd: z.number().min(0.01).max(100).default(1),
       })
       .strict()
-      .default({ max_steps_per_task: 60, context_tokens: 32_000 }),
+      .default({ max_steps_per_task: 60, context_tokens: 32_000, max_cost_per_task_usd: 1 }),
   })
   .strict()
   .superRefine((config, ctx) => {

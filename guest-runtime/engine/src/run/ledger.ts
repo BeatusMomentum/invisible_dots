@@ -120,6 +120,20 @@ export class RunLedger {
     if (current && current.requestAttempts !== 0) this.store.setConfig(KEY_ACTIVE_UNIT, { ...current, requestAttempts: 0 });
   }
 
+  /**
+   * The cost cap of a unit: its spend as persisted with every response, the
+   * summary and flush calls included. Returns the reason to stop, or null.
+   * A chat turn is capped on its own.
+   */
+  costCapReached(record: RunRecord, capUsd: number): string | null {
+    const current = this.get();
+    const cost =
+      record.kind === "chat"
+        ? ((current?.kind === "chat" ? current : record).usage.cost ?? 0)
+        : (this.queue.get(record.taskId)?.usage?.cost ?? 0);
+    return cost >= capUsd ? `stopped: cost cap reached (${cost.toFixed(4)} USD of ${capUsd.toFixed(2)})` : null;
+  }
+
   /** Usage of a request that is not a step (a memory flush, a summary): it counts toward cost, not steps. */
   addUsage(record: RunRecord, usage: Usage): void {
     this.store.transaction(() => {

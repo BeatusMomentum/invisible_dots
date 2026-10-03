@@ -42,6 +42,7 @@ memory:
 limits:
   max_steps_per_task: 60
   context_tokens: 32000
+  max_cost_per_task_usd: 1.00
 `;
 
 const MINIMAL = { name: "a", goal: "do it", model: { provider: "openrouter", id: "openrouter/auto" } };
@@ -115,7 +116,7 @@ describe("parseDotConfig", () => {
       browser: { identities: { managed_by_dot: true, max_identities: 20, max_open: 3 } },
       permissions: {},
       memory: { enabled: true },
-      limits: { max_steps_per_task: 60, context_tokens: 32_000 },
+      limits: { max_steps_per_task: 60, context_tokens: 32_000, max_cost_per_task_usd: 1 },
     });
   });
 

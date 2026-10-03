@@ -2,13 +2,28 @@
 // Co., Ltd. and open-multi-agent contributors. Modified for invisible_dots.
 // See guest-runtime/engine/LICENSE and UPSTREAM.md.
 /**
- * Sliding-window loop detector for the agent conversation loop.
+ * Loop detector for the agent conversation loop (architecture section 8.2).
  *
- * Tracks tool-call signatures and text outputs across turns to detect when an
- * agent is stuck repeating the same actions. Used by {@link AgentRunner} when
- * {@link LoopDetectionConfig} is provided.
+ * A round is the set of (tool, canonical arguments) of one response together
+ * with the results the calls returned. When the same round comes back three
+ * times in a row, the model is told once; when it happens again within the
+ * unit, the unit stops. Identical calls whose results change (polling a page
+ * that is still loading) are not a loop.
+ *
+ * Nothing is held in memory: the streak and the notices are derived from the
+ * unit's own messages (from its start message), so a restart neither forgets
+ * a streak nor counts a notice from an earlier chat turn.
  */
-import type { LoopDetectionConfig, LoopDetectionInfo } from "../types.js";
+import type { ThreadMessage } from "../types.js";
+
+/** Identical rounds in a row that count as a loop. */
+export const LOOP_ROUNDS = 3;
+
+export const LOOP_NOTICE =
+  "[Notice from the agent runtime] Your last 3 rounds made the same tool calls with the same arguments and got the same results. " +
+  "Repeating them will not change anything: try something different, or answer with what you have.";
+
+export const LOOP_STOP_TEXT = `stopped: the same tool calls returned the same results ${LOOP_ROUNDS} rounds in a row`;
 
 /**
  * Recursively sort object keys so that `{b:1, a:2}` and `{a:2, b:1}` produce
@@ -24,66 +39,13 @@ export function sortKeys(value: unknown): unknown {
   return sorted;
 }
 
-export class LoopDetector {
-  private readonly maxRepeats: number;
-  private readonly windowSize: number;
-
-  private readonly toolSignatures: string[] = [];
-  private readonly textOutputs: string[] = [];
-
-  constructor(config: LoopDetectionConfig = {}) {
-    this.maxRepeats = config.maxRepetitions ?? 3;
-    const requestedWindow = config.loopDetectionWindow ?? 4;
-    // Window must be >= threshold, otherwise detection can never trigger.
-    this.windowSize = Math.max(requestedWindow, this.maxRepeats);
-  }
-
-  /** Record a turn's tool calls. Returns detection info when a loop is found. */
-  recordToolCalls(calls: ReadonlyArray<{ name: string; input: unknown }>): LoopDetectionInfo | null {
-    if (calls.length === 0) return null;
-    this.push(this.toolSignatures, computeToolSignature(calls));
-    const count = consecutiveRepeats(this.toolSignatures);
-    if (count >= this.maxRepeats) {
-      const names = calls.map((c) => c.name).join(", ");
-      return {
-        kind: "tool_repetition",
-        repetitions: count,
-        detail: `Tool call "${names}" with identical arguments has repeated ${count} times consecutively. The agent appears to be stuck in a loop.`,
-      };
-    }
-    return null;
-  }
-
-  /** Record a turn's text output. Returns detection info when a loop is found. */
-  recordText(text: string): LoopDetectionInfo | null {
-    const normalised = text.trim().replace(/\s+/g, " ");
-    if (normalised.length === 0) return null;
-    this.push(this.textOutputs, normalised);
-    const count = consecutiveRepeats(this.textOutputs);
-    if (count >= this.maxRepeats) {
-      return {
-        kind: "text_repetition",
-        repetitions: count,
-        detail: `The agent has produced the same text response ${count} times consecutively. It appears to be stuck in a loop.`,
-      };
-    }
-    return null;
-  }
-
-  /** Push an entry and trim the buffer to `windowSize`. */
-  private push(buffer: string[], entry: string): void {
-    buffer.push(entry);
-    while (buffer.length > this.windowSize) buffer.shift();
-  }
-}
-
 /**
- * Deterministic JSON signature for a set of tool calls.
- * Sorts calls by name (for multi-tool turns) and keys within each input.
+ * Deterministic signature of one round: its calls sorted by name and
+ * canonical arguments, each with the result it got.
  */
-export function computeToolSignature(calls: ReadonlyArray<{ name: string; input: unknown }>): string {
+function roundSignature(calls: ReadonlyArray<{ name: string; input: unknown; result: string }>): string {
   const items = calls
-    .map((c) => ({ name: c.name, input: sortKeys(c.input) }))
+    .map((c) => ({ name: c.name, input: sortKeys(c.input), result: c.result }))
     .sort((a, b) => {
       const cmp = a.name.localeCompare(b.name);
       if (cmp !== 0) return cmp;
@@ -92,24 +54,46 @@ export function computeToolSignature(calls: ReadonlyArray<{ name: string; input:
   return JSON.stringify(items);
 }
 
-/**
- * Count how many consecutive identical entries exist at the tail of `buffer`.
- * Returns 1 when the last entry is unique.
- */
-function consecutiveRepeats(buffer: readonly string[]): number {
-  if (buffer.length === 0) return 0;
-  const last = buffer[buffer.length - 1];
-  let count = 0;
-  for (let i = buffer.length - 1; i >= 0; i--) {
-    if (buffer[i] === last) count++;
-    else break;
+function parseArguments(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
   }
-  return count;
 }
 
-/** The message a loop warning adds to the conversation. */
-export function loopWarningText(kind: LoopDetectionInfo["kind"]): string {
-  return kind === "text_repetition"
-    ? "WARNING: You appear to be generating the same response repeatedly. This suggests you are stuck in a loop. Please try a different approach or provide new information."
-    : "WARNING: You appear to be repeating the same tool calls with identical arguments. This suggests you are stuck in a loop. Please try a different approach, use different parameters, or explain what you are trying to accomplish.";
+export type LoopVerdict = "none" | "notice" | "stop";
+
+/**
+ * What the unit's messages call for before its next model request: a notice
+ * the first time its last `LOOP_ROUNDS` complete rounds are identical, a stop
+ * when that happens again after a notice, nothing when the notice already
+ * follows the newest round. Safe to ask again after a restart.
+ */
+export function detectLoop(unitMessages: readonly ThreadMessage[]): LoopVerdict {
+  const signatures: string[] = [];
+  let noticesBefore = 0;
+  let noticeAfterLast = false;
+  for (let i = 0; i < unitMessages.length; i++) {
+    const m = unitMessages[i]!;
+    if (m.role === "user" && m.content === LOOP_NOTICE) noticeAfterLast = true;
+    if (m.role !== "assistant" || !m.tool_calls || m.tool_calls.length === 0) continue;
+    const results = new Map<string, string>();
+    for (let j = i + 1; j < unitMessages.length && unitMessages[j]!.role === "tool"; j++) {
+      const r = unitMessages[j] as Extract<ThreadMessage, { role: "tool" }>;
+      results.set(r.tool_call_id, r.content);
+    }
+    if (results.size < m.tool_calls.length) continue; // not complete yet
+    if (noticeAfterLast) noticesBefore++;
+    noticeAfterLast = false;
+    signatures.push(
+      roundSignature(m.tool_calls.map((c) => ({ name: c.function.name, input: parseArguments(c.function.arguments), result: results.get(c.id)! }))),
+    );
+  }
+  const last = signatures.at(-1);
+  if (last === undefined || noticeAfterLast) return "none";
+  let streak = 0;
+  for (let i = signatures.length - 1; i >= 0 && signatures[i] === last; i--) streak++;
+  if (streak < LOOP_ROUNDS) return "none";
+  return noticesBefore > 0 ? "stop" : "notice";
 }

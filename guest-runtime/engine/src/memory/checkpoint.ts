@@ -49,10 +49,15 @@ export class Checkpoint {
     return this.store.listMessages<ThreadMessage>(thread, { limit });
   }
 
-  /** The model answered: its message, the step and its usage (which ends the step's request attempts), the progress text of a task. */
-  assistant(record: RunRecord, message: AssistantMessage, usage: Usage): void {
+  /**
+   * The model answered: its message, the step and its usage (which ends the
+   * step's request attempts), the progress text of a task, and a notice
+   * that follows the message when the engine has one for the model.
+   */
+  assistant(record: RunRecord, message: AssistantMessage, usage: Usage, notice?: string): void {
     this.store.transaction(() => {
       this.store.appendMessage<ThreadMessage>(threadOf(record), message);
+      if (notice !== undefined) this.store.appendMessage<ThreadMessage>(threadOf(record), { role: "user", content: notice });
       this.ledger.countStep(record, usage);
       const text = message.content ?? "";
       if (record.kind === "task" && (message.tool_calls?.length ?? 0) > 0 && text.trim() !== "") {

@@ -138,4 +138,5 @@ memory:
 limits:
   max_steps_per_task: 60
   context_tokens: 32000
+  max_cost_per_task_usd: 1.00
 `;

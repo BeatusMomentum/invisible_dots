@@ -48,22 +48,3 @@ export interface FaultSeam {
 
 export const NO_FAULTS: FaultSeam = { at() {} };
 
-/** Configuration for agent loop detection. */
-export interface LoopDetectionConfig {
-  /**
-   * Maximum consecutive times the same tool call (name + args) or text
-   * output can repeat before detection triggers. Default: `3`.
-   */
-  readonly maxRepetitions?: number;
-  /** Number of recent turns to track for repetition analysis. Default: `4`. */
-  readonly loopDetectionWindow?: number;
-}
-
-/** Diagnostic payload when a loop is detected. */
-export interface LoopDetectionInfo {
-  readonly kind: "tool_repetition" | "text_repetition";
-  /** Number of consecutive identical occurrences observed. */
-  readonly repetitions: number;
-  /** Human-readable description of the detected loop. */
-  readonly detail: string;
-}
