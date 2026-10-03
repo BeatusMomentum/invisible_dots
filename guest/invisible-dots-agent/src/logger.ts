@@ -3,7 +3,7 @@
  * `journalctl -o cat` prints readably. Field values are never secrets: the
  * code that holds the OpenRouter key does not pass it to a logger.
  */
-import type { Logger } from "@invisible-dots/agent-runtime";
+import type { Logger } from "@invisible-dots/engine";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
 const ORDER: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };

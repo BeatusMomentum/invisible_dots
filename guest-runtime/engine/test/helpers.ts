@@ -76,7 +76,7 @@ export interface CrashPlan {
 
 export async function harness(
   config: Record<string, unknown> = baseConfig,
-  options: { apiKey?: boolean; faults?: FaultSeam; crash?: CrashPlan } = {},
+  options: { apiKey?: boolean; faults?: FaultSeam; crash?: CrashPlan; stopGraceMs?: number } = {},
 ): Promise<Harness> {
   let crashes = 0;
   let passed = 0;
@@ -110,7 +110,13 @@ export async function harness(
           },
         }
       : options.faults;
-    const runtime = new DotRuntime({ store, registry, model, ...(faults ? { faults } : {}) });
+    const runtime = new DotRuntime({
+      store,
+      registry,
+      model,
+      ...(faults ? { faults } : {}),
+      ...(options.stopGraceMs !== undefined ? { stopGraceMs: options.stopGraceMs } : {}),
+    });
     return { store, model, runtime };
   };
 

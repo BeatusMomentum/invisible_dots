@@ -24,12 +24,18 @@ let dir: string;
 let paths: HostPaths;
 let inputs: RuntimeInputs;
 const AGENT = "#!/usr/bin/env node\nconsole.log('the agent');\n";
+const NOTICES = "== invisible_dots (MIT)\n";
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "idots-runtime-"));
   paths = hostPaths({ INVISIBLE_DOTS_HOME: join(dir, "home") });
-  inputs = { agentBundle: join(dir, "invisible-dots-agent.mjs"), agentdBinary: join(dir, "dot-agentd") };
+  inputs = {
+    agentBundle: join(dir, "invisible-dots-agent.mjs"),
+    agentNotices: join(dir, "THIRD_PARTY_NOTICES.txt"),
+    agentdBinary: join(dir, "dot-agentd"),
+  };
   await writeFile(inputs.agentBundle, AGENT);
+  await writeFile(inputs.agentNotices, NOTICES);
   await writeFile(inputs.agentdBinary, elf(0x3e));
 });
 
@@ -54,11 +60,21 @@ describe("buildRuntimeIso", () => {
     expect(parsed.joliet.volumeId).toBe(RUNTIME_ISO_LABEL);
     const files = listFiles(parsed.joliet.root);
     expect([...files.keys()].sort()).toEqual(
-      ["VERSION", "bin/dot-agentd", "bin/dot-desktop", "install.sh", "invisible-dots-agent.mjs", ...GUEST_UNITS.map((unit) => `units/${unit}`)].sort(),
+      [
+        "VERSION",
+        "THIRD_PARTY_NOTICES.txt",
+        "bin/dot-agentd",
+        "bin/dot-desktop",
+        "install.sh",
+        "invisible-dots-agent.mjs",
+        ...GUEST_UNITS.map((unit) => `units/${unit}`),
+      ].sort(),
     );
     const read = (path: string) => fileBytes(image, files.get(path)!);
     expect(read("VERSION").toString()).toBe(`${result.version}\n`);
     expect(read("invisible-dots-agent.mjs").toString()).toBe(AGENT);
+    // The licenses of what the bundle carries travel next to it.
+    expect(read("THIRD_PARTY_NOTICES.txt").toString()).toBe(NOTICES);
     expect(read("bin/dot-agentd")).toEqual(elf(0x3e));
     expect(read("install.sh")).toEqual(await readFile(join(defaultAssetRoot(), "runtime", "install.sh")));
     expect(read("bin/dot-desktop")).toEqual(await readFile(join(defaultAssetRoot(), "runtime", "dot-desktop.sh")));
@@ -93,6 +109,9 @@ describe("buildRuntimeIso", () => {
     await rm(inputs.agentBundle);
     await expect(buildRuntimeIso({ inputs, paths })).rejects.toThrow(/npm run build --workspace guest\/invisible-dots-agent/);
     await writeFile(inputs.agentBundle, AGENT);
+    await rm(inputs.agentNotices);
+    await expect(buildRuntimeIso({ inputs, paths })).rejects.toThrow(/the agent's build writes it next to the bundle/);
+    await writeFile(inputs.agentNotices, NOTICES);
     await rm(inputs.agentdBinary);
     await expect(buildRuntimeIso({ inputs, paths })).rejects.toThrow(/GOOS=linux GOARCH=amd64 go build/);
   });

@@ -1,4 +1,4 @@
-export { DotRuntime } from "./driver.js";
+export { DotRuntime, STOP_GRACE_MS } from "./driver.js";
 export type { DotRuntimeOptions } from "./driver.js";
 export { decideTool } from "./gate.js";
 export type { ToolDecision } from "./gate.js";

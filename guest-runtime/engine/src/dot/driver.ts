@@ -47,7 +47,19 @@ export interface DotRuntimeOptions {
   identities?: () => readonly BrowserIdentity[];
   /** Test seam at named points of the commits (see `FaultSeam`); never set in the product. */
   faults?: FaultSeam;
+  /** How long a tool in flight may run on after a prepare-sleep or a shutdown. Default 20 s. */
+  stopGraceMs?: number;
 }
+
+/**
+ * A tool in flight gets this long to finish and record its result when the
+ * agent stops (architecture section 5.3): systemd's TimeoutStopSec=30 leaves
+ * the rest to close the browsers and checkpoint the database.
+ */
+export const STOP_GRACE_MS = 20_000;
+
+/** How long past the grace a stop waits for a unit that does not return, before giving up on it. */
+const STOP_MARGIN_MS = 2_000;
 
 type UnitOutcome = "finished" | "suspended";
 
@@ -76,6 +88,8 @@ export class DotRuntime {
   #worker: Promise<void> | null = null;
   #rerun = false;
   #controller: AbortController | null = null;
+  #toolController: AbortController | null = null;
+  readonly #stopGraceMs: number;
   #activeTaskId: string | null = null;
   #waitingForKeyLogged = false;
 
@@ -92,6 +106,7 @@ export class DotRuntime {
     this.#ledger = new RunLedger(this.#store, this.#queue);
     this.#approvals = new DurableApprovalLedger(this.#store, this.#queue);
     this.#faults = options.faults ?? NO_FAULTS;
+    this.#stopGraceMs = options.stopGraceMs ?? STOP_GRACE_MS;
     this.#checkpoint = new Checkpoint(this.#store, this.#queue, this.#ledger, this.#approvals, this.#faults);
     this.#inbound = {
       store: this.#store,
@@ -236,6 +251,7 @@ export class DotRuntime {
     for (const action of actions) {
       if (action.kind === "abort-unit") {
         this.#controller?.abort(new UnitAbort("cancel"));
+        this.#toolController?.abort(new UnitAbort("cancel"));
       } else {
         if (this.#activeTaskId === action.taskId) this.#activeTaskId = null;
         this.#emitState("IDLE");
@@ -263,13 +279,29 @@ export class DotRuntime {
 
   /**
    * Stop working without losing anything (`POST /prepare-sleep`): a model
-   * request or tool call in flight is abandoned and redone after the next
-   * boot. New inbound events lift the suspension.
+   * request in flight is abandoned; a tool in flight gets up to the stop
+   * grace to finish and record its result, then is aborted, and its intent
+   * makes the next entry of the unit report it (architecture section 8.7).
+   * New inbound events lift the suspension.
    */
   async suspend(): Promise<void> {
     this.#suspended = true;
     this.#controller?.abort(new UnitAbort("suspend"));
-    await this.idle();
+    const tools = this.#toolController;
+    const grace = tools ? setTimeout(() => tools.abort(new UnitAbort("suspend")), this.#stopGraceMs) : undefined;
+    let giveUp: ReturnType<typeof setTimeout> | undefined;
+    try {
+      // A tool that ignores its abort cannot hold the stop past the grace.
+      await Promise.race([
+        this.idle(),
+        new Promise<void>((resolve) => {
+          giveUp = setTimeout(resolve, this.#stopGraceMs + STOP_MARGIN_MS);
+        }),
+      ]);
+    } finally {
+      clearTimeout(grace);
+      clearTimeout(giveUp);
+    }
   }
 
   /** Like `suspend`, for good: used on SIGTERM. */
@@ -355,7 +387,9 @@ export class DotRuntime {
 
   async #runUnit(record: RunRecord): Promise<UnitOutcome> {
     const controller = new AbortController();
+    const toolController = new AbortController();
     this.#controller = controller;
+    this.#toolController = toolController;
     this.#activeTaskId = record.kind === "task" ? record.taskId : null;
     try {
       if (record.kind === "task") {
@@ -375,6 +409,7 @@ export class DotRuntime {
         tools,
         systemPrompt: () => this.#systemPrompt(record, config),
         signal: controller.signal,
+        toolSignal: toolController.signal,
         onState: (state) => this.#emitState(state),
       });
       if (outcome.status === "suspended") return "suspended";
@@ -402,6 +437,7 @@ export class DotRuntime {
       return "finished";
     } finally {
       this.#controller = null;
+      this.#toolController = null;
     }
   }
 

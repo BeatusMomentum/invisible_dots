@@ -6,6 +6,7 @@
  *   /install.sh                  the hook each Dot's seed runs on every boot
  *   /VERSION                     this runtime's version
  *   /invisible-dots-agent.mjs    the bundled agent
+ *   /THIRD_PARTY_NOTICES.txt     the license notices of everything the bundle carries
  *   /bin/dot-agentd              the computer daemon (linux/amd64)
  *   /bin/dot-desktop             ExecStart of dot-desktop.service
  *   /units/*.service             the guest systemd units
@@ -30,6 +31,8 @@ import { checkVersion, findImageByDigest, inputsDigest, versionFor } from "./ver
 export interface RuntimeInputs {
   /** guest/invisible-dots-agent/dist/invisible-dots-agent.mjs */
   agentBundle: string;
+  /** guest/invisible-dots-agent/dist/THIRD_PARTY_NOTICES.txt, written by the same build */
+  agentNotices: string;
   /** guest/dot-agentd/bin/dot-agentd, built for linux/amd64 */
   agentdBinary: string;
 }
@@ -38,6 +41,7 @@ export interface RuntimeInputs {
 export function defaultRuntimeInputs(repoRoot: string = fileURLToPath(new URL("../../..", import.meta.url))): RuntimeInputs {
   return {
     agentBundle: join(repoRoot, "guest", "invisible-dots-agent", "dist", "invisible-dots-agent.mjs"),
+    agentNotices: join(repoRoot, "guest", "invisible-dots-agent", "dist", "THIRD_PARTY_NOTICES.txt"),
     agentdBinary: join(repoRoot, "guest", "dot-agentd", "bin", "dot-agentd"),
   };
 }
@@ -106,6 +110,11 @@ export async function runtimeFiles(inputs: RuntimeInputs, assetRoot: string = de
   if (!agent?.isFile()) {
     throw new Error(`agent bundle ${inputs.agentBundle} not found: build it first (npm run build --workspace guest/invisible-dots-agent)`);
   }
+  // The bundle's licenses travel with it: a runtime disk without them is not built.
+  const notices = await stat(inputs.agentNotices).catch(() => undefined);
+  if (!notices?.isFile()) {
+    throw new Error(`${inputs.agentNotices} not found: the agent's build writes it next to the bundle; build the agent again`);
+  }
   const agentd = await stat(inputs.agentdBinary).catch(() => undefined);
   if (!agentd?.isFile()) {
     throw new Error(
@@ -119,6 +128,7 @@ export async function runtimeFiles(inputs: RuntimeInputs, assetRoot: string = de
     stageBytes("install.sh", await readGuestAsset(assetRoot, RUNTIME_INSTALL)),
     stageBytes("bin/dot-desktop", await readGuestAsset(assetRoot, RUNTIME_DESKTOP)),
     await stageFile("invisible-dots-agent.mjs", inputs.agentBundle),
+    await stageFile("THIRD_PARTY_NOTICES.txt", inputs.agentNotices),
     await stageFile("bin/dot-agentd", inputs.agentdBinary),
   ];
   for (const unit of GUEST_UNITS) files.push(stageBytes(`units/${unit}`, await readGuestAsset(assetRoot, unitAsset(unit))));

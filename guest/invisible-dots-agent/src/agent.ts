@@ -6,7 +6,7 @@ import { chmod, mkdir, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { AgentRuntime, type Logger, type ToolRegistry } from "@invisible-dots/agent-runtime";
+import { DotRuntime, type Logger, type ToolRegistry } from "@invisible-dots/engine";
 import { BrowserIdentityManager } from "@invisible-dots/browser-manager";
 import { DotStore } from "@invisible-dots/memory";
 import { OpenRouterClient } from "@invisible-dots/openrouter-client";
@@ -45,7 +45,7 @@ function limitsOf(config: DotRuntimeConfig): IdentityLimits {
 export interface Agent {
   store: DotStore;
   model: OpenRouterClient;
-  runtime: AgentRuntime;
+  runtime: DotRuntime;
   identities: BrowserIdentityManager;
   /** Listen, then start the runtime; resolves with the bound address. */
   start(): Promise<string>;
@@ -98,7 +98,7 @@ export function createAgent(options: AgentOptions): Agent {
       browsers: identities,
       store: memory,
     });
-  const agentRuntime = new AgentRuntime({ store, registry, model, logger: log });
+  const agentRuntime = new DotRuntime({ store, registry, model, logger: log });
 
   const checks =
     options.checks ??

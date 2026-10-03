@@ -5,7 +5,7 @@
  * owned by `dot` with mode 0600, so this server does no authentication itself.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import type { AgentRuntime, Logger } from "@invisible-dots/agent-runtime";
+import type { DotRuntime, Logger } from "@invisible-dots/engine";
 import type { DotStore } from "@invisible-dots/memory";
 import {
   AGENT_ROUTES,
@@ -25,7 +25,7 @@ export interface SecretSink {
 }
 
 export interface AgentServerDeps {
-  runtime: Pick<AgentRuntime, "started" | "state" | "stateAnswer" | "accept" | "setConfig" | "modelConfigured" | "suspend">;
+  runtime: Pick<DotRuntime, "started" | "state" | "stateAnswer" | "accept" | "setConfig" | "modelConfigured" | "suspend">;
   store: Pick<DotStore, "readAfter" | "subscribe" | "checkpoint">;
   model: SecretSink;
   identities: IdentityService;

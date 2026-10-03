@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { httpOverSocket, offeredTools, testSocketPath, type OutboundEvent } from "@invisible-dots/shared";
-import type { ToolRegistry } from "@invisible-dots/agent-runtime";
+import type { ToolRegistry } from "@invisible-dots/engine";
 import { completion, startFakeOpenRouter, type FakeOpenRouter } from "../../../guest-runtime/openrouter-client/test/fake-openrouter.js";
 import { createAgent, createJsonLogger, type Agent } from "../src/index.js";
 

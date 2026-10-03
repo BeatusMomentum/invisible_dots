@@ -92,7 +92,7 @@ export function bench(config: Record<string, unknown> = baseConfig, options: { m
   }
   const thread = record.kind === "chat" ? "conversation" : "t1";
   const signal = new AbortController().signal;
-  const unit = () => ({ record: ledger.get() ?? record, config: parsed, tools: offeredTools(parsed), systemPrompt: () => "system", signal });
+  const unit = () => ({ record: ledger.get() ?? record, config: parsed, tools: offeredTools(parsed), systemPrompt: () => "system", signal, toolSignal: signal });
   return {
     store,
     model,

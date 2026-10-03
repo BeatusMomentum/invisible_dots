@@ -5,6 +5,11 @@ The MIT license in `LICENSE` covers this repository, except the files under
 under `guest-runtime/engine/LICENSE`. Those files, and the text this
 repository's history holds through them, come with the notices below.
 
+The guest agent is shipped as one bundled file. Its build writes
+`THIRD_PARTY_NOTICES.txt` next to the bundle, with the license texts of
+every npm package it carries, and the runtime disk carries that file next to
+the agent.
+
 ## Open Multi-Agent
 
 Derived files: those under `guest-runtime/engine/src/` whose first lines say

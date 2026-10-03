@@ -47,9 +47,6 @@ export function truncateText(text: string, max: number = TOOL_RESULT_MAX_CHARS, 
   return text.slice(0, head) + marker(text.length - keep) + (tail > 0 ? text.slice(text.length - tail) : "");
 }
 
-/** Working memory keeps this many messages plus the system prompt (section 8.6). */
-export const WORKING_MEMORY_MESSAGES = 40;
-
 /** The system prompt lists this many most recently updated memory keys (section 8.6). */
 export const SYSTEM_PROMPT_MEMORY_KEYS = 20;
 

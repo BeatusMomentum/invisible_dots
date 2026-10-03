@@ -15,11 +15,10 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@invisible-dots/agent-runtime": "0.0.0",
     "@invisible-dots/browser-manager": "0.0.0",
+    "@invisible-dots/engine": "0.0.0",
     "@invisible-dots/memory": "0.0.0",
     "@invisible-dots/openrouter-client": "0.0.0",
-    "@invisible-dots/policy": "0.0.0",
     "@invisible-dots/shared": "0.0.0",
     "@invisible-dots/task-runtime": "0.0.0",
     "@invisible-dots/tools": "0.0.0"

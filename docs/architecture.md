@@ -90,12 +90,11 @@ guest/
   dot-agentd/             the computer daemon (Go): the guest endpoint, exec, files, screenshots
   image-builder/          golden image and runtime disk builders (TypeScript), guest systemd units
 guest-runtime/
-  engine/             the agent engine, derived in part from Open Multi-Agent (MIT); the agent does not run on it yet
+  engine/             the agent engine: state machine, reasoning loop, policy gate, context budget, crash
+                      recovery; derived in part from Open Multi-Agent (MIT, see THIRD_PARTY_NOTICES.md)
   openrouter-client/  the only LLM client
-  agent-runtime/      state machine and the reasoning loop
-  memory/             local SQLite state: conversation, memories, outbox
+  memory/             local SQLite state: conversation, memories, outbox, intents, summaries
   task-runtime/       local task queue and lifecycle
-  policy/             ALLOW / ASK / DENY engine
   tools/              tool registry: computer, files, memory tools
   browser-manager/    browser identities and their MCP sessions
 virtualization/
@@ -404,7 +403,7 @@ because cloud-init adds no group to a user that exists already.
 
 ```text
 /etc/invisible-dots/config.json     written by cloud-init: dotId, token (0600, owner dot)
-/opt/invisible-dots/                the runtime ISO, read-only
+/opt/invisible-dots/                the runtime ISO, read-only: the agent bundle, its THIRD_PARTY_NOTICES.txt, dot-agentd, the units
 /home/dot/
   workspace/  downloads/  documents/
   memory/                           long-term memory notes the Dot writes itself
@@ -517,7 +516,7 @@ Paths in file routes are resolved against `/home/dot` when relative.
 | `POST /browser-identities` | `{ name, proxy? }` | `201 BrowserIdentity` |
 | `GET /browser-identities/:id` | | `BrowserIdentity` |
 | `DELETE /browser-identities/:id` | | `204` |
-| `POST /prepare-sleep` | | `204` after the state is flushed and browser sessions are closed; the agent then starts no new work. A `POST /secrets` (the READY procedure of a VM whose stop failed, so no shutdown followed) lifts that, and so does a new inbound event |
+| `POST /prepare-sleep` | | `204` after the state is flushed and browser sessions are closed; the agent then starts no new work. A model request in flight is abandoned; a tool in flight gets up to 20 seconds to finish and record its result, then is aborted (section 8.7). A `POST /secrets` (the READY procedure of a VM whose stop failed, so no shutdown followed) lifts that, and so does a new inbound event |
 
 Outbound events are written to an outbox table in `dot.db` before they are
 streamed, with a monotonically increasing `seq`. The host stores the last `seq`
@@ -732,7 +731,9 @@ with a note, the note follows the call's result. `reject` returns `Rejected by
 the user: <note>` (or `Rejected by the user.`) to the model. A decision is
 recorded once: a second one for the same approval is ignored. An approved call
 runs at most once, or at most twice when its tool is replay-safe and the agent
-crashed during it (section 8.7).
+crashed during it (section 8.7). The memory flush before a summary (section
+8.6) goes through this policy: its `memory_remember` calls run only when
+`memory.write` is `allow`.
 
 ### 8.5 OpenRouter
 
@@ -813,6 +814,12 @@ starts it again. What it guarantees:
   started; and it deletes the thread's intents. A thread never keeps a call
   without its result, which the provider would refuse on every later turn;
   the request builder only asserts it, and fails the unit if it is broken.
+- Stopping: `POST /prepare-sleep` and SIGTERM abandon a model request in
+  flight and give a tool in flight up to 20 seconds to finish and commit its
+  result, which leaves 10 of systemd's `TimeoutStopSec=30` to close the
+  browsers and checkpoint the database. A tool cut at the grace keeps its
+  intent, and the next entry of its unit, in this process or the next,
+  reports it as interrupted (or runs it again, if it is replay-safe).
 - The first start on this engine (marked by a config row, not by the
   migration, so a crash between the two cannot skip it) applies the inbound
   events the previous version accepted but never applied, gives old approvals
@@ -1160,7 +1167,13 @@ The root LICENSE (MIT) covers this repository, except the files under
 `guest-runtime/engine/` that carry the Open Multi-Agent header, which are under
 `guest-runtime/engine/LICENSE` (MIT as well); `THIRD_PARTY_NOTICES.md` at the
 root carries that notice, and `guest-runtime/engine/UPSTREAM.md` records the
-version and commit they come from. QEMU (GPL-2.0) is installed
+version and commit they come from. The guest agent is one bundled file; its
+build writes `THIRD_PARTY_NOTICES.txt` next to it from esbuild's metafile,
+with the license and notice files of every npm package an input comes from,
+this repository's license and Open Multi-Agent's, and the runtime disk
+carries it next to the agent (`/opt/invisible-dots/THIRD_PARTY_NOTICES.txt`),
+so the notices travel with every copy of the bundle. No list is written by
+hand, so it cannot drift from the lockfile. QEMU (GPL-2.0) is installed
 from the official Windows installer or the distribution's package and is only
 ever run as a separate program; it is never linked into, bundled with or
 shipped by this project. The guest operating system (the Ubuntu cloud image),

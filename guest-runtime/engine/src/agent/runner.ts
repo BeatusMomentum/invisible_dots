@@ -28,7 +28,7 @@ import type { DurableApprovalLedger } from "../approval/durable.js";
 import { decideTool } from "../dot/gate.js";
 import { callKey, classifyIntent, interruptedText } from "../dot/intents.js";
 import { THREAD_READ_LIMIT, openCalls, type OpenCall } from "../dot/request.js";
-import { UnitAbort, throwIfAborted } from "../errors.js";
+import { UnitAbort, abortReason, throwIfAborted } from "../errors.js";
 import type { CallPosition, Checkpoint } from "../memory/checkpoint.js";
 import { describeRun, threadOf, type RunRecord } from "../run/record.js";
 import type { RunLedger } from "../run/ledger.js";
@@ -76,7 +76,14 @@ export interface UnitRun {
   readonly tools: readonly ToolDefinition[];
   /** Built again for every request, because identities and memory keys change. */
   systemPrompt(): string;
+  /** Aborts the unit: a model request in flight at once, and the unit before its next call. */
   readonly signal: AbortSignal;
+  /**
+   * Aborts a tool in flight. On a cancel it fires with `signal`; on a sleep
+   * or a shutdown it fires only once the stop grace is over, so a running
+   * call gets the time to finish and record its result.
+   */
+  readonly toolSignal: AbortSignal;
   onState(state: AgentState): void;
 }
 
@@ -307,7 +314,7 @@ export class AgentRunner {
     unit.onState("EXECUTING");
     const context: ToolContext = {
       ...(unit.record.kind === "task" ? { taskId: unit.record.taskId } : {}),
-      signal: unit.signal,
+      signal: unit.toolSignal,
       emit: this.deps.emit,
     };
     const key = callKey(thread, position.messageId, position.callIndex);
@@ -315,6 +322,9 @@ export class AgentRunner {
     try {
       const execution = await this.deps.executor.execute(call, context);
       this.deps.faults.at("tool:executed");
+      // Cut at the stop grace: what the call did is unknown. Its intent stays,
+      // and the next entry of the unit reports it (or runs it again, if replay-safe).
+      if (unit.toolSignal.aborted && abortReason(unit.toolSignal) === "suspend") throw new UnitAbort("suspend");
       return execution;
     } finally {
       this.deps.executing.delete(key);
