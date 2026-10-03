@@ -14,7 +14,6 @@ import { OpenRouterError, type ChatModel } from "@invisible-dots/openrouter-clie
 import { CONVERSATION_THREAD, type DotStore } from "@invisible-dots/memory";
 import {
   SYSTEM_PROMPT_MEMORY_KEYS,
-  TASK_CANCELLED_SYSTEM_EVENT,
   WORKING_MEMORY_MESSAGES,
   parseRuntimeConfig,
   type AgentState,
@@ -33,6 +32,7 @@ import { describeRun, type RunRecord } from "../run/record.js";
 import { ToolExecutor } from "../tool/executor.js";
 import type { ToolRegistry } from "../tool/framework.js";
 import { silentLogger, type Logger, type ThreadMessage } from "../types.js";
+import { applyInbound, type InboundContext, type PostCommitAction } from "./inbound.js";
 import { buildSystemPrompt, taskSeedMessage } from "./prompt.js";
 import { toRequestMessages, trimThread } from "./request.js";
 
@@ -44,7 +44,18 @@ export interface DotRuntimeOptions {
   now?: () => Date;
   /** Identities listed in the system prompt; defaults to the store's table. */
   identities?: () => readonly BrowserIdentity[];
+  /**
+   * Test seam: called at named points of a commit, where a test throws to
+   * fail the transaction or kills the process. Never set in the product.
+   */
+  faults?: FaultSeam;
 }
+
+export interface FaultSeam {
+  at(point: string): void;
+}
+
+const NO_FAULTS: FaultSeam = { at() {} };
 
 type UnitOutcome = "finished" | "suspended";
 
@@ -62,6 +73,8 @@ export class DotRuntime {
   readonly #approvals: DurableApprovalLedger;
   readonly #checkpoint: Checkpoint;
   readonly #deps: RunnerDeps;
+  readonly #inbound: InboundContext;
+  readonly #faults: FaultSeam;
 
   #config: DotRuntimeConfig | null = null;
   #state: AgentState = "IDLE";
@@ -85,6 +98,15 @@ export class DotRuntime {
     this.#ledger = new RunLedger(this.#store, this.#queue);
     this.#approvals = new DurableApprovalLedger(this.#store, this.#queue);
     this.#checkpoint = new Checkpoint(this.#store, this.#queue, this.#ledger, this.#approvals);
+    this.#faults = options.faults ?? NO_FAULTS;
+    this.#inbound = {
+      store: this.#store,
+      queue: this.#queue,
+      approvals: this.#approvals,
+      ledger: this.#ledger,
+      log: this.#log,
+      running: () => this.#controller !== null,
+    };
     this.#deps = {
       model: this.#model,
       executor: new ToolExecutor(this.#registry, this.#log),
@@ -128,6 +150,12 @@ export class DotRuntime {
         this.#log.error("stored runtime config is invalid; waiting for PUT /config", { error: errorText(error) });
       }
     }
+    // Events accepted before a crash that were never applied: each in its own transaction.
+    for (const row of this.#store.pendingInbound()) {
+      if (row.type === "user.message") continue;
+      this.#log.info("applying an inbound event accepted before the last stop", { id: row.id, type: row.type });
+      this.#runActions(this.#store.transaction(() => applyInbound(this.#inbound, row)));
+    }
     const resumed = this.#ledger.adoptOrphan();
     if (resumed) this.#log.info("resuming work interrupted by the last stop", describeRun(resumed));
     if (resumed?.kind === "task") this.#activeTaskId = resumed.taskId;
@@ -169,43 +197,36 @@ export class DotRuntime {
    */
   accept(event: InboundEvent): boolean {
     if (this.#stopped) throw new Error("the agent is shutting down");
-    const fresh = this.#store.acceptInbound(event);
+    // The inbox row, its effect and its processed mark commit together, or not at all.
+    let actions: PostCommitAction[] = [];
+    const fresh = this.#store.transaction(() => {
+      if (!this.#store.acceptInbound(event)) return false;
+      this.#faults.at("accept:inserted");
+      actions = applyInbound(this.#inbound, { id: event.id, type: event.type, data: event.data as Record<string, unknown> });
+      this.#faults.at("accept:applied");
+      return true;
+    });
     if (!fresh) {
       this.#log.debug("inbound event already accepted", { id: event.id, type: event.type });
       return false;
     }
     this.#log.info("inbound event accepted", { id: event.id, type: event.type });
-    switch (event.type) {
-      case "user.message":
-        // Stays in the inbox until the chat turn has been answered.
-        break;
-      case "task.created": {
-        const { created } = this.#queue.enqueue({
-          id: event.data.task_id,
-          description: event.data.description,
-          priority: event.data.priority,
-        });
-        if (!created) this.#log.warn("task already known, not queued again", { task_id: event.data.task_id });
-        this.#store.markInboundProcessed(event.id);
-        break;
-      }
-      case "approval.received": {
-        const outcome = this.#approvals.decide(event.data.approval_id, event.data.decision, event.data.note);
-        if (outcome === "unknown") this.#log.warn("approval.received for an unknown approval; ignored", { approval_id: event.data.approval_id });
-        else if (outcome === "already decided") this.#log.warn("approval.received for an approval already resolved; ignored", { approval_id: event.data.approval_id });
-        else this.#log.info("approval resolved", { approval_id: event.data.approval_id, decision: event.data.decision });
-        this.#store.markInboundProcessed(event.id);
-        break;
-      }
-      case "system.event":
-        this.#systemEvent(event.data.name, event.data.data);
-        this.#store.markInboundProcessed(event.id);
-        break;
-    }
+    this.#runActions(actions);
     // New work after a prepare-sleep means the host changed its mind.
     this.#suspended = false;
     this.#kick();
     return true;
+  }
+
+  #runActions(actions: readonly PostCommitAction[]): void {
+    for (const action of actions) {
+      if (action.kind === "abort-unit") {
+        this.#controller?.abort(new UnitAbort("cancel"));
+      } else {
+        if (this.#activeTaskId === action.taskId) this.#activeTaskId = null;
+        this.#emitState("IDLE");
+      }
+    }
   }
 
   stateAnswer(): AgentStateAnswer {
@@ -380,33 +401,6 @@ export class DotRuntime {
       now: this.#now(),
       ...(task ? { task: { id: task.id, description: task.description } } : {}),
     });
-  }
-
-  #systemEvent(name: string, data: Record<string, unknown>): void {
-    if (name === TASK_CANCELLED_SYSTEM_EVENT) {
-      const taskId = typeof data.task_id === "string" ? data.task_id : "";
-      this.#cancelTask(taskId);
-      return;
-    }
-    this.#log.info("system event recorded", { name });
-  }
-
-  #cancelTask(taskId: string): void {
-    const cancelled = this.#queue.cancel(taskId);
-    if (!cancelled) {
-      this.#log.warn("cancel for a task that is unknown or already finished; ignored", { task_id: taskId });
-      return;
-    }
-    this.#approvals.dropThread(taskId);
-    this.#log.info("task cancelled", { task_id: taskId });
-    const active = this.#ledger.get();
-    if (active?.kind !== "task" || active.taskId !== taskId) return;
-    if (this.#controller) {
-      this.#controller.abort(new UnitAbort("cancel"));
-    } else {
-      // Not running: it was waiting for an approval.
-      this.#finishUnit(active);
-    }
   }
 
   #failUnit(record: RunRecord, error: string): void {

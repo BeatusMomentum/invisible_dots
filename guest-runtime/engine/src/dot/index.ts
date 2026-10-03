@@ -1,5 +1,5 @@
 export { DotRuntime } from "./driver.js";
-export type { DotRuntimeOptions } from "./driver.js";
+export type { DotRuntimeOptions, FaultSeam } from "./driver.js";
 export { decideTool } from "./gate.js";
 export type { ToolDecision } from "./gate.js";
 export { buildSystemPrompt, taskSeedMessage } from "./prompt.js";

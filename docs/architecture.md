@@ -540,7 +540,10 @@ note?}`, `system.event {name, data}`. A task cancelled after its
 `system.event { name: "task.cancelled", data: { task_id } }`. The guest keeps
 the id of every inbound event it accepted and ignores one it already has, so
 the host may send an event again whenever the outcome of a send is unknown
-(section 9.2).
+(section 9.2). An inbound event is recorded and applied in one transaction
+(a `user.message` is applied when its chat turn is answered): an event the
+guest has accepted is never lost to a restart, and one whose transaction
+failed was not accepted, so its redelivery is.
 
 Outbound types: `agent.started {}` (the first event of every start of the
 agent process, section 4.3), `agent.state {state}`, `message.assistant {text,

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { DotStore } from "@invisible-dots/memory";
 import { OpenRouterClient } from "@invisible-dots/openrouter-client";
 import { offeredTools, type DotRuntimeConfig, type InboundEvent, type OutboundEvent } from "@invisible-dots/shared";
-import { DotRuntime, type ToolContext, type ToolRegistry, type ToolResult } from "../src/dot/index.js";
+import { DotRuntime, type FaultSeam, type ToolContext, type ToolRegistry, type ToolResult } from "../src/dot/index.js";
 import { startFakeOpenRouter, type FakeOpenRouter } from "../../openrouter-client/test/fake-openrouter.js";
 
 export { completion } from "../../openrouter-client/test/fake-openrouter.js";
@@ -53,7 +53,10 @@ export interface Harness {
   close(): Promise<void>;
 }
 
-export async function harness(config: Record<string, unknown> = baseConfig, options: { apiKey?: boolean } = {}): Promise<Harness> {
+export async function harness(
+  config: Record<string, unknown> = baseConfig,
+  options: { apiKey?: boolean; faults?: FaultSeam } = {},
+): Promise<Harness> {
   const dir = mkdtempSync(join(tmpdir(), "idots-agent-"));
   const dbPath = join(dir, "dot.db");
   const fake = await startFakeOpenRouter();
@@ -66,7 +69,7 @@ export async function harness(config: Record<string, unknown> = baseConfig, opti
       url: fake.url,
       sleep: async () => {},
     });
-    const runtime = new DotRuntime({ store, registry, model });
+    const runtime = new DotRuntime({ store, registry, model, ...(options.faults ? { faults: options.faults } : {}) });
     return { store, model, runtime };
   };
 
