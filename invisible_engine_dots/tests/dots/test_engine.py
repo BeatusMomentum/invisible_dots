@@ -509,6 +509,95 @@ class TestTasks:
             {"task_id": "a", "error": "stopped: the task reached limits.max_steps_per_task (1)"}
         ]
 
+    async def test_a_task_that_spent_the_cap_fails_with_what_it_spent_and_its_calls_are_closed(
+        self, make_engine: MakeEngine
+    ) -> None:
+        body = cfg(limits={"max_steps_per_task": 60, "context_tokens": 32000, "max_cost_per_task_usd": 1})
+        h = make_engine(
+            [
+                calls(call("c1", "list_dir", path="."), cost=0.6),
+                calls(call("c2", "list_dir", path="."), cost=0.6),
+                says("never asked", cost=0.6),
+            ]
+        )
+        h.engine.start()
+        h.configure(body)
+
+        h.engine.accept(task_created("a"))
+        await h.idle()
+
+        assert h.events_of("task.failed") == [
+            {"task_id": "a", "error": "stopped: the task reached limits.max_cost_per_task_usd (spent 1.2000 USD of 1.00)"}
+        ]
+        assert h.asked() == 2
+        assert h.task("a").status == "failed"  # type: ignore[union-attr]
+        assert [m["role"] for m in h.messages("task:a")] == ["user", "assistant", "tool", "assistant", "tool"]
+        assert h.engine.state == "IDLE"
+
+    async def test_a_chat_turn_that_spent_the_cap_answers_with_what_it_spent(self, make_engine: MakeEngine) -> None:
+        body = cfg(limits={"max_steps_per_task": 60, "context_tokens": 32000, "max_cost_per_task_usd": 0.01})
+        h = make_engine(
+            [calls(call("c1", "list_dir", path="."), cost=0.006), calls(call("c2", "list_dir", path="."), cost=0.006)]
+        )
+        h.engine.start()
+        h.configure(body)
+
+        h.engine.accept(user_message("m1"))
+        await h.idle()
+
+        assert h.events_of("message.assistant") == [
+            {
+                "text": "I could not answer: stopped: the turn reached limits.max_cost_per_task_usd (spent 0.0120 USD of 0.01)",
+                "in_reply_to": "m1",
+            }
+        ]
+        assert h.asked() == 2
+        assert h.inbound_state("m1") == "applied"
+
+    async def test_the_cap_still_holds_for_a_task_after_the_process_was_killed(self, make_engine: MakeEngine) -> None:
+        body = cfg(limits={"max_steps_per_task": 60, "context_tokens": 32000, "max_cost_per_task_usd": 1})
+        h = make_engine(
+            [
+                calls(call("c1", "exec", command="sleep 30"), cost=0.6),
+                calls(call("c2", "list_dir", path="."), cost=0.6),
+                says("never asked", cost=0.6),
+            ]
+        )
+        h.engine.start()
+        h.configure(body)
+        h.engine.accept(task_created("a"))
+        await h.wait_until(lambda: "EXECUTING" in h.states())
+        await h.engine.suspend()
+        await h.idle()
+        assert h.store.read(lambda c: s.get_spend(c, "task:a")) == 0.6
+
+        # A new process: nothing in memory, the task is left running.
+        restarted = h.restart()
+        restarted.start()
+        h.configure(body)
+        await h.idle()
+
+        assert h.events_of("task.failed") == [
+            {"task_id": "a", "error": "stopped: the task reached limits.max_cost_per_task_usd (spent 1.2000 USD of 1.00)"}
+        ]
+        assert h.asked() == 2
+
+    async def test_a_task_found_running_with_the_cap_already_spent_is_failed_before_any_request(
+        self, make_engine: MakeEngine
+    ) -> None:
+        h = make_engine([says("never asked")])
+        h.store.write(lambda c: s.enqueue_task(c, task_id="a", description="x", priority=0))
+        h.store.write(lambda c: s.start_task(c, "a"))
+        h.store.write(lambda c: s.add_spend(c, "task:a", 1.5))
+
+        started(h)
+        await h.idle()
+
+        assert h.asked() == 0
+        assert h.events_of("task.failed") == [
+            {"task_id": "a", "error": "stopped: the task reached limits.max_cost_per_task_usd (spent 1.5000 USD of 1.00)"}
+        ]
+
     async def test_cancels_a_running_task_its_turn_ends_and_nothing_more_is_reported(
         self, make_engine: MakeEngine
     ) -> None:

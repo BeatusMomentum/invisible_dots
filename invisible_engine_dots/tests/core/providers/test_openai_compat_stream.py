@@ -132,6 +132,68 @@ class TestTheUsageOfAStream:
         assert (response.content, response.usage) == ("pong", None)
 
 
+class TestTheCostOfAStream:
+    @pytest.mark.parametrize("form", FORMS)
+    async def test_the_cost_in_the_final_usage_chunk_is_the_responses_cost(self, form: str) -> None:
+        make = FORMS[form]
+        stream = FakeStream([
+            make(chunk({"role": "assistant", "content": "pong"}, finish="stop")),
+            make(chunk(usage={**USAGE, "cost": 0.0123})),
+        ])
+        provider, _ = provider_streaming(stream)
+
+        response = await provider.chat_stream(MESSAGES, max_tokens=10)
+
+        assert response.cost_usd == 0.0123
+        # The cost is the response's, not a token count: the usage is what it was.
+        assert response.usage is not None and response.usage.total_tokens == 18
+
+    async def test_a_cost_of_zero_is_a_cost(self) -> None:
+        stream = FakeStream([as_sdk_object(chunk({"content": "pong"}, finish="stop", usage={**USAGE, "cost": 0}))])
+        provider, _ = provider_streaming(stream)
+
+        response = await provider.chat_stream(MESSAGES, max_tokens=10)
+
+        assert response.cost_usd == 0.0
+
+    @pytest.mark.parametrize("form", FORMS)
+    async def test_a_byok_request_counts_the_upstream_bill_beside_the_charge(self, form: str) -> None:
+        make = FORMS[form]
+        usage = {**USAGE, "cost": 0.001, "is_byok": True, "cost_details": {"upstream_inference_cost": 0.02}}
+        stream = FakeStream([make(chunk({"content": "pong"}, finish="stop")), make(chunk(usage=usage))])
+        provider, _ = provider_streaming(stream)
+
+        response = await provider.chat_stream(MESSAGES, max_tokens=10)
+
+        assert response.cost_usd == pytest.approx(0.021)
+
+    async def test_the_upstream_cost_of_a_request_that_is_not_byok_is_not_added(self) -> None:
+        usage = {**USAGE, "cost": 0.001, "is_byok": False, "cost_details": {"upstream_inference_cost": 0.02}}
+        stream = FakeStream([as_sdk_object(chunk({"content": "pong"}, finish="stop", usage=usage))])
+        provider, _ = provider_streaming(stream)
+
+        response = await provider.chat_stream(MESSAGES, max_tokens=10)
+
+        assert response.cost_usd == 0.001
+
+    async def test_a_stream_that_reports_no_cost_has_none(self) -> None:
+        stream = FakeStream([as_sdk_object(chunk({"content": "pong"}, finish="stop", usage=USAGE))])
+        provider, _ = provider_streaming(stream)
+
+        response = await provider.chat_stream(MESSAGES, max_tokens=10)
+
+        assert (response.content, response.cost_usd) == ("pong", None)
+
+    @pytest.mark.parametrize("not_a_cost", [True, "0.5", None, -1, float("nan"), float("inf")])
+    async def test_what_is_not_an_amount_of_money_is_no_cost(self, not_a_cost: object) -> None:
+        stream = FakeStream([as_bare_object(chunk({"content": "pong"}, finish="stop", usage={**USAGE, "cost": not_a_cost}))])
+        provider, _ = provider_streaming(stream)
+
+        response = await provider.chat_stream(MESSAGES, max_tokens=10)
+
+        assert response.cost_usd is None
+
+
 class TestAStreamThatGoesSilent:
     async def test_it_ends_as_a_timeout_whose_text_is_the_one_owners(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(openai_compat_provider, "STREAM_IDLE_TIMEOUT_S", 0.2)

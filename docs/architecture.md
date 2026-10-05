@@ -790,7 +790,7 @@ memory:
 limits:
   max_steps_per_task: 60               # model turns before a task is failed
   context_tokens: 32000                # prompt tokens a request may use, 4000..1000000 (section 8.6)
-  max_cost_per_task_usd: 1.00          # model spend of a task or a chat turn, 0.01..100 (section 8.2)
+  max_cost_per_task_usd: 1.00          # USD of model spend of a task or a chat turn, 0.01..100; the last request may exceed it (section 8.2)
 ```
 
 The permission names are the ones of `PERMISSIONS` in
@@ -839,8 +839,30 @@ the summary), or when an approval is rejected and the model gives up. It fails
 `max_steps_per_task`; when a model request fails for good after the retries of
 section 8.5, or the run ends without an answer; or after being interrupted
 three times (section 8.7). A chat turn has the same limits; a failed chat turn
-answers "I could not answer: ...". `limits.max_cost_per_task_usd` is accepted
-and not enforced yet (section 8.8).
+answers "I could not answer: ...".
+
+`limits.max_cost_per_task_usd` caps the model spend of a task, or of one turn of
+the chat. The cost of a request is what OpenRouter reports for it in the usage
+of the last chunk of its response (`usage.cost`, USD; for a BYOK request the
+upstream cost it reports beside it is added, which may count more than was
+charged and never less). The engine adds the cost of every response of a turn,
+the requests of the turn, their retries and the summary requests alike, to the
+spend of its session in the Dot's database as each arrives, and checks the
+spend before every model request: when it has reached the cap the turn stops
+without asking again, and fails with `stopped: the task reached
+limits.max_cost_per_task_usd (spent 1.0423 USD of 1.00)` (`task.failed`'s
+`error`; "the turn" instead of "the task" for the chat, which then answers "I
+could not answer: ..."). A request cannot be priced before it is answered, so
+the cap may be exceeded by the last request, and an answer that crosses it is
+delivered and the task completes: the cap only stops the work from going on. A
+request that failed has no cost and counts for nothing. A task's spend is kept
+across a restart, an approval and a resume (a task that was cut by a crash goes
+on from what it had spent); the chat's spend starts again with every chat turn.
+A lowered cap applies from the next turn, like the step limit. A response that
+reports no cost fails the turn at its next check, `stopped: OpenRouter reported
+no cost for a request, so limits.max_cost_per_task_usd cannot be enforced`: the
+cap never runs blind. A request abandoned by a sleep may have cost something
+that was never reported; that gap is at most one request a sleep.
 
 ### 8.3 Tools
 
@@ -925,7 +947,9 @@ runs at most once. Section 8.8 says how the gate does this.
 `HTTP-Referer: https://github.com/feder-cr/dots` and `X-Title: invisible_dots`
 (sent only when the base URL's host is `openrouter.ai`, so a stand-in used by
 tests never receives them), the key from memory (section 4.3). Tool calling in
-the OpenAI format, `tool_choice: "auto"`, no streaming. A response cut by the
+the OpenAI format, `tool_choice: "auto"`, every request streamed (with
+`stream_options.include_usage`, so the final chunk carries the usage and the
+cost, section 8.2). A response cut by the
 output limit (`finish_reason: "length"`) has none of its tool calls executed:
 what it said is stored without them and the model is asked to go on, a bounded
 number of times. Retries with exponential backoff on 429 and 5xx (at most 4
@@ -1033,7 +1057,7 @@ state.
   (`/home/dotengine/state`, 0700), opened in WAL mode with
   `synchronous=FULL` and the exclusive locking mode. It holds the Dot's tables
   (`dots_outbox`, `dots_inbound`, `dots_tasks`, `dots_tool_intents`,
-  `dots_tool_decisions`, `dots_approvals`, `dots_kv`) and the transcripts
+  `dots_tool_decisions`, `dots_approvals`, `dots_spend`, `dots_kv`) and the transcripts
   (`sessions`, `messages`): SQLite makes a transaction atomic per file only,
   and this is what lets an event commit with the transcript row it describes.
   `DotStore` (`store.py`) is the one place a write transaction begins and
@@ -1187,8 +1211,7 @@ state.
   the usage telemetry, the configuration files and every provider but
   OpenRouter.
 - Not yet: the browser identities (`GET` lists none, `POST` and `DELETE` answer
-  `501`), the screenshot tool,
-  `limits.max_cost_per_task_usd` (accepted, not enforced), the extra `models`
+  `501`), the screenshot tool, the extra `models`
   roles, and a pseudo-terminal tool (`exec` and `exec_session` cover jobs and
   their input; `dot-agentd relay --tty` is there for it).
 

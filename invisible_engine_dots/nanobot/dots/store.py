@@ -13,6 +13,7 @@ transaction atomic per file only.
 - dots_tool_intents: a tool call that started and has no result yet (an intent
   left by a crash is a call the agent stopped during), with the notes the call
   writes (`memory_keys_json`), which its result reports as `memory.written`;
+- dots_spend: what the model requests of a session have cost, in USD (see `nanobot.dots.spend`);
 - dots_kv: the runtime config the host pushed and the last agent state;
 - dots_approvals: a tool call the policy answered "ask", with its full
   arguments, from the request to the call that ran it or the rejection the
@@ -57,7 +58,7 @@ T = TypeVar("T")
 # The version of the database layout, kept in the file's `user_version`. Change it with any
 # change of `_SCHEMA`: an engine refuses a file of another version rather than run on a layout
 # it does not know. There is no migration (no engine of an older layout has run on a real Dot).
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 # How long open() waits for the file's lock before it says another engine owns it.
 OPEN_TIMEOUT_S = 2.0
@@ -119,6 +120,12 @@ _SCHEMA: tuple[str, ...] = (
       started_at INTEGER NOT NULL,
       memory_keys_json TEXT NOT NULL DEFAULT '[]',
       PRIMARY KEY (session_key, tool_call_id)
+    ) STRICT
+    """,
+    """
+    CREATE TABLE dots_spend (
+      session_key TEXT PRIMARY KEY,
+      usd REAL NOT NULL
     ) STRICT
     """,
     """
@@ -658,6 +665,32 @@ def record_agent_state(conn: sqlite3.Connection, state: str, force: bool = False
     write_kv(conn, KV_AGENT_STATE, state)
     append_outbox(conn, "agent.state", {"state": state})
     return True
+
+
+# ---------------------------------------------------------------------------
+# Spend
+# ---------------------------------------------------------------------------
+
+
+def add_spend(conn: sqlite3.Connection, session_key: str, usd: float) -> float:
+    """Add what a model request cost to the session's spend; returns the new total."""
+    conn.execute(
+        """
+        INSERT INTO dots_spend (session_key, usd) VALUES (?, ?)
+        ON CONFLICT (session_key) DO UPDATE SET usd = usd + excluded.usd
+        """,
+        (session_key, usd),
+    )
+    return get_spend(conn, session_key)
+
+
+def get_spend(conn: sqlite3.Connection, session_key: str) -> float:
+    row = conn.execute("SELECT usd FROM dots_spend WHERE session_key = ?", (session_key,)).fetchone()
+    return float(row["usd"]) if row else 0.0
+
+
+def reset_spend(conn: sqlite3.Connection, session_key: str) -> None:
+    conn.execute("DELETE FROM dots_spend WHERE session_key = ?", (session_key,))
 
 
 # ---------------------------------------------------------------------------

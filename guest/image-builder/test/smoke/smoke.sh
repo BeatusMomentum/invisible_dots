@@ -337,6 +337,27 @@ check "a file written outside the memory directory (through ../) is no note" "[ 
 echo '{"computer.exec":"allow"}' > /tmp/perms.json
 check "the host pushes the allow-everything config once more (204 204)" "[ \"\$(push)\" = '204 204' ]"
 
+# --- limits.max_cost_per_task_usd (1 in the pushed config): the cap stops a task and a chat turn, and holds after kill -9 ---
+# The stand-in reports a cost of 0.6 in every response of a conversation whose last user text has a COST 0.6 line,
+# and REPEAT-EXEC makes it call exec after every result: only the cap ends such a task.
+ev task-ev-8 task.created '{"task_id":"t8","description":"COST 0.6\nREPEAT-EXEC echo spend","priority":0}' >/dev/null
+check "t8 (0.6 a response, a model that never stops) fails with the cap's text, having spent 1.2" "wait_event $STREAM '.type==\"task.failed\" and .data.task_id==\"t8\" and .data.error==\"stopped: the task reached limits.max_cost_per_task_usd (spent 1.2000 USD of 1.00)\"'"
+check "t8 made two requests: the third was never asked (two tool.called, no task.completed)" "[ \"\$(grep '^data: ' $STREAM | sed 's/^data: //' | jq -c 'select(.type==\"tool.called\" and .data.task_id==\"t8\")' | wc -l)\" = 2 ] && [ \"\$(grep -c 'REPEAT-EXEC echo spend' /tmp/fake-tools.jsonl)\" = 2 ]"
+ev msg-spend user.message '{"text":"COST 0.6\nREPEAT-EXEC echo chat-spend"}' >/dev/null
+check "a chat turn that spent the cap answers with the turn's text" "wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-spend\" and .data.text==\"I could not answer: stopped: the turn reached limits.max_cost_per_task_usd (spent 1.2000 USD of 1.00)\"'"
+# The first response of t9 is paid (0.6) and its command runs; the engine is killed then. The restarted engine
+# resumes the task from the spend it stored: one more response ends it. Were the spend lost with the process,
+# a third request would be made.
+ev task-ev-9 task.created '{"task_id":"t9","description":"COST 0.6\nREPEAT-EXEC sleep 4","priority":0}' >/dev/null
+for _ in $(seq 1 60); do pgrep -u dot -f 'sleep 4$' >/dev/null && break; sleep 0.5; done
+check "t9's first command runs as dot" "pgrep -u dot -f 'sleep 4\$' >/dev/null"
+pkill -9 -u dotengine
+sleep 2
+start_engine
+check "the restarted engine answers /health (the cap's task cut)" "wait_health && wait_key"
+check "t9 fails with the cap's text after one more response: the spend survived the kill" "wait_event $STREAM '.type==\"task.failed\" and .data.task_id==\"t9\" and .data.error==\"stopped: the task reached limits.max_cost_per_task_usd (spent 1.2000 USD of 1.00)\"'"
+check "t9 asked the model twice in all: once before the kill, once after" "[ \"\$(grep -c 'REPEAT-EXEC sleep 4' /tmp/fake-tools.jsonl)\" = 2 ]"
+
 # --- what the model is sent, read whole ---
 # Here, after the last model turn of the run, so the checks judge EVERY request:
 # the allow-mode chat and tasks, the resumes after each restart, the ask-mode
@@ -359,7 +380,7 @@ check "seqs of the full stream are 1..N without a gap" "[ \"\$(seqs $ALL | tr '\
 check "the host received every event exactly once across the crash (no loss, no repeat)" "[ \"\$(seqs $STREAM | tr '\n' ' ')\" = \"\$(seqs $ALL | tr '\n' ' ')\" ]"
 check "event ids are unique" "[ \"\$(grep '^data: ' $ALL | sed 's/^data: //' | jq -r .id | sort | uniq -d | wc -l)\" = 0 ]"
 check "tool.called for t2 appears once as interrupted" "[ \"\$(grep '^data: ' $ALL | sed 's/^data: //' | jq -c 'select(.type==\"tool.called\" and .data.task_id==\"t2\" and .data.interrupted==true)' | wc -l)\" = 1 ]"
-check "agent.started five times in all (five starts)" "[ \"\$(grep '^data: ' $ALL | sed 's/^data: //' | jq -c 'select(.type==\"agent.started\")' | wc -l)\" = 5 ]"
+check "agent.started six times in all (six starts)" "[ \"\$(grep '^data: ' $ALL | sed 's/^data: //' | jq -c 'select(.type==\"agent.started\")' | wc -l)\" = 6 ]"
 echo "event types: $(grep '^data: ' $ALL | sed 's/^data: //' | jq -r .type | sort | uniq -c | tr '\n' ' ')"
 
 # --- the key on disk ---

@@ -893,3 +893,166 @@ class TestTheStartOfATurn:
         assert (called["tool"], called["ok"], called["interrupted"], called["duration_ms"]) == ("exec", False, True, 0)
         # The model was asked with every call answered.
         assert roles(h.provider.requests[0]["messages"]) == ["system", "user", "assistant", "tool", "tool", "user"]
+
+
+def cap_limits(cap: float) -> dict[str, Any]:
+    return {"max_steps_per_task": 60, "context_tokens": 32000, "max_cost_per_task_usd": cap}
+
+
+def cap_text(spent: str, cap: str, what: str = "task") -> str:
+    return f"stopped: the {what} reached limits.max_cost_per_task_usd (spent {spent} USD of {cap})"
+
+
+class TestTheCostCap:
+    async def test_a_task_that_spent_the_cap_stops_before_the_next_request(self, make_harness: MakeHarness) -> None:
+        h = make_harness(
+            [
+                calls(call("c1", "list_dir", path="."), cost=0.006),
+                calls(call("c2", "list_dir", path="."), cost=0.006),
+                says("never asked", cost=0.006),
+            ],
+            limits=cap_limits(0.01),
+        )
+        session = h.start_task()
+
+        outcome = await h.run(TurnUnit(session, "t1", (OpeningMessage("do it"),)))
+
+        assert outcome == TurnOutcome.failed(cap_text("0.0120", "0.01"))
+        assert len(h.provider.requests) == 2
+        # Both calls were answered before it stopped, and the task is the engine's to fail, not this turn's.
+        assert roles(h.messages(session)) == ["user", "assistant", "tool", "assistant", "tool"]
+        assert [kind for kind, _ in h.events()] == ["tool.called", "tool.called"]
+
+    async def test_the_answer_that_crosses_the_cap_is_delivered(self, make_harness: MakeHarness) -> None:
+        h = make_harness([says("the summary", cost=5.0)], limits=cap_limits(0.01))
+        session = h.start_task()
+
+        outcome = await h.run(TurnUnit(session, "t1", (OpeningMessage("do it"),)))
+
+        assert outcome.kind == "completed"
+        assert h.events() == [("task.completed", {"task_id": "t1", "summary": "the summary"})]
+        assert h.store.read(lambda conn: s.get_spend(conn, session)) == 5.0
+
+    async def test_a_chat_turn_says_the_turn_and_keeps_its_transcript_legal(self, make_harness: MakeHarness) -> None:
+        h = make_harness(
+            [calls(call("c1", "list_dir", path="."), cost=0.6), calls(call("c2", "list_dir", path="."), cost=0.6)],
+            limits=cap_limits(1),
+        )
+        h.accept("in1")
+
+        outcome = await h.run(chat_unit())
+
+        assert outcome == TurnOutcome.failed(cap_text("1.2000", "1.00", "turn"))
+        assert len(h.provider.requests) == 2
+        assert roles(h.messages()) == ["user", "assistant", "tool", "assistant", "tool"]
+
+    async def test_a_summary_request_counts_toward_the_cap(
+        self, make_harness: MakeHarness, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def four_characters_a_token(provider: Any, model: str, messages: list[dict[str, Any]], tools: Any) -> Any:
+            return sum(len(json.dumps(message)) for message in messages) // 4, "test"
+
+        for module in ("nanobot.agent.context_governance", "nanobot.agent.memory"):
+            monkeypatch.setattr(f"{module}.estimate_prompt_tokens_chain", four_characters_a_token)
+        # The request, the summary the next request needs, the request after it. The requests alone cost
+        # 0.005 and the summary 0.007: only with the summary counted is the cap met before the fourth.
+        h = make_harness(
+            [
+                calls(call("c1", "read_file", path="big.txt"), cost=0.004),
+                says("summary of the history", cost=0.007),
+                calls(call("c2", "read_file", path="big.txt"), cost=0.001),
+                says("never asked", cost=0.001),
+            ],
+            {"files.read": "allow"},
+            max_tokens=500,
+            limits=cap_limits(0.01),
+        )
+        h.settings_override = {"context_window_tokens": 2500}
+        (h.tmp_path / "home" / "dot" / "workspace" / "big.txt").write_bytes(b"z" * 800)
+        old = [
+            {"role": "user", "content": "q1 " + "x" * 700},
+            {"role": "assistant", "content": "a1 " + "y" * 700},
+            {"role": "user", "content": "q2 " + "x" * 700},
+            {"role": "assistant", "content": "a2 " + "y" * 700},
+        ]
+        h.store.write(lambda conn: s.append_messages(conn, CHAT, old, final_index=None))
+        h.accept("in1")
+
+        outcome = await h.run(chat_unit("read big.txt"))
+
+        assert outcome == TurnOutcome.failed(cap_text("0.0120", "0.01", "turn"))
+        assert len(h.provider.requests) == 3
+
+    async def test_a_response_with_no_cost_fails_the_turn_closed(self, make_harness: MakeHarness) -> None:
+        h = make_harness([calls(call("c1", "list_dir", path=".")), says("never asked")], limits=cap_limits(1))
+        h.provider.default_cost = None
+        session = h.start_task()
+
+        outcome = await h.run(TurnUnit(session, "t1", (OpeningMessage("do it"),)))
+
+        assert outcome == TurnOutcome.failed(
+            "stopped: OpenRouter reported no cost for a request, so limits.max_cost_per_task_usd cannot be enforced"
+        )
+        assert len(h.provider.requests) == 1
+
+    async def test_the_spend_of_a_task_is_there_for_the_next_turn_on_it(self, make_harness: MakeHarness) -> None:
+        h = make_harness(
+            [calls(call("c1", "list_dir", path="."), cost=0.006), RuntimeError("the connection broke")],
+            limits=cap_limits(0.01),
+        )
+        session = h.start_task()
+        assert (await h.run(TurnUnit(session, "t1", (OpeningMessage("do it"),)))) == TurnOutcome.failed(
+            "the connection broke"
+        )
+
+        # The turn that resumes it (after a restart, as the engine resumes a running task) starts from that spend.
+        h.provider.script += [calls(call("c2", "list_dir", path="."), cost=0.006), says("never asked")]
+        outcome = await h.run(TurnUnit(session, "t1", (OpeningMessage("resume"),)))
+
+        assert outcome == TurnOutcome.failed(cap_text("0.0120", "0.01"))
+        assert len(h.provider.requests) == 3
+
+    async def test_the_turn_that_tells_a_task_its_approval_stops_at_once_when_the_cap_was_spent(
+        self, make_harness: MakeHarness
+    ) -> None:
+        h = make_harness(
+            [calls(call("c1", "write_file", path="a.txt", content="x"), cost=0.02)],
+            {"files.write": "ask"},
+            limits=cap_limits(0.01),
+        )
+        session = h.start_task()
+        assert (await h.run(TurnUnit(session, "t1", (OpeningMessage("do it"),)))).kind == "parked"
+        approval = approval_of(h)
+        h.store.write(lambda conn: s.advance_approval(conn, approval.approval_id, "pending", "approved"))
+        h.store.write(lambda conn: s.advance_approval(conn, approval.approval_id, "approved", "granted"))
+        h.provider.script += [says("never asked")]
+        opening = OpeningMessage("approved", {"dots_approval_id": approval.approval_id})
+
+        outcome = await h.run(TurnUnit(session, "t1", (opening,), approval.approval_id))
+
+        assert outcome == TurnOutcome.failed(cap_text("0.0200", "0.01"))
+        assert len(h.provider.requests) == 1
+        assert not (h.tmp_path / "home" / "dot" / "workspace" / "a.txt").exists()
+
+    async def test_the_chat_starts_every_turn_with_nothing_spent(self, make_harness: MakeHarness) -> None:
+        h = make_harness([says("one", cost=0.9), says("two", cost=0.9)], limits=cap_limits(1))
+        h.accept("in1")
+        assert (await h.run(chat_unit())).kind == "completed"
+        assert h.store.read(lambda conn: s.get_spend(conn, CHAT)) == 0.9
+
+        h.accept("in2")
+        outcome = await h.run(chat_unit("again", "in2"))
+
+        assert outcome.kind == "completed"
+        assert h.store.read(lambda conn: s.get_spend(conn, CHAT)) == 0.9
+
+    async def test_the_cap_is_the_one_the_settings_have_when_the_turn_starts(self, make_harness: MakeHarness) -> None:
+        h = make_harness(
+            [calls(call("c1", "list_dir", path="."), cost=0.4), says("done", cost=0.4)], limits=cap_limits(1)
+        )
+        h.accept("in1")
+        h.settings_override = {"max_cost_usd": 0.3}
+
+        outcome = await h.run(chat_unit())
+
+        assert outcome == TurnOutcome.failed(cap_text("0.4000", "0.30", "turn"))

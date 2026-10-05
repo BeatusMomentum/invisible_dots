@@ -8,7 +8,8 @@ means (answering the chat, failing a task, the agent state) belongs to the engin
 
 Commit points of a turn, each one store transaction with the outbox rows that
 describe it:
-- the opening: closing the calls the previous unit left open, and the opening messages;
+- the opening: closing the calls the previous unit left open, the opening messages, and for a
+  chat turn the start of its spend;
 - every message the runner adds, one at a time, before it goes on (`_commit`);
 - a call's intent with the EXECUTING state (`DotsTurnHook`, through the host);
 - the summary checkpoint, at the end.
@@ -42,6 +43,7 @@ from nanobot.dots.memory_tools import MEMORY_DIR, memory_keys_written
 from nanobot.dots.projection import EngineSettings
 from nanobot.dots.provider import OpenRouterProviders
 from nanobot.dots.secrets import KeyHolder
+from nanobot.dots.spend import CostCapReached, TurnSpend
 from nanobot.dots.store import CHAT_SESSION_KEY, DotStore, ToolIntent
 from nanobot.providers.base import ToolCallRequest
 from nanobot.session.manager import Session
@@ -132,12 +134,15 @@ class TurnHost(Protocol):
 
 
 class DotsTurnHook(AgentHook):
-    """The runner's lifecycle seen by the Dot: agent state, intents, suspension."""
+    """The runner's lifecycle seen by the Dot: agent state, intents, suspension, the cost cap."""
 
-    def __init__(self, unit: TurnUnit, host: TurnHost, resolve: Callable[[str], str]) -> None:
+    def __init__(
+        self, unit: TurnUnit, host: TurnHost, resolve: Callable[[str], str], spend: TurnSpend
+    ) -> None:
         super().__init__()
         self._unit = unit
         self._host = host
+        self._spend = spend
         # The computer's own path resolution: which notes a call of a file tool writes depends on it.
         self._resolve = resolve
 
@@ -147,6 +152,7 @@ class DotsTurnHook(AgentHook):
     async def before_iteration(self, context: AgentHookContext) -> None:
         if self._host.is_suspending():
             raise TurnAbandoned()
+        self._spend.check()
 
     async def before_execute_tool(
         self,
@@ -243,6 +249,8 @@ class TurnRunner:
             return await self._run(unit, settings)
         except TurnAbandoned:
             return TurnOutcome("abandoned")
+        except CostCapReached as exc:
+            return TurnOutcome.failed(str(exc))
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -254,6 +262,9 @@ class TurnRunner:
 
         def open_turn(conn: sqlite3.Connection) -> Session:
             close_open_calls(conn, session_key)
+            if session_key == CHAT_SESSION_KEY:
+                # A chat turn is capped on its own; a task's spend is the task's, whatever turn it is on.
+                dots_store.reset_spend(conn, session_key)
             if unit.opening:
                 dots_store.append_messages(
                     conn,
@@ -267,7 +278,10 @@ class TurnRunner:
         history = session.get_history()
         rows_at_start = len(session.messages)
 
-        provider = self._providers.current(settings, self._key_holder.require())
+        spend = TurnSpend(
+            self._store, session_key, settings.max_cost_usd, "turn" if session_key == CHAT_SESSION_KEY else "task"
+        )
+        provider = spend.meter(self._providers.current(settings, self._key_holder.require()))
         runtime = LLMRuntime.capture(
             provider, settings.model_id, context_window_tokens=settings.context_window_tokens
         )
@@ -301,7 +315,7 @@ class TurnRunner:
                 ),
             ),
             transcript_builder=builder.build_transcript,
-            hook=DotsTurnHook(unit, self._host, self._computer.resolve),
+            hook=DotsTurnHook(unit, self._host, self._computer.resolve, spend),
             concurrent_tools=False,
             # No spill files: a long result is cut to the limit, the Dot's computer is not the engine's disk.
             workspace=None,

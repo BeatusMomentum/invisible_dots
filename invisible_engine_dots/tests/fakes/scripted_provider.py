@@ -5,6 +5,8 @@ transcript cannot change what the model was asked) and answered by the next entr
 of the script:
 - an LLMResponse is returned;
 - an exception instance is raised;
+- a response that reports no cost is stamped with `default_cost` (what OpenRouter's usage.cost is on a
+  real one; None leaves it unpriced, as a gateway that sends no cost does);
 - a callable is called with the provider and returns one of the above, or an
   awaitable of one of them, which lets a test look at the world at the moment the
   model is asked, and hold the answer back (`Gate`).
@@ -23,12 +25,12 @@ from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse,
 ScriptEntry = LLMResponse | BaseException | Callable[["ScriptedProvider"], Any]
 
 
-def says(text: str) -> LLMResponse:
-    return LLMResponse(content=text)
+def says(text: str, *, cost: float | None = None) -> LLMResponse:
+    return LLMResponse(content=text, cost_usd=cost)
 
 
-def calls(*tool_calls: ToolCallRequest, text: str | None = None) -> LLMResponse:
-    return LLMResponse(content=text, tool_calls=list(tool_calls), finish_reason="tool_calls")
+def calls(*tool_calls: ToolCallRequest, text: str | None = None, cost: float | None = None) -> LLMResponse:
+    return LLMResponse(content=text, tool_calls=list(tool_calls), finish_reason="tool_calls", cost_usd=cost)
 
 
 def call(call_id: str, name: str, **arguments: Any) -> ToolCallRequest:
@@ -60,9 +62,12 @@ class Gate:
 
 
 class ScriptedProvider(LLMProvider):
-    def __init__(self, script: list[ScriptEntry], *, max_tokens: int = 1000) -> None:
+    def __init__(
+        self, script: list[ScriptEntry], *, max_tokens: int = 1000, default_cost: float | None = 0.0
+    ) -> None:
         super().__init__(provider_name="scripted")
         self.script = list(script)
+        self.default_cost = default_cost
         self.requests: list[dict[str, Any]] = []
         # The ProviderCallContext of each request, kept apart from `requests`, which tests serialize.
         self.contexts: list[Any] = []
@@ -92,6 +97,8 @@ class ScriptedProvider(LLMProvider):
             entry = await entry
         if isinstance(entry, BaseException):
             raise entry
+        if entry.cost_usd is None and entry.finish_reason != "error":
+            entry.cost_usd = self.default_cost
         return entry
 
     @property

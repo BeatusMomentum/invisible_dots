@@ -38,6 +38,7 @@ class TestOpen:
             "dots_inbound",
             "dots_tasks",
             "dots_tool_intents",
+            "dots_spend",
             "dots_kv",
             "dots_approvals",
             "dots_tool_decisions",
@@ -48,7 +49,7 @@ class TestOpen:
     def test_every_table_is_strict(self, dot_store: DotStore) -> None:
         rows = dot_store.read(lambda c: c.execute("PRAGMA table_list").fetchall())
         user_tables = [r for r in rows if r["schema"] == "main" and not r["name"].startswith("sqlite_")]
-        assert len(user_tables) == 9
+        assert len(user_tables) == 10
         assert all(r["strict"] == 1 for r in user_tables)
 
     def test_the_connection_is_wal_full_and_exclusive(self, dot_store: DotStore) -> None:
@@ -494,6 +495,38 @@ class TestKv:
         dot_store.write(lambda c: s.write_kv(c, "k", {"a": [1, 2]}))
         dot_store.write(lambda c: s.write_kv(c, "k", {"a": [3]}))
         assert dot_store.read(lambda c: s.read_kv(c, "k")) == {"a": [3]}
+
+
+class TestSpend:
+    def test_a_session_that_spent_nothing_has_spent_zero(self, dot_store: DotStore) -> None:
+        assert dot_store.read(lambda c: s.get_spend(c, "task:t1")) == 0.0
+
+    def test_adding_returns_the_total_and_keeps_the_sessions_apart(self, dot_store: DotStore) -> None:
+        assert dot_store.write(lambda c: s.add_spend(c, "task:t1", 0.25)) == 0.25
+        assert dot_store.write(lambda c: s.add_spend(c, "task:t1", 0.5)) == 0.75
+        assert dot_store.write(lambda c: s.add_spend(c, "chat", 0.125)) == 0.125
+        assert dot_store.read(lambda c: s.get_spend(c, "task:t1")) == 0.75
+        assert dot_store.read(lambda c: s.get_spend(c, "chat")) == 0.125
+
+    def test_resetting_one_session_leaves_the_others(self, dot_store: DotStore) -> None:
+        dot_store.write(lambda c: s.add_spend(c, "task:t1", 0.75))
+        dot_store.write(lambda c: s.add_spend(c, "chat", 0.125))
+        dot_store.write(lambda c: s.reset_spend(c, "chat"))
+        assert dot_store.read(lambda c: s.get_spend(c, "chat")) == 0.0
+        assert dot_store.read(lambda c: s.get_spend(c, "task:t1")) == 0.75
+        # Nothing to reset is no error.
+        dot_store.write(lambda c: s.reset_spend(c, "never"))
+
+    def test_the_spend_is_there_after_the_file_is_opened_again(self, tmp_path: Path) -> None:
+        path = tmp_path / "engine.sqlite"
+        first = DotStore.open(path)
+        first.write(lambda c: s.add_spend(c, "task:t1", 0.4))
+        first.close()
+        second = DotStore.open(path)
+        try:
+            assert second.read(lambda c: s.get_spend(c, "task:t1")) == 0.4
+        finally:
+            second.close()
 
 
 class TestToolIntents:

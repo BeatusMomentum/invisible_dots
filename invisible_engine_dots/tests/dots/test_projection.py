@@ -29,15 +29,16 @@ def test_names_the_model_the_workspace_and_maps_the_limits(make_config: Callable
     assert result.model_id == "z-ai/glm-5.3-flash"
     assert result.workspace == WORKSPACE
     assert result.max_iterations == 60
+    assert result.max_cost_usd == 1
     assert result.context_window_tokens == 32000
     assert result.max_tool_result_chars == MAX_TOOL_RESULT_CHARS == 12000
 
 
 def test_the_limits_follow_the_config(config_body: Callable[..., dict[str, Any]]) -> None:
     body = config_body()
-    body["limits"].update(max_steps_per_task=7, context_tokens=4000)
+    body["limits"].update(max_steps_per_task=7, context_tokens=4000, max_cost_per_task_usd=0.25)
     result = settings(parse_runtime_config(body))
-    assert (result.max_iterations, result.context_window_tokens) == (7, 4000)
+    assert (result.max_iterations, result.context_window_tokens, result.max_cost_usd) == (7, 4000, 0.25)
 
 
 def test_offers_the_model_only_the_tools_whose_permission_is_not_denied(make_config: Callable[..., DotRuntimeConfig]) -> None:

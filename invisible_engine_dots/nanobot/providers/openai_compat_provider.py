@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import math
 import re
 import secrets
 import string
@@ -757,6 +758,33 @@ class OpenAICompatProvider(LLMProvider):
         return "".join(parts) or None
 
     @classmethod
+    def _usage_object(cls, response: Any) -> Any:
+        """The ``usage`` of a response or stream chunk (dict or SDK object), or None."""
+        response_map = cls._maybe_mapping(response)
+        if response_map is not None:
+            return response_map.get("usage")
+        if hasattr(response, "usage") and response.usage:
+            return response.usage
+        return None
+
+    @classmethod
+    def _extract_cost(cls, response: Any) -> float | None:
+        """The money the request cost, in USD, as the gateway reported it; None when it did not.
+
+        OpenRouter puts it in the usage of the final stream chunk: ``cost`` is the whole
+        charge. For a BYOK request (``is_byok``) the upstream provider's bill is reported
+        beside it in ``cost_details.upstream_inference_cost``; the two are added, which may
+        count more than was charged and never less, the safe side for a cap.
+        """
+        usage_obj = cls._usage_object(response)
+        cost = cls._get_nested_float(usage_obj, ("cost",))
+        if cost is None:
+            return None
+        if cls._get_nested(usage_obj, ("is_byok",)) is True:
+            cost += cls._get_nested_float(usage_obj, ("cost_details", "upstream_inference_cost")) or 0.0
+        return cost
+
+    @classmethod
     def _extract_usage(cls, response: Any) -> LLMUsage | None:
         """Extract token usage from an OpenAI-compatible response.
 
@@ -764,14 +792,7 @@ class OpenAICompatProvider(LLMProvider):
         responses. Provider-specific cache fields are normalized once at
         this Chat Completions wire boundary.
         """
-        # --- resolve usage object ---
-        usage_obj = None
-        response_map = cls._maybe_mapping(response)
-        if response_map is not None:
-            usage_obj = response_map.get("usage")
-        elif hasattr(response, "usage") and response.usage:
-            usage_obj = response.usage
-
+        usage_obj = cls._usage_object(response)
         usage_map = cls._maybe_mapping(usage_obj)
         if usage_map is not None:
             input_tokens = int(usage_map.get("prompt_tokens") or 0)
@@ -814,12 +835,8 @@ class OpenAICompatProvider(LLMProvider):
         )
 
     @staticmethod
-    def _get_nested_int(obj: object, path: tuple[str, ...]) -> int | None:
-        """Return a present usage count while preserving explicit zero.
-
-        Supports both dict-key access and attribute access so it works
-        uniformly with raw JSON dicts **and** SDK Pydantic models.
-        """
+    def _get_nested(obj: object, path: tuple[str, ...]) -> object:
+        """The value at `path` of a dict or an SDK object; None when a step is missing."""
         current: object = obj
         for segment in path:
             if current is None:
@@ -828,6 +845,25 @@ class OpenAICompatProvider(LLMProvider):
                 current = cast(dict[str, Any], current).get(segment)
             else:
                 current = getattr(current, segment, None)
+        return current
+
+    @classmethod
+    def _get_nested_float(cls, obj: object, path: tuple[str, ...]) -> float | None:
+        """A reported amount of money: a finite number that is not negative (a bool, text or NaN is none)."""
+        value = cls._get_nested(obj, path)
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        amount = float(value)
+        return amount if math.isfinite(amount) and amount >= 0 else None
+
+    @classmethod
+    def _get_nested_int(cls, obj: object, path: tuple[str, ...]) -> int | None:
+        """Return a present usage count while preserving explicit zero.
+
+        Supports both dict-key access and attribute access so it works
+        uniformly with raw JSON dicts **and** SDK Pydantic models.
+        """
+        current = cls._get_nested(obj, path)
         if current is None or isinstance(current, bool):
             return None
         try:
@@ -842,6 +878,15 @@ class OpenAICompatProvider(LLMProvider):
         tc_bufs: dict[int, dict[str, Any]] = {}
         finish_reason = "stop"
         usage: LLMUsage | None = None
+        cost_usd: float | None = None
+
+        def note_usage(chunk: Any) -> None:
+            """Keep the last usage a chunk reported, and the cost with it."""
+            nonlocal usage, cost_usd
+            usage = cls._extract_usage(chunk) or usage
+            cost = cls._extract_cost(chunk)
+            if cost is not None:
+                cost_usd = cost
 
         def _accum_tc(tc: Any, idx_hint: int) -> None:
             """Accumulate one streaming tool-call delta into *tc_bufs*."""
@@ -896,7 +941,7 @@ class OpenAICompatProvider(LLMProvider):
                     chunk_map.get("choices") or [],
                 )
                 if not choices:
-                    usage = cls._extract_usage(chunk_map) or usage
+                    note_usage(chunk_map)
                     text = cls._extract_text_content(
                         chunk_map.get("content") or chunk_map.get("output_text")
                     )
@@ -928,11 +973,11 @@ class OpenAICompatProvider(LLMProvider):
                 ):
                     _accum_tc(tc, idx)
                 _accum_legacy_function_call(delta.get("function_call"))
-                usage = cls._extract_usage(chunk_map) or usage
+                note_usage(chunk_map)
                 continue
 
             if not chunk.choices:
-                usage = cls._extract_usage(chunk) or usage
+                note_usage(chunk)
                 continue
             choice = chunk.choices[0]
             if choice.finish_reason:
@@ -992,6 +1037,7 @@ class OpenAICompatProvider(LLMProvider):
             tool_calls=tool_calls,
             finish_reason=finish_reason,
             usage=usage,
+            cost_usd=cost_usd,
             reasoning_content="".join(reasoning_parts) or None,
         )
 

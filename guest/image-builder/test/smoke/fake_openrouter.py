@@ -4,6 +4,8 @@
 It answers by looking at the conversation (the last non-system message and the
 last user text, substring matches):
 - the last message a tool result: a final answer quoting it;
+- a user message with REPEAT-EXEC <cmd>: a call of the exec tool with <cmd>, after every result too
+  (a model that never stops, for the cost cap);
 - a user message with RUN-EXEC <cmd>: a call of the exec tool with <cmd>;
 - a user message with SAY-RUN-EXEC <text> :: <cmd>: the same call with <text> written beside it;
 - a user message with WRITE-NOTE <path> :: <text>: a call of write_file on /home/dot/memory/<path>;
@@ -11,6 +13,10 @@ last user text, substring matches):
 - a user message with "interrupted by a restart": a final answer;
 - an approval's continuation: the approved call again, or "rejection noted";
 - anything else: "hello from the stand-in".
+
+Every response reports its cost in its usage, as OpenRouter's usage.cost (USD): 0, or the amount of a line
+`COST <usd>` of the last user message. That message stays the last user message through a task's tool
+results, so every response of a task costs that amount.
 
 Every request is appended to /tmp/fake-requests.jsonl; every request with a
 body is appended whole (messages, system prompt included, and the tools with
@@ -55,13 +61,27 @@ def append(path: str, line: object) -> None:
         handle.write(json.dumps(line) + "\n")
 
 
+def last_user_text(conversation: list[dict]) -> str:
+    last_user = next((m for m in reversed(conversation) if m.get("role") == "user"), None)
+    return text_of(last_user.get("content")) if last_user else ""
+
+
+def cost_of(messages: list[dict]) -> float:
+    """What the response to this conversation costs: the `COST <usd>` line of the last user message, else 0."""
+    said = last_user_text([m for m in messages if m.get("role") not in ("system", "developer")])
+    found = re.search(r"^COST (\d+(?:\.\d+)?)$", said, re.M)
+    return float(found.group(1)) if found else 0
+
+
 def decide(messages: list[dict]) -> dict:
     conversation = [m for m in messages if m.get("role") not in ("system", "developer")]
     last = conversation[-1] if conversation else {}
+    said = last_user_text(conversation)
+    repeated = re.search(r"REPEAT-EXEC (.+)$", said, re.M)
+    if repeated:
+        return {"tool": {"name": "exec", "args": {"command": repeated.group(1).strip()}}}
     if last.get("role") == "tool":
         return {"text": f"done: {text_of(last.get('content'))[:200]}"}
-    last_user = next((m for m in reversed(conversation) if m.get("role") == "user"), None)
-    said = text_of(last_user.get("content")) if last_user else ""
     if "interrupted by a restart" in said:
         return {"text": "resumed and finished"}
     # The engine's continuations after an approval (nanobot/dots/engine.py).
@@ -173,7 +193,7 @@ class Handler(BaseHTTPRequestHandler):
             number = _counter
         completion_id = f"chatcmpl-{number}"
         model = request.get("model") or "openai/gpt-4o-mini"
-        usage = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15, "cost": 0}
+        usage = {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15, "cost": cost_of(request.get("messages") or [])}
         tool = answer.get("tool")
         # Every call of every response is "call_0", as with the models behind OpenRouter that number
         # their calls from zero each time: the engine must tell calls apart by more than the id.

@@ -381,6 +381,9 @@ class LLMResponse:
     tool_calls: list[ToolCallRequest] = field(default_factory=list)
     finish_reason: str = "stop"
     usage: LLMUsage | None = None
+    # What the request cost in USD, as the gateway reported it (OpenRouter's usage.cost); None when it
+    # did not. On the response, not on LLMUsage: a cost is one request's, there is nothing to merge.
+    cost_usd: float | None = None
     # Locally measured streaming telemetry. ``generation_ms`` excludes time to
     # first token and provider retry gaps; ``ttft_ms`` measures the first
     # streamed reasoning/content delta from request start. They stay separate

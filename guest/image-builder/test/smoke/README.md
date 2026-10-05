@@ -18,7 +18,8 @@ disk lay them out. This smoke does, in one Linux container, with no QEMU:
   rule and cannot read the host's token, `dot` cannot read the engine's state),
   the event stream (`seq` 1..N across `kill -9`, no loss, no repeat), commands
   that run as `dot` and end with the call that started them (cancel, terminate,
-  SIGTERM within systemd's 30 s), approvals that survive a crash, the tools offered
+  SIGTERM within systemd's 30 s), approvals that survive a crash, the cost cap that
+  stops a task and a chat turn and still holds after a crash, the tools offered
   for each permission map, the text sent to the model, the key reaching no file,
   log or process environment, and the engine refusing to start on a lock that is not
   the golden image's or on a key in a dotenv file.
@@ -55,7 +56,7 @@ removes the volume and the container on exit.
 | `run.sh` | the entry: builds `dot-agentd` in `golang:1.26`, starts `ubuntu:24.04` with the tree, checks the exit status and the summary line |
 | `prepare-engine.sh` | in the container: `uv`, the engine's environment, the staged engine source; then it runs `smoke.sh` |
 | `smoke.sh` | the checks; prints `PASS:` or `FAIL:` per check and the summary line |
-| `fake_openrouter.py` | the stand-in for OpenRouter's chat completions: answers by the last message (`RUN-EXEC <cmd>` makes it call the engine's `exec` tool, `SAY-RUN-EXEC <text> :: <cmd>` the same with `<text>` written beside the call, `WRITE-NOTE <path> :: <text>` a `write_file` into `/home/dot/memory/<path>`, `FIND-NOTE <word>` a `memory_search`) and logs every request whole |
+| `fake_openrouter.py` | the stand-in for OpenRouter's chat completions: answers by the last message (`RUN-EXEC <cmd>` makes it call the engine's `exec` tool, `SAY-RUN-EXEC <text> :: <cmd>` the same with `<text>` written beside the call, `WRITE-NOTE <path> :: <text>` a `write_file` into `/home/dot/memory/<path>`, `FIND-NOTE <word>` a `memory_search`, `REPEAT-EXEC <cmd>` an `exec` after every result too, a `COST <usd>` line the cost every response reports in its usage) and logs every request whole |
 | `host-stream.sh` | the fake host's event reader: reads `/v1/agent/events/stream` from its last `seq`, reconnects after a drop, pushes the key and the config on every `agent.started` |
 
 `smoke.sh` is written against the engine as it is: a check that pins something the

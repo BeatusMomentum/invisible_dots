@@ -24,6 +24,8 @@ class EngineSettings:
     # The tools the model is offered: those whose permission is not denied.
     offered_tools: tuple[str, ...]
     max_iterations: int
+    # What a task, or a chat turn, may spend on the model, in USD (see nanobot.dots.spend).
+    max_cost_usd: float
     context_window_tokens: int
     max_tool_result_chars: int
     # Whether the model is offered the tools that read the memory notes.
@@ -40,6 +42,7 @@ def project(config: DotRuntimeConfig, *, workspace: str, openrouter_base_url: st
         openrouter_base_url=(openrouter_base_url or "").strip() or None,
         offered_tools=tuple(offered),
         max_iterations=config.limits.max_steps_per_task,
+        max_cost_usd=config.limits.max_cost_per_task_usd,
         context_window_tokens=config.limits.context_tokens,
         max_tool_result_chars=MAX_TOOL_RESULT_CHARS,
         memory_read=any(TOOL_PERMISSIONS[name].needs_memory for name in offered),
