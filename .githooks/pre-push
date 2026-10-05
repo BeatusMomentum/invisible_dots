@@ -79,6 +79,19 @@ if ! command -v go >/dev/null 2>&1; then
     refuse "REFUSED - go is not on PATH, so the dot-agentd tests cannot run." \
            "Install Go (1.25 or newer, see guest/dot-agentd/go.mod) and push again."
 fi
+# The same checks, in the same order, as the go job in tests.yml: a file gofmt
+# would rewrite, or code go vet rejects, is refused here instead of in CI.
+echo "[pre-push] gofmt and go vet (guest/dot-agentd)"
+unformatted=$(cd guest/dot-agentd && gofmt -l .)
+if [ -n "$unformatted" ]; then
+    refuse "REFUSED - gofmt would rewrite these dot-agentd files:" "$unformatted" \
+           "Run gofmt -w on them and push again."
+fi
+(cd guest/dot-agentd && without_git_env go vet ./... && without_git_env env GOOS=windows go vet ./...)
+status=$?
+if [ "$status" -ne 0 ]; then
+    refuse "REFUSED - go vet exited with $status. Nothing is pushed past a vet error."
+fi
 echo "[pre-push] go test ./... (guest/dot-agentd)"
 (cd guest/dot-agentd && without_git_env go test -json -count=1 ./... > ../../tmp/go-test.json)
 status=$?

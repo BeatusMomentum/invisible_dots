@@ -1,7 +1,11 @@
 // Command dot-agentd is the computer daemon of a Dot's VM. It serves the
 // routes of architecture section 5.2 on TCP port 1024, which the host reaches
 // through QEMU's port forward (token required), and on a local unix socket for
-// the agent (no token, no agent proxy).
+// the engine (no token, no agent proxy, plus the process route).
+//
+// `dot-agentd relay [flags] -- PROGRAM [ARGS...]` is the client of that
+// process route: the engine runs the model's commands through it, so they run
+// as the Dot's user, not as the engine's.
 //
 // Every flag can also be set through the environment variable named in its
 // help text; a flag given on the command line wins over the variable.
@@ -54,7 +58,7 @@ func parseFlags(args []string) (settings, error) {
 	fs.StringVar(&s.home, "home", envOr("DOT_HOME", agentd.DefaultHome), "the Dot's home directory, which relative paths resolve against (DOT_HOME)")
 	fs.StringVar(&s.runDir, "run-dir", envOr("INVISIBLE_DOTS_RUN_DIR", agentd.DefaultRunDir), "directory of agentd.sock and agent.sock (INVISIBLE_DOTS_RUN_DIR)")
 	fs.StringVar(&s.agentdSocket, "agentd-socket", os.Getenv("INVISIBLE_DOTS_AGENTD_SOCKET"), "local socket of this daemon, default <run-dir>/agentd.sock (INVISIBLE_DOTS_AGENTD_SOCKET)")
-	fs.StringVar(&s.agentSocket, "agent-socket", os.Getenv("INVISIBLE_DOTS_AGENT_SOCKET"), "socket of the agent, default <run-dir>/agent.sock (INVISIBLE_DOTS_AGENT_SOCKET)")
+	fs.StringVar(&s.agentSocket, "agent-socket", envOr("INVISIBLE_DOTS_AGENT_SOCKET", agentd.DefaultAgentSocket), "socket of the agent, in a directory of the engine's user (INVISIBLE_DOTS_AGENT_SOCKET)")
 	fs.StringVar(&s.listen, "listen", envOr("INVISIBLE_DOTS_AGENTD_LISTEN", agentd.DefaultListenAddr), "IP address and TCP port of the token-protected routes (INVISIBLE_DOTS_AGENTD_LISTEN)")
 	fs.StringVar(&s.display, "display", envOr("INVISIBLE_DOTS_DISPLAY", agentd.DefaultDisplay), "X display for screenshots and exec (INVISIBLE_DOTS_DISPLAY)")
 	fs.StringVar(&s.importBin, "import-bin", envOr("INVISIBLE_DOTS_IMPORT_BIN", "import"), "ImageMagick import executable (INVISIBLE_DOTS_IMPORT_BIN)")
@@ -68,9 +72,6 @@ func parseFlags(args []string) (settings, error) {
 	if s.agentdSocket == "" {
 		s.agentdSocket = filepath.Join(s.runDir, "agentd.sock")
 	}
-	if s.agentSocket == "" {
-		s.agentSocket = filepath.Join(s.runDir, "agent.sock")
-	}
 	return s, nil
 }
 
@@ -81,6 +82,9 @@ func parseLevel(s string) (slog.Level, error) {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "relay" {
+		os.Exit(runRelay(os.Args[2:]))
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "dot-agentd:", err)
 		os.Exit(1)

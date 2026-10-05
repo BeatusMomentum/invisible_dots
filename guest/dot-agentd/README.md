@@ -12,9 +12,16 @@ sections 4 and 5.2). It serves:
   It binds every interface because the forward targets the guest's
   DHCP-assigned user-network address; nothing outside the host's forward can
   reach that interface.
-- `/run/invisible-dots/agentd.sock` (mode 0600), for the agent: the same
-  routes, no token, no `/v1/agent` proxy and no `POST /v1/system/poweroff`
-  (powering the VM off is the control plane's decision).
+- `/run/invisible-dots/agentd.sock` (mode 0660; its directory, setgid to the
+  engine's group, admits only `dot` and `dotengine`), for the engine: the
+  same routes, no token, no `/v1/agent` proxy and no `POST /v1/system/poweroff`
+  (powering the VM off is the control plane's decision), plus `POST /v1/proc`,
+  the process route the engine runs the model's commands through.
+
+`dot-agentd relay [--socket P] [--cwd DIR] [--tty] [--env NAME=VALUE]... --
+PROGRAM [ARGS...]` is the client of `POST /v1/proc`: it runs the program as
+`dot`, copies its own stdin, stdout and stderr through, and exits with the
+program's code (128 + the signal number for a signal).
 
 ## Build
 
@@ -45,7 +52,7 @@ Every flag has an environment variable; a flag on the command line wins.
 | `--home` | `DOT_HOME` | `/home/dot` |
 | `--run-dir` | `INVISIBLE_DOTS_RUN_DIR` | `/run/invisible-dots` |
 | `--agentd-socket` | `INVISIBLE_DOTS_AGENTD_SOCKET` | `<run-dir>/agentd.sock` |
-| `--agent-socket` | `INVISIBLE_DOTS_AGENT_SOCKET` | `<run-dir>/agent.sock` |
+| `--agent-socket` | `INVISIBLE_DOTS_AGENT_SOCKET` | `/run/invisible-dots-agent/agent.sock` (the engine's directory) |
 | `--listen` | `INVISIBLE_DOTS_AGENTD_LISTEN` | `0.0.0.0:1024`; an IP literal and a port, e.g. `127.0.0.1:18024` for development outside a VM |
 | `--display` | `INVISIBLE_DOTS_DISPLAY` | `:0` |
 | `--import-bin` | `INVISIBLE_DOTS_IMPORT_BIN` | `import` |
@@ -82,6 +89,13 @@ without it.
   caller kills the whole group. The answer adds `stdout_truncated` and
   `stderr_truncated`. Background children that keep stdout open are not
   waited for longer than 2 s after bash exits.
+- `POST /v1/proc` (local socket only): the request asks to switch to
+  `dots-proc/1`; after `101` the connection carries frames of one type byte, a
+  big-endian uint32 length and the payload (`frames.go`). The program runs
+  without a shell in its own process group, or as the session leader of a new
+  pseudo-terminal when `tty` is given; the caller going away kills the group.
+  After the program exits, output still held open by a child it left behind is
+  read for at most 2 s.
 - File paths: relative paths and `~/...` resolve against home, absolute paths
   are used as they are, a NUL byte is refused. `PUT` creates parent directories
   and replaces the file atomically, keeping an existing file's mode.

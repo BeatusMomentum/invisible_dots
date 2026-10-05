@@ -10,7 +10,9 @@ import (
 	"strconv"
 )
 
-// ListenUnix listens on a unix socket readable and writable by the owner only.
+// ListenUnix listens on a unix socket readable and writable by its owner and
+// its group. In the guest the socket's directory is setgid to the engine's
+// group, so the group is the engine's user and nobody else.
 // A stale socket file left by a previous run is removed first; anything else
 // at that path is refused rather than deleted.
 func ListenUnix(path string) (net.Listener, error) {
@@ -29,7 +31,7 @@ func ListenUnix(path string) (net.Listener, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", path, err)
 	}
-	if err := os.Chmod(path, 0o600); err != nil {
+	if err := os.Chmod(path, 0o660); err != nil {
 		_ = ln.Close()
 		return nil, fmt.Errorf("chmod %s: %w", path, err)
 	}

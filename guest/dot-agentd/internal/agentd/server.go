@@ -84,8 +84,11 @@ const (
 	DefaultHome         = "/home/dot"
 	DefaultRunDir       = "/run/invisible-dots"
 	DefaultAgentdSocket = DefaultRunDir + "/agentd.sock"
-	DefaultAgentSocket  = DefaultRunDir + "/agent.sock"
-	DefaultDisplay      = ":0"
+	// DefaultAgentSocket is the engine's API, in a directory the engine's user
+	// owns and dot cannot write (architecture 4.2): nothing of dot's can put
+	// another socket in its place and take the key the host pushes.
+	DefaultAgentSocket = "/run/invisible-dots-agent/agent.sock"
+	DefaultDisplay     = ":0"
 	// DefaultListenAddr uses port 1024, the one QEMU's forward targets
 	// (architecture sections 3.4 and 5.1), on every interface; ListenTCP
 	// says why every interface.
@@ -118,6 +121,10 @@ func (s *Server) routes(remote bool) *http.ServeMux {
 	mux.HandleFunc("PUT /v1/files", s.handleFilePut)
 	mux.HandleFunc("GET /v1/files/list", s.handleFileList)
 	mux.HandleFunc("GET /v1/screenshot", s.handleScreenshot)
+	if !remote {
+		// The engine's commands for the model; the host has no use for them.
+		mux.HandleFunc("POST /v1/proc", s.handleProc)
+	}
 	if remote {
 		mux.HandleFunc("POST /v1/system/poweroff", s.handlePowerOff)
 		proxy := s.newAgentProxy()
@@ -130,8 +137,9 @@ func (s *Server) routes(remote bool) *http.ServeMux {
 	return mux
 }
 
-// LocalHandler serves agentd.sock: no token (the socket file is 0600 and
-// owned by the agent's user), no agent proxy and no poweroff.
+// LocalHandler serves agentd.sock: no token (the socket is 0660, owned by dot
+// with the engine's group, in a directory only they reach), no agent proxy
+// and no poweroff, and the process route.
 func (s *Server) LocalHandler() http.Handler {
 	return s.accessLog("local", s.routes(false))
 }

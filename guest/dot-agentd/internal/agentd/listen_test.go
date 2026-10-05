@@ -23,8 +23,8 @@ func TestListenUnixIsPrivateAndReplacesStaleSocket(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if perm := info.Mode().Perm(); perm != 0o600 {
-			t.Errorf("socket mode %v, want 0600", perm)
+		if perm := info.Mode().Perm(); perm != 0o660 {
+			t.Errorf("socket mode %v, want 0660 (the owner and the engine's group)", perm)
 		}
 	}
 	if runtime.GOOS == "windows" {

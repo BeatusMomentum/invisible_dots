@@ -57,7 +57,7 @@ func TestParseFlagsDefaultsMatchTheContract(t *testing.T) {
 		t.Errorf("got %+v", s)
 	}
 	if filepath.ToSlash(s.agentdSocket) != "/run/invisible-dots/agentd.sock" ||
-		filepath.ToSlash(s.agentSocket) != "/run/invisible-dots/agent.sock" {
+		filepath.ToSlash(s.agentSocket) != "/run/invisible-dots-agent/agent.sock" {
 		t.Errorf("sockets %q %q", s.agentdSocket, s.agentSocket)
 	}
 }
