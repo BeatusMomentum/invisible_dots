@@ -184,6 +184,15 @@ describe("parseDotConfig", () => {
     expect(issuesOf({ ...MINIMAL, permissions: { "computer.exec": "maybe" } })[0]).toMatch(/^permissions\.computer\.exec:/);
   });
 
+  it.each(["web.fetch", "web.search", "subagents", "message.send", "memory.write"])(
+    "refuses %s: no tool of the Dot can exercise it",
+    (name) => {
+      expect(issuesOf({ ...MINIMAL, permissions: { [name]: "allow" } })).toEqual([
+        `permissions.${name}: unknown permission "${name}"`,
+      ]);
+    },
+  );
+
   it("reports invalid YAML as a config error", () => {
     expect(() => parseDotConfig("name: [unclosed")).toThrow(DotConfigError);
     expect(() => parseDotConfig("name: [unclosed")).toThrow(/not valid YAML/);
@@ -230,7 +239,7 @@ describe("toRuntimeConfig / parseRuntimeConfig", () => {
       expect(runtime.permissions[permission]).toBe(resolvePermission(config, permission));
     }
     expect(runtime.permissions["computer.exec"]).toBe("deny");
-    expect(runtime.permissions["message.send"]).toBe("ask");
+    expect(runtime.permissions.automations).toBe("ask");
   });
 
   it("round-trips through the guest validator", () => {
@@ -248,7 +257,7 @@ describe("resolvePermission", () => {
   const defaults = parseDotConfig(MINIMAL);
 
   it("allows every known permission by default except those that act beyond the Dot's computer", () => {
-    const asks = new Set(["browser.identity.delete", "message.send", "automations", "subagents"]);
+    const asks = new Set(["browser.identity.delete", "automations"]);
     for (const permission of PERMISSIONS) {
       expect(resolvePermission(defaults, permission)).toBe(asks.has(permission) ? "ask" : "allow");
     }

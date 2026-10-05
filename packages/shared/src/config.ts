@@ -321,11 +321,10 @@ export function computerResources(config: Pick<DotConfig, "computer">): Computer
 
 /**
  * The decision for one permission (section 7). An explicit entry in the
- * config wins. Otherwise everything under computer.*, files.*, browser.*,
- * memory.* and web.* is allowed, except browser.identity.delete, which asks;
- * sending a message, creating an automation and starting a sub-agent ask too,
- * because each acts outside the Dot's own computer or keeps working after the
- * turn. A permission the tool registry does not know is denied whatever the
+ * config wins. Otherwise everything under computer.*, files.*, browser.* and
+ * memory.* is allowed, except browser.identity.delete, which asks; the
+ * automations permission asks too, because an automation keeps working after
+ * the turn. A permission the registry does not know is denied whatever the
  * config says.
  */
 export function resolvePermission(
@@ -338,13 +337,8 @@ export function resolvePermission(
   return defaultPermission(permission);
 }
 
-const ASK_BY_DEFAULT: ReadonlySet<Permission> = new Set<Permission>([
-  "browser.identity.delete",
-  "message.send",
-  "automations",
-  "subagents",
-]);
-const ALLOWED_NAMESPACES: ReadonlySet<string> = new Set(["computer", "files", "browser", "memory", "web"]);
+const ASK_BY_DEFAULT: ReadonlySet<Permission> = new Set<Permission>(["browser.identity.delete", "automations"]);
+const ALLOWED_NAMESPACES: ReadonlySet<string> = new Set(["computer", "files", "browser", "memory"]);
 
 function defaultPermission(permission: Permission): PermissionDecision {
   if (ASK_BY_DEFAULT.has(permission)) return "ask";

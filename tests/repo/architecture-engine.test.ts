@@ -8,6 +8,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { PERMISSIONS } from "@invisible-dots/shared";
 import { describe, expect, it } from "vitest";
 
 const repo = resolve(fileURLToPath(new URL(".", import.meta.url)), "../..");
@@ -42,6 +43,27 @@ describe("the architecture document and the engine", () => {
       [...offered.matchAll(/^\| `(\w+)` \| `([\w.]+)` \|/gm)].map((m) => [m[1]!, m[2]!] as const),
     );
     expect(Object.fromEntries(documented)).toEqual(Object.fromEntries(table));
+  });
+
+  it("uses only permissions that packages/shared names, in the engine's table and in the document", () => {
+    // packages/shared is where a Dot's config is checked: a permission outside its list can never be allowed.
+    const known = new Set<string>(PERMISSIONS);
+    const code = read("invisible_engine_dots/nanobot/dots/permissions.py");
+    const used = [...code.matchAll(/^\s+"\w+": ToolEntry\("([\w.]+)"/gm)].map((m) => m[1]!);
+    expect(used.length).toBeGreaterThan(0);
+    for (const permission of used) expect(known.has(permission), `engine: ${permission}`).toBe(true);
+
+    const tools = section(architecture, "### 8.3 Tools");
+    const documented = [...tools.matchAll(/^\| .+? \| `([a-z.]+)` \|/gm)].map((m) => m[1]!);
+    expect(documented.length).toBeGreaterThan(used.length);
+    for (const permission of documented) expect(known.has(permission), `section 8.3: ${permission}`).toBe(true);
+
+    // The names that no tool can exercise are in no list of section 7 or 8.3 either.
+    const configuration = section(architecture, "## 7. Dot configuration");
+    for (const gone of ["web.fetch", "web.search", "web.*", "subagents", "message.send", "memory.write"]) {
+      expect(configuration, gone).not.toContain(gone);
+      expect(tools, gone).not.toContain(gone);
+    }
   });
 
   it("names the engine files that exist", () => {

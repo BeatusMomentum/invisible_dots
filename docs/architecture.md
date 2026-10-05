@@ -689,10 +689,12 @@ the engine stopped during: its outcome is unknown and it was not run again, so
 
 The `arguments` of `approval.requested` are what the person decides on, and
 they leave the guest: a tool argument that carries a secret is redacted there
-by the tool's own rule (`redactToolArguments()`, `packages/shared/src/tools.ts`;
-today the password in a `browser_identity_create` proxy URL; the engine's tools
-carry no such argument yet and it redacts nothing). The pending call in the
-Dot's database keeps the full arguments, so the approved call is made as asked.
+by the engine, at the point where the event is built (the engine's tools carry
+no such argument yet and it redacts nothing; the browser phase adds the proxy
+URL of `browser_identity_create`, whose password is replaced by the rule of
+`redactProxy()` in `packages/shared/src/identity-rules.ts`). The pending call in
+the Dot's database keeps the full arguments, so the approved call is made as
+asked.
 
 An outbound event is handed to the event stream only after the transaction
 that wrote it to the outbox committed: one written inside a transaction that
@@ -769,11 +771,18 @@ limits:
   max_cost_per_task_usd: 1.00          # model spend of a task or a chat turn, 0.01..100 (section 8.2)
 ```
 
+The permission names are the ones of `PERMISSIONS` in
+`packages/shared/src/tools.ts`: those the tools of section 8.3 exercise, and no
+others (a Dot has no tool for web reading or search, sub-agents or messaging,
+and its notes are files written with `files.write`). A config that names any
+other permission is refused as unknown. `PERMISSION_INFO` in the same file gives
+each one the label, description and risk (`low`, `medium`, `high`) a person is
+shown when they decide on it.
+
 Defaults for permissions not listed: everything under `computer.*`,
-`files.*`, `browser.*`, `memory.*` and `web.*` is `allow`, except
-`browser.identity.delete`, which is `ask`; `message.send`, `automations` and
-`subagents` are `ask`. Any permission name the registry does not know is
-`deny`.
+`files.*`, `browser.*` and `memory.*` is `allow`, except
+`browser.identity.delete`, which is `ask`; `automations` is `ask`. Any
+permission name the registry does not know is `deny`.
 
 `DotRuntimeConfig` (what `PUT /config` sends to the guest) is the same object
 minus `computer`, with `permissions` resolved by the host: one decision for
@@ -817,7 +826,9 @@ Function names use `_` because OpenAI-style function names cannot contain
 dots. Each tool declares the permission it needs, in one table
 (`nanobot/dots/permissions.py`) that offers the model its tools, decides every
 call and reports the permission of each `tool.called`. A tool that is not in
-the table is neither offered nor allowed.
+the table is neither offered nor allowed. Every permission named below is one
+of `PERMISSIONS` (section 7); a tool cannot take a permission the host's config
+does not know.
 
 | tool | permission | what it does |
 |---|---|---|
