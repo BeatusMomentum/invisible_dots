@@ -67,6 +67,8 @@ export interface NewChannelBinding {
   settings: ChannelSettings;
   /** Events up to and including this id are not the channel's: it starts with what comes after. */
   eventCursor: number;
+  /** The channel's public name for the account, when the credentials were checked before the binding was made. */
+  account?: string;
 }
 
 export interface NewChannelPeer {
@@ -83,9 +85,9 @@ export class ChannelsRepository {
   /** Insert the binding, `connecting`; a Dot has one per kind, so a second one is a unique violation (`isUniqueViolation`). */
   async createBinding(binding: NewChannelBinding): Promise<ChannelBindingRecord> {
     const { rows } = await this.q.query<BindingRow>(
-      `INSERT INTO channel_bindings (id, dot_id, kind, settings, status, event_cursor)
-       VALUES ($1, $2, $3, $4::jsonb, 'connecting', $5) RETURNING *`,
-      [binding.id, binding.dotId, binding.kind, JSON.stringify(binding.settings), binding.eventCursor],
+      `INSERT INTO channel_bindings (id, dot_id, kind, settings, status, event_cursor, account)
+       VALUES ($1, $2, $3, $4::jsonb, 'connecting', $5, $6) RETURNING *`,
+      [binding.id, binding.dotId, binding.kind, JSON.stringify(binding.settings), binding.eventCursor, binding.account ?? null],
     );
     return toBinding(rows[0]!);
   }

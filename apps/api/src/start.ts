@@ -4,7 +4,7 @@
  * first start needs. `invisible-dots server` calls `runServer`; tests call
  * `startServer` and close the handle themselves.
  */
-import { ChannelHub, type ChannelType } from "@invisible-dots/channels";
+import { ChannelHub, TelegramChannelType, type ChannelType } from "@invisible-dots/channels";
 import type { Database } from "@invisible-dots/database";
 import { errorMessage, prefixedStderrLogger, Scheduler, type ComputerDriver, type Logger, type SchedulerOptions } from "@invisible-dots/scheduler";
 import { ensureDir, ENV, hostPaths, type HostPaths } from "@invisible-dots/shared";
@@ -95,11 +95,11 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
     const channels = new ChannelHub({
       db,
       host: scheduler,
-      types: options.channelTypes ?? [],
+      types: options.channelTypes ?? [new TelegramChannelType()],
       logger: options.logger ?? prefixedStderrLogger("channels", debug),
     });
     cleanup.push(() => channels.close());
-    const app = buildServer({ scheduler, token: token.value, logger });
+    const app = buildServer({ scheduler, channels, token: token.value, logger });
     cleanup.push(() => app.close());
 
     await scheduler.start();

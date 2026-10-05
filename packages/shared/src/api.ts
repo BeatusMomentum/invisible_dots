@@ -177,7 +177,10 @@ export interface PutTelegramChannelRequest {
 }
 
 export interface PatchChannelRequest {
-  settings: Partial<ChannelSettings>;
+  /** Only the settings named change. */
+  settings?: Partial<ChannelSettings>;
+  /** `false` pauses the channel (its people and its token stay), `true` starts it again. */
+  enabled?: boolean;
 }
 
 /** A one-time code that pairs a person's chat to the Dot (valid for ten minutes, stored hashed). */

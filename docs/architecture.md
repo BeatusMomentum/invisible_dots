@@ -88,7 +88,7 @@ packages/
   database/        PostgreSQL schema (PGlite embedded or an external server), migrations, repositories, durable queue
   iso/             ISO 9660 + Joliet writer in plain TypeScript (seed and runtime disks)
   events/          event types, the host event log and its fan-out to SSE subscribers
-  channels/        the messaging channel hub (section 9.8): pairing, who may talk, the messages between a chat and its Dot; runs inside the control plane process
+  channels/        the messaging channel hub and the Telegram adapter (section 9.8): pairing, who may talk, the messages between a chat and its Dot; runs inside the control plane process
   sdk/             typed HTTP client for the API (used by cli and web)
 guest/
   dot-agentd/             the computer daemon (Go): the guest endpoint, exec, files, screenshots
@@ -1502,6 +1502,13 @@ POST   /api/dots/:id/browser-identities
 GET    /api/dots/:id/browser-identities/:identityId
 DELETE /api/dots/:id/browser-identities/:identityId
 
+GET    /api/dots/:id/channels        { channels: [{ kind, enabled, status, status_detail, bot_username, settings, peers, created_at }] }; never a token
+PUT    /api/dots/:id/channels/telegram  body: { token }   links the Dot to the bot (201), or gives the linked bot a new token (200); the token is checked with Telegram, stored encrypted, never returned
+PATCH  /api/dots/:id/channels/:kind  body: { settings?: { approvals?, notify_tasks? }, enabled? }   enabled false pauses the channel, its people and token stay
+DELETE /api/dots/:id/channels/:kind  unlink: the channel stops, its token and its people are deleted
+POST   /api/dots/:id/channels/:kind/pairing   201 { code, deep_link, expires_at }: a one-time code, valid ten minutes
+DELETE /api/dots/:id/channels/:kind/peers/:peer   revoke a paired person
+
 GET    /api/approvals                ?status=pending|approved|rejected|expired
 POST   /api/approvals/:id/approve    body: { note? }
 POST   /api/approvals/:id/reject     body: { note? }
@@ -1611,7 +1618,52 @@ owns every policy:
   (foreign keys) and the hub stops the adapter on `dot.deleted`.
 - **Credentials.** Stored as secrets scoped to the Dot, under the names the
   channel type declares, encrypted like the OpenRouter key, never returned,
-  never pushed to the guest, deleted with the binding and with the Dot.
+  never pushed to the guest, deleted with the binding and with the Dot. A channel
+  type may check credentials before anything is stored (`check`): Telegram asks
+  `getMe`, so a wrong token is a 400 `invalid_credentials` (the message never
+  holds the token), an unreachable Telegram a 502 `channel_unreachable`, and a
+  bot another Dot already uses a 409 `account_in_use` (a bot serves one Dot: two
+  pollers on one token take turns failing). Giving a linked channel a new token
+  (`PUT`) starts it again with the people kept; it is the way back from
+  `needs_relink`.
+
+#### Telegram
+
+`packages/channels/src/telegram/` is the adapter, on grammY (the Bot API client,
+MIT). It is transport only, like every adapter.
+
+- **Long polling**, because the control plane listens on a local address behind
+  NAT and polling needs only outbound HTTPS. Telegram keeps an update that was
+  not confirmed for 24 hours: a PC that is off for longer loses what was sent
+  meanwhile. A webhook the bot had is deleted on connect (the bot is the Dot's
+  own). Only `message` updates are asked for.
+- **An update is confirmed to Telegram** (the `offset` of the next poll) only after
+  the hub dealt with it. When the hub could not record a message the adapter
+  fails, the hub starts it again, and Telegram offers the update once more; the
+  hub recognises one it already gave the Dot by its id, `<bot id>:<update id>`
+  (update ids of two bots overlap, and a Dot's bot can be replaced). No offset is
+  stored: a restart is the same as a failure.
+- **Pairing.** `/start <code>` in a private chat is a pairing attempt; the deep
+  link `https://t.me/<bot>?start=<code>` sends exactly that. A bare `/start` and
+  everything a stranger sends get no answer. Only private chats are served.
+  Authorization is the sender's numeric user id, never a username.
+- **Messages.** Plain text, no formatting; a long answer is split at 4000
+  characters. A message without text (a photo, a voice note) is answered "not
+  supported yet" to a paired person and dropped. Typing shows while the Dot
+  thinks.
+- **Failures are told to the hub in words.** A 401 is a revoked token
+  (`needs_relink`); a 409 on polling says another process polls the same bot; a
+  403, 400 or 404 on send is final (the person blocked the bot), a 429 carries its
+  `retry_after`, anything else is retried. The token is in every request URL, so
+  no message the adapter makes carries a URL, and the hub replaces the binding's
+  token in whatever it stores or logs. Retries and backoff are the hub's alone.
+- **Not private.** Telegram bot chats are not end-to-end encrypted: Telegram can
+  read what a person and the Dot write there. The CLI says so when a bot is linked.
+
+From the CLI, `invisible-dots channel add telegram --dot <dot>` (token asked for in
+a terminal or read from stdin, never from arguments), `channel list [--dot]`,
+`channel pair telegram --dot <dot>` (prints the deep link) and `channel remove
+telegram --dot <dot>`.
 
 ## 10. Out of scope for this version
 

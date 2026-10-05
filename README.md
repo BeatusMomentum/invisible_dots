@@ -54,6 +54,19 @@ node apps/cli/dist/invisible-dots.mjs message my-first-dot "What is on your desk
 `create`. `invisible-dots doctor` checks the host and names the command that
 fixes anything missing.
 
+To talk to a Dot from Telegram, make a bot with @BotFather (one bot per Dot),
+then:
+
+```text
+node apps/cli/dist/invisible-dots.mjs channel add telegram --dot my-first-dot
+node apps/cli/dist/invisible-dots.mjs channel pair telegram --dot my-first-dot
+```
+
+`channel add` asks for the bot's token and stores it encrypted; `channel pair`
+prints a link: open it in Telegram and press Start, and that chat is the Dot's
+from then on. Nobody else can talk to it. Telegram bot chats are not end-to-end
+encrypted.
+
 The web client:
 
 ```text

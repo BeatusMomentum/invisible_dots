@@ -4,11 +4,15 @@
  * thin: the work happens in the Scheduler.
  */
 import { createHash, timingSafeEqual } from "node:crypto";
+import { TELEGRAM_TOKEN_SECRET, type ChannelHub } from "@invisible-dots/channels";
 import { StreamOverflowError } from "@invisible-dots/events";
 import { ControlPlaneError, errorMessage, silentLogger, type Logger, type Scheduler } from "@invisible-dots/scheduler";
 import { STREAM_ERROR_EVENT } from "@invisible-dots/sdk";
 import type {
   ApprovalsAnswer,
+  ChannelPairingAnswer,
+  ChannelRecord,
+  ChannelsAnswer,
   DotsAnswer,
   EventsAnswer,
   HealthResponse,
@@ -17,7 +21,7 @@ import type {
   TasksAnswer,
   UsageAnswer,
 } from "@invisible-dots/sdk/types";
-import { APPROVAL_STATUSES, type ApprovalStatus } from "@invisible-dots/shared";
+import { APPROVAL_STATUSES, CHANNEL_KINDS, type ApprovalStatus, type ChannelKind } from "@invisible-dots/shared";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 
 export const API_VERSION = "0.1.0";
@@ -27,12 +31,13 @@ export const SSE_HEARTBEAT_MS = 15_000;
 
 export interface ServerOptions {
   scheduler: Scheduler;
+  channels: ChannelHub;
   token: string;
   logger?: Logger;
   heartbeatMs?: number;
 }
 
-type Params = { id: string; identityId: string };
+type Params = { id: string; identityId: string; kind: string; peer: string };
 type Body = Record<string, unknown> | undefined;
 
 function digest(value: string): Buffer {
@@ -62,6 +67,11 @@ function sinceParam(value: unknown): Date | undefined {
   return parsed;
 }
 
+function channelKind(value: string): ChannelKind {
+  if (!(CHANNEL_KINDS as readonly string[]).includes(value)) throw bad(`no "${value}" channel: the channels are ${CHANNEL_KINDS.join(", ")}`);
+  return value as ChannelKind;
+}
+
 function bodyOf(request: FastifyRequest): Record<string, unknown> {
   const body = request.body as Body;
   if (body === undefined || body === null) return {};
@@ -70,7 +80,7 @@ function bodyOf(request: FastifyRequest): Record<string, unknown> {
 }
 
 export function buildServer(options: ServerOptions): FastifyInstance {
-  const { scheduler } = options;
+  const { scheduler, channels } = options;
   const log = options.logger ?? silentLogger;
   const expected = digest(options.token);
   const heartbeatMs = options.heartbeatMs ?? SSE_HEARTBEAT_MS;
@@ -216,6 +226,48 @@ export function buildServer(options: ServerOptions): FastifyInstance {
 
   app.delete<{ Params: Params }>("/api/dots/:id/browser-identities/:identityId", async (request, reply) => {
     await scheduler.deleteIdentity(request.params.id, request.params.identityId);
+    return reply.code(204).send();
+  });
+
+  // Channels (the hub never returns a credential, and no route here echoes one)
+
+  app.get<{ Params: Params }>(
+    "/api/dots/:id/channels",
+    async (request): Promise<ChannelsAnswer> => ({ channels: await channels.list(request.params.id) }),
+  );
+
+  // Link the Dot to a Telegram bot, or give the linked one a new token (a revoked token is the only way back from needs_relink).
+  app.put<{ Params: Params }>("/api/dots/:id/channels/telegram", async (request, reply): Promise<ChannelRecord> => {
+    const token = bodyOf(request).token;
+    if (typeof token !== "string" || token.trim() === "") throw bad("token must be the bot token from @BotFather");
+    const credentials = { [TELEGRAM_TOKEN_SECRET]: token.trim() };
+    const linked = (await channels.list(request.params.id)).some((channel) => channel.kind === "telegram");
+    if (linked) return channels.setCredentials(request.params.id, "telegram", credentials);
+    return reply.code(201).send(await channels.add(request.params.id, "telegram", { credentials }));
+  });
+
+  app.patch<{ Params: Params }>("/api/dots/:id/channels/:kind", async (request): Promise<ChannelRecord> => {
+    const kind = channelKind(request.params.kind);
+    const { settings, enabled } = bodyOf(request);
+    if (settings === undefined && enabled === undefined) throw bad("give settings, enabled, or both");
+    if (enabled !== undefined && typeof enabled !== "boolean") throw bad("enabled must be true or false");
+    let record: ChannelRecord | undefined;
+    if (settings !== undefined) record = await channels.setSettings(request.params.id, kind, settings);
+    if (enabled !== undefined) record = await channels.setEnabled(request.params.id, kind, enabled);
+    return record!;
+  });
+
+  app.delete<{ Params: Params }>("/api/dots/:id/channels/:kind", async (request, reply) => {
+    await channels.remove(request.params.id, channelKind(request.params.kind));
+    return reply.code(204).send();
+  });
+
+  app.post<{ Params: Params }>("/api/dots/:id/channels/:kind/pairing", async (request, reply): Promise<ChannelPairingAnswer> => {
+    return reply.code(201).send(await channels.pair(request.params.id, channelKind(request.params.kind)));
+  });
+
+  app.delete<{ Params: Params }>("/api/dots/:id/channels/:kind/peers/:peer", async (request, reply) => {
+    await channels.removePeer(request.params.id, channelKind(request.params.kind), request.params.peer);
     return reply.code(204).send();
   });
 

@@ -2,11 +2,14 @@
  * Typed client for every route of the control-plane API (architecture
  * section 9.6), built on `fetch` so it runs in Node and in browsers.
  */
-import { SseParser, type ApprovalStatus, type BrowserIdentity, type StoredEvent } from "@invisible-dots/shared/browser";
+import { SseParser, type ApprovalStatus, type BrowserIdentity, type ChannelKind, type StoredEvent } from "@invisible-dots/shared/browser";
 import type {
   AcceptedAnswer,
   ApprovalRecord,
   ApprovalsAnswer,
+  ChannelPairingAnswer,
+  ChannelRecord,
+  ChannelsAnswer,
   ComputerAnswer,
   ConversationMessage,
   CreateTaskRequest,
@@ -18,6 +21,7 @@ import type {
   IdentitiesAnswer,
   MessageAnswer,
   MessagesAnswer,
+  PatchChannelRequest,
   TaskRecord,
   TasksAnswer,
   UsageAnswer,
@@ -221,6 +225,41 @@ export class InvisibleDotsClient {
 
   async deleteIdentity(idOrName: string, identityId: string): Promise<void> {
     await this.#json("DELETE", `/api/dots/${enc(idOrName)}/browser-identities/${enc(identityId)}`);
+  }
+
+  // Channels
+
+  /** The Dot's messaging channels with the people paired to each. Never a token. */
+  async channels(idOrName: string): Promise<ChannelRecord[]> {
+    return (await this.#json<ChannelsAnswer>("GET", `/api/dots/${enc(idOrName)}/channels`)).channels;
+  }
+
+  /**
+   * Link the Dot to a Telegram bot, or give the linked bot a new token. The server checks the token with
+   * Telegram, stores it encrypted and never returns it.
+   */
+  putTelegramChannel(idOrName: string, token: string): Promise<ChannelRecord> {
+    return this.#json("PUT", `/api/dots/${enc(idOrName)}/channels/telegram`, { body: { token } });
+  }
+
+  /** Change settings, or pause (`enabled: false`) and resume the channel. */
+  patchChannel(idOrName: string, kind: ChannelKind, patch: PatchChannelRequest): Promise<ChannelRecord> {
+    return this.#json("PATCH", `/api/dots/${enc(idOrName)}/channels/${enc(kind)}`, { body: patch });
+  }
+
+  /** Unlink: the token, the paired people and the channel's record are deleted. */
+  async removeChannel(idOrName: string, kind: ChannelKind): Promise<void> {
+    await this.#json("DELETE", `/api/dots/${enc(idOrName)}/channels/${enc(kind)}`);
+  }
+
+  /** A one-time code (valid ten minutes) and, where the channel has one, the link that opens the chat with the code filled in. */
+  pairChannel(idOrName: string, kind: ChannelKind): Promise<ChannelPairingAnswer> {
+    return this.#json("POST", `/api/dots/${enc(idOrName)}/channels/${enc(kind)}/pairing`);
+  }
+
+  /** Revoke a paired person: they are strangers again. */
+  async removeChannelPeer(idOrName: string, kind: ChannelKind, peerId: string): Promise<void> {
+    await this.#json("DELETE", `/api/dots/${enc(idOrName)}/channels/${enc(kind)}/peers/${enc(peerId)}`);
   }
 
   // Approvals

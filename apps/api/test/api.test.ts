@@ -1,4 +1,6 @@
 import type { AddressInfo } from "node:net";
+import { ChannelHub } from "@invisible-dots/channels";
+import { FakeChannelType } from "@invisible-dots/channels/testing";
 import type { Database } from "@invisible-dots/database";
 import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-dots/database/testing";
 import { Scheduler } from "@invisible-dots/scheduler";
@@ -18,6 +20,7 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
   let db: Database;
   let app: FastifyInstance;
   let scheduler: Scheduler;
+  let channels: ChannelHub;
   let driver: FakeDriver;
   let clock: ManualClock;
   let base: string;
@@ -35,7 +38,8 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
       lifecycle: { healthPollMs: 5, readyTimeoutMs: 3_000, pumpRetryMs: 10 },
       dispatcher: { retryDelayMs: 0 },
     });
-    app = buildServer({ scheduler, token: TOKEN, heartbeatMs: 50 });
+    channels = new ChannelHub({ db, host: scheduler, types: [new FakeChannelType()] });
+    app = buildServer({ scheduler, channels, token: TOKEN, heartbeatMs: 50 });
     await app.listen({ host: "127.0.0.1", port: 0 });
     base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
     api = new InvisibleDotsClient({ baseUrl: base, token: TOKEN });
@@ -43,6 +47,7 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
 
   afterAll(async () => {
     await app?.close();
+    await channels?.close();
     await scheduler?.close();
     await t?.drop();
   });

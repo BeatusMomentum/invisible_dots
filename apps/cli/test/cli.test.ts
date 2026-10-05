@@ -58,6 +58,16 @@ const task = {
   summary: "tuesday",
   error: null,
 };
+const channel = {
+  kind: "telegram",
+  enabled: true,
+  status: "connected",
+  status_detail: null,
+  bot_username: "dot_helper_bot",
+  settings: { approvals: true, notify_tasks: true },
+  peers: [{ peer_id: "10", role: "owner", label: "Ann (@ann)", created_at: now }],
+  created_at: now,
+};
 const events = Array.from({ length: 5 }, (_, i) => ({
   id: i + 1,
   dot_id: dot.id,
@@ -131,6 +141,19 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
       return send(res, 200, { id: "apr_1", status: "rejected", note: body?.note ?? null });
     case "PUT /api/secrets/openrouter":
       return send(res, 200, { pushed: 2 });
+    case `GET /api/dots/${dot.id}/channels`:
+      return send(res, 200, { channels: [channel] });
+    case `PUT /api/dots/${dot.id}/channels/telegram`:
+      if (body?.token === "9:REFUSED-TOKEN-VALUE") {
+        return send(res, 400, { error: "invalid_credentials", message: "Telegram refused the bot token: it is wrong, or it was revoked in @BotFather. Paste a current token." });
+      }
+      return send(res, 201, channel);
+    case `POST /api/dots/${dot.id}/channels/telegram/pairing`:
+      return send(res, 201, { code: "ABCD2345", deep_link: "https://t.me/dot_helper_bot?start=ABCD2345", expires_at: "2026-10-02T08:10:00.000Z" });
+    case `POST /api/dots/${dot.id}/channels/whatsapp/pairing`:
+      return send(res, 201, { code: "WXYZ6789", deep_link: null, expires_at: "2026-10-02T08:10:00.000Z" });
+    case `DELETE /api/dots/${dot.id}/channels/telegram`:
+      return send(res, 204);
     case `GET /api/dots/${dot.id}/events`: {
       const after = Number(url.searchParams.get("after") ?? 0);
       return send(res, 200, { events: events.filter((e) => e.id > after) });
@@ -329,6 +352,72 @@ describe("commands", () => {
     // The hint is a command that runs as printed in PowerShell too: no "<" redirection.
     expect(empty.stderr).toContain('run "invisible-dots secret openrouter" in a terminal');
     expect(empty.stderr).not.toContain("<");
+  });
+
+  it("channel add reads the token from stdin or one line of a terminal, never from arguments, and never prints it", async () => {
+    const piped = await cli(["channel", "add", "telegram", "--dot", "fare-watch"], { stdin: "123456:SECRET-TOKEN-VALUE\n" });
+    expect(piped.code).toBe(EXIT.ok);
+    expect(requests.at(-1)).toMatchObject({ method: "PUT", path: `/api/dots/fare-watch/channels/telegram`, body: { token: "123456:SECRET-TOKEN-VALUE" } });
+    expect(piped.stdout).toContain("linked Telegram bot @dot_helper_bot to Dot fare-watch\n");
+    expect(piped.stdout).toContain("next: invisible-dots channel pair telegram --dot fare-watch\n");
+    expect(piped.stdout).toMatch(/not end-to-end encrypted/);
+    expect(piped.stdout + piped.stderr).not.toContain("SECRET-TOKEN");
+
+    const typed = await cli(["channel", "add", "telegram", "--dot", "fare-watch"], { tty: true, line: "123456:TYPED-TOKEN-VALUE", stdin: "never read" });
+    expect(typed.code).toBe(EXIT.ok);
+    expect(typed.stderr).toBe("paste the Telegram bot token from @BotFather, then press Enter:\n");
+    expect(requests.at(-1)?.body).toEqual({ token: "123456:TYPED-TOKEN-VALUE" });
+
+    const inArgs = await cli(["channel", "add", "telegram", "123456:SECRET-TOKEN-VALUE", "--dot", "fare-watch"]);
+    expect(inArgs.code).toBe(EXIT.usage);
+    expect(inArgs.stderr).toMatch(/never from arguments/);
+    expect(inArgs.stderr).not.toContain("SECRET-TOKEN");
+    const empty = await cli(["channel", "add", "telegram", "--dot", "fare-watch"], { tty: true, line: "" });
+    expect(empty.code).toBe(EXIT.usage);
+    expect(empty.stderr).toContain('run "invisible-dots channel add telegram --dot fare-watch" in a terminal');
+    expect((await cli(["channel", "add", "telegram"], { stdin: "123456:SECRET-TOKEN-VALUE" })).stderr).toMatch(/missing --dot <dot>/);
+    expect((await cli(["channel", "add", "whatsapp", "--dot", "fare-watch"])).stderr).toMatch(/only telegram is supported/);
+    const json = await cli(["channel", "add", "telegram", "--dot", "fare-watch", "--json"], { stdin: "123456:SECRET-TOKEN-VALUE" });
+    expect(JSON.parse(json.stdout)).toMatchObject({ kind: "telegram", bot_username: "dot_helper_bot" });
+  });
+
+  it("channel add shows what the server said about a refused token, without the token", async () => {
+    const refused = await cli(["channel", "add", "telegram", "--dot", "fare-watch"], { stdin: "9:REFUSED-TOKEN-VALUE" });
+    expect(refused.code).toBe(EXIT.failed);
+    expect(refused.stderr).toMatch(/refused the bot token.*\[400 invalid_credentials\]/);
+    expect(refused.stderr).not.toContain("REFUSED-TOKEN-VALUE");
+  });
+
+  it("channel list prints a table of every Dot's channels, or one Dot's, and --json the data", async () => {
+    const all = await cli(["channel", "list"]);
+    expect(all.code).toBe(EXIT.ok);
+    expect(all.stdout.split("\n")[0]).toMatch(/^DOT\s+CHANNEL\s+STATUS\s+ACCOUNT\s+PEOPLE\s+NOTE/);
+    expect(all.stdout).toMatch(/fare-watch\s+telegram\s+connected\s+@dot_helper_bot\s+Ann \(@ann\)/);
+    const one = await cli(["channel", "list", "--dot", "fare-watch"]);
+    expect(one.stdout).toBe(all.stdout);
+    expect(JSON.parse((await cli(["channel", "list", "--json"])).stdout)).toEqual([{ dot: "fare-watch", channel }]);
+    expect((await cli(["channel", "list", "extra"])).code).toBe(EXIT.usage);
+  });
+
+  it("channel pair prints the link and the code, or only the code where a channel has no link", async () => {
+    const paired = await cli(["channel", "pair", "telegram", "--dot", "fare-watch"]);
+    expect(paired.code).toBe(EXIT.ok);
+    expect(paired.stdout).toBe(
+      "open this link on the device where you use telegram, then press Start (valid until 2026-10-02T08:10:00.000Z):\n  https://t.me/dot_helper_bot?start=ABCD2345\nor send the bot: /start ABCD2345\n",
+    );
+    expect((await cli(["channel", "pair", "whatsapp", "--dot", "fare-watch"])).stdout).toBe("pairing code WXYZ6789, valid until 2026-10-02T08:10:00.000Z\n");
+    expect((await cli(["channel", "pair", "carrier-pigeon", "--dot", "fare-watch"])).stderr).toMatch(/unknown channel "carrier-pigeon": use telegram or whatsapp/);
+    expect((await cli(["channel", "pair", "telegram"])).stderr).toMatch(/missing --dot <dot>/);
+  });
+
+  it("channel remove unlinks, and an unknown subcommand is a usage error", async () => {
+    const removed = await cli(["channel", "remove", "telegram", "--dot", "fare-watch"]);
+    expect(removed.code).toBe(EXIT.ok);
+    expect(removed.stdout).toBe("unlinked telegram from Dot fare-watch: its token and paired people are deleted\n");
+    expect(requests.at(-1)).toMatchObject({ method: "DELETE", path: "/api/dots/fare-watch/channels/telegram" });
+    expect((await cli(["channel", "remove", "telegram"])).code).toBe(EXIT.usage);
+    expect((await cli(["channel", "mute"])).stderr).toMatch(/unknown channel subcommand "mute": use add, list, pair or remove/);
+    expect((await cli(["channel"])).stderr).toMatch(/missing add\|list\|pair\|remove/);
   });
 
   it("logs prints the tail without follow, and follows the stream until interrupted", async () => {

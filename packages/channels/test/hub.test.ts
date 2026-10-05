@@ -1,33 +1,29 @@
 import type { Database } from "@invisible-dots/database";
 import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-dots/database/testing";
-import { Scheduler } from "@invisible-dots/scheduler";
-import { FakeDriver, ManualClock, waitFor, waitUntilSettledReady } from "@invisible-dots/scheduler/testing";
+import { ManualClock, waitFor } from "@invisible-dots/scheduler/testing";
 import type { ChannelKind, StoredEvent } from "@invisible-dots/shared";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { ChannelHub, ChannelNeedsRelinkError, ChannelSendError, type ChannelHubOptions } from "../src/index.js";
+import { ChannelNeedsRelinkError, ChannelSendError, type ChannelHubOptions } from "../src/index.js";
 import { FakeChannelType } from "../src/testing.js";
+import { makeWorlds, quiet, type World } from "./world.js";
 
-const yaml = (name: string) => `name: ${name}\ngoal: keep watch\nmodel:\n  provider: openrouter\n  id: test/model\n`;
-const FAST = { initialMs: 1, maxMs: 5, jitter: 0 };
 const TOKEN = "123456:SECRET-TOKEN-VALUE";
-
-/** Let the hub and the event loops settle: nothing they would do in the meantime is left undone. */
-const quiet = (ms = 80) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe.each(testAdapters())("channel hub, with the real Scheduler and a fake guest (%s)", { timeout: 60_000 }, (kind) => {
   let t: TestDatabase;
   let db: Database;
-  const closers: (() => Promise<unknown>)[] = [];
-  let seq = 0;
+  let world: ReturnType<typeof makeWorlds>["world"];
+  let closeAll: ReturnType<typeof makeWorlds>["closeAll"];
 
   beforeAll(async () => {
     t = await createTestDatabase(kind);
     db = t.db;
+    ({ world, closeAll } = makeWorlds(db));
     await db.secrets.put("global", "openrouter_api_key", "sk-or-test");
   }, 60_000);
 
   afterEach(async () => {
-    for (const close of closers.splice(0).reverse()) await close();
+    await closeAll();
     // The next test's hub starts every binding in the database: it must find only its own.
     await db.query("DELETE FROM channel_bindings");
   });
@@ -35,36 +31,6 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
   afterAll(async () => {
     await t?.drop();
   });
-
-  async function world() {
-    const driver = new FakeDriver();
-    const scheduler = new Scheduler({
-      db,
-      driver,
-      clock: new ManualClock(),
-      lifecycle: { healthPollMs: 5, readyTimeoutMs: 3_000, pumpRetryMs: 10, pumpMaxRetryMs: 50 },
-      dispatcher: { retryDelayMs: 0, maxDeliveryAttempts: 2 },
-    });
-    closers.push(() => scheduler.close());
-    const clock = new ManualClock();
-    const hubs: ChannelHub[] = [];
-    /** A hub on this scheduler, started; `type` is what the hub makes channels with. */
-    async function hub(type = new FakeChannelType(), options: Partial<ChannelHubOptions> = {}) {
-      const h = new ChannelHub({ db, host: scheduler, types: [type], clock, backoff: FAST, ...options });
-      hubs.push(h);
-      closers.push(() => h.close());
-      await h.start();
-      return { hub: h, type };
-    }
-    async function dot(name = `dot-${++seq}-${Math.random().toString(36).slice(2, 6)}`) {
-      const created = await scheduler.createDot(yaml(name));
-      await waitUntilSettledReady(scheduler, driver, created.id, name);
-      return { ...created, guest: driver.guestOf(created.id) };
-    }
-    return { driver, scheduler, clock, hub, dot };
-  }
-
-  type World = Awaited<ReturnType<typeof world>>;
 
   /** A Dot with a Telegram-like channel linked and the given people paired (peer id = chat id). */
   async function linked(w: World, people: string[] = ["10"], options: Partial<ChannelHubOptions> = {}, type?: FakeChannelType) {
@@ -355,7 +321,8 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
     const { hub } = await w.hub(type);
     const dot = await w.dot();
     await hub.add(dot.id, "telegram");
-    await waitFor(async () => (await hub.list(dot.id))[0]!.status === "connected", "connected after the retry");
+    // The status row is written before its event: wait for the event, which is what is asserted.
+    await waitFor(async () => (await eventsOf(dot.id, "channel.status")).length >= 2, "the error and the connected event");
     expect((await eventsOf(dot.id, "channel.status")).map((e) => e.data.status)).toEqual(["error", "connected"]);
   });
 

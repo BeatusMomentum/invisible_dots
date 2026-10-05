@@ -37,6 +37,14 @@ describe.each(testAdapters())("channel repository on %s", { timeout: SETUP_TIMEO
     expect((await db.channels.listBindings()).map((b) => b.id)).toContain(record.id);
   });
 
+  it("a binding made with a checked account has its name from the start, and the account stays when the status changes", async () => {
+    const dot = await db.dots.insert({ id: newId("dot"), config: parseDotConfig(yaml("chan-account")), status: "READY" });
+    const record = await db.channels.createBinding({ id: newId("chb"), dotId: dot.id, kind: "telegram", settings, eventCursor: 0, account: "my_bot" });
+    expect(record).toMatchObject({ account: "my_bot", status: "connecting" });
+    expect(await db.channels.setStatus(record.id, "connected", null)).toBe(true);
+    expect((await db.channels.bindingById(record.id))?.account).toBe("my_bot");
+  });
+
   it("settings and enabled are stored; the status reports a change once; the cursor never moves back", async () => {
     const { record } = await binding("chan-two");
     expect((await db.channels.setSettings(record.id, { approvals: false, notify_tasks: true }))?.settings).toEqual({ approvals: false, notify_tasks: true });

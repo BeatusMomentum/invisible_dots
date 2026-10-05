@@ -36,6 +36,37 @@ describe("InvisibleDotsClient", () => {
     expect(seen[0]?.headers.get("authorization")).toBe("Bearer secret-token");
   });
 
+  it("channel methods send the method, path and body the API routes expect, with names and ids encoded", async () => {
+    const seen: { method: string; url: string; body: string }[] = [];
+    const record = { kind: "telegram", enabled: true, status: "connected", status_detail: null, bot_username: "b", settings: { approvals: true, notify_tasks: true }, peers: [], created_at: "now" };
+    const client = new InvisibleDotsClient({
+      baseUrl: "http://api.test",
+      token: "t",
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        seen.push({ method: request.method, url: request.url, body: await request.text() });
+        if (request.method === "DELETE") return new Response(null, { status: 204 });
+        if (request.method === "GET") return new Response(JSON.stringify({ channels: [record] }));
+        if (request.url.endsWith("/pairing")) return new Response(JSON.stringify({ code: "ABCD2345", deep_link: null, expires_at: "later" }), { status: 201 });
+        return new Response(JSON.stringify(record));
+      },
+    });
+    expect(await client.channels("my dot")).toEqual([record]);
+    expect(await client.putTelegramChannel("my dot", "1:TOKEN")).toEqual(record);
+    expect(await client.patchChannel("my dot", "telegram", { enabled: false, settings: { notify_tasks: false } })).toEqual(record);
+    expect(await client.pairChannel("my dot", "telegram")).toEqual({ code: "ABCD2345", deep_link: null, expires_at: "later" });
+    await client.removeChannelPeer("my dot", "telegram", "a/b");
+    await client.removeChannel("my dot", "telegram");
+    expect(seen.map((r) => [r.method, r.url.replace("http://api.test", ""), r.body])).toEqual([
+      ["GET", "/api/dots/my%20dot/channels", ""],
+      ["PUT", "/api/dots/my%20dot/channels/telegram", '{"token":"1:TOKEN"}'],
+      ["PATCH", "/api/dots/my%20dot/channels/telegram", '{"enabled":false,"settings":{"notify_tasks":false}}'],
+      ["POST", "/api/dots/my%20dot/channels/telegram/pairing", ""],
+      ["DELETE", "/api/dots/my%20dot/channels/telegram/peers/a%2Fb", ""],
+      ["DELETE", "/api/dots/my%20dot/channels/telegram", ""],
+    ]);
+  });
+
   it("reports an unreachable server as status 0 / unreachable", async () => {
     const client = new InvisibleDotsClient({
       baseUrl: "http://api.test",

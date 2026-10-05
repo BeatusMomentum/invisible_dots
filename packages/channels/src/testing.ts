@@ -1,11 +1,13 @@
 /**
  * An in-memory channel for tests: no network, nothing mocked. FakeChannelType makes FakeChannels the way a
  * real type makes adapters, and a test plays the person (`receive`, `pair`) and the network (`crash`,
- * `sendFailures`) through them.
+ * `sendFailures`) through them. `FakeBotApi` is a Bot API server the real Telegram adapter talks to.
  */
 import type { ChannelBindingRecord, SecretsRepository } from "@invisible-dots/database";
 import type { ChannelKind } from "@invisible-dots/shared";
 import type { Channel, ChannelCapabilities, ChannelSink, ChannelType, InboundChat } from "./channel.js";
+
+export * from "./telegram/fake-bot-api.js";
 
 export class FakeChannel implements Channel {
   readonly sent: { chatId: string; text: string }[] = [];

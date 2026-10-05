@@ -22,7 +22,7 @@ import {
 } from "@invisible-dots/shared";
 import { ControlPlaneError, errorMessage, notFound, silentLogger, systemClock, type Clock, type Logger } from "@invisible-dots/scheduler";
 import { DEFAULT_BACKOFF, type BackoffOptions } from "./backoff.js";
-import type { ChannelSink, ChannelStatusReport, ChannelType, InboundChat, PairingAttempt } from "./channel.js";
+import { ChannelCredentialsError, type ChannelSink, type ChannelStatusReport, type ChannelType, type InboundChat, type PairingAttempt } from "./channel.js";
 import { hashPairingCode, newPairingCode } from "./pairing.js";
 import { RateLimiter } from "./rate.js";
 import { BindingRunner } from "./runner.js";
@@ -143,9 +143,9 @@ export class ChannelHub {
   }
 
   /**
-   * Link the Dot to a channel and start it. `credentials` are stored encrypted as secrets of the Dot, by
-   * the names the channel type declares, and never returned. The channel starts after the Dot's latest
-   * event: what happened before is not replayed into the chat.
+   * Link the Dot to a channel and start it. `credentials` are checked with the channel first, then stored
+   * encrypted as secrets of the Dot, by the names the channel type declares, and never returned. The
+   * channel starts after the Dot's latest event: what happened before is not replayed into the chat.
    */
   async add(
     dotIdOrName: string,
@@ -156,17 +156,15 @@ export class ChannelHub {
     const type = this.#type(kind);
     const dot = await this.#o.host.requireDot(dotIdOrName);
     const settings = applySettings(DEFAULT_CHANNEL_SETTINGS, options.settings);
-    const credentials = Object.entries(options.credentials ?? {});
-    for (const [name, value] of credentials) {
-      if (!type.secretNames.includes(name)) throw bad(`a ${kind} channel has no credential "${name}"`);
-      if (typeof value !== "string" || value === "") throw bad(`the credential "${name}" must be a non-empty string`);
-    }
+    const credentials = this.#credentials(type, options.credentials);
+    const account = await this.#check(type, credentials);
+    await this.#assertAccountFree(kind, account, dot.id);
     const eventCursor = (await this.#o.host.events.tail(dot.id, 1))[0]?.id ?? 0;
     let binding: ChannelBindingRecord;
     try {
       binding = await this.#o.db.transaction(async (tx) => {
-        const created = await tx.channels.createBinding({ id: newId("chb"), dotId: dot.id, kind, settings, eventCursor });
-        for (const [name, value] of credentials) await tx.secrets.put(dot.id, name, value);
+        const created = await tx.channels.createBinding({ id: newId("chb"), dotId: dot.id, kind, settings, eventCursor, ...(account !== null && { account }) });
+        for (const [name, value] of Object.entries(credentials)) await tx.secrets.put(dot.id, name, value);
         return created;
       });
     } catch (error) {
@@ -175,6 +173,35 @@ export class ChannelHub {
     }
     if (this.#state === "started") this.#run(binding);
     return this.#record(binding, []);
+  }
+
+  /**
+   * Give an existing channel new credentials (the token was revoked, or the person wants another bot) and
+   * start it again with them. The people paired to it stay. A channel the person paused stays paused.
+   */
+  async setCredentials(dotIdOrName: string, kind: ChannelKind, credentials: Record<string, string>): Promise<ChannelRecord> {
+    this.#assertOpen();
+    const type = this.#type(kind);
+    const binding = await this.#binding(dotIdOrName, kind);
+    const checked = this.#credentials(type, credentials);
+    const account = await this.#check(type, checked);
+    await this.#assertAccountFree(kind, account, binding.dot_id);
+    await this.#stop(binding.id);
+    let updated: ChannelBindingRecord;
+    try {
+      updated = await this.#o.db.transaction(async (tx) => {
+        for (const [name, value] of Object.entries(checked)) await tx.secrets.put(binding.dot_id, name, value);
+        // The new credentials may belong to another account: its name is shown, and what the old one reported is stale.
+        await tx.channels.setStatus(binding.id, "connecting", null, account ?? undefined);
+        return (await tx.channels.bindingById(binding.id)) ?? binding;
+      });
+    } catch (error) {
+      // Nothing changed: the channel goes on with the credentials it had.
+      if (binding.enabled && this.#state === "started") this.#run(binding);
+      throw error;
+    }
+    if (updated.enabled && this.#state === "started") this.#run(updated);
+    return this.#record(updated, await this.#o.db.channels.peers(binding.id));
   }
 
   /** Unlink: stop the channel and delete its binding, the people paired to it and its credentials. */
@@ -237,6 +264,35 @@ export class ChannelHub {
       throw bad(`no "${String(kind)}" channel: ${known}`);
     }
     return type;
+  }
+
+  /** The credentials to store: only the names the type declares, each a non-empty string. */
+  #credentials(type: ChannelType, given: Record<string, string> | undefined): Record<string, string> {
+    for (const [name, value] of Object.entries(given ?? {})) {
+      if (!type.secretNames.includes(name)) throw bad(`a ${type.kind} channel has no credential "${name}"`);
+      if (typeof value !== "string" || value === "") throw bad(`the credential "${name}" must be a non-empty string`);
+    }
+    return { ...given };
+  }
+
+  /** What the channel says of the credentials, as the answer the API gives: refused ones are the person's to fix, an unreachable channel is a 502. */
+  async #check(type: ChannelType, credentials: Record<string, string>): Promise<string | null> {
+    if (!type.check) return null;
+    try {
+      return (await type.check(credentials)).account;
+    } catch (error) {
+      if (error instanceof ChannelCredentialsError) throw new ControlPlaneError(400, "invalid_credentials", error.message);
+      let reason = errorMessage(error);
+      for (const value of Object.values(credentials)) reason = reason.split(value).join("[redacted]");
+      throw new ControlPlaneError(502, "channel_unreachable", `could not check the ${type.kind} credentials: ${reason.slice(0, STATUS_DETAIL_MAX)}`);
+    }
+  }
+
+  /** An account (a bot) serves one Dot: two pollers on one bot take turns failing. */
+  async #assertAccountFree(kind: ChannelKind, account: string | null, dotId: string): Promise<void> {
+    if (account === null) return;
+    const other = (await this.#o.db.channels.listBindings()).find((b) => b.kind === kind && b.account === account && b.dot_id !== dotId);
+    if (other) throw new ControlPlaneError(409, "account_in_use", `${kind} account "${account}" is already linked to another Dot: use one account per Dot`);
   }
 
   async #binding(dotIdOrName: string, kind: ChannelKind): Promise<ChannelBindingRecord> {
@@ -328,7 +384,7 @@ export class ChannelHub {
     if (!message.direct) return;
     const peer = await this.#o.db.channels.peer(runner.bindingId, message.peerId);
     if (!peer) return;
-    if (message.text.trim() === "") return;
+    if (message.text.trim() === "" && !message.attachment) return;
     const key = `${runner.bindingId}:${peer.peer_id}`;
     if (!this.#rate.take(key)) {
       if (!this.#slowed.has(key)) {
@@ -338,6 +394,10 @@ export class ChannelHub {
       return;
     }
     this.#slowed.delete(key);
+    if (message.attachment) {
+      await this.#tell(runner, message.chatId, "Attachments are not supported yet: send the message as text.");
+      return;
+    }
     if (message.text.length > this.#limits.maxChars) {
       await this.#tell(runner, message.chatId, `That message is too long: the limit is ${this.#limits.maxChars} characters.`);
       return;

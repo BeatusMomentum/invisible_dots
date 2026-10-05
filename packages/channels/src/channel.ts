@@ -19,6 +19,11 @@ export interface InboundChat {
   direct: boolean;
   /** How the sender is named in the channel, for the list of paired people; the hub falls back to `peerId`. */
   label?: string;
+  /**
+   * The message carries something other than text (a photo, a voice note). The Dot gets text only, so the
+   * hub tells a paired person it is not supported yet and hands nothing on.
+   */
+  attachment?: boolean;
 }
 
 /** A person who sent the one-time code from `/start <code>` or the like. */
@@ -97,6 +102,14 @@ export class ChannelNeedsRelinkError extends Error {
   }
 }
 
+/** The credentials a person gave do not work (a revoked or mistyped token). The message may be shown to them: it never carries a credential. */
+export class ChannelCredentialsError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ChannelCredentialsError";
+  }
+}
+
 /** One kind of channel: how to make its adapter for a binding, and what a binding of it owns besides its rows. */
 export interface ChannelType {
   readonly kind: ChannelKind;
@@ -105,6 +118,12 @@ export interface ChannelType {
    * names the hub stores for it, and they are deleted with the binding; they are never pushed to the guest.
    */
   readonly secretNames: readonly string[];
+  /**
+   * Try the credentials a person is giving, before anything is stored: resolves with the account they
+   * belong to (a bot's username), rejects with `ChannelCredentialsError` when they do not work and with
+   * any other error when the channel cannot be reached. Absent when a channel has nothing to check.
+   */
+  check?(credentials: Record<string, string>): Promise<{ account: string }>;
   /** The adapter for `binding`, reading its credentials from `secrets`. Throws when they are missing. */
   create(binding: ChannelBindingRecord, secrets: Pick<SecretsRepository, "get">): Promise<Channel>;
   /** The link that opens the channel with the code filled in, or null when the channel has none. `account` is what the adapter reported. */
