@@ -1,5 +1,5 @@
 /**
- * What a guest event changes on the host besides the event log: task rows,
+ * What a guest event changes on the host besides the event log: task rows (state, summary, error, spend),
  * approval rows and the Dot's status.
  */
 import type { Repositories } from "@invisible-dots/database";
@@ -29,6 +29,11 @@ export interface AppliedGuestEvent {
   taskSettled: boolean;
 }
 
+/** The spend a task event reports (architecture section 5.4), onto the task's row; events without it change nothing. */
+async function recordTaskSpend(tx: Repositories, dotId: string, data: { task_id: string; spent_usd?: number }): Promise<void> {
+  if (data.spent_usd !== undefined) await tx.tasks.recordSpend(data.task_id, dotId, data.spent_usd);
+}
+
 /** Apply one newly stored guest event inside the transaction that stored it. */
 export async function applyGuestEvent(tx: Repositories, dotId: string, event: OutboundEvent): Promise<AppliedGuestEvent> {
   switch (event.type) {
@@ -43,9 +48,14 @@ export async function applyGuestEvent(tx: Repositories, dotId: string, event: Ou
     case "task.started":
       await tx.tasks.transition(event.data.task_id, "RUNNING", { dotId });
       return { taskSettled: false };
+    case "task.progress":
+      await recordTaskSpend(tx, dotId, event.data);
+      return { taskSettled: false };
     case "task.completed":
+      await recordTaskSpend(tx, dotId, event.data);
       return { taskSettled: (await tx.tasks.transition(event.data.task_id, "COMPLETED", { summary: event.data.summary, dotId })) !== null };
     case "task.failed":
+      await recordTaskSpend(tx, dotId, event.data);
       return { taskSettled: (await tx.tasks.transition(event.data.task_id, "FAILED", { error: event.data.error, dotId })) !== null };
     case "approval.requested": {
       // A request for a task that already ended (cancelled while the guest

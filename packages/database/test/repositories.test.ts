@@ -37,7 +37,7 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect(again.applied).toEqual([]);
     expect(again.alreadyApplied).toContain("0001_initial");
     const { rows } = await db.query<{ version: string }>("SELECT version FROM schema_migrations ORDER BY version");
-    expect(rows.map((r) => r.version)).toEqual(["0001_initial", "0002_inbound_events"]);
+    expect(rows.map((r) => r.version)).toEqual(["0001_initial", "0002_inbound_events", "0003_task_spend"]);
   });
 
   it("dots: unique names, resolve by id or name, status with error", async () => {
@@ -97,6 +97,64 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect(await db.events.list({ dotId: dot.id, types: ["computer.state"] })).toHaveLength(1);
     expect((await db.events.tail(dot.id, 1))[0]?.id).toBe(host.id);
     expect(await db.events.latestId()).toBeGreaterThanOrEqual(host.id);
+  });
+
+  it("events: the spend of a Dot sums the events that end a unit of spend, from a moment on", async () => {
+    const dot = await seedDot(db, "spender");
+    const other = await seedDot(db, "bystander");
+    expect(await db.events.spentUsd(dot.id)).toBe(0);
+    let seq = 0;
+    const guest = (id: string, type: OutboundEvent["type"], data: Record<string, unknown>) =>
+      db.events.insertGuest(id, outbound(++seq, type, data));
+    await guest(dot.id, "task.progress", { task_id: "task_1", text: "a", spent_usd: 0.1 });
+    await guest(dot.id, "task.completed", { task_id: "task_1", summary: "b", spent_usd: 0.2 });
+    await guest(dot.id, "task.failed", { task_id: "task_2", error: "c", spent_usd: 0.5 });
+    await guest(dot.id, "message.assistant", { text: "d", spent_usd: 0.25 });
+    // An event that predates the report has none, and a type that reports no spend adds none.
+    await guest(dot.id, "message.assistant", { text: "old" });
+    await guest(dot.id, "memory.written", { key: "k", spent_usd: 99 });
+    // Another Dot's, and a host event of the same type, are not this Dot's.
+    await guest(other.id, "task.completed", { task_id: "task_9", summary: "z", spent_usd: 7 });
+    await db.events.insertHost(dot.id, "task.completed", { task_id: "task_h", spent_usd: 50 });
+    // 0.2 + 0.5 + 0.25: the float sum is rounded to the hundred-millionth of a USD, the engine's resolution.
+    expect(await db.events.spentUsd(dot.id)).toBe(0.95);
+    expect(await db.events.spentUsd(other.id)).toBe(7);
+
+    const later = new Date(Date.now() + 60_000);
+    expect(await db.events.spentUsd(dot.id, later)).toBe(0);
+    expect(await db.events.spentUsd(dot.id, new Date(Date.now() - 60_000))).toBe(0.95);
+    await db.query("UPDATE events SET created_at = now() - interval '2 days' WHERE dot_id = $1 AND type = 'task.completed' AND source = 'guest'", [dot.id]);
+    expect(await db.events.spentUsd(dot.id, new Date(Date.now() - 3_600_000))).toBe(0.75);
+    expect(await db.events.spentUsd(dot.id)).toBe(0.95);
+  });
+
+  it("events: a float sum shows no noise", async () => {
+    const dot = await seedDot(db, "noisy");
+    await db.events.insertGuest(dot.id, outbound(1, "task.completed", { task_id: "t", summary: "s", spent_usd: 0.1 }));
+    await db.events.insertGuest(dot.id, outbound(2, "message.assistant", { text: "m", spent_usd: 0.2 }));
+    expect(await db.events.spentUsd(dot.id)).toBe(0.3);
+  });
+
+  it("tasks: the spend a guest reports only grows, counts after the task ended and stays inside its Dot", async () => {
+    const dot = await seedDot(db, "meter");
+    const stranger = await seedDot(db, "stranger");
+    const task = await db.tasks.insert({ id: newId("task"), dotId: dot.id, description: "spend" });
+    expect(task.spent_usd).toBe(0);
+    await db.tasks.recordSpend(task.id, dot.id, 0.25);
+    expect((await db.tasks.get(task.id))?.spent_usd).toBe(0.25);
+    // A late or repeated event never lowers it.
+    await db.tasks.recordSpend(task.id, dot.id, 0.1);
+    expect((await db.tasks.get(task.id))?.spent_usd).toBe(0.25);
+    await db.tasks.recordSpend(task.id, dot.id, 0.75);
+    expect((await db.tasks.get(task.id))?.spent_usd).toBe(0.75);
+    // Another Dot's guest cannot write it.
+    await db.tasks.recordSpend(task.id, stranger.id, 50);
+    expect((await db.tasks.get(task.id))?.spent_usd).toBe(0.75);
+    // A cancelled task the guest keeps working on still spends.
+    await db.tasks.transition(task.id, "CANCELLED");
+    await db.tasks.recordSpend(task.id, dot.id, 1.5);
+    expect((await db.tasks.get(task.id))?.spent_usd).toBe(1.5);
+    expect((await db.tasks.listByDot(dot.id))[0]?.spent_usd).toBe(1.5);
   });
 
   it("tasks: claim skips busy Dots, honours priority and scheduled_at, and never hands one Dot two tasks", async () => {

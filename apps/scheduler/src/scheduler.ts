@@ -16,6 +16,7 @@ import type {
   DotSummary,
   MessageAnswer,
   TaskRecord,
+  UsageAnswer,
 } from "@invisible-dots/shared";
 import {
   checkOpenRouterKey,
@@ -579,12 +580,22 @@ export class Scheduler {
 
   // Events and secrets
 
-  async listEvents(idOrName: string, after?: number, limit?: number): Promise<StoredEvent[]> {
+  /** The id of a Dot whose history is read: a deleted Dot's history stays readable by id. */
+  async #historyDotId(idOrName: string): Promise<string> {
     const dot = await this.db.dots.resolve(idOrName);
-    // A deleted Dot's history stays readable by id.
     const dotId = dot?.id ?? (idOrName.includes("_") ? idOrName : undefined);
     if (!dotId) throw notFound("Dot", idOrName);
-    return this.events.query({ dotId, after, limit });
+    return dotId;
+  }
+
+  async listEvents(idOrName: string, after?: number, limit?: number): Promise<StoredEvent[]> {
+    return this.events.query({ dotId: await this.#historyDotId(idOrName), after, limit });
+  }
+
+  /** The model spend the Dot's guest reported since `since` (every event when omitted), from the event log. */
+  async usage(idOrName: string, since?: Date): Promise<UsageAnswer> {
+    const dotId = await this.#historyDotId(idOrName);
+    return { dot_id: dotId, since: since?.toISOString() ?? null, spent_usd: await this.db.events.spentUsd(dotId, since) };
   }
 
   /** Store the OpenRouter key (global or per Dot) and push it to the READY guests it applies to. */

@@ -56,7 +56,7 @@ class TestAChatTurn:
         user, answer = h.messages()
         assert (user["role"], user["content"], user[METADATA_KEY]) == ("user", "hello", {INBOUND_ID: "in1"})
         assert (answer["role"], answer["content"]) == ("assistant", "hi there")
-        assert h.events() == [("message.assistant", {"text": "hi there", "in_reply_to": "in1"})]
+        assert h.events() == [("message.assistant", {"text": "hi there", "in_reply_to": "in1", "spent_usd": 0.0})]
         assert h.inbound_state("in1") == "applied"
         assert h.host.events == [("run_started", CHAT)]
 
@@ -107,7 +107,7 @@ class TestAChatTurn:
             ("user", "and this"),
             ("assistant", "both answered"),
         ]
-        assert h.events() == [("message.assistant", {"text": "both answered", "in_reply_to": "in2"})]
+        assert h.events() == [("message.assistant", {"text": "both answered", "in_reply_to": "in2", "spent_usd": 0.0})]
         assert h.inbound_state("in1") == h.inbound_state("in2") == "applied"
         # The model was asked once, with both user messages merged as for any request.
         (request,) = h.provider.requests
@@ -134,7 +134,7 @@ class TestATaskTurn:
 
         assert outcome.kind == "completed"
         assert [(m["role"], m["content"]) for m in h.messages(session)] == [("user", "do it"), ("assistant", "the summary")]
-        assert h.events() == [("task.completed", {"task_id": "t1", "summary": "the summary"})]
+        assert h.events() == [("task.completed", {"task_id": "t1", "summary": "the summary", "spent_usd": 0.0})]
         assert h.host.events == [("run_started", session)]
 
     async def test_the_text_beside_a_tool_call_is_reported_as_progress_before_the_call_and_the_completion(
@@ -930,8 +930,39 @@ class TestTheCostCap:
         outcome = await h.run(TurnUnit(session, "t1", (OpeningMessage("do it"),)))
 
         assert outcome.kind == "completed"
-        assert h.events() == [("task.completed", {"task_id": "t1", "summary": "the summary"})]
+        assert h.events() == [("task.completed", {"task_id": "t1", "summary": "the summary", "spent_usd": 5.0})]
         assert h.store.read(lambda conn: s.get_spend(conn, session)) == 5.0
+
+    async def test_the_events_of_a_task_turn_report_what_the_task_has_spent_so_far(
+        self, make_harness: MakeHarness
+    ) -> None:
+        h = make_harness(
+            [
+                calls(call("c1", "list_dir", path="."), text="Listing first.", cost=0.25),
+                calls(call("c2", "list_dir", path="."), text="And once more.", cost=0.5),
+                says("the summary", cost=0.125),
+            ]
+        )
+        session = h.start_task()
+
+        outcome = await h.run(TurnUnit(session, "t1", (OpeningMessage("do it"),)))
+
+        assert outcome.kind == "completed"
+        assert [(kind, data["spent_usd"]) for kind, data in h.events() if kind != "tool.called"] == [
+            ("task.progress", 0.25),
+            ("task.progress", 0.75),
+            ("task.completed", 0.875),
+        ]
+
+    async def test_the_answer_of_a_chat_turn_reports_what_that_turn_spent(self, make_harness: MakeHarness) -> None:
+        h = make_harness([calls(call("c1", "list_dir", path="."), cost=0.25), says("done", cost=0.5)])
+        h.accept("in1")
+
+        await h.run(chat_unit())
+
+        assert [(kind, data["spent_usd"]) for kind, data in h.events() if kind == "message.assistant"] == [
+            ("message.assistant", 0.75)
+        ]
 
     async def test_a_chat_turn_says_the_turn_and_keeps_its_transcript_legal(self, make_harness: MakeHarness) -> None:
         h = make_harness(

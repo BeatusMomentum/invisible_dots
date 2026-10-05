@@ -82,6 +82,42 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     expect(await broken.json()).toMatchObject({ error: "invalid_request" });
   });
 
+  it("usage: the spend the guest reported, since a moment, from the event log", async () => {
+    const dot = await readyDot("usage-one");
+    const other = await readyDot("usage-two");
+    expect(await api.usage(dot.id)).toEqual({ dot_id: dot.id, since: null, spent_usd: 0 });
+    const guest = driver.guestOf(dot.id);
+    guest.onInbound = () => {};
+    const task = await api.createTask(dot.id, { description: "costly" });
+    await waitFor(async () => (await db.tasks.runs(task.id))[0]?.delivered_at, "delivered");
+    guest.emit("task.progress", { task_id: task.id, text: "step", spent_usd: 0.25 });
+    guest.emit("task.completed", { task_id: task.id, summary: "done", spent_usd: 0.5 });
+    guest.emit("message.assistant", { text: "hello", spent_usd: 0.125 });
+    driver.guestOf(other.id).emit("message.assistant", { text: "not mine", spent_usd: 9 });
+    await waitFor(async () => (await api.getTask(task.id)).status === "COMPLETED", "completed");
+    await waitFor(async () => (await api.usage(dot.id)).spent_usd === 0.625, "chat answer stored");
+    expect(await api.usage(dot.name)).toEqual({ dot_id: dot.id, since: null, spent_usd: 0.625 });
+    expect((await api.getTask(task.id)).spent_usd).toBe(0.5);
+    expect((await api.listTasks(dot.id))[0]?.spent_usd).toBe(0.5);
+
+    const future = new Date(Date.now() + 3_600_000).toISOString();
+    expect(await api.usage(dot.id, { since: future })).toEqual({ dot_id: dot.id, since: future, spent_usd: 0 });
+    const past = new Date(Date.now() - 3_600_000).toISOString();
+    expect((await api.usage(dot.id, { since: past })).spent_usd).toBe(0.625);
+  });
+
+  it("usage: a bad since is 400, an unknown Dot 404, and a deleted Dot's history stays readable by id", async () => {
+    const dot = await readyDot("usage-three");
+    await expect(api.usage(dot.id, { since: "yesterday" })).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+    await expect(api.usage(dot.id, { since: "2026-13-45T00:00:00Z" })).rejects.toMatchObject({ status: 400 });
+    await expect(api.usage("no-such-dot")).rejects.toMatchObject({ status: 404 });
+    driver.guestOf(dot.id).emit("message.assistant", { text: "paid", spent_usd: 0.5 });
+    await waitFor(async () => (await api.usage(dot.id)).spent_usd === 0.5, "spend stored");
+    await api.deleteDot(dot.id);
+    await waitFor(async () => (await db.dots.get(dot.id)) === null, "deleted");
+    expect(await api.usage(dot.id)).toEqual({ dot_id: dot.id, since: null, spent_usd: 0.5 });
+  });
+
   it("create validates the config: 400 with the issues, 409 for a taken name", async () => {
     const invalid = await api.createDot({ name: "Bad Name", goal: "x", model: { provider: "openrouter", id: "m" } }).catch((e) => e);
     expect(invalid).toBeInstanceOf(ApiError);

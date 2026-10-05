@@ -15,6 +15,7 @@ import type {
   IdentitiesAnswer,
   MessagesAnswer,
   TasksAnswer,
+  UsageAnswer,
 } from "@invisible-dots/sdk/types";
 import { APPROVAL_STATUSES, type ApprovalStatus } from "@invisible-dots/shared";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
@@ -49,6 +50,16 @@ function intParam(value: unknown, name: string, max = Number.MAX_SAFE_INTEGER): 
     throw bad(`${name} must be a non-negative integer${max < Number.MAX_SAFE_INTEGER ? ` up to ${max}` : ""}`);
   }
   return Number(value);
+}
+
+/** An ISO 8601 date-time query parameter, or undefined when absent. */
+function sinceParam(value: unknown): Date | undefined {
+  if (value === undefined || value === "") return undefined;
+  const parsed = typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value) ? new Date(value) : undefined;
+  if (parsed === undefined || Number.isNaN(parsed.getTime())) {
+    throw bad("since must be an ISO 8601 timestamp such as 2026-10-05T00:00:00Z");
+  }
+  return parsed;
 }
 
 function bodyOf(request: FastifyRequest): Record<string, unknown> {
@@ -226,7 +237,12 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     });
   }
 
-  // Events
+  // Events and usage
+
+  app.get<{ Params: Params; Querystring: { since?: string } }>(
+    "/api/dots/:id/usage",
+    async (request): Promise<UsageAnswer> => scheduler.usage(request.params.id, sinceParam(request.query.since)),
+  );
 
   app.get<{ Params: Params; Querystring: { after?: string; limit?: string } }>(
     "/api/dots/:id/events",

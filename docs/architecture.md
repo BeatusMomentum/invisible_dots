@@ -678,8 +678,9 @@ failed was not accepted, so its redelivery is.
 
 Outbound types: `agent.started {}` (the first event of every start of the
 agent process, section 4.3), `agent.state {state}`, `message.assistant {text,
-in_reply_to?}`, `task.started {task_id}`, `task.progress {task_id, text}`,
-`task.completed {task_id, summary}`, `task.failed {task_id, error}`,
+in_reply_to?, spent_usd?}`, `task.started {task_id}`, `task.progress {task_id,
+text, spent_usd?}`, `task.completed {task_id, summary, spent_usd?}`,
+`task.failed {task_id, error, spent_usd?}`,
 `approval.requested {approval_id, task_id?, tool, permission, arguments,
 reason}`, `tool.called {task_id?, tool, permission, decision, ok,
 duration_ms, interrupted?}`, `browser.identity.created|deleted|launched|closed
@@ -696,6 +697,17 @@ cut at 2000 characters, the last one an ellipsis. A message with no text beside
 its calls sends nothing, and neither does the chat: the answer of a chat turn
 is its `message.assistant`, and the final answer of a task is its
 `task.completed`.
+
+`spent_usd` on `message.assistant`, `task.progress`, `task.completed` and
+`task.failed` is the model spend of the session the event belongs to, in USD,
+read from the same ledger the cost cap uses (section 8.2) in the transaction
+that stores the event, to the hundred-millionth of a USD. On a task's events it
+is the spend of the task so far (it only grows, and survives a restart, an
+approval and a resume); on the chat's `message.assistant` it is the spend of the
+turn that answered, because the chat's spend starts again with every turn. The
+engine always sends it (0 when nothing was spent); the schema makes it optional
+so events logged before it existed stay valid. The host reads it as the
+guest's report: it is never used to enforce anything (the cap is the guest's).
 
 `memory.written {key}` reports a note the Dot wrote: `key` is the note's path
 relative to `/home/dot/memory` (`trips/rome.md` for
@@ -842,7 +854,7 @@ three times (section 8.7). A chat turn has the same limits; a failed chat turn
 answers "I could not answer: ...".
 
 `limits.max_cost_per_task_usd` caps the model spend of a task, or of one turn of
-the chat. The cost of a request is what OpenRouter reports for it in the usage
+the chat. The events that end work carry the spend (section 5.4). The cost of a request is what OpenRouter reports for it in the usage
 of the last chunk of its response (`usage.cost`, USD; for a BYOK request the
 upstream cost it reports beside it is added, which may count more than was
 charged and never less). The engine adds the cost of every response of a turn,
@@ -1259,7 +1271,7 @@ files applied in order at start.
 
 - `dots(id text pk, name text unique, config jsonb, status text, created_at, updated_at)`
 - `computers(dot_id pk fk, vm_name, guest_port int null, pid int null, state text, golden_image text, runtime_image text, token_enc bytea, event_cursor bigint default 0, last_active_at, last_error, updated_at)`: `guest_port` and `pid` are null while no QEMU runs, and `guest_port` is not unique (a crashed VM's row may name a port since reused); both are copies of `qemu.json` (section 3.2), which wins on reconciliation
-- `tasks(id text pk, dot_id fk, description, priority int, status, created_at, scheduled_at, started_at, finished_at, summary, error)`
+- `tasks(id text pk, dot_id fk, description, priority int, status, created_at, scheduled_at, started_at, finished_at, summary, error, spent_usd double precision default 0)`: `spent_usd` is the highest `spent_usd` the guest reported on the task's events (section 5.4), recorded by the host in the transaction that stores each event, so a late or repeated event never lowers it and a cancelled task the guest keeps working on still counts; a task whose guest never reported spend stays 0
 - `task_runs(id pk, task_id fk, started_at, delivered_at, finished_at, outcome)`: `delivered_at` is set when the guest accepted the run's `task.created`
 - `events(id bigserial pk, dot_id, type, data jsonb, source 'host'|'guest', guest_seq bigint, created_at)`, unique `(dot_id, guest_seq)`
 - `approvals(id text pk, dot_id, task_id, tool, permission, arguments jsonb, reason, status 'pending'|'approved'|'rejected'|'expired', note, created_at, resolved_at)`: an approval whose task reached a terminal state before anyone decided is `expired`, in the same statement that ends the task, and an `approval.requested` for a task that is already terminal is stored as `expired`, never `pending`
@@ -1397,6 +1409,7 @@ POST   /api/approvals/:id/approve    body: { note? }
 POST   /api/approvals/:id/reject     body: { note? }
 
 GET    /api/dots/:id/events          ?after=<id>&limit=
+GET    /api/dots/:id/usage           ?since=<ISO 8601 timestamp>   { dot_id, since, spent_usd }
 GET    /api/stream                   SSE: every event, ?dot_id= to filter
 PUT    /api/secrets/openrouter       body: { value, dot_id? }
 GET    /api/health
@@ -1405,6 +1418,17 @@ GET    /api/health
 `GET /api/health` answers `{ status: "ok", database: "ok", version,
 openrouter_configured }`; the last field is whether a global OpenRouter key is
 stored, which `invisible-dots doctor` reports.
+
+`GET /api/dots/:id/usage` answers the model spend the Dot's guest reported, in
+USD, since `since` (the first event when omitted; a malformed `since` is a 400).
+The event log is its one source: it sums `spent_usd` over the events that end a
+unit of spend, a task's `task.completed` and `task.failed` (each carries the
+whole task) and the chat's `message.assistant` (each carries its turn), by the
+time the host stored them. `task.progress` is left out because its value is the
+running total of a task that ends with one of those events. Work that never
+reported an end (a cancelled task, a chat turn cut by a restart) is not in the
+total; the task's own `spent_usd` still shows what was heard of it. Like
+`/events`, it reads the history of a deleted Dot by id.
 
 Browser identity routes need the Dot's computer running: on a stopped Dot they
 answer `409 { error: "computer_stopped" }`.

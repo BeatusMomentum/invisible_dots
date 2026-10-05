@@ -75,6 +75,23 @@ export interface ApprovalRequestedData {
   reason: string;
 }
 
+/**
+ * Model spend in USD, on the events that report it (architecture section 5.4): what the
+ * session of the event has spent so far. A task's events carry the task's spend (it only
+ * grows), the chat's `message.assistant` the spend of the turn that answered. The engine
+ * always sends it; it is optional because events logged before it existed have none.
+ */
+export interface SpentUsd {
+  spent_usd?: number;
+}
+
+/**
+ * The events a usage total sums `spent_usd` over: each one ends a unit of spend and carries the whole
+ * of it. `task.progress` also carries `spent_usd`, but it is a running value of a task that ends with
+ * one of these, so summing it would count the same money twice.
+ */
+export const USAGE_EVENT_TYPES = ["task.completed", "task.failed", "message.assistant"] as const satisfies readonly OutboundEventType[];
+
 export interface OutboundEventDataMap {
   /**
    * The agent process started (a boot, or a restart by systemd inside a
@@ -83,11 +100,11 @@ export interface OutboundEventDataMap {
    */
   "agent.started": Record<string, never>;
   "agent.state": { state: AgentState };
-  "message.assistant": { text: string; in_reply_to?: string };
+  "message.assistant": { text: string; in_reply_to?: string } & SpentUsd;
   "task.started": { task_id: string };
-  "task.progress": { task_id: string; text: string };
-  "task.completed": { task_id: string; summary: string };
-  "task.failed": { task_id: string; error: string };
+  "task.progress": { task_id: string; text: string } & SpentUsd;
+  "task.completed": { task_id: string; summary: string } & SpentUsd;
+  "task.failed": { task_id: string; error: string } & SpentUsd;
   "approval.requested": ApprovalRequestedData;
   "tool.called": {
     task_id?: string;
@@ -194,6 +211,7 @@ export function parseInboundEvent(value: unknown): InboundEvent {
 const outboundBase = { seq: z.number().int().positive(), id: nonEmpty, ts: isoTimestamp };
 const identityData = z.object({ identity_id: nonEmpty, name: z.string() });
 const permission = z.enum(PERMISSIONS);
+const spentUsd = z.number().nonnegative().optional();
 
 export const outboundEventSchema = z.discriminatedUnion("type", [
   z.object({ ...outboundBase, type: z.literal("agent.started"), data: z.object({}) }),
@@ -201,23 +219,23 @@ export const outboundEventSchema = z.discriminatedUnion("type", [
   z.object({
     ...outboundBase,
     type: z.literal("message.assistant"),
-    data: z.object({ text: z.string(), in_reply_to: z.string().optional() }),
+    data: z.object({ text: z.string(), in_reply_to: z.string().optional(), spent_usd: spentUsd }),
   }),
   z.object({ ...outboundBase, type: z.literal("task.started"), data: z.object({ task_id: nonEmpty }) }),
   z.object({
     ...outboundBase,
     type: z.literal("task.progress"),
-    data: z.object({ task_id: nonEmpty, text: z.string() }),
+    data: z.object({ task_id: nonEmpty, text: z.string(), spent_usd: spentUsd }),
   }),
   z.object({
     ...outboundBase,
     type: z.literal("task.completed"),
-    data: z.object({ task_id: nonEmpty, summary: z.string() }),
+    data: z.object({ task_id: nonEmpty, summary: z.string(), spent_usd: spentUsd }),
   }),
   z.object({
     ...outboundBase,
     type: z.literal("task.failed"),
-    data: z.object({ task_id: nonEmpty, error: z.string() }),
+    data: z.object({ task_id: nonEmpty, error: z.string(), spent_usd: spentUsd }),
   }),
   z.object({
     ...outboundBase,

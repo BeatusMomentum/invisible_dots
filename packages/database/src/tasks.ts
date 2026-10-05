@@ -15,6 +15,7 @@ interface TaskRow {
   finished_at: Date | null;
   summary: string | null;
   error: string | null;
+  spent_usd: number;
 }
 
 interface TaskRunRow {
@@ -39,6 +40,7 @@ function toTask(row: TaskRow): TaskRecord {
     finished_at: iso(row.finished_at),
     summary: row.summary,
     error: row.error,
+    spent_usd: row.spent_usd,
   };
 }
 
@@ -224,6 +226,20 @@ export class TasksRepository {
     }
     const { previous_status: previous, ...task } = row;
     return { task: toTask(task), previous };
+  }
+
+  /**
+   * Record what the guest says the task has spent (`spent_usd` of its events): the highest value
+   * heard, so an event that arrives late or twice never lowers it. Unlike `transition` it also
+   * counts for a task that already ended (a cancelled task the guest keeps working on still spends).
+   * Only a task of `dotId` changes: a guest can never write another Dot's tasks by naming their ids.
+   */
+  async recordSpend(taskId: string, dotId: string, usd: number): Promise<void> {
+    await this.q.query("UPDATE tasks SET spent_usd = GREATEST(spent_usd, $3) WHERE id = $1 AND dot_id = $2", [
+      taskId,
+      dotId,
+      usd,
+    ]);
   }
 
   /**

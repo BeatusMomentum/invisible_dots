@@ -205,7 +205,7 @@ class TestTheChat:
         await h.idle()
 
         assert h.asked() == 1
-        assert h.events_of("message.assistant") == [{"text": "hi", "in_reply_to": "m1"}]
+        assert h.events_of("message.assistant") == [{"text": "hi", "in_reply_to": "m1", "spent_usd": 0.0}]
         assert h.inbound_state("m1") == "applied"
 
     async def test_every_message_accepted_before_the_turn_starts_opens_the_same_turn(
@@ -222,7 +222,7 @@ class TestTheChat:
 
         assert h.asked() == 1
         assert user_texts(h.provider.requests[0]) == ["first\n\nsecond"]
-        assert h.events_of("message.assistant") == [{"text": "both", "in_reply_to": "m2"}]
+        assert h.events_of("message.assistant") == [{"text": "both", "in_reply_to": "m2", "spent_usd": 0.0}]
 
     async def test_a_turn_that_failed_still_answers_with_why(self, make_engine: MakeEngine) -> None:
         h = started(make_engine([LLMResponse(content="rate limited", finish_reason="error")]))
@@ -230,7 +230,7 @@ class TestTheChat:
         h.engine.accept(user_message("m1"))
         await h.idle()
 
-        assert h.events_of("message.assistant") == [{"text": "I could not answer: rate limited", "in_reply_to": "m1"}]
+        assert h.events_of("message.assistant") == [{"text": "I could not answer: rate limited", "in_reply_to": "m1", "spent_usd": 0.0}]
         assert h.inbound_state("m1") == "applied"
         assert h.engine.state == "IDLE"
         # Nothing is owed any more: no turn follows.
@@ -286,7 +286,7 @@ class TestTheChat:
 
         assert h.asked() == 2
         assert user_texts(h.provider.requests[1]) == ["first", "second"]
-        assert h.events_of("message.assistant") == [{"text": "both", "in_reply_to": "m2"}]
+        assert h.events_of("message.assistant") == [{"text": "both", "in_reply_to": "m2", "spent_usd": 0.0}]
         assert (h.inbound_state("m1"), h.inbound_state("m2")) == ("applied", "applied")
         injected = [m for m in h.messages() if m["role"] == "user"][1]
         assert injected[METADATA_KEY] == {INBOUND_ID: "m2"}
@@ -300,7 +300,7 @@ class TestTheChat:
         h.engine.accept(user_message("m1"))
         await h.wait_until(lambda: bool(h.events_of("message.assistant")))
 
-        assert h.events_of("message.assistant") == [{"text": "chat done", "in_reply_to": "m1"}]
+        assert h.events_of("message.assistant") == [{"text": "chat done", "in_reply_to": "m1", "spent_usd": 0.0}]
         assert h.task("a").status == "running"  # type: ignore[union-attr]
         task_gate.release.set()
         await h.idle()
@@ -327,7 +327,7 @@ class TestTheAnswerAChatOwes:
         started(h)
         await h.idle()
 
-        assert h.events_of("message.assistant") == [{"text": "sorry for the wait", "in_reply_to": "m1"}]
+        assert h.events_of("message.assistant") == [{"text": "sorry for the wait", "in_reply_to": "m1", "spent_usd": 0.0}]
         assert [m["role"] for m in h.messages()] == ["user", "assistant"]
         assert user_texts(h.provider.requests[0]) == ["hello"]
 
@@ -363,7 +363,7 @@ class TestTheAnswerAChatOwes:
         h.give_key()
         await h.idle()
 
-        assert h.events_of("message.assistant") == [{"text": "back again", "in_reply_to": "m1"}]
+        assert h.events_of("message.assistant") == [{"text": "back again", "in_reply_to": "m1", "spent_usd": 0.0}]
         assert user_texts(h.provider.requests[1]) == ["hello"]
 
 
@@ -384,7 +384,7 @@ class TestAutomations:
         await h.idle()
 
         assert user_texts(h.provider.requests[0]) == ['[Automation "daily-fares" fired] check the fares']
-        assert h.events_of("message.assistant") == [{"text": "fares checked"}]
+        assert h.events_of("message.assistant") == [{"text": "fares checked", "spent_usd": 0.0}]
         assert h.inbound_state("cron:j1:1000") == "applied"
         row = h.messages()[0]
         assert row[METADATA_KEY] == {INBOUND_ID: "cron:j1:1000"}
@@ -415,7 +415,7 @@ class TestAutomations:
         assert user_texts(h.provider.requests[0]) == [
             '[Automation "daily-fares" fired] check the fares\n\nand this'
         ]
-        assert h.events_of("message.assistant") == [{"text": "both handled", "in_reply_to": "m1"}]
+        assert h.events_of("message.assistant") == [{"text": "both handled", "in_reply_to": "m1", "spent_usd": 0.0}]
 
     async def test_a_firing_during_a_prepare_sleep_waits_for_the_sleep_to_end(self, make_engine: MakeEngine) -> None:
         h = started(make_engine([says("woken")]))
@@ -428,7 +428,7 @@ class TestAutomations:
 
         h.give_key()
         await h.idle()
-        assert h.events_of("message.assistant") == [{"text": "woken"}]
+        assert h.events_of("message.assistant") == [{"text": "woken", "spent_usd": 0.0}]
 
     async def test_a_stopped_engine_records_nothing(self, make_engine: MakeEngine) -> None:
         h = started(make_engine())
@@ -463,7 +463,7 @@ class TestTasks:
         ]
         assert [m["content"] for m in h.messages(s.task_session_key("high"))] == ["sooner", "second done"]
         assert [m["content"] for m in h.messages(s.task_session_key("low"))] == ["later", "first done"]
-        assert h.events_of("task.completed")[0] == {"task_id": "low", "summary": "first done"}
+        assert h.events_of("task.completed")[0] == {"task_id": "low", "summary": "first done", "spent_usd": 0.0}
 
     async def test_the_highest_priority_goes_first(self, make_engine: MakeEngine) -> None:
         h = make_engine([says("a"), says("b")], key=False)
@@ -490,8 +490,8 @@ class TestTasks:
         await h.idle()
 
         assert h.events_of("task.failed") == [
-            {"task_id": "a", "error": "provider down"},
-            {"task_id": "b", "error": "the run ended without an answer"},
+            {"task_id": "a", "error": "provider down", "spent_usd": 0.0},
+            {"task_id": "b", "error": "the run ended without an answer", "spent_usd": 0.0},
         ]
         assert h.task("a").status == "failed"  # type: ignore[union-attr]
         assert h.engine.state == "IDLE"
@@ -506,7 +506,7 @@ class TestTasks:
         await h.idle()
 
         assert h.events_of("task.failed") == [
-            {"task_id": "a", "error": "stopped: the task reached limits.max_steps_per_task (1)"}
+            {"task_id": "a", "error": "stopped: the task reached limits.max_steps_per_task (1)", "spent_usd": 0.0}
         ]
 
     async def test_a_task_that_spent_the_cap_fails_with_what_it_spent_and_its_calls_are_closed(
@@ -527,7 +527,7 @@ class TestTasks:
         await h.idle()
 
         assert h.events_of("task.failed") == [
-            {"task_id": "a", "error": "stopped: the task reached limits.max_cost_per_task_usd (spent 1.2000 USD of 1.00)"}
+            {"task_id": "a", "error": "stopped: the task reached limits.max_cost_per_task_usd (spent 1.2000 USD of 1.00)", "spent_usd": 1.2}
         ]
         assert h.asked() == 2
         assert h.task("a").status == "failed"  # type: ignore[union-attr]
@@ -549,6 +549,7 @@ class TestTasks:
             {
                 "text": "I could not answer: stopped: the turn reached limits.max_cost_per_task_usd (spent 0.0120 USD of 0.01)",
                 "in_reply_to": "m1",
+                "spent_usd": 0.012,
             }
         ]
         assert h.asked() == 2
@@ -578,9 +579,36 @@ class TestTasks:
         await h.idle()
 
         assert h.events_of("task.failed") == [
-            {"task_id": "a", "error": "stopped: the task reached limits.max_cost_per_task_usd (spent 1.2000 USD of 1.00)"}
+            {"task_id": "a", "error": "stopped: the task reached limits.max_cost_per_task_usd (spent 1.2000 USD of 1.00)", "spent_usd": 1.2}
         ]
         assert h.asked() == 2
+
+    async def test_a_task_resumed_after_a_kill_reports_what_it_spent_before_and_after(
+        self, make_engine: MakeEngine
+    ) -> None:
+        h = make_engine([calls(call("c1", "exec", command="sleep 30"), cost=0.6), says("finished", cost=0.25)])
+        h.engine.start()
+        h.configure(cfg())
+        h.engine.accept(task_created("a"))
+        await h.wait_until(lambda: "EXECUTING" in h.states())
+        await h.engine.suspend()
+        await h.idle()
+
+        restarted = h.restart()
+        restarted.start()
+        h.configure(cfg())
+        await h.idle()
+
+        assert h.events_of("task.completed") == [{"task_id": "a", "summary": "finished", "spent_usd": 0.85}]
+
+    async def test_every_chat_answer_reports_the_spend_of_its_own_turn(self, make_engine: MakeEngine) -> None:
+        h = started(make_engine([says("one", cost=0.25), says("two", cost=0.5)]))
+        h.engine.accept(user_message("m1"))
+        await h.idle()
+        h.engine.accept(user_message("m2"))
+        await h.idle()
+
+        assert [e["spent_usd"] for e in h.events_of("message.assistant")] == [0.25, 0.5]
 
     async def test_a_task_found_running_with_the_cap_already_spent_is_failed_before_any_request(
         self, make_engine: MakeEngine
@@ -595,7 +623,7 @@ class TestTasks:
 
         assert h.asked() == 0
         assert h.events_of("task.failed") == [
-            {"task_id": "a", "error": "stopped: the task reached limits.max_cost_per_task_usd (spent 1.5000 USD of 1.00)"}
+            {"task_id": "a", "error": "stopped: the task reached limits.max_cost_per_task_usd (spent 1.5000 USD of 1.00)", "spent_usd": 1.5}
         ]
 
     async def test_cancels_a_running_task_its_turn_ends_and_nothing_more_is_reported(
@@ -667,7 +695,7 @@ class TestTasks:
         await h.idle()
 
         assert h.asked() == 0
-        assert h.events_of("task.failed") == [{"task_id": "b", "error": "stopped: the task was interrupted 3 times"}]
+        assert h.events_of("task.failed") == [{"task_id": "b", "error": "stopped: the task was interrupted 3 times", "spent_usd": 0.0}]
         assert h.task("b").status == "failed"  # type: ignore[union-attr]
 
     async def test_a_failed_task_does_not_hold_back_the_next_one(self, make_engine: MakeEngine) -> None:
@@ -735,7 +763,7 @@ class TestConfig:
         await h.idle()
 
         assert h.store.read(lambda c: s.read_kv(c, s.KV_RUNTIME_CONFIG)) == before
-        assert h.events_of("message.assistant") == [{"text": "done", "in_reply_to": "m1"}]
+        assert h.events_of("message.assistant") == [{"text": "done", "in_reply_to": "m1", "spent_usd": 0.0}]
 
     async def test_a_new_model_applies_to_the_next_turn_only(self, make_engine: MakeEngine) -> None:
         gate = Gate()
@@ -857,7 +885,7 @@ class TestApprovals:
         assert h.approval(approval.approval_id).status == "done"
         (called,) = h.events_of("tool.called")
         assert (called["tool"], called["decision"], called["ok"]) == ("write_file", "ask", True)
-        assert h.events_of("message.assistant") == [{"text": "written", "in_reply_to": "m1"}]
+        assert h.events_of("message.assistant") == [{"text": "written", "in_reply_to": "m1", "spent_usd": 0.0}]
         assert h.engine.state == "IDLE"
 
     async def test_an_approved_call_runs_once_even_when_the_model_makes_it_a_second_time(
@@ -935,7 +963,7 @@ class TestApprovals:
         await h.idle()
 
         assert h.approval(approval.approval_id).status == "done"
-        assert h.events_of("task.failed") == [{"task_id": "a", "error": "the run ended without an answer"}]
+        assert h.events_of("task.failed") == [{"task_id": "a", "error": "the run ended without an answer", "spent_usd": 0.0}]
 
     async def test_an_approved_call_of_a_task_runs_once_and_the_task_completes(self, make_engine: MakeEngine) -> None:
         arguments = {"path": "b.txt", "content": "y"}
@@ -1012,7 +1040,7 @@ class TestApprovals:
 
         # Nothing of the turn's end was written, yet the approval is over with the answer: a restart
         # does not tell the session again.
-        assert h.events_of("message.assistant") == [{"text": "understood"}]
+        assert h.events_of("message.assistant") == [{"text": "understood", "spent_usd": 0.0}]
         assert h.approval(approval_id).status == "done"
 
     async def test_a_kill_between_the_gate_letting_an_approved_call_through_and_its_start_gives_the_approval_back(
@@ -1058,7 +1086,7 @@ class TestApprovals:
         assert h.approval(approval.approval_id).status == "done"
         (called,) = h.events_of("tool.called")
         assert (called["tool"], called["decision"], called["ok"]) == ("write_file", "ask", True)
-        assert h.events_of("message.assistant") == [{"text": "written", "in_reply_to": "m1"}]
+        assert h.events_of("message.assistant") == [{"text": "written", "in_reply_to": "m1", "spent_usd": 0.0}]
         (closed,) = [m for m in h.messages() if m["role"] == "tool" and m["tool_call_id"] == "c2"]
         assert closed["content"] == "Not executed: the unit ended before this call ran."
 
@@ -1105,7 +1133,7 @@ class TestPrepareSleep:
         # Work resumes: the history ends with the tool's result and the chat still owes its answer.
         h.give_key()
         await h.idle()
-        assert h.events_of("message.assistant") == [{"text": "after the sleep", "in_reply_to": "m1"}]
+        assert h.events_of("message.assistant") == [{"text": "after the sleep", "in_reply_to": "m1", "spent_usd": 0.0}]
 
     async def test_a_tool_still_running_when_the_grace_ends_is_cut_and_the_next_start_reports_it_interrupted(
         self, make_engine: MakeEngine
@@ -1127,7 +1155,7 @@ class TestPrepareSleep:
         assert (called["tool"], called["ok"], called["interrupted"], called["duration_ms"]) == ("exec", False, True, 0)
         h.configure(cfg())
         await h.idle()
-        assert h.events_of("message.assistant") == [{"text": "recovered", "in_reply_to": "m1"}]
+        assert h.events_of("message.assistant") == [{"text": "recovered", "in_reply_to": "m1", "spent_usd": 0.0}]
         closed = [m for m in h.messages() if m["role"] == "tool"][0]
         assert "interrupted before its result was recorded" in closed["content"]
 
@@ -1141,7 +1169,7 @@ class TestPrepareSleep:
         )
         h.engine.accept(task_created("a"))
         await h.wait_until(lambda: "EXECUTING" in h.states())
-        assert h.events_of("task.progress") == [{"task_id": "a", "text": "Starting the long job."}]
+        assert h.events_of("task.progress") == [{"task_id": "a", "text": "Starting the long job.", "spent_usd": 0.0}]
 
         await h.engine.suspend()
         await h.idle()
@@ -1150,7 +1178,7 @@ class TestPrepareSleep:
         h.configure(cfg())
         await h.idle()
 
-        assert h.events_of("task.progress") == [{"task_id": "a", "text": "Starting the long job."}]
+        assert h.events_of("task.progress") == [{"task_id": "a", "text": "Starting the long job.", "spent_usd": 0.0}]
         assert h.types().index("task.progress") < h.types().index("tool.called") < h.types().index("task.completed")
         assert h.task_events() == [("task.started", "a"), ("task.progress", "a"), ("task.completed", "a")]
 
@@ -1215,7 +1243,7 @@ class TestPrepareSleep:
         await h.idle()
 
         assert not h.engine.is_suspending()
-        assert h.events_of("message.assistant") == [{"text": "up again", "in_reply_to": "m1"}]
+        assert h.events_of("message.assistant") == [{"text": "up again", "in_reply_to": "m1", "spent_usd": 0.0}]
 
 
 class TestStopping:
@@ -1288,7 +1316,7 @@ class TestAChatTurnThatFailsBeforeItsOpeningIsStored:
             await h.idle()
 
         assert h.events_of("message.assistant") == [
-            {"text": "I could not answer: database or disk is full", "in_reply_to": "m1"}
+            {"text": "I could not answer: database or disk is full", "in_reply_to": "m1", "spent_usd": 0.0}
         ]
         assert h.inbound_state("m1") == "applied"
         assert h.asked() == 0
@@ -1321,7 +1349,7 @@ class TestAChatTurnThatFailsBeforeItsOpeningIsStored:
         h.engine.kick()
         await h.idle()
         assert launches == ["chat", "chat"]
-        assert h.events_of("message.assistant") == [{"text": "back", "in_reply_to": "m1"}]
+        assert h.events_of("message.assistant") == [{"text": "back", "in_reply_to": "m1", "spent_usd": 0.0}]
 
 
 class TestWhatTheHostSees:

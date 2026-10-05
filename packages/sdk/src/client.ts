@@ -20,6 +20,7 @@ import type {
   MessagesAnswer,
   TaskRecord,
   TasksAnswer,
+  UsageAnswer,
 } from "./types.js";
 
 /** An `{ error, message }` answer of the API, or a failure to reach it (`status` 0, `code` "unreachable"). */
@@ -244,6 +245,14 @@ export class InvisibleDotsClient {
         query: { after: options.after, limit: options.limit },
       })
     ).events;
+  }
+
+  /**
+   * The model spend the Dot's guest reported, in USD, since an ISO 8601 timestamp (omitted: ever).
+   * See `UsageAnswer` for what it counts.
+   */
+  usage(idOrName: string, options: { since?: string } = {}): Promise<UsageAnswer> {
+    return this.#json("GET", `/api/dots/${enc(idOrName)}/usage`, { query: { since: options.since } });
   }
 
   /**

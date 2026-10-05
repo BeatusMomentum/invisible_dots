@@ -442,7 +442,7 @@ class TestTheEngineServed:
         assert [e["type"] for e in events] == [
             "agent.started", "agent.state", "agent.state", "message.assistant", "agent.state", "agent.state",
         ]
-        assert events[3]["data"] == {"text": "pong", "in_reply_to": "m1"}
+        assert events[3]["data"] == {"text": "pong", "in_reply_to": "m1", "spent_usd": 0.0}
         (request,) = served.fake.requests
         # The key reached the provider from memory, the model is the Dot's, and nothing of the Dot's
         # attribution goes to a stand-in.

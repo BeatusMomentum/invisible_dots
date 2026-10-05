@@ -693,6 +693,30 @@ def reset_spend(conn: sqlite3.Connection, session_key: str) -> None:
     conn.execute("DELETE FROM dots_spend WHERE session_key = ?", (session_key,))
 
 
+# The events that report the spend of the session they belong to (architecture section 5.4).
+SPEND_EVENT_TYPES = ("message.assistant", "task.progress", "task.completed", "task.failed")
+# USD are reported to the hundred-millionth: the cost OpenRouter reports has at most that many decimals,
+# and the sum of several of them must not show the noise of a float addition.
+SPENT_USD_DECIMALS = 8
+
+
+def append_outbox_spent(
+    conn: sqlite3.Connection,
+    event_type: str,
+    data: Mapping[str, Any],
+    session_key: str,
+) -> dict[str, Any]:
+    """Append one outbound event with `spent_usd`, what `session_key` has spent so far, read in this transaction.
+
+    The one place the spend of an event is told: a task's events carry the task's spend, the chat's
+    `message.assistant` the spend of the turn that answered (the chat's row starts again with every turn).
+    """
+    if event_type not in SPEND_EVENT_TYPES:
+        raise ValueError(f"not an event that reports spend: {event_type}")
+    spent = round(get_spend(conn, session_key), SPENT_USD_DECIMALS)
+    return append_outbox(conn, event_type, {**data, "spent_usd": spent})
+
+
 # ---------------------------------------------------------------------------
 # Tool intents
 # ---------------------------------------------------------------------------

@@ -19,7 +19,8 @@ disk lay them out. This smoke does, in one Linux container, with no QEMU:
   the event stream (`seq` 1..N across `kill -9`, no loss, no repeat), commands
   that run as `dot` and end with the call that started them (cancel, terminate,
   SIGTERM within systemd's 30 s), approvals that survive a crash, the cost cap that
-  stops a task and a chat turn and still holds after a crash, the tools offered
+  stops a task and a chat turn and still holds after a crash, the `spent_usd` the
+  events of tasks and chat answers carry, the tools offered
   for each permission map, the text sent to the model, the key reaching no file,
   log or process environment, and the engine refusing to start on a lock that is not
   the golden image's or on a key in a dotenv file.

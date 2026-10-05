@@ -1,4 +1,4 @@
-import type { EventSource, OutboundEvent, StoredEvent } from "@invisible-dots/shared";
+import { USAGE_EVENT_TYPES, type EventSource, type OutboundEvent, type StoredEvent } from "@invisible-dots/shared";
 import { isoRequired, type Queryable } from "./rows.js";
 
 interface EventRow {
@@ -103,6 +103,21 @@ export class EventsRepository {
       [dotId, Math.min(Math.max(count, 1), MAX_EVENT_PAGE)],
     );
     return rows.map(toStored);
+  }
+
+  /**
+   * The USD the Dot's guest reported spending, summed over the events of `USAGE_EVENT_TYPES` stored
+   * at or after `since` (every one when omitted). The event log is the one record of it: nothing
+   * else keeps a running total.
+   */
+  async spentUsd(dotId: string, since?: Date): Promise<number> {
+    const { rows } = await this.q.query<{ usd: number }>(
+      `SELECT COALESCE(SUM((data->>'spent_usd')::double precision), 0) AS usd FROM events
+        WHERE dot_id = $1 AND source = 'guest' AND type = ANY($2) AND ($3::timestamptz IS NULL OR created_at >= $3)`,
+      [dotId, [...USAGE_EVENT_TYPES], since ?? null],
+    );
+    // A float sum shows its noise (0.1 + 0.2): the engine reports to the hundred-millionth of a USD.
+    return Math.round(Number(rows[0]!.usd) * 1e8) / 1e8;
   }
 
   async latestId(): Promise<number> {

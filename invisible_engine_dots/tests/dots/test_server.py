@@ -309,7 +309,7 @@ class TestEvents:
             "DONE",
             "IDLE",
         ]
-        assert events[3]["data"] == {"text": "hello yourself", "in_reply_to": "m1"}
+        assert events[3]["data"] == {"text": "hello yourself", "in_reply_to": "m1", "spent_usd": 0.0}
 
 
 class TestTheStream:

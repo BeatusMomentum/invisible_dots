@@ -8,6 +8,7 @@ import {
   OUTBOUND_EVENT_TYPES,
   parseInboundEvent,
   parseOutboundEvent,
+  USAGE_EVENT_TYPES,
 } from "../src/index.js";
 
 const ts = "2026-10-02T08:15:00.000Z";
@@ -58,6 +59,35 @@ describe("parseInboundEvent", () => {
     ).toThrow(/data\.decision/);
     expect(() => parseInboundEvent({ id: "e", type: "user.message", ts: "yesterday", data: { text: "x" } })).toThrow(/ts/);
     expect(() => parseInboundEvent(null)).toThrow(/invalid inbound event/);
+  });
+});
+
+describe("spent_usd (section 5.4)", () => {
+  const events = [
+    { type: "message.assistant", data: { text: "hi", in_reply_to: "m1" } },
+    { type: "task.progress", data: { task_id: "task_1", text: "looking" } },
+    { type: "task.completed", data: { task_id: "task_1", summary: "done" } },
+    { type: "task.failed", data: { task_id: "task_1", error: "stopped" } },
+  ] as const;
+
+  it.each(events)("$type keeps the spend the engine reports, and is valid without it", ({ type, data }) => {
+    expect(parseOutboundEvent({ seq: 1, id: "e", type, ts, data: { ...data, spent_usd: 0.0123 } }).data).toEqual({
+      ...data,
+      spent_usd: 0.0123,
+    });
+    expect(parseOutboundEvent({ seq: 1, id: "e", type, ts, data: { ...data, spent_usd: 0 } }).data).toEqual({ ...data, spent_usd: 0 });
+    expect(parseOutboundEvent({ seq: 1, id: "e", type, ts, data }).data).toEqual(data);
+  });
+
+  it.each(events)("$type refuses a spend that is not an amount of USD", ({ type, data }) => {
+    for (const spent_usd of [-0.5, "0.5", null, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => parseOutboundEvent({ seq: 1, id: "e", type, ts, data: { ...data, spent_usd } })).toThrow(/spent_usd/);
+    }
+  });
+
+  it("is summed over the events that end a unit of spend, never over the running value of a task", () => {
+    expect([...USAGE_EVENT_TYPES]).toEqual(["task.completed", "task.failed", "message.assistant"]);
+    expect(USAGE_EVENT_TYPES.every((type) => isOutboundEventType(type))).toBe(true);
   });
 });
 

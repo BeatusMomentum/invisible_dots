@@ -517,6 +517,43 @@ class TestSpend:
         # Nothing to reset is no error.
         dot_store.write(lambda c: s.reset_spend(c, "never"))
 
+    def test_an_event_that_reports_spend_carries_the_spend_of_its_session_read_at_that_moment(
+        self, dot_store: DotStore
+    ) -> None:
+        dot_store.write(lambda c: s.add_spend(c, "task:t1", 0.25))
+        dot_store.write(lambda c: s.add_spend(c, "chat", 0.125))
+        first = dot_store.write(
+            lambda c: s.append_outbox_spent(c, "task.progress", {"task_id": "t1", "text": "x"}, "task:t1")
+        )
+        dot_store.write(lambda c: s.add_spend(c, "task:t1", 0.5))
+        second = dot_store.write(
+            lambda c: s.append_outbox_spent(c, "task.completed", {"task_id": "t1", "summary": "y"}, "task:t1")
+        )
+        chat = dot_store.write(lambda c: s.append_outbox_spent(c, "message.assistant", {"text": "z"}, "chat"))
+        assert first["data"] == {"task_id": "t1", "text": "x", "spent_usd": 0.25}
+        assert second["data"] == {"task_id": "t1", "summary": "y", "spent_usd": 0.75}
+        assert chat["data"] == {"text": "z", "spent_usd": 0.125}
+        stored = dot_store.read(lambda c: s.read_outbox_after(c, 0, 10))
+        assert [e["data"]["spent_usd"] for e in stored] == [0.25, 0.75, 0.125]
+
+    def test_a_session_that_spent_nothing_reports_zero_and_the_sum_shows_no_float_noise(
+        self, dot_store: DotStore
+    ) -> None:
+        zero = dot_store.write(lambda c: s.append_outbox_spent(c, "message.assistant", {"text": "a"}, "chat"))
+        assert zero["data"]["spent_usd"] == 0.0
+        for usd in (0.1, 0.2):
+            dot_store.write(lambda c, usd=usd: s.add_spend(c, "task:t1", usd))
+        total = dot_store.write(
+            lambda c: s.append_outbox_spent(c, "task.failed", {"task_id": "t1", "error": "e"}, "task:t1")
+        )
+        assert total["data"]["spent_usd"] == 0.3
+
+    @pytest.mark.parametrize("event_type", ["tool.called", "task.started", "agent.state", "memory.written"])
+    def test_an_event_that_does_not_report_spend_is_refused(self, dot_store: DotStore, event_type: str) -> None:
+        with pytest.raises(ValueError, match="not an event that reports spend"):
+            dot_store.write(lambda c: s.append_outbox_spent(c, event_type, {}, "chat"))
+        assert dot_store.read(lambda c: s.read_outbox_after(c, 0, 10)) == []
+
     def test_the_spend_is_there_after_the_file_is_opened_again(self, tmp_path: Path) -> None:
         path = tmp_path / "engine.sqlite"
         first = DotStore.open(path)
@@ -712,7 +749,7 @@ class TestTranscripts:
             )
         )
         events = dot_store.read(lambda c: s.read_outbox_after(c, 0, 10))
-        assert [(e["type"], e["data"]) for e in events] == [("message.assistant", {"text": "hi there", "in_reply_to": "m1"})]
+        assert [(e["type"], e["data"]) for e in events] == [("message.assistant", {"text": "hi there", "in_reply_to": "m1", "spent_usd": 0.0})]
 
     def test_a_final_index_outside_the_messages_is_refused(self, dot_store: DotStore) -> None:
         for bad in (1, -1):

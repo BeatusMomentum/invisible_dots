@@ -27,6 +27,9 @@ this process's memory.
   `tool.called`, in the same transaction. The intent holds the keys, set before
   the call ran; a call that failed, was denied or was interrupted reports none.
 
+`message.assistant`, `task.progress` and `task.completed` carry `spent_usd`, what the session has spent so
+far (`store.append_outbox_spent`), read in the same transaction.
+
 Metadata of a message travels inside the message dict under one key, `_dots`.
 The runner keeps it out of the transcript the model reads (`AgentRunner._commit`), and
 the replay of a stored session copies only the keys of a model message
@@ -122,7 +125,7 @@ def record_transcript_append(
         return
     if not final:
         if task is not None and task.status == "running" and message.get("tool_calls"):
-            _record_progress(conn, task.task_id, message_text(message))
+            _record_progress(conn, session_key, task.task_id, message_text(message))
         return
     text = message_text(message)
     # The turn that told the session of a decision ends with this answer: the answer and the end of
@@ -131,19 +134,19 @@ def record_transcript_append(
     if is_chat:
         answered = store.apply_answered_inputs(conn)
         reply = {"in_reply_to": answered[-1]} if answered else {}
-        store.append_outbox(conn, "message.assistant", {"text": text, **reply})
+        store.append_outbox_spent(conn, "message.assistant", {"text": text, **reply}, session_key)
         return
     if task is not None and task.status == "running":
         if store.finish_task(conn, task.task_id, "completed", summary=text):
-            store.append_outbox(conn, "task.completed", {"task_id": task.task_id, "summary": text})
+            store.append_outbox_spent(conn, "task.completed", {"task_id": task.task_id, "summary": text}, session_key)
 
 
-def _record_progress(conn: sqlite3.Connection, task_id: str, text: str) -> None:
+def _record_progress(conn: sqlite3.Connection, session_key: str, task_id: str, text: str) -> None:
     if not text:
         return
     if len(text) > PROGRESS_TEXT_MAX:
         text = text[: PROGRESS_TEXT_MAX - 1] + "…"
-    store.append_outbox(conn, "task.progress", {"task_id": task_id, "text": text})
+    store.append_outbox_spent(conn, "task.progress", {"task_id": task_id, "text": text}, session_key)
 
 
 def _record_tool_result(

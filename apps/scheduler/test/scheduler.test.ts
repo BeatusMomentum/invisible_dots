@@ -97,6 +97,67 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     expect((await db.dots.get(dot.id))?.status).toBe("READY");
   });
 
+  it("the spend a task's events report lands on the task: the highest heard, whatever ends it", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "spend-one");
+    const guest = driver.guestOf(dot.id);
+    guest.onInbound = () => {};
+    const task = await scheduler.createTask(dot.id, { description: "costly" });
+    await waitFor(async () => (await db.tasks.runs(task.id))[0]?.delivered_at, "delivered");
+    const spent = async () => (await db.tasks.get(task.id))?.spent_usd;
+    guest.emit("task.started", { task_id: task.id });
+    guest.emit("task.progress", { task_id: task.id, text: "first step", spent_usd: 0.25 });
+    await waitFor(async () => (await spent()) === 0.25, "progress spend");
+    guest.emit("task.progress", { task_id: task.id, text: "second step", spent_usd: 0.75 });
+    await waitFor(async () => (await spent()) === 0.75, "ticking spend");
+    guest.emit("task.completed", { task_id: task.id, summary: "done", spent_usd: 0.875 });
+    await waitFor(async () => (await db.tasks.get(task.id))?.status === "COMPLETED", "completed");
+    expect(await spent()).toBe(0.875);
+    expect((await db.tasks.get(task.id))?.summary).toBe("done");
+  });
+
+  it("a failed task keeps the spend its failure reports, and an event without one changes nothing", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "spend-two");
+    const guest = driver.guestOf(dot.id);
+    guest.onInbound = () => {};
+    const task = await scheduler.createTask(dot.id, { description: "capped" });
+    await waitFor(async () => (await db.tasks.runs(task.id))[0]?.delivered_at, "delivered");
+    guest.emit("task.progress", { task_id: task.id, text: "x", spent_usd: 0.6 });
+    guest.emit("task.progress", { task_id: task.id, text: "no spend reported" });
+    guest.emit("task.failed", { task_id: task.id, error: "stopped: the task reached limits.max_cost_per_task_usd (spent 1.2000 USD of 1.00)", spent_usd: 1.2 });
+    await waitFor(async () => (await db.tasks.get(task.id))?.status === "FAILED", "failed");
+    expect((await db.tasks.get(task.id))?.spent_usd).toBe(1.2);
+    expect((await scheduler.getTask(task.id)).spent_usd).toBe(1.2);
+  });
+
+  it("a cancelled task still takes the spend its guest reports afterwards", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "spend-three");
+    const guest = driver.guestOf(dot.id);
+    guest.onInbound = () => {};
+    const task = await scheduler.createTask(dot.id, { description: "cancelled while spending" });
+    await waitFor(async () => (await db.tasks.runs(task.id))[0]?.delivered_at, "delivered");
+    guest.emit("task.progress", { task_id: task.id, text: "x", spent_usd: 0.25 });
+    await waitFor(async () => (await db.tasks.get(task.id))?.spent_usd === 0.25, "first spend");
+    await scheduler.cancelTask(task.id);
+    guest.emit("task.failed", { task_id: task.id, error: "cancelled", spent_usd: 0.4 });
+    await waitFor(async () => (await db.tasks.get(task.id))?.spent_usd === 0.4, "spend after the cancel");
+    expect((await db.tasks.get(task.id))?.status).toBe("CANCELLED");
+  });
+
+  it("a guest cannot write the spend of another Dot's task", async () => {
+    const { scheduler, driver } = make();
+    const a = await readyDot(scheduler, "spend-owner");
+    const b = await readyDot(scheduler, "spend-other");
+    driver.guestOf(a.id).onInbound = () => {};
+    const task = await scheduler.createTask(a.id, { description: "mine" });
+    await waitFor(async () => (await db.tasks.runs(task.id))[0]?.delivered_at, "delivered");
+    driver.guestOf(b.id).emit("task.progress", { task_id: task.id, text: "forged", spent_usd: 99 });
+    await waitFor(async () => (await db.computers.get(b.id))?.event_cursor === 1, "forged event stored");
+    expect((await db.tasks.get(task.id))?.spent_usd).toBe(0);
+  });
+
   it("a reconnecting event stream does not store an event twice", async () => {
     const { scheduler, driver } = make();
     const dot = await readyDot(scheduler, "replay-one");

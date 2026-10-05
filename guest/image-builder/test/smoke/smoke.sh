@@ -175,6 +175,7 @@ check "the model is offered exec and nothing outside the allowed permissions" "t
 check "a task whose model writes a line beside its exec call is accepted" "[ \"\$(ev task-ev-7 task.created '{\"task_id\":\"t7\",\"description\":\"SAY-RUN-EXEC Checking the workspace first. :: echo progress-ran\",\"priority\":0}')\" = 202 ]"
 check "task.completed t7" "wait_event $STREAM '.type==\"task.completed\" and .data.task_id==\"t7\" and (.data.summary|test(\"progress-ran\"))'"
 check "t7 reported its line once as task.progress, before the call and the completion" "grep '^data: ' $STREAM | sed 's/^data: //' | jq -s -e '[.[] | select(.data.task_id==\"t7\") | .type] == [\"task.started\",\"task.progress\",\"tool.called\",\"task.completed\"] and ([.[] | select(.type==\"task.progress\" and .data.task_id==\"t7\")] | map(.data.text) == [\"Checking the workspace first.\"])' >/dev/null"
+check "the events of t7, which spent nothing, report spent_usd 0" "grep '^data: ' $STREAM | sed 's/^data: //' | jq -s -e '[.[] | select(.data.task_id==\"t7\" and (.type==\"task.progress\" or .type==\"task.completed\"))] | length == 2 and all(.data.spent_usd == 0)' >/dev/null"
 check "the chat's own line beside a tool call is no progress" "[ \"\$(ev msg-narrated user.message '{\"text\":\"SAY-RUN-EXEC Chat narration. :: echo chat-ran\"}')\" = 202 ] && wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-narrated\"' && [ \"\$(grep '^data: ' $STREAM | sed 's/^data: //' | jq -c 'select(.type==\"task.progress\")' | wc -l)\" = 1 ]"
 
 # --- kill -9 and seq resume ---
@@ -342,9 +343,11 @@ check "the host pushes the allow-everything config once more (204 204)" "[ \"\$(
 # and REPEAT-EXEC makes it call exec after every result: only the cap ends such a task.
 ev task-ev-8 task.created '{"task_id":"t8","description":"COST 0.6\nREPEAT-EXEC echo spend","priority":0}' >/dev/null
 check "t8 (0.6 a response, a model that never stops) fails with the cap's text, having spent 1.2" "wait_event $STREAM '.type==\"task.failed\" and .data.task_id==\"t8\" and .data.error==\"stopped: the task reached limits.max_cost_per_task_usd (spent 1.2000 USD of 1.00)\"'"
+check "the failure of t8 reports what the task spent: spent_usd 1.2" "wait_event $STREAM '.type==\"task.failed\" and .data.task_id==\"t8\" and .data.spent_usd==1.2'"
 check "t8 made two requests: the third was never asked (two tool.called, no task.completed)" "[ \"\$(grep '^data: ' $STREAM | sed 's/^data: //' | jq -c 'select(.type==\"tool.called\" and .data.task_id==\"t8\")' | wc -l)\" = 2 ] && [ \"\$(grep -c 'REPEAT-EXEC echo spend' /tmp/fake-tools.jsonl)\" = 2 ]"
 ev msg-spend user.message '{"text":"COST 0.6\nREPEAT-EXEC echo chat-spend"}' >/dev/null
 check "a chat turn that spent the cap answers with the turn's text" "wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-spend\" and .data.text==\"I could not answer: stopped: the turn reached limits.max_cost_per_task_usd (spent 1.2000 USD of 1.00)\"'"
+check "the answer of that chat turn reports the turn's spend: spent_usd 1.2" "wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-spend\" and .data.spent_usd==1.2'"
 # The first response of t9 is paid (0.6) and its command runs; the engine is killed then. The restarted engine
 # resumes the task from the spend it stored: one more response ends it. Were the spend lost with the process,
 # a third request would be made.
@@ -356,6 +359,7 @@ sleep 2
 start_engine
 check "the restarted engine answers /health (the cap's task cut)" "wait_health && wait_key"
 check "t9 fails with the cap's text after one more response: the spend survived the kill" "wait_event $STREAM '.type==\"task.failed\" and .data.task_id==\"t9\" and .data.error==\"stopped: the task reached limits.max_cost_per_task_usd (spent 1.2000 USD of 1.00)\"'"
+check "the failure of t9 reports the spend of both processes: spent_usd 1.2" "wait_event $STREAM '.type==\"task.failed\" and .data.task_id==\"t9\" and .data.spent_usd==1.2'"
 check "t9 asked the model twice in all: once before the kill, once after" "[ \"\$(grep -c 'REPEAT-EXEC sleep 4' /tmp/fake-tools.jsonl)\" = 2 ]"
 
 # --- what the model is sent, read whole ---

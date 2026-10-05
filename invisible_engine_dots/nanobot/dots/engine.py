@@ -562,7 +562,9 @@ class Engine:
                 if running.attempts >= TASK_MAX_ATTEMPTS:
                     error = f"stopped: the task was interrupted {running.attempts} times"
                     dots_store.finish_task(conn, running.task_id, "failed", error=error)
-                    dots_store.append_outbox(conn, "task.failed", {"task_id": running.task_id, "error": error})
+                    dots_store.append_outbox_spent(
+                        conn, "task.failed", {"task_id": running.task_id, "error": error}, running.session_key
+                    )
                     return "failed"
                 dots_store.start_task(conn, running.task_id)
                 return running, True
@@ -661,7 +663,9 @@ class Engine:
                     # A run that parked a call for approval ended on purpose: the task waits.
                     if dots_store.open_approval_for_session(conn, session_key) is None:
                         dots_store.finish_task(conn, task.task_id, "failed", error=reason)
-                        dots_store.append_outbox(conn, "task.failed", {"task_id": task.task_id, "error": reason})
+                        dots_store.append_outbox_spent(
+                            conn, "task.failed", {"task_id": task.task_id, "error": reason}, session_key
+                        )
             elif outcome.kind == "abandoned" and task is not None and not task_running:
                 # The task was cancelled under the turn: its open calls end here.
                 close_open_calls(conn, session_key)
@@ -687,4 +691,6 @@ class Engine:
             return
         answered = dots_store.apply_answered_inputs(conn)
         reply = {"in_reply_to": answered[-1]} if answered else {}
-        dots_store.append_outbox(conn, "message.assistant", {"text": f"I could not answer: {reason}", **reply})
+        dots_store.append_outbox_spent(
+            conn, "message.assistant", {"text": f"I could not answer: {reason}", **reply}, unit.session_key
+        )

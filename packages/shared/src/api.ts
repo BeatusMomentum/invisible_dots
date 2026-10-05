@@ -65,6 +65,8 @@ export interface TaskRecord {
   finished_at: string | null;
   summary: string | null;
   error: string | null;
+  /** Model spend of the task in USD, as the guest last reported it (architecture section 5.4); 0 until it reports. */
+  spent_usd: number;
 }
 
 export interface TaskRunRecord {
@@ -159,6 +161,19 @@ export interface MessagesAnswer {
 
 export interface EventsAnswer {
   events: StoredEvent[];
+}
+
+/**
+ * `GET /api/dots/:id/usage`: the model spend the Dot's guest reported since `since` (null: since
+ * the first event), in USD. It sums `spent_usd` over the events that end a unit of spend: a task's
+ * `task.completed` and `task.failed` (each carries the whole task) and the chat's `message.assistant`
+ * (each carries its turn). Work that never reported an end (a cancelled task, a chat turn cut by a
+ * restart) is not in it.
+ */
+export interface UsageAnswer {
+  dot_id: string;
+  since: string | null;
+  spent_usd: number;
 }
 
 export interface IdentitiesAnswer {

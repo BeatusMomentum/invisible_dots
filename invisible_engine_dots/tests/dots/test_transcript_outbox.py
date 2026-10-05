@@ -102,12 +102,12 @@ class TestAnswers:
             accept(dot_store, inbound_id)
             transcript.append(CHAT, user(inbound_id, inbound_id))
         transcript.append(CHAT, final("both answered"), final=True)
-        assert transcript.events() == [("message.assistant", {"text": "both answered", "in_reply_to": "m2"})]
+        assert transcript.events() == [("message.assistant", {"text": "both answered", "in_reply_to": "m2", "spent_usd": 0.0})]
         assert transcript.inbound("applied") == ["m1", "m2"]
 
     def test_sends_an_answer_nobody_asked_for_without_in_reply_to(self, transcript: Transcript) -> None:
         transcript.append(CHAT, final("unprompted"), final=True)
-        assert transcript.events() == [("message.assistant", {"text": "unprompted"})]
+        assert transcript.events() == [("message.assistant", {"text": "unprompted", "spent_usd": 0.0})]
 
     def test_an_automation_firing_is_applied_but_never_named_in_in_reply_to(
         self, dot_store: DotStore, transcript: Transcript
@@ -117,7 +117,7 @@ class TestAnswers:
         transcript.append(CHAT, user("hello", "m1"))
         transcript.append(CHAT, user('[Automation "j" fired] check', "cron:j:5"))
         transcript.append(CHAT, final("answered"), final=True)
-        assert transcript.events() == [("message.assistant", {"text": "answered", "in_reply_to": "m1"})]
+        assert transcript.events() == [("message.assistant", {"text": "answered", "in_reply_to": "m1", "spent_usd": 0.0})]
         assert transcript.inbound("applied") == ["m1", "cron:j:5"]
 
     def test_an_answer_to_an_automation_alone_has_no_in_reply_to(
@@ -126,7 +126,7 @@ class TestAnswers:
         accept(dot_store, "cron:j:6", "automation.fired")
         transcript.append(CHAT, user("[Automation fired]", "cron:j:6"))
         transcript.append(CHAT, final("done it"), final=True)
-        assert transcript.events() == [("message.assistant", {"text": "done it"})]
+        assert transcript.events() == [("message.assistant", {"text": "done it", "spent_usd": 0.0})]
         assert transcript.inbound("applied") == ["cron:j:6"]
 
     def test_the_final_flag_decides_not_the_shape_of_the_message(self, transcript: Transcript) -> None:
@@ -134,7 +134,7 @@ class TestAnswers:
         transcript.append(CHAT, {"role": "assistant", "content": "tools next", "tool_calls": [{"id": "1"}]})
         assert transcript.events() == []
         transcript.append(CHAT, final("the answer"), final=True)
-        assert transcript.events() == [("message.assistant", {"text": "the answer"})]
+        assert transcript.events() == [("message.assistant", {"text": "the answer", "spent_usd": 0.0})]
 
     def test_completes_a_running_task_with_its_final_answer_once(
         self, dot_store: DotStore, transcript: Transcript
@@ -143,7 +143,7 @@ class TestAnswers:
         transcript.append(session, final("the summary"), final=True)
         transcript.append(session, final("a second answer"), final=True)
         assert dot_store.read(lambda c: s.get_task(c, "t1")).status == "completed"
-        assert transcript.events() == [("task.completed", {"task_id": "t1", "summary": "the summary"})]
+        assert transcript.events() == [("task.completed", {"task_id": "t1", "summary": "the summary", "spent_usd": 0.0})]
 
     def test_does_not_complete_a_task_that_is_not_running(self, dot_store: DotStore, transcript: Transcript) -> None:
         dot_store.write(lambda c: s.enqueue_task(c, task_id="t1", description="d", priority=0))
@@ -170,7 +170,7 @@ class TestTaskProgress:
     ) -> None:
         session = start_task(dot_store)
         transcript.append(session, with_calls(" Looking at the fares. "))
-        assert transcript.events() == [("task.progress", {"task_id": "t1", "text": "Looking at the fares."})]
+        assert transcript.events() == [("task.progress", {"task_id": "t1", "text": "Looking at the fares.", "spent_usd": 0.0})]
 
     def test_the_text_parts_of_the_message_are_the_text_and_thinking_parts_are_not(
         self, dot_store: DotStore, transcript: Transcript
@@ -178,7 +178,7 @@ class TestTaskProgress:
         session = start_task(dot_store)
         content = [{"type": "thinking", "thinking": "private"}, {"type": "text", "text": "step one"}]
         transcript.append(session, with_calls(None, content=content))
-        assert transcript.events() == [("task.progress", {"task_id": "t1", "text": "step one"})]
+        assert transcript.events() == [("task.progress", {"task_id": "t1", "text": "step one", "spent_usd": 0.0})]
 
     @pytest.mark.parametrize("content", [None, "", "  \n ", [{"type": "thinking", "thinking": "only thoughts"}]])
     def test_a_call_with_no_text_beside_it_says_nothing(
@@ -201,7 +201,7 @@ class TestTaskProgress:
     def test_text_of_exactly_the_limit_is_sent_whole(self, dot_store: DotStore, transcript: Transcript) -> None:
         session = start_task(dot_store)
         transcript.append(session, with_calls("y" * t.PROGRESS_TEXT_MAX))
-        assert transcript.events() == [("task.progress", {"task_id": "t1", "text": "y" * t.PROGRESS_TEXT_MAX})]
+        assert transcript.events() == [("task.progress", {"task_id": "t1", "text": "y" * t.PROGRESS_TEXT_MAX, "spent_usd": 0.0})]
 
     def test_every_step_with_text_reports_once_in_order(self, dot_store: DotStore, transcript: Transcript) -> None:
         session = start_task(dot_store)
@@ -520,6 +520,58 @@ class TestIgnored:
         assert [r.id for r in dot_store.read(lambda c: s.list_inbound(c, "in_transcript"))] == ["m1"]
 
 
+class TestSpentUsd:
+    """The events that report spend carry what their own session has spent, read in the same transaction."""
+
+    def spend(self, store: DotStore, session_key: str, usd: float) -> None:
+        store.write(lambda c: s.add_spend(c, session_key, usd))
+
+    def test_progress_and_completion_of_a_task_carry_the_spend_of_that_task_so_far(
+        self, dot_store: DotStore, transcript: Transcript
+    ) -> None:
+        session = start_task(dot_store)
+        self.spend(dot_store, session, 0.25)
+        transcript.append(session, with_calls("step one"))
+        self.spend(dot_store, session, 0.5)
+        transcript.append(session, with_calls("step two"))
+        self.spend(dot_store, session, 0.125)
+        transcript.append(session, final("all done"), final=True)
+        assert [(kind, data["spent_usd"]) for kind, data in transcript.events()] == [
+            ("task.progress", 0.25),
+            ("task.progress", 0.75),
+            ("task.completed", 0.875),
+        ]
+
+    def test_the_chat_answer_carries_the_spend_of_the_chat_and_not_of_a_task(
+        self, dot_store: DotStore, transcript: Transcript
+    ) -> None:
+        session = start_task(dot_store)
+        self.spend(dot_store, session, 3.0)
+        self.spend(dot_store, CHAT, 0.0625)
+        accept(dot_store, "m1")
+        transcript.append(CHAT, user("hi", "m1"))
+        transcript.append(CHAT, final("hello"), final=True)
+        assert transcript.events() == [
+            ("message.assistant", {"text": "hello", "in_reply_to": "m1", "spent_usd": 0.0625})
+        ]
+
+    def test_the_spend_of_a_task_is_that_of_its_own_session(self, dot_store: DotStore, transcript: Transcript) -> None:
+        session = start_task(dot_store, "t1")
+        self.spend(dot_store, session, 0.5)
+        self.spend(dot_store, CHAT, 9.0)
+        self.spend(dot_store, s.task_session_key("t2"), 7.0)
+        transcript.append(session, final("done"), final=True)
+        assert transcript.events() == [("task.completed", {"task_id": "t1", "summary": "done", "spent_usd": 0.5})]
+
+    def test_a_tool_result_reports_no_spend(self, dot_store: DotStore, transcript: Transcript) -> None:
+        session = start_task(dot_store)
+        self.spend(dot_store, session, 0.5)
+        transcript.append(session, tool_result("c1"))
+        ((kind, data),) = transcript.events()
+        assert kind == "tool.called"
+        assert "spent_usd" not in data
+
+
 class TestTheEndOfAnApprovalsTelling:
     """The final answer of the turn that told a session of a decision ends that approval in its transaction."""
 
@@ -545,7 +597,7 @@ class TestTheEndOfAnApprovalsTelling:
         approval_id = self.approval(dot_store, s.CHAT_SESSION_KEY, status)
         transcript.append(s.CHAT_SESSION_KEY, final("understood"), final=True)
         assert self.status(dot_store, approval_id) == "done"
-        assert transcript.events() == [("message.assistant", {"text": "understood"})]
+        assert transcript.events() == [("message.assistant", {"text": "understood", "spent_usd": 0.0})]
 
     def test_the_final_answer_of_a_task_ends_it_with_the_completion(
         self, dot_store: DotStore, transcript: Transcript
