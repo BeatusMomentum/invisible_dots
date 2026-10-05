@@ -1,27 +1,44 @@
 [Unit]
-Description=invisible_dots agent: the Dot itself
+Description=invisible_dots engine: the Dot itself, on the nanobot fork
 After=network-online.target dot-agentd.service dot-desktop.service
 Wants=network-online.target dot-agentd.service dot-desktop.service
 RequiresMountsFor=/opt/invisible-dots
 
 [Service]
 Type=simple
-User=dot
-Group=dot
-WorkingDirectory=/home/dot
-Environment=HOME=/home/dot
-Environment=NODE_ENV=production
-# Browser identities start invisible-playwright-mcp on the Dot's desktop
-# (architecture section 6), so the agent needs both of these.
+# The engine has its own user (architecture 4.1): it holds the OpenRouter key in
+# memory and owns its state (database and cron jobs, in /home/dotengine/state),
+# none of which the model's commands (user dot, through dot-agentd) can read or
+# change. It is in group dot to read and seed the Dot's workspace; UMask 0002
+# leaves what it writes there editable by dot.
+User=dotengine
+Group=dotengine
+UMask=0002
+WorkingDirectory=/home/dotengine
+Environment=HOME=/home/dotengine
 Environment=DISPLAY=:0
 Environment=PATH=/home/dot/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-# --disable-sigusr1: the OpenRouter key lives only in this process's memory
-# (architecture section 4.3), and SIGUSR1 would open Node's inspector to any
-# process of the same user, which could then read it without ptrace.
-ExecStart=/usr/local/bin/node --disable-sigusr1 /opt/invisible-dots/invisible-dots-agent.mjs
+# The tokenizer's table, fetched when the golden image was built: the engine never fetches it.
+Environment=TIKTOKEN_CACHE_DIR=/opt/invisible-dots-engine/share/tiktoken
+Environment=INVISIBLE_DOTS_ENGINE_STATE=/home/dotengine/state
+# The engine serves the Dot's API on this socket and binds no TCP port.
+Environment=INVISIBLE_DOTS_AGENT_SOCKET=/run/invisible-dots-agent/agent.sock
+Environment=INVISIBLE_DOTS_AGENTD_SOCKET=/run/invisible-dots/agentd.sock
+Environment=INVISIBLE_DOTS_AGENTD_BIN=/opt/invisible-dots/bin/dot-agentd
+Environment=INVISIBLE_DOTS_WORKSPACE=/home/dot/workspace
+# The engine needs no privilege at all now that its config lives in its own
+# database: no sudo rule, and nothing it starts can gain any.
+NoNewPrivileges=yes
+# The OpenRouter key lives only in this process's memory (architecture section
+# 4.3): no core file may carry it. CPython opens no debugger on a signal, and
+# ptrace of another user's process is refused.
+LimitCORE=0
+# -I ignores PYTHON* variables and the user site; the .pth file in the venv's
+# site-packages (the engine's source on the runtime disk) is still read. -B:
+# the runtime disk is read-only, so no bytecode is written.
+ExecStart=/opt/invisible-dots-engine/bin/python -I -B -m nanobot
 Restart=on-failure
 RestartSec=2
-# prepare-sleep closes the browsers before shutdown; a plain stop gets time to do the same.
 TimeoutStopSec=30
 
 [Install]

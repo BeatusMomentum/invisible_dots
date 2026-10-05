@@ -10,6 +10,9 @@ import type { PythonLock } from "./python-lock.js";
 
 /** The lock's name on the builder seed, where provision.sh reads it. */
 export const SEED_PYTHON_LOCK = "mcp-requirements.lock";
+/** The engine's lock and the script that builds its Python environment from it, on the builder seed. */
+export const SEED_ENGINE_LOCK = "engine-requirements.lock";
+export const SEED_ENGINE_BUILD = "build-engine-env.sh";
 
 export interface BuilderSeedInput {
   version: string;
@@ -22,6 +25,9 @@ export interface BuilderSeedInput {
   /** Host paths of the verified tarballs, streamed into the image. */
   nodeTarball: string;
   uvTarball: string;
+  /** builder/engine-requirements.lock and builder/build-engine-env.sh, as read. */
+  engineLock: Uint8Array;
+  engineBuild: Uint8Array;
 }
 
 /**
@@ -39,6 +45,8 @@ export function pinsEnv(pins: GuestPins, python: PythonLock): string {
     ["MCP_VERSION", python.mcpVersion],
     ["PLAYWRIGHT_VERSION", python.playwrightVersion],
     ["PYTHON_LOCK", SEED_PYTHON_LOCK],
+    ["ENGINE_LOCK", SEED_ENGINE_LOCK],
+    ["ENGINE_BUILD", SEED_ENGINE_BUILD],
     ["APT_PACKAGES", pins.apt_packages.join(" ")],
   ];
   return values
@@ -63,5 +71,7 @@ export function builderSeedEntries(input: BuilderSeedInput): IsoEntry[] {
     { path: SEED_PYTHON_LOCK, data: input.pythonLock },
     { path: downloadFileName(input.pins.node), file: input.nodeTarball },
     { path: downloadFileName(input.pins.uv), file: input.uvTarball },
+    { path: SEED_ENGINE_LOCK, data: input.engineLock },
+    { path: SEED_ENGINE_BUILD, data: input.engineBuild },
   ];
 }

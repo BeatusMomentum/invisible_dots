@@ -17,6 +17,16 @@ users:
     lock_passwd: true
     sudo: false
     groups: [audio, video, systemd-journal]
+  # The engine's own user (architecture 4.1): it runs the engine (the nanobot
+  # fork, Python), holds the key and owns the engine's state; the model's
+  # commands run as dot.
+  # Group dot lets it read and seed the Dot's workspace.
+  - name: dotengine
+    gecos: invisible_dots engine
+    shell: /usr/sbin/nologin
+    lock_passwd: true
+    sudo: false
+    groups: [dot]
 disable_root: true
 ssh_pwauth: false
 package_update: false

@@ -9,13 +9,13 @@ import { chmod, copyFile, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { writeIso } from "@invisible-dots/iso";
 import { hostPaths, replaceFile, type HostPaths } from "@invisible-dots/shared";
-import { BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_USER_DATA, defaultAssetRoot, readGuestAsset } from "./assets.js";
+import { BUILDER_ENGINE_BUILD, BUILDER_ENGINE_LOCK, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_USER_DATA, defaultAssetRoot, readGuestAsset } from "./assets.js";
 import { fetchVerified, sha256File, type Fetch, type FetchVerifiedOptions } from "./download.js";
 import { acquireLock, type Lock } from "./lock.js";
 import { manifestPathFor, writeManifest, type GoldenManifest } from "./manifest.js";
 import { BASE_IMAGE, downloadFileName, GUEST_PINS, type BaseImagePin, type GuestPins, type PinnedDownload } from "./pins.js";
 import { waitForExit, type ProcessRunner } from "./process.js";
-import { parsePythonLock, type PythonLock } from "./python-lock.js";
+import { parseHashedLock, parsePythonLock, type PythonLock } from "./python-lock.js";
 import { builderQemuArgs, type Accelerator, type QemuPrograms } from "./qemu.js";
 import { SEED_VOLUME_ID } from "@invisible-dots/vm-manager";
 import { builderSeedEntries } from "./seed.js";
@@ -27,8 +27,8 @@ export const GOLDEN_DEFAULTS = {
   diskSize: "10G",
   cpus: 2,
   memoryMib: 4096,
-  /** apt, the browser engine download and a cold cache on a slow line fit in an hour. */
-  timeoutMs: 60 * 60 * 1000,
+  /** apt, the Python environments, the browser engine download and a cold cache on a slow line. */
+  timeoutMs: 2 * 60 * 60 * 1000,
 } as const;
 
 /** qemu-img convert of a multi-GiB disk; generous because a slow disk is not an error. */
@@ -94,9 +94,14 @@ export async function buildGoldenImage(options: GoldenBuildOptions): Promise<Gol
   const provision = await readGuestAsset(assetRoot, BUILDER_PROVISION);
   const pythonLock = await readGuestAsset(assetRoot, BUILDER_PYTHON_LOCK);
   const python = parsePythonLock(pythonLock.toString("utf8"));
+  const engineBuild = await readGuestAsset(assetRoot, BUILDER_ENGINE_BUILD);
+  const engineLock = await readGuestAsset(assetRoot, BUILDER_ENGINE_LOCK);
+  parseHashedLock(engineLock.toString("utf8"), BUILDER_ENGINE_LOCK);
   // The disk size is an input: the same pins at another size are another image.
-  // The lock is one too, so a changed transitive dependency is another image.
-  const digest = inputsDigest([JSON.stringify(base), JSON.stringify(pins), userData, provision, pythonLock, diskSize]);
+  // The locks are too, so a changed transitive dependency is another image, and
+  // so is the script that builds the engine's environment. The engine's own
+  // source is not: it travels on the runtime disk (section 3.3).
+  const digest = inputsDigest([JSON.stringify(base), JSON.stringify(pins), userData, provision, pythonLock, diskSize, engineLock, engineBuild]);
 
   await mkdir(paths.imagesDir, { recursive: true });
   let version: string;
@@ -123,7 +128,10 @@ export async function buildGoldenImage(options: GoldenBuildOptions): Promise<Gol
 
   const lock = await acquireLock(join(paths.imagesDir, ".golden-build.lock"), "golden image build");
   try {
-    return await buildLocked({ ...options, log, paths, base, pins, diskSize, now, lock }, { version, image, manifest, digest, userData, provision, pythonLock, python });
+    return await buildLocked(
+      { ...options, log, paths, base, pins, diskSize, now, lock },
+      { version, image, manifest, digest, userData, provision, pythonLock, python, engineLock, engineBuild },
+    );
   } finally {
     await lock.release();
   }
@@ -149,6 +157,8 @@ interface Target {
   provision: Buffer;
   pythonLock: Buffer;
   python: PythonLock;
+  engineLock: Buffer;
+  engineBuild: Buffer;
 }
 
 async function buildLocked(options: GoldenBuildOptions & Resolved, target: Target): Promise<GoldenBuildResult> {
@@ -195,6 +205,8 @@ async function buildLocked(options: GoldenBuildOptions & Resolved, target: Targe
         python: target.python,
         nodeTarball,
         uvTarball,
+        engineLock: target.engineLock,
+        engineBuild: target.engineBuild,
       }),
       { volumeId: SEED_VOLUME_ID, timestamp: options.now() },
     );
@@ -229,6 +241,7 @@ async function buildLocked(options: GoldenBuildOptions & Resolved, target: Targe
         "mcp-requirements.lock": createHash("sha256").update(target.pythonLock).digest("hex"),
         apt_packages: [...pins.apt_packages],
       },
+      engine: { lock_sha256: createHash("sha256").update(target.engineLock).digest("hex") },
       installed: installedComponents(consoleText),
       builder: { accelerator: options.accelerator },
     };

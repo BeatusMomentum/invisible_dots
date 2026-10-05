@@ -29,7 +29,7 @@ const bashUsable = bashCanRead(join(root, "runtime", "dot-desktop.sh"));
 
 describe("guest files", () => {
   it("lists every guest script", () => {
-    expect([...scripts].sort()).toEqual(["builder/provision.sh", "runtime/dot-desktop.sh", "runtime/install.sh"]);
+    expect([...scripts].sort()).toEqual(["builder/build-engine-env.sh", "builder/provision.sh", "runtime/dot-desktop.sh", "runtime/install.sh"]);
   });
 
   it.each(GUEST_ASSETS)("%s is LF-only ASCII and says nothing about vsock or libvirt", (path) => {
@@ -86,10 +86,11 @@ describe("guest files", () => {
 });
 
 describe("the sudo grants (architecture section 4.1)", () => {
-  it("the builder seed gives dot no sudo rule, and the provisioner removes any the image had", () => {
+  it("the builder seed gives dot and dotengine no sudo rule, and the provisioner removes any the image had", () => {
     const builder = text("builder/user-data.yaml");
     expect(builder).toContain("  - name: dot\n");
-    expect(builder.match(/^\s*sudo:.*$/gm)).toEqual(["    sudo: false"]);
+    expect(builder).toContain("  - name: dotengine\n");
+    expect(builder.match(/^\s*sudo:.*$/gm)).toEqual(["    sudo: false", "    sudo: false"]);
     // provision.sh runs as root and reaches dot through root's own sudo -u.
     expect(text("builder/provision.sh")).toContain("rm -f /etc/sudoers.d/90-cloud-init-users");
   });
@@ -114,9 +115,9 @@ describe("the MCP server's Python environment", () => {
 });
 
 describe("guest units", () => {
-  it.each(GUEST_UNITS)("%s runs as dot with the display and uv's bin dir", (name) => {
+  it.each(GUEST_UNITS)("%s runs with the display and uv's bin dir, as dot or the engine's own user", (name) => {
     const unit = text(unitAsset(name));
-    expect(unit).toMatch(/^User=dot$/m);
+    expect(unit).toMatch(name === "invisible-dots-agent.service" ? /^User=dotengine$/m : /^User=dot$/m);
     expect(unit).toMatch(/^Environment=DISPLAY=:0$/m);
     expect(unit).toMatch(/^Environment=PATH=\/home\/dot\/\.local\/bin:/m);
     expect(unit).toMatch(/^RequiresMountsFor=\/opt\/invisible-dots$/m);
@@ -138,10 +139,43 @@ describe("guest units", () => {
     expect(unit).toMatch(/^After=.*dot-agentd\.service.*dot-desktop\.service/m);
   });
 
-  it("starts the agent with SIGUSR1 ignored, so no process of the same user can open its inspector and read the key", () => {
-    expect(text(unitAsset("invisible-dots-agent.service"))).toContain(
-      "ExecStart=/usr/local/bin/node --disable-sigusr1 /opt/invisible-dots/invisible-dots-agent.mjs\n",
-    );
+  it("starts the Python engine as dotengine from its venv, isolated, with its state and sockets named", () => {
+    const unit = text(unitAsset("invisible-dots-agent.service"));
+    // -I: no PYTHON* variable and no user site; -B: the runtime disk is read-only.
+    expect(unit).toContain("ExecStart=/opt/invisible-dots-engine/bin/python -I -B -m nanobot\n");
+    expect(unit).toMatch(/^User=dotengine$/m);
+    expect(unit).toMatch(/^Group=dotengine$/m);
+    expect(unit).toMatch(/^UMask=0002$/m);
+    expect(unit).toContain("Environment=HOME=/home/dotengine\n");
+    expect(unit).toContain("Environment=TIKTOKEN_CACHE_DIR=/opt/invisible-dots-engine/share/tiktoken\n");
+    expect(unit).toContain("Environment=INVISIBLE_DOTS_ENGINE_STATE=/home/dotengine/state\n");
+    expect(unit).toContain("Environment=INVISIBLE_DOTS_AGENT_SOCKET=/run/invisible-dots-agent/agent.sock\n");
+    expect(unit).toContain("Environment=INVISIBLE_DOTS_AGENTD_SOCKET=/run/invisible-dots/agentd.sock\n");
+    expect(unit).toContain("Environment=INVISIBLE_DOTS_AGENTD_BIN=/opt/invisible-dots/bin/dot-agentd\n");
+    expect(unit).toContain("Environment=INVISIBLE_DOTS_WORKSPACE=/home/dot/workspace\n");
+    // It needs no privilege and may leave no core file: the key lives in its memory (architecture 4.3).
+    expect(unit).toMatch(/^NoNewPrivileges=yes$/m);
+    expect(unit).toMatch(/^LimitCORE=0$/m);
+    expect(unit).toMatch(/^TimeoutStopSec=30$/m);
+    // No key, ever, in the unit's environment, and no sudo or installer of any kind.
+    const settings = unit.split("\n").filter((line) => !line.startsWith("#")).join("\n");
+    expect(settings).not.toMatch(/API_KEY|NODE_ENV|sudo|INSTALLER/);
+  });
+
+  it("gives each socket a directory only its two users reach, and dotengine no root command", () => {
+    const install = text("runtime/install.sh");
+    expect(install).toContain("d /run/invisible-dots 2750 dot dotengine -");
+    expect(install).toContain("d /run/invisible-dots-agent 2750 dotengine dot -");
+    expect(install).toContain("install -d -o dotengine -g dotengine -m 0700 /home/dotengine/state");
+    // No sudoers rule and no config directory are written: the engine's config lives in its database.
+    expect(install).not.toMatch(/visudo|NOPASSWD|sudoers\.d|\/etc\/invisible-dots\/[a-z]+\//);
+    expect(text("builder/user-data.yaml")).toMatch(/- name: dotengine\n[\s\S]*?groups: \[dot\]/);
+  });
+
+  it("install.sh refuses a golden image without the engine's environment", () => {
+    const install = text("runtime/install.sh");
+    expect(install).toContain("[ -x /opt/invisible-dots-engine/bin/python ] || die ");
+    expect(install).toContain("a golden image from before the nanobot engine");
   });
 
   it("install.sh installs exactly the units the runtime disk carries", () => {
@@ -163,6 +197,31 @@ describe("the provisioner", () => {
     expect(provision).toContain('component() { console "IDOTS-BUILD-COMPONENT: $1=$2"; }');
     expect(provision).toContain('console "IDOTS-BUILD-RESULT: ok"');
     expect(provision).toContain('console "IDOTS-BUILD-RESULT: failed at line $1: $2"');
+  });
+
+  it("builds the engine's Python environment with the script the seed carries, at the path the unit runs", () => {
+    expect(provision).toContain('bash "$payload/$ENGINE_BUILD" "$payload/$ENGINE_LOCK" "$engine_venv" /opt/invisible-dots/engine');
+    expect(provision).toContain("engine_venv=/opt/invisible-dots-engine\n");
+    expect(provision).toContain('component engine-python "$engine_python"');
+    // No build user and no Node build of the engine: its environment is the wheels of the lock.
+    expect(provision).not.toMatch(/useradd --system|pnpm/i);
+    expect(text(unitAsset("invisible-dots-agent.service"))).toContain(`ExecStart=/opt/invisible-dots-engine/bin/python `);
+  });
+
+  it("builds that environment from the hashed lock, wheels only, and joins the engine's source by a .pth file", () => {
+    const build = text("builder/build-engine-env.sh");
+    expect(build).toContain('uv venv --quiet --python /usr/bin/python3 "$venv"');
+    expect(build).toContain('uv pip install --quiet --no-cache --python "$python" --require-hashes --only-binary :all: -r "$lock"');
+    // The site-packages directory is asked of the venv's own Python, never written down.
+    expect(build).toContain('sysconfig.get_path("purelib")');
+    expect(build).toContain('printf \'%s\\n\' "$source_dir" > "$site_packages/invisible-dots-engine.pth"');
+    // The copy of the lock the engine compares with the runtime disk's.
+    expect(build).toContain('install -m 0644 "$lock" "$venv/requirements.lock"');
+    expect(build).toContain('TIKTOKEN_CACHE_DIR="$venv/share/tiktoken"');
+    expect(build).toContain('chown -R root:root "$venv"');
+    expect(build).toContain('chmod -R go-w,a+rX "$venv"');
+    // Never a resolution from the index, a build from source or a plain `pip install`.
+    expect(build).not.toMatch(/pip install(?!.*--require-hashes)|--no-binary|--no-deps|-e /);
   });
 
   it("leaves no instance state behind", () => {

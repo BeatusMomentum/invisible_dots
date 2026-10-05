@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { hostPaths, type HostPaths } from "@invisible-dots/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_USER_DATA, defaultAssetRoot } from "../src/assets.js";
-import { buildGoldenImage, GoldenBuildError, type GoldenBuildOptions } from "../src/golden.js";
+import { BUILDER_ENGINE_BUILD, BUILDER_ENGINE_LOCK, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_USER_DATA, defaultAssetRoot } from "../src/assets.js";
+import { buildGoldenImage, GOLDEN_DEFAULTS, GoldenBuildError, type GoldenBuildOptions } from "../src/golden.js";
 import { readManifest, verifyImage, type GoldenManifest } from "../src/manifest.js";
 import type { BaseImagePin, GuestPins } from "../src/pins.js";
 import { parsePythonLock } from "../src/python-lock.js";
@@ -109,7 +109,9 @@ describe("buildGoldenImage", () => {
     expect(runner.runs[0]!.args).toEqual(["resize", "-q", "-f", "qcow2", expect.stringMatching(/disk\.qcow2$/), "10G"]);
     expect(runner.spawns).toHaveLength(1);
     expect(runner.spawns[0]!.command).toBe("/opt/qemu/qemu-system-x86_64");
-    expect(runner.spawns[0]!.args).toEqual(expect.arrayContaining(["-accel", "kvm", "-cpu", "host", "-m", "4096", "-smp", "2"]));
+    expect(runner.spawns[0]!.args).toEqual(
+      expect.arrayContaining(["-accel", "kvm", "-cpu", "host", "-m", String(GOLDEN_DEFAULTS.memoryMib), "-smp", String(GOLDEN_DEFAULTS.cpus)]),
+    );
     // The seed carried both tarballs.
     expect(seedSize).toBeGreaterThan(NODE.length + UV.length);
 
@@ -132,6 +134,8 @@ describe("buildGoldenImage", () => {
         "invisible-playwright": "0.25.7",
         apt_packages: ["xvfb", "imagemagick"],
       },
+      // The engine's lock, which the runtime disk's copy must equal.
+      engine: { lock_sha256: sha256(await readFile(join(defaultAssetRoot(), BUILDER_ENGINE_LOCK))) },
       installed: { node: "v24.21.0", "browser-engine": "151.0" },
       builder: { accelerator: "kvm" },
     });
@@ -163,14 +167,56 @@ describe("buildGoldenImage", () => {
     expect(second.version).not.toBe(first.version);
   });
 
-  it("builds a new version when only the Python lock changes, a transitive package included", async () => {
-    const first = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }).opts);
-    // A copy of the guest files whose lock differs in one hash of one dependency.
+  /** A copy of the guest files the digest reads, for a test that changes one of them. */
+  async function assetCopy(): Promise<string> {
     const assetRoot = join(home, "assets");
-    for (const relative of [BUILDER_USER_DATA, BUILDER_PROVISION, BUILDER_PYTHON_LOCK]) {
+    for (const relative of [BUILDER_USER_DATA, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_ENGINE_LOCK, BUILDER_ENGINE_BUILD]) {
       await mkdir(join(assetRoot, dirname(relative)), { recursive: true });
       await copyFile(join(defaultAssetRoot(), relative), join(assetRoot, relative));
     }
+    return assetRoot;
+  }
+
+  it("builds a new version when only the engine's lock changes, and records the new lock", async () => {
+    const first = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }).opts);
+    const assetRoot = await assetCopy();
+    const lockPath = join(assetRoot, BUILDER_ENGINE_LOCK);
+    const lock = await readFile(lockPath, "utf8");
+    const hash = /--hash=sha256:([0-9a-f]{64})/.exec(lock.slice(lock.indexOf("\naiohttp==")))![1]!;
+    await writeFile(lockPath, lock.replace(hash, "0".repeat(64)));
+
+    const second = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }, { assetRoot }).opts);
+    expect(second.created).toBe(true);
+    expect(second.version).not.toBe(first.version);
+    const manifest = (await readManifest(second.manifest)) as GoldenManifest;
+    expect(manifest.engine).toEqual({ lock_sha256: sha256(Buffer.from(await readFile(lockPath))) });
+  });
+
+  it("builds a new version when only the script that builds the engine's environment changes", async () => {
+    const first = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }).opts);
+    const assetRoot = await assetCopy();
+    const scriptPath = join(assetRoot, BUILDER_ENGINE_BUILD);
+    await writeFile(scriptPath, `${await readFile(scriptPath, "utf8")}# changed\n`);
+
+    const second = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }, { assetRoot }).opts);
+    expect(second.created).toBe(true);
+    expect(second.version).not.toBe(first.version);
+  });
+
+  it("refuses an engine lock with a requirement that has no hash, before booting anything", async () => {
+    const assetRoot = await assetCopy();
+    const lockPath = join(assetRoot, BUILDER_ENGINE_LOCK);
+    await writeFile(lockPath, `${await readFile(lockPath, "utf8")}idna==3.20\n`);
+
+    const { runner, opts } = options({ console: OK_CONSOLE, exit: 0 }, { assetRoot });
+    await expect(buildGoldenImage(opts)).rejects.toThrow(/engine-requirements\.lock:\d+: expected/);
+    expect(runner.spawns).toHaveLength(0);
+  });
+
+  it("builds a new version when only the Python lock changes, a transitive package included", async () => {
+    const first = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }).opts);
+    // A copy of the guest files whose lock differs in one hash of one dependency.
+    const assetRoot = await assetCopy();
     const lockPath = join(assetRoot, BUILDER_PYTHON_LOCK);
     const lock = await readFile(lockPath, "utf8");
     const hash = /--hash=sha256:([0-9a-f]{64})/.exec(lock.slice(lock.indexOf("\nanyio==")))![1]!;

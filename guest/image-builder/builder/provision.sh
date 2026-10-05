@@ -82,9 +82,21 @@ engine_version="$(as_dot "$mcp_env/bin/invisible-playwright" version | sed -n 's
 [ -n "$engine_version" ] || { console "invisible-playwright version printed no engine line"; false; }
 as_dot sh -c 'command -v invisible-playwright-mcp' >/dev/null || { console "invisible-playwright-mcp is not on the PATH of dot"; false; }
 
+step "installing the engine's Python environment"
+# The engine's third-party dependencies come from the hashed lock on the seed,
+# wheels only, so no build script of any of them runs as root. The engine's own
+# source is not here: it comes on the runtime disk and joins this environment
+# through the .pth file the script writes (section 3.3).
+engine_venv=/opt/invisible-dots-engine
+bash "$payload/$ENGINE_BUILD" "$payload/$ENGINE_LOCK" "$engine_venv" /opt/invisible-dots/engine
+engine_python="$("$engine_venv/bin/python" -V)"
+
 step "preparing the dot home"
-install -d -o dot -g dot -m 0755 /home/dot/workspace /home/dot/downloads /home/dot/documents /home/dot/memory
-install -d -o dot -g dot -m 0700 /home/dot/state /home/dot/browsers
+# The workspace is shared with the engine (user dotengine, in group dot).
+install -d -o dot -g dot -m 2775 /home/dot/workspace
+install -d -o dot -g dot -m 0755 /home/dot/downloads /home/dot/documents /home/dot/memory
+install -d -o dotengine -g dotengine -m 0700 /home/dotengine
+install -d -o dot -g dot -m 0700 /home/dot/browsers
 
 step "recording installed versions"
 # shellcheck source=/dev/null
@@ -96,6 +108,7 @@ component uv "$(/usr/local/bin/uv --version)"
 component invisible-playwright-mcp "$MCP_VERSION"
 component invisible-playwright "$PLAYWRIGHT_VERSION"
 component browser-engine "$engine_version"
+component engine-python "$engine_python"
 
 step "cleaning up"
 apt-get clean

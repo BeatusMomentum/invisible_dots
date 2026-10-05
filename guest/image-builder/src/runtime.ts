@@ -5,43 +5,53 @@
  *
  *   /install.sh                  the hook each Dot's seed runs on every boot
  *   /VERSION                     this runtime's version
- *   /invisible-dots-agent.mjs    the bundled agent
- *   /THIRD_PARTY_NOTICES.txt     the license notices of everything the bundle carries
  *   /bin/dot-agentd              the computer daemon (linux/amd64)
  *   /bin/dot-desktop             ExecStart of dot-desktop.service
+ *   /engine/nanobot/...          the engine's source: its .py files and templates
+ *   /engine/requirements.lock    the golden image's lock, which the engine compares with its venv's
+ *   /engine/LICENSE, /engine/UPSTREAM.md   the engine's license and where it was forked from
  *   /units/*.service             the guest systemd units
+ *
+ * The engine's source is ours, so it travels here and not in the golden image
+ * (architecture 3.3): a change to it is a new runtime disk. The golden image's
+ * venv names /opt/invisible-dots/engine in a .pth file.
  *
  * The image has no Rock Ridge, so Linux shows every file on it as readable
  * and executable by everyone: the scripts and the daemon run without any
  * permission bits having to survive a Windows host.
  */
 import { createHash } from "node:crypto";
-import { chmod, mkdir, open, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, open, readdir, rm, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { writeIso, type IsoEntry } from "@invisible-dots/iso";
 import { hostPaths, replaceFile, type HostPaths } from "@invisible-dots/shared";
 import { RUNTIME_ISO_LABEL } from "@invisible-dots/vm-manager";
-import { defaultAssetRoot, GUEST_UNITS, readGuestAsset, RUNTIME_DESKTOP, RUNTIME_INSTALL, unitAsset } from "./assets.js";
+import {
+  BUILDER_ENGINE_LOCK,
+  defaultAssetRoot,
+  GUEST_UNITS,
+  readGuestAsset,
+  RUNTIME_DESKTOP,
+  RUNTIME_INSTALL,
+  unitAsset,
+} from "./assets.js";
 import { sha256File } from "./download.js";
 import { acquireLock } from "./lock.js";
 import { manifestPathFor, writeManifest, type RuntimeFile, type RuntimeManifest } from "./manifest.js";
 import { checkVersion, findImageByDigest, inputsDigest, versionFor } from "./versions.js";
 
 export interface RuntimeInputs {
-  /** guest/invisible-dots-agent/dist/invisible-dots-agent.mjs */
-  agentBundle: string;
-  /** guest/invisible-dots-agent/dist/THIRD_PARTY_NOTICES.txt, written by the same build */
-  agentNotices: string;
   /** guest/dot-agentd/bin/dot-agentd, built for linux/amd64 */
   agentdBinary: string;
+  /** invisible_engine_dots/: the engine's source tree (nanobot/, LICENSE, UPSTREAM.md) */
+  engineRoot: string;
 }
 
-/** Where `npm run build` and `go build` put the two inputs in this repository. */
+/** Where `go build` puts dot-agentd in this repository, and where the engine's source is. */
 export function defaultRuntimeInputs(repoRoot: string = fileURLToPath(new URL("../../..", import.meta.url))): RuntimeInputs {
   return {
-    agentBundle: join(repoRoot, "guest", "invisible-dots-agent", "dist", "invisible-dots-agent.mjs"),
-    agentNotices: join(repoRoot, "guest", "invisible-dots-agent", "dist", "THIRD_PARTY_NOTICES.txt"),
+    engineRoot: join(repoRoot, "invisible_engine_dots"),
     agentdBinary: join(repoRoot, "guest", "dot-agentd", "bin", "dot-agentd"),
   };
 }
@@ -104,17 +114,44 @@ async function stageFile(path: string, hostFile: string): Promise<StagedFile> {
   return { path, entry: { path, file: hostFile }, sha256: await sha256File(hostFile), size: info.size };
 }
 
+/**
+ * What the engine's package ships (the wheel's include list in its
+ * pyproject.toml): every .py file, and the .md templates. The tests and
+ * __pycache__ are not part of it.
+ */
+async function engineSourcePaths(root: string, relative: string, out: string[]): Promise<void> {
+  const entries = await readdir(join(root, relative), { withFileTypes: true });
+  for (const entry of entries) {
+    const path = `${relative}/${entry.name}`;
+    if (entry.isDirectory()) {
+      if (entry.name !== "__pycache__") await engineSourcePaths(root, path, out);
+    } else if (entry.isFile()) {
+      if (entry.name.endsWith(".py") || (entry.name.endsWith(".md") && path.startsWith("nanobot/templates/"))) out.push(path);
+    } else {
+      throw new Error(`${join(root, path)} is neither a file nor a directory; the engine's source must hold only plain files`);
+    }
+  }
+}
+
+/** The engine's files at `engine/` on the disk: its package, its license and where it was forked from. */
+async function engineFiles(engineRoot: string, assetRoot: string): Promise<StagedFile[]> {
+  const paths: string[] = [];
+  await engineSourcePaths(engineRoot, "nanobot", paths).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") throw new Error(`the engine's source ${join(engineRoot, "nanobot")} does not exist (invisible_engine_dots/ in this repository)`);
+    throw error;
+  });
+  if (!paths.includes("nanobot/__init__.py")) throw new Error(`${engineRoot} is not the engine's source: it has no nanobot/__init__.py`);
+  const files: StagedFile[] = [];
+  for (const path of paths) files.push(await stageFile(`engine/${path}`, join(engineRoot, path)));
+  files.push(await stageFile("engine/LICENSE", join(engineRoot, "LICENSE")));
+  files.push(await stageFile("engine/UPSTREAM.md", join(engineRoot, "UPSTREAM.md")));
+  // The golden image's lock, byte for byte: the engine refuses to start on a venv built from another.
+  files.push(stageBytes("engine/requirements.lock", await readGuestAsset(assetRoot, BUILDER_ENGINE_LOCK)));
+  return files;
+}
+
 /** The ISO's files except VERSION, which depends on the version this list decides. */
 export async function runtimeFiles(inputs: RuntimeInputs, assetRoot: string = defaultAssetRoot()): Promise<StagedFile[]> {
-  const agent = await stat(inputs.agentBundle).catch(() => undefined);
-  if (!agent?.isFile()) {
-    throw new Error(`agent bundle ${inputs.agentBundle} not found: build it first (npm run build --workspace guest/invisible-dots-agent)`);
-  }
-  // The bundle's licenses travel with it: a runtime disk without them is not built.
-  const notices = await stat(inputs.agentNotices).catch(() => undefined);
-  if (!notices?.isFile()) {
-    throw new Error(`${inputs.agentNotices} not found: the agent's build writes it next to the bundle; build the agent again`);
-  }
   const agentd = await stat(inputs.agentdBinary).catch(() => undefined);
   if (!agentd?.isFile()) {
     throw new Error(
@@ -127,9 +164,8 @@ export async function runtimeFiles(inputs: RuntimeInputs, assetRoot: string = de
   const files = [
     stageBytes("install.sh", await readGuestAsset(assetRoot, RUNTIME_INSTALL)),
     stageBytes("bin/dot-desktop", await readGuestAsset(assetRoot, RUNTIME_DESKTOP)),
-    await stageFile("invisible-dots-agent.mjs", inputs.agentBundle),
-    await stageFile("THIRD_PARTY_NOTICES.txt", inputs.agentNotices),
     await stageFile("bin/dot-agentd", inputs.agentdBinary),
+    ...(await engineFiles(inputs.engineRoot, assetRoot)),
   ];
   for (const unit of GUEST_UNITS) files.push(stageBytes(`units/${unit}`, await readGuestAsset(assetRoot, unitAsset(unit))));
   return files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));

@@ -179,7 +179,8 @@ const processRunner: ProcessRunner = {
  * The repository root. apps/cli/src/host.ts and the bundle
  * apps/cli/dist/invisible-dots.mjs sit at the same depth, so this holds for
  * both. The image builder's own default would point inside apps/cli once
- * bundled, so its guest files are named here.
+ * bundled, so its guest files are named here (the engine's source is named by
+ * defaultRuntimeInputs, from this same root).
  */
 const REPO_ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 const IMAGE_BUILDER_DIR = join(REPO_ROOT, "guest", "image-builder");

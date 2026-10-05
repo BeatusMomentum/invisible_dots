@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MCP_PACKAGE, parsePythonLock, PLAYWRIGHT_PACKAGE } from "../src/python-lock.js";
+import { MCP_PACKAGE, parseHashedLock, parsePythonLock, PLAYWRIGHT_PACKAGE } from "../src/python-lock.js";
 
 const HASH_A = `--hash=sha256:${"a".repeat(64)}`;
 const HASH_B = `--hash=sha256:${"b".repeat(64)}`;
@@ -38,5 +38,21 @@ describe("parsePythonLock", () => {
 
   it("refuses a version that pins.env could not carry without quoting", () => {
     expect(() => parsePythonLock(lock(pkg(MCP_PACKAGE, "0.70.2;x"), pkg(PLAYWRIGHT_PACKAGE, "0.25.7")))).toThrow(/expected/);
+  });
+});
+
+describe("parseHashedLock", () => {
+  it("applies the same rules without asking for the MCP server's packages", () => {
+    const packages = parseHashedLock(lock(pkg("idna", "3.20"), pkg("Typing_Extensions", "4.16.0", [HASH_A, HASH_B])), "engine.lock");
+    expect([...packages]).toEqual([
+      ["idna", "3.20"],
+      ["typing-extensions", "4.16.0"],
+    ]);
+  });
+
+  it("names the file it was given in every refusal", () => {
+    expect(() => parseHashedLock(lock("idna==3.20"), "engine.lock")).toThrow(/^engine\.lock:2: expected/);
+    expect(() => parseHashedLock(lock(pkg("idna", "3.20"), pkg("IDNA", "3.21")), "engine.lock")).toThrow(/engine\.lock:4: idna is listed twice/);
+    expect(() => parseHashedLock(lock("idna==3.20 \\"), "engine.lock")).toThrow(/engine\.lock: idna ends without its hashes/);
   });
 });

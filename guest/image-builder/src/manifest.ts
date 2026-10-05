@@ -40,6 +40,8 @@ export interface GoldenManifest {
     "mcp-requirements.lock": string;
     apt_packages: string[];
   };
+  /** The engine's Python environment (builder/engine-requirements.lock): the lock the runtime disk's copy must equal. */
+  engine: { lock_sha256: string };
   /** What the provisioner reported it installed (node, uv, browser-engine, ubuntu, kernel, ...). */
   installed: Record<string, string>;
   builder: { accelerator: string };

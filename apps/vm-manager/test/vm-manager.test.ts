@@ -47,7 +47,9 @@ function makeManager(extra: Partial<VmManagerOptions> = {}): VmManager {
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, Math.min(ms, 2))),
     pollIntervalMs: 1,
     startSettleMs: 1,
-    shutdownTimeoutMs: 40,
+    // Generous: a guest that powers off must never be mistaken for one that does
+    // not on a loaded host. The tests of the forced kill pass their own short timeoutMs.
+    shutdownTimeoutMs: 5_000,
     killTimeoutMs: 40,
     startTimeoutMs: 200,
     ...extra,

@@ -1,14 +1,14 @@
-import { cp, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hostPaths, type HostPaths } from "@invisible-dots/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 // The ISO package's own test reader: it shares no code with the writer.
 import { fileBytes, listFiles, parseIso } from "../../../packages/iso/test/iso-reader.js";
-import { defaultAssetRoot, GUEST_UNITS } from "../src/assets.js";
+import { BUILDER_ENGINE_LOCK, defaultAssetRoot, GUEST_UNITS } from "../src/assets.js";
 import { readManifest, verifyImage, type RuntimeManifest } from "../src/manifest.js";
 import { RUNTIME_ISO_LABEL } from "@invisible-dots/vm-manager";
-import { assertLinuxAmd64Elf, buildRuntimeIso, type RuntimeInputs } from "../src/runtime.js";
+import { assertLinuxAmd64Elf, buildRuntimeIso, defaultRuntimeInputs, runtimeFiles, type RuntimeInputs } from "../src/runtime.js";
 import { sha256 } from "./http-fixture.js";
 
 /** The first bytes of an ELF executable for `machine` (0x3e is x86-64, 0xb7 arm64). */
@@ -20,22 +20,38 @@ function elf(machine: number, body = "go binary"): Buffer {
   return Buffer.concat([header, Buffer.from(body)]);
 }
 
+/** A stand-in for invisible_engine_dots/: what the runtime disk takes, and what it leaves out. */
+async function writeEngineTree(root: string): Promise<void> {
+  const files: Record<string, string> = {
+    "nanobot/__init__.py": "__version__ = '0.1.0'\n",
+    "nanobot/dots/main.py": "def main(): ...\n",
+    "nanobot/templates/agent/tool_contract.md": "# contract\n",
+    "nanobot/README.md": "not a template: left out\n",
+    "nanobot/data.json": "{}\n",
+    "nanobot/__pycache__/main.cpython-312.pyc": "bytecode",
+    "tests/test_main.py": "def test(): ...\n",
+    "pyproject.toml": "[project]\n",
+    LICENSE: "MIT\n",
+    "UPSTREAM.md": "upstream\n",
+  };
+  for (const [path, text] of Object.entries(files)) {
+    await mkdir(join(root, path, ".."), { recursive: true });
+    await writeFile(join(root, path), text);
+  }
+}
+
 let dir: string;
 let paths: HostPaths;
 let inputs: RuntimeInputs;
-const AGENT = "#!/usr/bin/env node\nconsole.log('the agent');\n";
-const NOTICES = "== invisible_dots (MIT)\n";
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), "idots-runtime-"));
   paths = hostPaths({ INVISIBLE_DOTS_HOME: join(dir, "home") });
   inputs = {
-    agentBundle: join(dir, "invisible-dots-agent.mjs"),
-    agentNotices: join(dir, "THIRD_PARTY_NOTICES.txt"),
     agentdBinary: join(dir, "dot-agentd"),
+    engineRoot: join(dir, "engine-src"),
   };
-  await writeFile(inputs.agentBundle, AGENT);
-  await writeFile(inputs.agentNotices, NOTICES);
+  await writeEngineTree(inputs.engineRoot);
   await writeFile(inputs.agentdBinary, elf(0x3e));
 });
 
@@ -46,7 +62,7 @@ afterEach(async () => {
 const at = (iso: string) => new Date(`2026-10-02T${iso}Z`);
 
 describe("buildRuntimeIso", () => {
-  it("writes the IDOTS-RT disk with the agent, dot-agentd, the hook and the units", async () => {
+  it("writes the IDOTS-RT disk with the engine, dot-agentd, the hook and the units", async () => {
     const result = await buildRuntimeIso({ inputs, paths, now: () => at("08:00:00") });
     expect(result.created).toBe(true);
     expect(result.version).toMatch(/^20261002080000-[0-9a-f]{12}$/);
@@ -62,23 +78,28 @@ describe("buildRuntimeIso", () => {
     expect([...files.keys()].sort()).toEqual(
       [
         "VERSION",
-        "THIRD_PARTY_NOTICES.txt",
         "bin/dot-agentd",
         "bin/dot-desktop",
+        "engine/LICENSE",
+        "engine/UPSTREAM.md",
+        "engine/nanobot/__init__.py",
+        "engine/nanobot/dots/main.py",
+        "engine/nanobot/templates/agent/tool_contract.md",
+        "engine/requirements.lock",
         "install.sh",
-        "invisible-dots-agent.mjs",
         ...GUEST_UNITS.map((unit) => `units/${unit}`),
       ].sort(),
     );
     const read = (path: string) => fileBytes(image, files.get(path)!);
     expect(read("VERSION").toString()).toBe(`${result.version}\n`);
-    expect(read("invisible-dots-agent.mjs").toString()).toBe(AGENT);
-    // The licenses of what the bundle carries travel next to it.
-    expect(read("THIRD_PARTY_NOTICES.txt").toString()).toBe(NOTICES);
     expect(read("bin/dot-agentd")).toEqual(elf(0x3e));
     expect(read("install.sh")).toEqual(await readFile(join(defaultAssetRoot(), "runtime", "install.sh")));
     expect(read("bin/dot-desktop")).toEqual(await readFile(join(defaultAssetRoot(), "runtime", "dot-desktop.sh")));
     expect(read("units/dot-agentd.service")).toEqual(await readFile(join(defaultAssetRoot(), "units", "dot-agentd.service")));
+    // The engine's source as it is, and the golden image's lock byte for byte: the engine compares the two at every start.
+    expect(read("engine/nanobot/dots/main.py").toString()).toBe("def main(): ...\n");
+    expect(read("engine/LICENSE").toString()).toBe("MIT\n");
+    expect(read("engine/requirements.lock")).toEqual(await readFile(join(defaultAssetRoot(), BUILDER_ENGINE_LOCK)));
 
     const manifest = (await readManifest(result.manifest)) as RuntimeManifest;
     expect(manifest).toMatchObject({ kind: "runtime", version: result.version, file: `runtime-${result.version}.iso`, sha256: sha256(image), size_bytes: image.length });
@@ -92,7 +113,7 @@ describe("buildRuntimeIso", () => {
     const again = await buildRuntimeIso({ inputs, paths, now: () => at("09:00:00") });
     expect(again).toEqual({ ...first, created: false });
 
-    await writeFile(inputs.agentBundle, `${AGENT}// changed\n`);
+    await writeFile(inputs.agentdBinary, elf(0x3e, "another go binary"));
     const next = await buildRuntimeIso({ inputs, paths, now: () => at("10:00:00") });
     expect(next.created).toBe(true);
     // The control plane starts VMs with the highest version: the new code must sort last.
@@ -106,14 +127,43 @@ describe("buildRuntimeIso", () => {
   });
 
   it("names the build command for a missing input", async () => {
-    await rm(inputs.agentBundle);
-    await expect(buildRuntimeIso({ inputs, paths })).rejects.toThrow(/npm run build --workspace guest\/invisible-dots-agent/);
-    await writeFile(inputs.agentBundle, AGENT);
-    await rm(inputs.agentNotices);
-    await expect(buildRuntimeIso({ inputs, paths })).rejects.toThrow(/the agent's build writes it next to the bundle/);
-    await writeFile(inputs.agentNotices, NOTICES);
     await rm(inputs.agentdBinary);
     await expect(buildRuntimeIso({ inputs, paths })).rejects.toThrow(/GOOS=linux GOARCH=amd64 go build/);
+  });
+
+  it("makes a new version when only the engine's source changes", async () => {
+    const first = await buildRuntimeIso({ inputs, paths, now: () => at("08:00:00") });
+    await writeFile(join(inputs.engineRoot, "nanobot", "dots", "main.py"), "def main(): return 0\n");
+    const next = await buildRuntimeIso({ inputs, paths, now: () => at("09:00:00") });
+    expect(next.created).toBe(true);
+    expect(next.version).not.toBe(first.version);
+  });
+
+  it("refuses a tree that is not the engine's source", async () => {
+    await rm(join(inputs.engineRoot, "nanobot", "__init__.py"));
+    await expect(buildRuntimeIso({ inputs, paths })).rejects.toThrow(/is not the engine's source: it has no nanobot\/__init__\.py/);
+    await rm(join(inputs.engineRoot, "nanobot"), { recursive: true });
+    await expect(buildRuntimeIso({ inputs, paths })).rejects.toThrow(/the engine's source .* does not exist/);
+  });
+
+  it("carries the whole engine of this repository within the ISO's limits", async () => {
+    const real = { ...inputs, engineRoot: defaultRuntimeInputs().engineRoot };
+    const staged = (await runtimeFiles(real)).map((file) => file.path);
+    for (const path of [
+      "engine/nanobot/__init__.py",
+      "engine/nanobot/__main__.py",
+      "engine/nanobot/dots/main.py",
+      "engine/nanobot/agent/tools/shell.py",
+      "engine/nanobot/templates/agent/tool_contract.md",
+    ]) {
+      expect(staged).toContain(path);
+    }
+    expect(staged.filter((path) => path.startsWith("engine/") && !/\.(py|md)$|requirements\.lock$|LICENSE$/.test(path))).toEqual([]);
+    expect(staged.some((path) => path.includes("tests/") || path.includes("__pycache__"))).toBe(false);
+    // The ISO's own limits (8 levels, names of 64 characters) hold for every one of them.
+    const result = await buildRuntimeIso({ inputs: real, paths, now: () => at("08:00:00") });
+    const parsed = parseIso(await readFile(result.iso));
+    expect([...listFiles(parsed.joliet.root).keys()]).toContain("engine/nanobot/agent/tools/shell.py");
   });
 
   it("refuses a guest file with CRLF line endings", async () => {
