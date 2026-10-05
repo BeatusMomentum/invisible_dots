@@ -1656,3 +1656,228 @@ async def test_optional_mcp_filters_reach_server_unchanged(params, error):
     else:
         assert result == "ok"
         session.call_tool.assert_awaited_once_with("list_issues", arguments=params)
+
+
+def _image_call_tool(*blocks: object, is_error: bool = False) -> SimpleNamespace:
+    async def call_tool(_name: str, arguments: dict) -> object:
+        return SimpleNamespace(content=list(blocks), isError=is_error)
+
+    return SimpleNamespace(call_tool=call_tool)
+
+
+def _make_image_wrapper(session: object, *, images: bool) -> MCPToolWrapper:
+    tool_def = SimpleNamespace(
+        name="demo", description="demo tool", inputSchema={"type": "object", "properties": {}}
+    )
+    return MCPToolWrapper(session, "test", tool_def, images=images)
+
+
+@pytest.mark.asyncio
+async def test_execute_returns_image_blocks_in_server_order_when_images_are_kept() -> None:
+    session = _image_call_tool(
+        _FakeTextContent("before"),
+        _FakeImageContent("QUJD", "image/png"),
+        _FakeTextContent("after"),
+    )
+
+    result = await _make_image_wrapper(session, images=True).execute()
+
+    assert result == [
+        {"type": "text", "text": "before"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,QUJD"}},
+        {"type": "text", "text": "after"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_execute_returns_the_embedded_image_blob_as_base64_when_images_are_kept() -> None:
+    class _EmbeddedResource:
+        def __init__(self, resource: object) -> None:
+            self.resource = resource
+
+    class _Blob(_FakeBlobResourceContents):
+        def __init__(self, blob: bytes, mime_type: str) -> None:
+            super().__init__(blob)
+            self.mimeType = mime_type
+
+    sys.modules["mcp"].types.EmbeddedResource = _EmbeddedResource
+    sys.modules["mcp"].types.BlobResourceContents = _Blob
+    session = _image_call_tool(_EmbeddedResource(_Blob(b"ABC", "image/webp")))
+
+    result = await _make_image_wrapper(session, images=True).execute()
+
+    assert result == [{"type": "image_url", "image_url": {"url": "data:image/webp;base64,QUJD"}}]
+
+
+@pytest.mark.asyncio
+async def test_execute_keeps_a_result_without_an_image_a_string_when_images_are_kept() -> None:
+    session = _image_call_tool(_FakeTextContent("one"), _FakeTextContent("two"))
+
+    result = await _make_image_wrapper(session, images=True).execute()
+
+    assert result == "one\ntwo"
+    assert isinstance(result, str)
+
+
+@pytest.mark.asyncio
+async def test_execute_without_the_images_flag_never_returns_image_bytes() -> None:
+    payload = "QUJD" * 64
+    session = _image_call_tool(_FakeTextContent("shot"), _FakeImageContent(payload))
+
+    result = await _make_image_wrapper(session, images=False).execute()
+
+    assert isinstance(result, str)
+    assert payload not in result
+
+
+@pytest.mark.asyncio
+async def test_execute_reports_an_error_result_as_text_even_when_images_are_kept() -> None:
+    payload = "QUJD" * 64
+    session = _image_call_tool(
+        _FakeTextContent("page crashed"), _FakeImageContent(payload), is_error=True
+    )
+
+    result = await _make_image_wrapper(session, images=True).execute()
+
+    assert is_tool_error_result(result)
+    assert isinstance(result, str)
+    assert result.startswith("page crashed")
+    assert payload not in result
+
+
+def test_server_config_does_not_keep_images_by_default() -> None:
+    assert MCPServerConfig(command="fake").images is False
+    assert MCPServerConfig(command="fake", images=True).images is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("images", [False, True])
+async def test_connect_mcp_servers_passes_the_images_flag_to_the_tool_wrappers(
+    fake_mcp_runtime: dict[str, object | None], images: bool
+) -> None:
+    fake_mcp_runtime["session"] = _make_fake_session(["demo"])
+
+    registry = ToolRegistry()
+    stacks = await connect_mcp_servers({"test": MCPServerConfig(command="fake", images=images)}, registry)
+    for stack in stacks.values():
+        await stack.aclose()
+
+    wrapper = registry.get("mcp_test_demo")
+    assert isinstance(wrapper, MCPToolWrapper)
+    assert wrapper._images is images
+
+
+@pytest.mark.asyncio
+async def test_each_server_uses_its_own_tool_timeout(
+    fake_mcp_runtime: dict[str, object | None], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_mcp_runtime["session"] = _make_fake_session(["demo"])
+    registry = ToolRegistry()
+    stacks = await connect_mcp_servers(
+        {
+            "quick": MCPServerConfig(command="fake", tool_timeout=7),
+            "browser": MCPServerConfig(command="fake", tool_timeout=120),
+        },
+        registry,
+    )
+    for stack in stacks.values():
+        await stack.aclose()
+
+    waited: list[float | None] = []
+    real_wait_for = asyncio.wait_for
+
+    async def recording_wait_for(awaitable: object, timeout: float | None = None) -> object:
+        waited.append(timeout)
+        return await real_wait_for(awaitable, timeout)
+
+    monkeypatch.setattr(mcp_mod.asyncio, "wait_for", recording_wait_for)
+    session = SimpleNamespace(
+        call_tool=AsyncMock(return_value=SimpleNamespace(content=[_FakeTextContent("ok")]))
+    )
+    for name in ("mcp_quick_demo", "mcp_browser_demo"):
+        wrapper = registry.get(name)
+        wrapper._session = session
+        await wrapper.execute()
+
+    assert waited == [7, 120]
+
+
+@pytest.mark.asyncio
+async def test_provider_connect_returns_no_failed_server_when_every_server_is_live(
+    fake_mcp_runtime: dict[str, object | None],
+) -> None:
+    fake_mcp_runtime["session"] = _make_fake_session(["demo"])
+    provider = MCPProvider({"test": MCPServerConfig(command="fake")}, ToolRegistry())
+
+    assert await provider.connect() == []
+    assert await provider.connect() == []
+
+    await provider.aclose()
+
+
+@pytest.mark.asyncio
+async def test_provider_connect_returns_the_servers_that_failed_and_retries_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sessions = {"good": _make_fake_session(["demo"]), "bad": _make_fake_session(["other"])}
+    broken = {"bad"}
+
+    class _SelectiveClientSession:
+        def __init__(self, read: object, _write: object) -> None:
+            self._session = sessions[read]
+
+        async def __aenter__(self) -> object:
+            return self._session
+
+        async def __aexit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+    @asynccontextmanager
+    async def _selective_stdio_client(params: object):
+        if params.command in broken:
+            raise RuntimeError("boom")
+        yield params.command, object()
+
+    monkeypatch.setattr(sys.modules["mcp"], "ClientSession", _SelectiveClientSession)
+    monkeypatch.setattr(sys.modules["mcp.client.stdio"], "stdio_client", _selective_stdio_client)
+    registry = ToolRegistry()
+    provider = MCPProvider(
+        {"bad": MCPServerConfig(command="bad"), "good": MCPServerConfig(command="good")}, registry
+    )
+
+    assert await provider.connect() == ["bad"]
+    assert registry.tool_names == ["mcp_good_demo"]
+
+    broken.clear()
+    assert await provider.connect() == []
+    assert sorted(registry.tool_names) == ["mcp_bad_other", "mcp_good_demo"]
+
+    await provider.aclose()
+
+
+@pytest.mark.asyncio
+async def test_provider_connect_reports_every_server_when_the_batch_itself_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def failing_connect(_servers: dict, _registry: ToolRegistry) -> dict:
+        raise RuntimeError("the transport layer is gone")
+
+    monkeypatch.setattr(mcp_mod, "connect_mcp_servers", failing_connect)
+    provider = MCPProvider(
+        {"a": MCPServerConfig(command="a"), "b": MCPServerConfig(command="b")}, ToolRegistry()
+    )
+
+    assert await provider.connect() == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_provider_connect_after_close_connects_nothing_and_reports_the_servers(
+    fake_mcp_runtime: dict[str, object | None],
+) -> None:
+    fake_mcp_runtime["session"] = _make_fake_session(["demo"])
+    registry = ToolRegistry()
+    provider = MCPProvider({"test": MCPServerConfig(command="fake")}, registry)
+    await provider.aclose()
+
+    assert await provider.connect() == ["test"]
+    assert registry.tool_names == []

@@ -132,9 +132,16 @@ class LocalComputer:
         local = self._local(path)
         return _entry(local) if local.exists() else None
 
-    def relay_argv(self, argv: list[str], *, cwd: str | None = None, tty: bool = False) -> list[str]:
+    def relay_argv(
+        self,
+        argv: list[str],
+        *,
+        cwd: str | None = None,
+        tty: bool = False,
+        env: dict[str, str] | None = None,
+    ) -> list[str]:
         return self._agentd.relay_argv(
-            argv, cwd=str(self._local(cwd)) if cwd else None, tty=tty
+            argv, cwd=str(self._local(cwd)) if cwd else None, tty=tty, env=env
         )
 
     def spawn_env(self, *, tty: bool = False) -> dict[str, str]:

@@ -59,6 +59,60 @@ def test_relay_argv_with_options() -> None:
     ]
 
 
+def test_relay_argv_passes_env_as_repeated_env_flags_in_order() -> None:
+    comp = AgentdComputer(agentd_bin="/x/agentd", agentd_socket="/s.sock")
+    argv = comp.relay_argv(
+        ["server", "--flag"],
+        cwd="browsers/a",
+        env={"B": "2", "A": "x=y z", "EMPTY": ""},
+    )
+    assert argv == [
+        "/x/agentd",
+        "relay",
+        "--socket",
+        "/s.sock",
+        "--cwd",
+        "browsers/a",
+        "--env",
+        "B=2",
+        "--env",
+        "A=x=y z",
+        "--env",
+        "EMPTY=",
+        "--",
+        "server",
+        "--flag",
+    ]
+
+
+def test_relay_argv_without_env_has_no_env_flag() -> None:
+    comp = AgentdComputer()
+    assert "--env" not in comp.relay_argv(["true"])
+    assert "--env" not in comp.relay_argv(["true"], env={})
+    assert "--env" not in comp.relay_argv(["true"], env=None)
+
+
+@pytest.mark.asyncio
+async def test_relay_env_reaches_the_program_and_not_the_relay_process(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("FAKE_SECRET", "super_secret_token")
+    computer, log = _computer_with_fake_relay(tmp_path)
+    argv = computer.relay_argv(
+        [sys.executable, "-c", "import os; print(os.environ['PROFILE'], os.environ.get('FAKE_SECRET', 'NOT_FOUND'))"],
+        env={"PROFILE": "/home/dot/browsers/a/profile"},
+    )
+    process = await asyncio.create_subprocess_exec(
+        *argv, env=computer.spawn_env(), stdout=asyncio.subprocess.PIPE
+    )
+    out, _ = await process.communicate()
+
+    assert process.returncode == 0
+    assert out.decode().strip() == "/home/dot/browsers/a/profile NOT_FOUND"
+    (record,) = _relay_records(log)
+    assert record["env"] == ["PROFILE=/home/dot/browsers/a/profile"]
+
+
 def test_spawn_env_isolation(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("FAKE_SECRET", "super_secret_token")
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-secret")

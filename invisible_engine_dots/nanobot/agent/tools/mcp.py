@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import re
 import urllib.parse
@@ -36,7 +37,10 @@ class MCPServerConfig(BaseModel):
     cwd: str = ""  # Stdio: working directory for MCP server runtime artifacts
     url: str = ""  # HTTP/SSE: endpoint URL
     headers: dict[str, str] = Field(default_factory=dict)  # HTTP/SSE: custom headers
-    tool_timeout: int = 30  # seconds before a tool call is cancelled
+    tool_timeout: int = 30  # seconds before a tool call is cancelled (per server)
+    # Tool results keep their image blocks as image_url content blocks; off, an image
+    # is reported by its MIME type and its bytes are dropped.
+    images: bool = False
     # Only register these tools; accepts raw MCP names or wrapped mcp_<server>_<tool> names.
     # ["*"] = all capabilities (tools, resources, prompts); any restriction = only the
     # listed tools, no resources or prompts.
@@ -488,8 +492,8 @@ class _MCPWrapperBase(Tool):
         return True
 
 
-def _image_block_mime(block: Any, types: Any) -> str | None:
-    """Return the MIME type of an MCP image-bearing content block, or ``None``.
+def _image_block(block: Any, types: Any) -> tuple[str, str] | None:
+    """Return ``(mime type, base64 data)`` of an MCP image-bearing content block, or ``None``.
 
     Handles ``ImageContent`` directly and ``EmbeddedResource`` wrapping a binary
     blob with an ``image/*`` MIME type. ``getattr`` guards keep this safe when
@@ -497,7 +501,7 @@ def _image_block_mime(block: Any, types: Any) -> str | None:
     """
     image_cls = getattr(types, "ImageContent", None)
     if image_cls is not None and isinstance(block, image_cls):
-        return getattr(block, "mimeType", None) or "image/png"
+        return getattr(block, "mimeType", None) or "image/png", _base64_text(block.data)
 
     embedded_cls = getattr(types, "EmbeddedResource", None)
     blob_cls = getattr(types, "BlobResourceContents", None)
@@ -506,8 +510,13 @@ def _image_block_mime(block: Any, types: Any) -> str | None:
         if blob_cls is not None and isinstance(resource, blob_cls):
             mime = getattr(cast(Any, resource), "mimeType", None) or ""
             if isinstance(mime, str) and mime.startswith("image/"):
-                return mime
+                return mime, _base64_text(cast(Any, resource).blob)
     return None
+
+
+def _base64_text(data: str | bytes) -> str:
+    """The SDK carries image data as base64 text; raw bytes are encoded to match."""
+    return data if isinstance(data, str) else base64.b64encode(data).decode("ascii")
 
 
 class MCPToolWrapper(_MCPWrapperBase):
@@ -520,8 +529,10 @@ class MCPToolWrapper(_MCPWrapperBase):
         server_name: str,
         tool_def: MCPToolDefinition,
         tool_timeout: int = 30,
+        images: bool = False,
     ):
         self._set_mcp_connection(session, server_name)
+        self._images = images
         self._original_name = tool_def.name
         self._name = _sanitize_mcp_tool_name(f"mcp_{server_name}_{tool_def.name}")
         self._description = tool_def.description or tool_def.name
@@ -603,10 +614,11 @@ class MCPToolWrapper(_MCPWrapperBase):
             else:
                 # Success: render the content blocks as text.
                 try:
-                    rendered = self._render_call_result(result.content)
                     if getattr(result, "isError", False):
-                        return ToolResult.error(rendered)
-                    return rendered
+                        # An error is text for the model; images are not kept in it.
+                        rendered = self._render_call_result(result.content, images=False)
+                        return ToolResult.error(str(rendered))
+                    return self._render_call_result(result.content, images=self._images)
                 except Exception as exc:
                     logger.opt(exception=tool_log_content_allowed()).error(
                         "MCP tool '{}' failed while rendering result: {}: {}",
@@ -619,25 +631,36 @@ class MCPToolWrapper(_MCPWrapperBase):
                     )
 
     @staticmethod
-    def _render_call_result(content: Any) -> str:
-        """Turn MCP content blocks into a tool result string.
+    def _render_call_result(content: Any, *, images: bool = False) -> str | list[dict[str, Any]]:
+        """Turn MCP content blocks into a tool result.
 
-        Text is concatenated. The Dot has no image understanding, so an image
-        block is reported by MIME type and its bytes never reach the model.
+        Text is concatenated into a string. An image block is reported by MIME
+        type and its bytes are dropped, unless ``images`` is set: then a result
+        with an image is a list of content blocks in the server's order, text as
+        ``{"type": "text"}`` and each image as an ``image_url`` data URL. A
+        result without an image stays a string either way.
         """
         from mcp import types
 
-        text_parts: list[str] = []
+        parts: list[dict[str, Any]] = []
+        has_image = False
         for block in content:
             if isinstance(block, types.TextContent):
-                text_parts.append(block.text)
+                parts.append({"type": "text", "text": block.text})
                 continue
-            mime = _image_block_mime(block, types)
-            if mime is not None:
-                text_parts.append(f"(MCP tool returned an image ({mime}); images are not supported)")
-                continue
-            text_parts.append(str(block))
-        return "\n".join(text_parts) or "(no output)"
+            image = _image_block(block, types)
+            if image is None:
+                parts.append({"type": "text", "text": str(block)})
+            elif images:
+                mime, data = image
+                has_image = True
+                parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}})
+            else:
+                note = f"(MCP tool returned an image ({image[0]}); images are not supported)"
+                parts.append({"type": "text", "text": note})
+        if has_image:
+            return parts
+        return "\n".join(part["text"] for part in parts) or "(no output)"
 
 
 class MCPResourceWrapper(_MCPWrapperBase):
@@ -999,7 +1022,9 @@ async def connect_mcp_servers(
                         name,
                     )
                     continue
-                wrapper = MCPToolWrapper(session, name, tool_def, tool_timeout=cfg.tool_timeout)
+                wrapper = MCPToolWrapper(
+                    session, name, tool_def, tool_timeout=cfg.tool_timeout, images=cfg.images
+                )
                 registry.register(wrapper)
                 logger.debug("MCP: registered tool '{}' from server '{}'", wrapper.name, name)
                 registered_count += 1
@@ -1178,44 +1203,53 @@ class MCPProvider:
         self._lock = asyncio.Lock()
         self._closing = False
 
-    async def connect(self) -> None:
-        """Connect configured servers that are not currently live."""
+    async def connect(self) -> list[str]:
+        """Connect configured servers that are not currently live.
+
+        Returns the configured servers that are not connected when it returns, in
+        configuration order: empty when every server is live. The reason a server
+        failed is in the log, not in the return value.
+        """
         async with self._lock:
+            await self._connect_missing()
+            return [name for name in self._servers if name not in self._connections]
+
+    async def _connect_missing(self) -> None:
+        if self._closing:
+            return
+        missing_servers = {
+            name: cfg
+            for name, cfg in self._servers.items()
+            if name not in self._connections
+        }
+        if not missing_servers:
+            return
+        try:
+            connected = await connect_mcp_servers(missing_servers, self._registry)
             if self._closing:
+                await _close_mcp_connections(connected)
                 return
-            missing_servers = {
-                name: cfg
-                for name, cfg in self._servers.items()
-                if name not in self._connections
-            }
-            if not missing_servers:
-                return
-            try:
-                connected = await connect_mcp_servers(missing_servers, self._registry)
-                if self._closing:
-                    await _close_mcp_connections(connected)
-                    return
-                self._connections.update(connected)
-                self._attach_reconnect_handlers(connected)
-                if connected:
-                    logger.info("MCP connected servers: {}", sorted(connected))
-                else:
-                    logger.warning(
-                        "No MCP servers connected successfully "
-                        "(will retry on the next readiness check)"
-                    )
-            except asyncio.CancelledError:
-                if task_is_cancelling():
-                    raise
+            self._connections.update(connected)
+            self._attach_reconnect_handlers(connected)
+            if connected:
+                logger.info("MCP connected servers: {}", sorted(connected))
+            else:
                 logger.warning(
-                    "MCP connection cancelled (will retry on the next readiness check)"
+                    "No MCP servers connected successfully "
+                    "(will retry on the next readiness check)"
                 )
-            except BaseException as exc:
-                logger.warning(
-                    "Failed to connect MCP servers "
-                    "(will retry on the next readiness check): {}",
-                    exc,
-                )
+        except asyncio.CancelledError:
+            if task_is_cancelling():
+                raise
+            logger.warning(
+                "MCP connection cancelled (will retry on the next readiness check)"
+            )
+        except BaseException as exc:
+            logger.warning(
+                "Failed to connect MCP servers "
+                "(will retry on the next readiness check): {}",
+                exc,
+            )
 
     def _attach_reconnect_handlers(self, server_names: Iterable[str]) -> None:
         async def reconnect(

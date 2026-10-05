@@ -106,8 +106,14 @@ class Computer(Protocol):
         *,
         cwd: str | None = None,
         tty: bool = False,
+        env: dict[str, str] | None = None,
     ) -> list[str]:
-        """Wrap argv in dot-agentd relay command."""
+        """Wrap argv in dot-agentd relay command.
+
+        env is added to the program's environment inside the VM (dot-agentd's
+        --env), in the order given. It is not the environment of the relay
+        process itself, which spawn_env decides.
+        """
         ...
 
     def spawn_env(self, *, tty: bool = False) -> dict[str, str]:
@@ -176,12 +182,15 @@ class AgentdComputer:
         *,
         cwd: str | None = None,
         tty: bool = False,
+        env: dict[str, str] | None = None,
     ) -> list[str]:
         cmd = [self.agentd_bin, "relay", "--socket", self.agentd_socket]
         if tty:
             cmd.append("--tty")
         if cwd:
             cmd.extend(["--cwd", cwd])
+        for name, value in (env or {}).items():
+            cmd.extend(["--env", f"{name}={value}"])
         cmd.append("--")
         cmd.extend(argv)
         return cmd
