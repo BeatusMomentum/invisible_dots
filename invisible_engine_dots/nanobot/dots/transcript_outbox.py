@@ -15,6 +15,9 @@ this process's memory.
   (`task.completed`, the text is the summary);
 - either final answer, when the turn was telling the session of an approval's
   decision: that approval is done, in the same transaction;
+- an assistant message of a running task that is not the final answer, has tool
+  calls and text beside them: `task.progress` with that text (the model saying
+  what it is about to do), never for the chat and never for the final answer;
 - a tool result in the chat or in a task: `tool.called`, with the duration
   measured from the call's intent row and the decision the gate recorded for
   it (gate.py); a call that did not run (parked, skipped, closed as not run)
@@ -44,6 +47,9 @@ APPROVAL_ID = "dots_approval_id"
 CLOSED = "dots_closed"
 CLOSED_INTERRUPTED = "interrupted"
 CLOSED_NOT_RUN = "not_run"
+
+# The longest text of a `task.progress` event, in characters, the ellipsis included.
+PROGRESS_TEXT_MAX = 2000
 
 # What the result of a call closed by the engine says to the model (gate.close_open_calls).
 CLOSED_INTERRUPTED_TEXT = (
@@ -108,7 +114,11 @@ def record_transcript_append(
         _record_tool_result(conn, session_key, message, task, store.clock_ms() if now_ms is None else now_ms)
         return
 
-    if role != "assistant" or not final:
+    if role != "assistant":
+        return
+    if not final:
+        if task is not None and task.status == "running" and message.get("tool_calls"):
+            _record_progress(conn, task.task_id, message_text(message))
         return
     text = message_text(message)
     # The turn that told the session of a decision ends with this answer: the answer and the end of
@@ -122,6 +132,14 @@ def record_transcript_append(
     if task is not None and task.status == "running":
         if store.finish_task(conn, task.task_id, "completed", summary=text):
             store.append_outbox(conn, "task.completed", {"task_id": task.task_id, "summary": text})
+
+
+def _record_progress(conn: sqlite3.Connection, task_id: str, text: str) -> None:
+    if not text:
+        return
+    if len(text) > PROGRESS_TEXT_MAX:
+        text = text[: PROGRESS_TEXT_MAX - 1] + "…"
+    store.append_outbox(conn, "task.progress", {"task_id": task_id, "text": text})
 
 
 def _record_tool_result(

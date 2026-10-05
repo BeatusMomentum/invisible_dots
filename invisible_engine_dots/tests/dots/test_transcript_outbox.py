@@ -155,6 +155,112 @@ class TestAnswers:
         assert dot_store.read(lambda c: s.get_task(c, "t1")).status == "queued"
 
 
+def with_calls(text: str | None, *, content: Any = None) -> dict[str, Any]:
+    """An assistant message that calls a tool, with the text the model wrote beside the call."""
+    return {
+        "role": "assistant",
+        "content": text if content is None else content,
+        "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "exec", "arguments": "{}"}}],
+    }
+
+
+class TestTaskProgress:
+    def test_the_text_beside_a_tool_call_of_a_running_task_is_one_progress_event(
+        self, dot_store: DotStore, transcript: Transcript
+    ) -> None:
+        session = start_task(dot_store)
+        transcript.append(session, with_calls(" Looking at the fares. "))
+        assert transcript.events() == [("task.progress", {"task_id": "t1", "text": "Looking at the fares."})]
+
+    def test_the_text_parts_of_the_message_are_the_text_and_thinking_parts_are_not(
+        self, dot_store: DotStore, transcript: Transcript
+    ) -> None:
+        session = start_task(dot_store)
+        content = [{"type": "thinking", "thinking": "private"}, {"type": "text", "text": "step one"}]
+        transcript.append(session, with_calls(None, content=content))
+        assert transcript.events() == [("task.progress", {"task_id": "t1", "text": "step one"})]
+
+    @pytest.mark.parametrize("content", [None, "", "  \n ", [{"type": "thinking", "thinking": "only thoughts"}]])
+    def test_a_call_with_no_text_beside_it_says_nothing(
+        self, dot_store: DotStore, transcript: Transcript, content: Any
+    ) -> None:
+        session = start_task(dot_store)
+        transcript.append(session, {**with_calls(None), "content": content})
+        assert transcript.events() == []
+
+    def test_text_longer_than_the_limit_is_cut_with_an_ellipsis_to_the_limit(
+        self, dot_store: DotStore, transcript: Transcript
+    ) -> None:
+        session = start_task(dot_store)
+        transcript.append(session, with_calls("x" * 5000))
+        ((kind, data),) = transcript.events()
+        assert kind == "task.progress"
+        assert data["text"] == "x" * (t.PROGRESS_TEXT_MAX - 1) + "…"
+        assert len(data["text"]) == t.PROGRESS_TEXT_MAX
+
+    def test_text_of_exactly_the_limit_is_sent_whole(self, dot_store: DotStore, transcript: Transcript) -> None:
+        session = start_task(dot_store)
+        transcript.append(session, with_calls("y" * t.PROGRESS_TEXT_MAX))
+        assert transcript.events() == [("task.progress", {"task_id": "t1", "text": "y" * t.PROGRESS_TEXT_MAX})]
+
+    def test_every_step_with_text_reports_once_in_order(self, dot_store: DotStore, transcript: Transcript) -> None:
+        session = start_task(dot_store)
+        transcript.append(session, with_calls("first"))
+        transcript.append(session, tool_result("c1"))
+        transcript.append(session, with_calls("second"))
+        assert [(kind, data.get("text")) for kind, data in transcript.events()] == [
+            ("task.progress", "first"),
+            ("tool.called", None),
+            ("task.progress", "second"),
+        ]
+
+    def test_the_chat_never_reports_progress(self, transcript: Transcript) -> None:
+        transcript.append(CHAT, with_calls("working on it"))
+        assert transcript.events() == []
+
+    @pytest.mark.parametrize("status", ["cancelled", "completed", "failed"])
+    def test_a_task_that_is_over_reports_nothing(
+        self, dot_store: DotStore, transcript: Transcript, status: str
+    ) -> None:
+        session = start_task(dot_store)
+        dot_store.write(lambda c: s.finish_task(c, "t1", status, summary="over", error="over"))  # type: ignore[arg-type]
+        before = transcript.events()
+        transcript.append(session, with_calls("too late"))
+        assert transcript.events() == before
+
+    def test_a_task_that_has_not_started_reports_nothing(self, dot_store: DotStore, transcript: Transcript) -> None:
+        dot_store.write(lambda c: s.enqueue_task(c, task_id="t1", description="d", priority=0))
+        transcript.append(s.task_session_key("t1"), with_calls("early"))
+        assert transcript.events() == []
+
+    def test_the_final_answer_is_the_completion_and_never_a_progress_event(
+        self, dot_store: DotStore, transcript: Transcript
+    ) -> None:
+        session = start_task(dot_store)
+        transcript.append(session, final("all done"), final=True)
+        assert [kind for kind, _ in transcript.events()] == ["task.completed"]
+
+    def test_text_without_a_call_that_is_not_the_final_answer_says_nothing(
+        self, dot_store: DotStore, transcript: Transcript
+    ) -> None:
+        session = start_task(dot_store)
+        transcript.append(session, final("thinking aloud"))
+        transcript.append(session, {**with_calls("no calls"), "tool_calls": []})
+        assert transcript.events() == []
+
+    def test_the_event_and_the_message_commit_together(self, dot_store: DotStore, transcript: Transcript) -> None:
+        session = start_task(dot_store)
+
+        def append_then_fail(conn: sqlite3.Connection) -> None:
+            s.append_messages(conn, session, [with_calls("rolled back")], final_index=None)
+            raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError):
+            dot_store.write(append_then_fail)
+        assert transcript.events() == []
+        assert dot_store.read(lambda c: s.read_messages(c, session)) == []
+
+
 class TestUserMessages:
     def test_marks_a_user_message_by_its_inbound_id_metadata(self, dot_store: DotStore, transcript: Transcript) -> None:
         accept(dot_store, "m1")

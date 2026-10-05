@@ -55,7 +55,7 @@ removes the volume and the container on exit.
 | `run.sh` | the entry: builds `dot-agentd` in `golang:1.26`, starts `ubuntu:24.04` with the tree, checks the exit status and the summary line |
 | `prepare-engine.sh` | in the container: `uv`, the engine's environment, the staged engine source; then it runs `smoke.sh` |
 | `smoke.sh` | the checks; prints `PASS:` or `FAIL:` per check and the summary line |
-| `fake_openrouter.py` | the stand-in for OpenRouter's chat completions: answers by the last message (`RUN-EXEC <cmd>` makes it call the engine's `exec` tool) and logs every request whole |
+| `fake_openrouter.py` | the stand-in for OpenRouter's chat completions: answers by the last message (`RUN-EXEC <cmd>` makes it call the engine's `exec` tool, `SAY-RUN-EXEC <text> :: <cmd>` the same with `<text>` written beside the call) and logs every request whole |
 | `host-stream.sh` | the fake host's event reader: reads `/v1/agent/events/stream` from its last `seq`, reconnects after a drop, pushes the key and the config on every `agent.started` |
 
 `smoke.sh` is written against the engine as it is: a check that pins something the

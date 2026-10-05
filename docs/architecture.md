@@ -687,6 +687,16 @@ duration_ms, interrupted?}`, `browser.identity.created|deleted|launched|closed
 the engine stopped during: its outcome is unknown and it was not run again, so
 `ok` is false and `duration_ms` is 0.
 
+`task.progress {task_id, text}` is the model saying what it is about to do: the
+text an assistant message of a running task carries beside its tool calls (the
+message is not the final answer). It is sent once per such message, in the
+transaction that stores the message, so a restart neither loses nor repeats it
+and it comes before the `tool.called` of those calls. The text is trimmed and
+cut at 2000 characters, the last one an ellipsis. A message with no text beside
+its calls sends nothing, and neither does the chat: the answer of a chat turn
+is its `message.assistant`, and the final answer of a task is its
+`task.completed`.
+
 The `arguments` of `approval.requested` are what the person decides on, and
 they leave the guest: a tool argument that carries a secret is redacted there
 by the engine, at the point where the event is built (the engine's tools carry
@@ -1032,6 +1042,8 @@ state.
   `message.assistant` and applies every input the transcript holds (the
   `in_reply_to` is the newest `user.message`); the final assistant message of
   a running task completes it with `task.completed`, the text as the summary;
+  any other assistant message of a running task that has tool calls and text
+  beside them emits `task.progress` (section 5.4);
   a tool result emits `tool.called`, its duration measured from the call's
   intent, which it removes. A turn that fails fails its task in its own
   transaction; a chat turn that fails answers "I could not answer: ...".
@@ -1162,7 +1174,7 @@ state.
   the usage telemetry, the configuration files and every provider but
   OpenRouter.
 - Not yet: the browser identities (`GET` lists none, `POST` and `DELETE` answer
-  `501`), the screenshot tool, `task.progress`, `memory.written`,
+  `501`), the screenshot tool, `memory.written`,
   `limits.max_cost_per_task_usd` (accepted, not enforced), the extra `models`
   roles, and a pseudo-terminal tool (`exec` and `exec_session` cover jobs and
   their input; `dot-agentd relay --tty` is there for it).

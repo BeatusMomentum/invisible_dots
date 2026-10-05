@@ -5,6 +5,7 @@ It answers by looking at the conversation (the last non-system message and the
 last user text, substring matches):
 - the last message a tool result: a final answer quoting it;
 - a user message with RUN-EXEC <cmd>: a call of the exec tool with <cmd>;
+- a user message with SAY-RUN-EXEC <text> :: <cmd>: the same call with <text> written beside it;
 - a user message with "interrupted by a restart": a final answer;
 - an approval's continuation: the approved call again, or "rejection noted";
 - anything else: "hello from the stand-in".
@@ -78,6 +79,9 @@ def decide(messages: list[dict]) -> dict:
     if session:
         # exec as a background session: it answers after 200 ms with a session id while the command runs on.
         return {"tool": {"name": "exec", "args": {"command": session.group(1).strip(), "yield_time_ms": 200}}}
+    narrated = re.search(r"SAY-RUN-EXEC (.+?) :: (.+)$", said, re.M)
+    if narrated:
+        return {"text": narrated.group(1).strip(), "tool": {"name": "exec", "args": {"command": narrated.group(2).strip()}}}
     run = re.search(r"RUN-EXEC (.+)$", said, re.M)
     if run:
         return {"tool": {"name": "exec", "args": {"command": run.group(1).strip()}}}
@@ -171,7 +175,7 @@ class Handler(BaseHTTPRequestHandler):
             message = (
                 {
                     "role": "assistant",
-                    "content": None,
+                    "content": answer.get("text"),
                     "tool_calls": [
                         {"id": call_id, "type": "function", "function": {"name": tool["name"], "arguments": json.dumps(tool["args"])}}
                     ],
@@ -210,6 +214,8 @@ class Handler(BaseHTTPRequestHandler):
 
         chunk({"role": "assistant"})
         if tool:
+            if answer.get("text"):
+                chunk({"content": answer["text"]})
             chunk({"tool_calls": [{"index": 0, "id": call_id, "type": "function", "function": {"name": tool["name"], "arguments": ""}}]})
             chunk({"tool_calls": [{"index": 0, "function": {"arguments": json.dumps(tool["args"])}}]})
         else:

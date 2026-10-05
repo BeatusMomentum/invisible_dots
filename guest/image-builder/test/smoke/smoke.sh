@@ -171,6 +171,12 @@ echo "whoami.txt: $(cat /home/dot/workspace/whoami.txt 2>/dev/null | tr '\n' ' '
 echo "offered tools: $(tail -1 /tmp/fake-tools.jsonl | jq -c '.tools|sort')"
 check "the model is offered exec and nothing outside the allowed permissions" "tail -1 /tmp/fake-tools.jsonl | jq -e '(.tools|index(\"exec\")) != null and (.tools - [\"exec\",\"exec_session\",\"list_exec_sessions\"] | length) == 0' >/dev/null"
 
+# --- task.progress: the text the model writes beside a tool call of a task ---
+check "a task whose model writes a line beside its exec call is accepted" "[ \"\$(ev task-ev-7 task.created '{\"task_id\":\"t7\",\"description\":\"SAY-RUN-EXEC Checking the workspace first. :: echo progress-ran\",\"priority\":0}')\" = 202 ]"
+check "task.completed t7" "wait_event $STREAM '.type==\"task.completed\" and .data.task_id==\"t7\" and (.data.summary|test(\"progress-ran\"))'"
+check "t7 reported its line once as task.progress, before the call and the completion" "grep '^data: ' $STREAM | sed 's/^data: //' | jq -s -e '[.[] | select(.data.task_id==\"t7\") | .type] == [\"task.started\",\"task.progress\",\"tool.called\",\"task.completed\"] and ([.[] | select(.type==\"task.progress\" and .data.task_id==\"t7\")] | map(.data.text) == [\"Checking the workspace first.\"])' >/dev/null"
+check "the chat's own line beside a tool call is no progress" "[ \"\$(ev msg-narrated user.message '{\"text\":\"SAY-RUN-EXEC Chat narration. :: echo chat-ran\"}')\" = 202 ] && wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-narrated\"' && [ \"\$(grep '^data: ' $STREAM | sed 's/^data: //' | jq -c 'select(.type==\"task.progress\")' | wc -l)\" = 1 ]"
+
 # --- kill -9 and seq resume ---
 LAST=$(grep '^id: ' "$STREAM" | tail -1 | sed 's/^id: //')
 echo "last seq before the crash: $LAST"

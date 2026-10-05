@@ -136,6 +136,37 @@ class TestATaskTurn:
         assert h.events() == [("task.completed", {"task_id": "t1", "summary": "the summary"})]
         assert h.host.events == [("run_started", session)]
 
+    async def test_the_text_beside_a_tool_call_is_reported_as_progress_before_the_call_and_the_completion(
+        self, make_harness: MakeHarness
+    ) -> None:
+        h = make_harness(
+            [
+                calls(call("c1", "list_dir", path="."), text="Listing the workspace first."),
+                calls(call("c2", "list_dir", path=".")),
+                says("the summary"),
+            ]
+        )
+        session = h.start_task()
+
+        outcome = await h.run(TurnUnit(session, "t1", (OpeningMessage("do it"),)))
+
+        assert outcome.kind == "completed"
+        assert [(kind, data.get("text") or data.get("tool") or data.get("summary")) for kind, data in h.events()] == [
+            ("task.progress", "Listing the workspace first."),
+            ("tool.called", "list_dir"),
+            ("tool.called", "list_dir"),
+            ("task.completed", "the summary"),
+        ]
+        assert h.events()[0][1]["task_id"] == "t1"
+
+    async def test_a_chat_turn_with_text_beside_a_tool_call_reports_no_progress(self, make_harness: MakeHarness) -> None:
+        h = make_harness([calls(call("c1", "list_dir", path="."), text="Let me look."), says("done")])
+        h.accept("in1")
+
+        await h.run(chat_unit())
+
+        assert [kind for kind, _ in h.events()] == ["tool.called", "message.assistant"]
+
     async def test_reaching_the_step_limit_fails_the_turn_with_the_limit(self, make_harness: MakeHarness) -> None:
         limits = {"max_steps_per_task": 2, "context_tokens": 32000, "max_cost_per_task_usd": 1}
         h = make_harness(

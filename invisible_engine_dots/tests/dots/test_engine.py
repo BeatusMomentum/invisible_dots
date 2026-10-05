@@ -1042,6 +1042,29 @@ class TestPrepareSleep:
         closed = [m for m in h.messages() if m["role"] == "tool"][0]
         assert "interrupted before its result was recorded" in closed["content"]
 
+    async def test_a_kill_between_the_progress_text_and_its_tool_reports_the_progress_exactly_once(
+        self, make_engine: MakeEngine
+    ) -> None:
+        h = started(
+            make_engine(
+                [calls(call("c1", "exec", command="sleep 30"), text="Starting the long job."), says("recovered")]
+            )
+        )
+        h.engine.accept(task_created("a"))
+        await h.wait_until(lambda: "EXECUTING" in h.states())
+        assert h.events_of("task.progress") == [{"task_id": "a", "text": "Starting the long job."}]
+
+        await h.engine.suspend()
+        await h.idle()
+        restarted = h.restart()
+        restarted.start()
+        h.configure(cfg())
+        await h.idle()
+
+        assert h.events_of("task.progress") == [{"task_id": "a", "text": "Starting the long job."}]
+        assert h.types().index("task.progress") < h.types().index("tool.called") < h.types().index("task.completed")
+        assert h.task_events() == [("task.started", "a"), ("task.progress", "a"), ("task.completed", "a")]
+
     async def test_two_prepare_sleeps_at_once_are_one_suspend_and_give_the_attempt_back_once(
         self, make_engine: MakeEngine
     ) -> None:
