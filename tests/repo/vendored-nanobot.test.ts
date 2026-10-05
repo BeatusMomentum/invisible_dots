@@ -18,6 +18,7 @@ import {
   AGENT_ROUTES,
   AGENT_STATES,
   INBOUND_EVENT_TYPES,
+  MODEL_ROLES,
   OPENROUTER_KEY_PATTERN,
   OPENROUTER_KEY_RULE,
   OUTBOUND_EVENT_TYPES,
@@ -102,7 +103,7 @@ describe("the vendored nanobot fork", () => {
     expect(found).toEqual([]);
   });
 
-  it("serves the guest contract with the routes, event types and states packages/shared names", () => {
+  it("serves the guest contract with the routes, event types, states and model roles packages/shared names", () => {
     // The engine cannot import packages/shared (it is Python), so it keeps a copy
     // of the names in nanobot/dots/protocol.py; this keeps the two equal. The copy
     // is written as `NAME = ("a", "b")` tuples and one `"key": "value"` line per
@@ -116,6 +117,7 @@ describe("the vendored nanobot fork", () => {
     expect(tuple("INBOUND_EVENT_TYPES")).toEqual([...INBOUND_EVENT_TYPES]);
     expect(tuple("OUTBOUND_EVENT_TYPES")).toEqual([...OUTBOUND_EVENT_TYPES]);
     expect(tuple("AGENT_STATES")).toEqual([...AGENT_STATES]);
+    expect(tuple("MODEL_ROLES")).toEqual([...MODEL_ROLES]);
 
     const routesMatch = /^AGENT_ROUTES = \{([^}]*)\}/m.exec(protocol);
     expect(routesMatch, "AGENT_ROUTES").not.toBeNull();

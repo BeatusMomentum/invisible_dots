@@ -147,7 +147,7 @@ class TestRuntimeConfig:
     def test_accepts_a_full_config_and_keeps_what_it_does_not_know(self, config_body: Callable[..., dict[str, Any]]) -> None:
         body = config_body(
             instructions="Be brief.",
-            models={"vision": "google/gemini"},
+            models={"summary": "google/gemini"},
             permissions={"computer.exec": "ask", "files.read": "allow", "files.write": "deny"},
             computer={"cpu": 4},
             model={"provider": "openrouter", "id": "m", "temperature": 0.2},
@@ -156,7 +156,7 @@ class TestRuntimeConfig:
         config = parse_runtime_config(body)
         assert config.name == "fare-watch"
         assert config.permissions == {"computer.exec": "ask", "files.read": "allow", "files.write": "deny"}
-        assert config.models == {"vision": "google/gemini"}
+        assert config.models == {"summary": "google/gemini"}
         dumped = config.model_dump()
         assert dumped["computer"] == {"cpu": 4}
         assert dumped["model"]["temperature"] == 0.2
@@ -182,6 +182,14 @@ class TestRuntimeConfig:
 
         assert str(caught.value) == f"invalid Dot config: {field}: Invalid input: expected {expected}, received null"
 
+    def test_refuses_a_model_role_the_engine_never_asks_for_in_the_words_the_host_uses(
+        self, config_body: Callable[..., dict[str, Any]]
+    ) -> None:
+        with pytest.raises(DotsConfigError) as caught:
+            parse_runtime_config(config_body(models={"summary": "a/b", "fast": "a/b"}))
+
+        assert str(caught.value) == 'invalid Dot config: models: unknown model role "fast" (the roles are: summary)'
+
     @pytest.mark.parametrize("name", ["a", "fare-watch", "a" * 40, "0-9"])
     def test_accepts_a_name(self, config_body: Callable[..., dict[str, Any]], name: str) -> None:
         assert parse_runtime_config(config_body(name=name)).name == name
@@ -198,7 +206,7 @@ class TestRuntimeConfig:
             (lambda b: b.update(instructions=3), "instructions"),
             (lambda b: b["model"].update(provider="anthropic"), "model.provider"),
             (lambda b: b["model"].update(id=""), "model.id"),
-            (lambda b: b.update(models={"vision": ""}), "models.vision"),
+            (lambda b: b.update(models={"summary": ""}), "models.summary"),
             (lambda b: b["browser"]["identities"].update(managed_by_dot="yes"), "browser.identities.managed_by_dot"),
             (lambda b: b["browser"]["identities"].update(max_identities=0), "browser.identities.max_identities"),
             (lambda b: b["browser"]["identities"].update(max_open=-1), "browser.identities.max_open"),

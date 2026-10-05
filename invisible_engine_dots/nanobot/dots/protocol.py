@@ -3,7 +3,7 @@
 This is what the engine serves on the agent socket. The host's copy of these
 names lives in packages/shared; tests/repo/vendored-nanobot.test.ts in the
 parent repository reads the tuples below and checks that both sides list the
-same routes, event types, states and cancel event. That test parses this file
+same routes, event types, states, model roles and cancel event. That test parses this file
 with a regex, so each tuple is written as `NAME = ("a", "b", ...)` with plain
 string literals, and the route table as `"key": "value"` lines.
 """
@@ -60,6 +60,10 @@ AGENT_STATES = (
     "WAITING_APPROVAL",
     "DONE",
 )
+
+# The roles a Dot's `models` map may name (MODEL_ROLES in packages/shared config.ts, which the host applies when
+# a config is created or patched; tests/repo/vendored-nanobot.test.ts keeps the two equal).
+MODEL_ROLES = ("summary",)
 
 # The `system.event` name of a cancelled task; its data is `{"task_id": ...}`.
 TASK_CANCELLED_EVENT = "task.cancelled"
@@ -265,8 +269,12 @@ class DotRuntimeConfig(_Open):
 
     @field_validator("models")
     @classmethod
-    def _models_are_absent_or_a_record(cls, value: dict[str, str] | None) -> dict[str, str] | None:
-        return _refuse_null(value, "record")
+    def _models_are_absent_or_a_record_of_roles(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        models = _refuse_null(value, "record")
+        for role in models:
+            if role not in MODEL_ROLES:
+                raise ValueError(f'unknown model role "{role}" (the roles are: {", ".join(MODEL_ROLES)})')
+        return models
 
 
 def parse_runtime_config(value: object) -> DotRuntimeConfig:

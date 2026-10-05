@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from nanobot.dots.permissions import TOOL_PERMISSIONS, offered_tools
-from nanobot.dots.protocol import DotRuntimeConfig
+from nanobot.dots.protocol import MODEL_ROLES, DotRuntimeConfig
 
 # Longest result of one tool call that goes back to the model, in characters.
 MAX_TOOL_RESULT_CHARS = 12000
@@ -19,6 +19,9 @@ MAX_TOOL_RESULT_CHARS = 12000
 @dataclass(frozen=True)
 class EngineSettings:
     model_id: str
+    # The models the config names for the jobs other than the turn itself, as (role, model id) pairs in
+    # role order (MODEL_ROLES); a tuple, as the settings are hashable.
+    models: tuple[tuple[str, str], ...]
     # The OpenRouter API base URL for tests against a stand-in; None means the provider's own.
     openrouter_base_url: str | None
     # The tools the model is offered: those whose permission is not denied.
@@ -34,11 +37,19 @@ class EngineSettings:
     # The system prompt section that says whose Dot this is and what it is for.
     dot_prompt: str
 
+    def model_for(self, role: str) -> str:
+        """The model for a role: the one the config names for it, else the Dot's own model."""
+        if role not in MODEL_ROLES:
+            raise ValueError(f'unknown model role "{role}" (the roles are: {", ".join(MODEL_ROLES)})')
+        return dict(self.models).get(role, self.model_id)
+
 
 def project(config: DotRuntimeConfig, *, workspace: str, openrouter_base_url: str | None) -> EngineSettings:
     offered = offered_tools(config.permissions, memory_enabled=config.memory.enabled)
+    named = config.models or {}
     return EngineSettings(
         model_id=config.model.id,
+        models=tuple((role, named[role]) for role in MODEL_ROLES if role in named),
         openrouter_base_url=(openrouter_base_url or "").strip() or None,
         offered_tools=tuple(offered),
         max_iterations=config.limits.max_steps_per_task,

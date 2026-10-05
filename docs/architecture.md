@@ -782,8 +782,8 @@ instructions: >                        # optional
 model:
   provider: openrouter                 # the only accepted value
   id: z-ai/glm-5.3-flash               # any OpenRouter model id
-models:                                # optional extra roles, all OpenRouter
-  fast: openai/gpt-5-mini
+models:                                # optional per-role models, OpenRouter ids; the roles: summary
+  summary: openai/gpt-5-mini         # writes the summary when the thread outgrows limits.context_tokens
 computer:
   cpu: 2                               # 1..16
   memory: 4gb                          # 2gb..64gb
@@ -804,6 +804,14 @@ limits:
   context_tokens: 32000                # prompt tokens a request may use, 4000..1000000 (section 8.6)
   max_cost_per_task_usd: 1.00          # USD of model spend of a task or a chat turn, 0.01..100; the last request may exceed it (section 8.2)
 ```
+
+`models` has one role, `summary`, and no other: the roles are what the engine
+asks a model for, and a role it never asks for would be a setting that does
+nothing, so a config that names another is refused as `unknown model role
+"fast" (the roles are: summary)` (`MODEL_ROLES` in `packages/shared`, copied
+into the guest's `protocol.py`). The role's value is an OpenRouter model id
+like `model.id`; without it the Dot's own model writes the summary. A config
+push that changes it applies from the next turn.
 
 The permission names are the ones of `PERMISSIONS` in
 `packages/shared/src/tools.ts`: those the tools of section 8.3 exercise, and no
@@ -979,6 +987,12 @@ are cut with a marker.
   Dot's model writes (a mechanical digest when that fails). The summary is
   stored with the session, at the boundary it covers, when the turn ends, and
   the next request is the system prompt, the summary and the thread after it.
+  `models.summary` (section 7) names another model for the summary request.
+  That request goes through the same metered provider, so its real cost counts
+  toward the cap (section 8.2); it keeps `limits.context_tokens` as its window,
+  so the summary model needs a window at least that large; and it carries no
+  tool definitions, because a model other than the turn's may not accept them
+  (the turn's own model keeps sending them so that its prompt cache is reused).
 - Long-term memory: notes, one file each, in `/home/dot/memory` on the Dot's
   computer. The Dot writes them with its file tools (`files.write`), and each
   note a file tool writes is reported to the host as `memory.written` (section
@@ -1223,8 +1237,7 @@ state.
   the usage telemetry, the configuration files and every provider but
   OpenRouter.
 - Not yet: the browser identities (`GET` lists none, `POST` and `DELETE` answer
-  `501`), the screenshot tool, the extra `models`
-  roles, and a pseudo-terminal tool (`exec` and `exec_session` cover jobs and
+  `501`), the screenshot tool, and a pseudo-terminal tool (`exec` and `exec_session` cover jobs and
   their input; `dot-agentd relay --tty` is there for it).
 
 ## 9. Control plane

@@ -14,7 +14,7 @@ describe("toYaml", () => {
       goal: "yes",
       instructions: "key: value # not a comment\n  indented second line\n",
       model: { provider: "openrouter", id: "vendor/model:free" },
-      models: { fast: "0123" },
+      models: { summary: "0123" },
       computer: { cpu: 4, memory: "8gb", disk: "100gb", idle_timeout: "0" },
       permissions: { "computer.exec": "ask" },
     });

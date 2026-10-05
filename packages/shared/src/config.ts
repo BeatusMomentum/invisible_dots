@@ -143,6 +143,19 @@ const modelId = z
   .min(1, "model id must not be empty")
   .regex(/^\S+$/, "model id must not contain whitespace");
 
+/**
+ * The roles a Dot's `models` map may name: the jobs the engine can give to a model other than `model.id`. The
+ * list is closed because a role the engine never asks for would be a setting that does nothing. `summary` is the
+ * model that writes the summary when the conversation outgrows `limits.context_tokens`. The engine keeps a copy
+ * in nanobot/dots/protocol.py, kept equal by tests/repo/vendored-nanobot.test.ts.
+ */
+export const MODEL_ROLES = ["summary"] as const;
+export type ModelRole = (typeof MODEL_ROLES)[number];
+
+export function isModelRole(name: string): name is ModelRole {
+  return (MODEL_ROLES as readonly string[]).includes(name);
+}
+
 const permissionDecision = z.enum(["allow", "ask", "deny"]);
 export type PermissionDecision = z.infer<typeof permissionDecision>;
 
@@ -160,8 +173,19 @@ export const dotConfigSchema = z
       })
       .strict(),
     models: z
-      .record(z.string().regex(/^[a-z0-9_-]{1,40}$/, "model role names are lowercase letters, digits, '_' and '-'"), modelId)
-      .default({}),
+      .record(z.string(), modelId)
+      .default({})
+      .superRefine((models, ctx) => {
+        for (const role of Object.keys(models)) {
+          if (!isModelRole(role)) {
+            ctx.addIssue({
+              code: "custom",
+              path: [role],
+              message: `unknown model role "${role}" (the roles are: ${MODEL_ROLES.join(", ")})`,
+            });
+          }
+        }
+      }),
     computer: z
       .object({
         cpu: z.number().int("computer.cpu must be an integer").min(1).max(16).default(2),

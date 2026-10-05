@@ -130,10 +130,12 @@ check "dot cannot write the engine's socket directory" "! su -s /bin/bash dot -c
 # The decision for every permission, as the host's toRuntimeConfig sends it; changed below.
 echo '{"computer.exec":"allow"}' > /tmp/perms.json; chmod 0644 /tmp/perms.json
 echo true > /tmp/memory.json; chmod 0644 /tmp/memory.json   # the config's memory.enabled
+echo '{}' > /tmp/models.json; chmod 0644 /tmp/models.json     # the config's models (the summary role)
+echo 32000 > /tmp/context.json; chmod 0644 /tmp/context.json # the config's limits.context_tokens
 push() {
   api -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d "{\"openrouter_api_key\":\"$KEY\"}" "$A/secrets"
   echo -n " "
-  api -o /dev/null -w '%{http_code}' -X PUT -H 'content-type: application/json' -d '{"name":"smoke","goal":"Answer the smoke test.","model":{"provider":"openrouter","id":"openai/gpt-4o-mini"},"browser":{"identities":{"managed_by_dot":true,"max_identities":20,"max_open":3}},"permissions":'"$(cat /tmp/perms.json)"',"memory":{"enabled":'"$(cat /tmp/memory.json)"'},"limits":{"max_steps_per_task":60,"context_tokens":32000,"max_cost_per_task_usd":1}}' "$A/config"
+  api -o /dev/null -w '%{http_code}' -X PUT -H 'content-type: application/json' -d '{"name":"smoke","goal":"Answer the smoke test.","model":{"provider":"openrouter","id":"openai/gpt-4o-mini"},"browser":{"identities":{"managed_by_dot":true,"max_identities":20,"max_open":3}},"permissions":'"$(cat /tmp/perms.json)"',"models":'"$(cat /tmp/models.json)"',"memory":{"enabled":'"$(cat /tmp/memory.json)"'},"limits":{"max_steps_per_task":60,"context_tokens":'"$(cat /tmp/context.json)"',"max_cost_per_task_usd":1}}' "$A/config"
 }
 { declare -f api push; echo "H=(-sS -H 'Authorization: Bearer $TOKEN'); A=$A; KEY=$KEY; push"; } > /tmp/push.sh
 check "the host pushes the key and the config (204 204)" "[ \"\$(push)\" = '204 204' ]"
@@ -361,6 +363,25 @@ check "the restarted engine answers /health (the cap's task cut)" "wait_health &
 check "t9 fails with the cap's text after one more response: the spend survived the kill" "wait_event $STREAM '.type==\"task.failed\" and .data.task_id==\"t9\" and .data.error==\"stopped: the task reached limits.max_cost_per_task_usd (spent 1.2000 USD of 1.00)\"'"
 check "the failure of t9 reports the spend of both processes: spent_usd 1.2" "wait_event $STREAM '.type==\"task.failed\" and .data.task_id==\"t9\" and .data.spent_usd==1.2'"
 check "t9 asked the model twice in all: once before the kill, once after" "[ \"\$(grep -c 'REPEAT-EXEC sleep 4' /tmp/fake-tools.jsonl)\" = 2 ]"
+
+# --- models.summary: a thread that outgrows limits.context_tokens is summarized by the role's model ---
+# The window is 8000 tokens, the answer's room 4096 and the safety buffer 1024: a request over 2880 tokens is
+# compacted, and the summary of it may read 3904. Each of the five messages is about 900 tokens, so the thread
+# outgrows its request budget within them, while the summary's input still fits (a summary that does not fit is a
+# mechanical digest and asks no model). The stand-in answers each message with the same short text.
+echo '{"summary":"smoke/summarizer"}' > /tmp/models.json; echo 8000 > /tmp/context.json
+check "the host pushes a config with a summary model and an 8000 token window (204 204)" "[ \"\$(push)\" = '204 204' ]"
+LONG=$(yes 'alpha beta gamma delta epsilon zeta' | head -n 130 | tr '\n' ' ')
+for n in 1 2 3 4 5; do
+  ev "msg-long-$n" user.message "{\"text\":\"$n $LONG\"}" >/dev/null
+  wait_event $STREAM ".type==\"message.assistant\" and .data.in_reply_to==\"msg-long-$n\"" || break
+done
+check "the five long messages were answered" "wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-long-5\"'"
+check "a request went to the summary role's model, with no tool in it" "jq -s -e 'any(.[]; .model==\"smoke/summarizer\" and (.tools|length)==0)' /tmp/fake-tools.jsonl >/dev/null"
+check "every request the summary role's model got was offered no tool (it never answers a turn)" "jq -s -e '[.[] | select(.model==\"smoke/summarizer\")] | length > 0 and all(.[]; (.tools|length)==0)' /tmp/fake-tools.jsonl >/dev/null"
+check "the turns themselves went to the Dot's own model, offered the tools of the permission map" "jq -s -e '[.[] | select(.model==\"openai/gpt-4o-mini\")] | length >= 5 and (last | .tools | index(\"exec\") != null)' /tmp/fake-tools.jsonl >/dev/null"
+echo '{}' > /tmp/models.json; echo 32000 > /tmp/context.json
+check "the host pushes the config without a summary model again (204 204)" "[ \"\$(push)\" = '204 204' ]"
 
 # --- what the model is sent, read whole ---
 # Here, after the last model turn of the run, so the checks judge EVERY request:

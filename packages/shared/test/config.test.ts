@@ -23,7 +23,7 @@ model:
   provider: openrouter
   id: z-ai/glm-5.3-flash
 models:
-  fast: openai/gpt-5-mini
+  summary: openai/gpt-5-mini
 computer:
   cpu: 2
   memory: 4gb
@@ -99,7 +99,7 @@ describe("parseDotConfig", () => {
     const config = parseDotConfig(FULL_YAML);
     expect(config.name).toBe("fare-watch");
     expect(config.model).toEqual({ provider: "openrouter", id: "z-ai/glm-5.3-flash" });
-    expect(config.models).toEqual({ fast: "openai/gpt-5-mini" });
+    expect(config.models).toEqual({ summary: "openai/gpt-5-mini" });
     expect(config.computer).toEqual({ cpu: 2, memory: "4gb", disk: "40gb", idle_timeout: "15m" });
     expect(config.permissions).toEqual({ "computer.exec": "allow", "browser.identity.delete": "ask" });
     expect(config.instructions).toContain("fares.csv");
@@ -182,6 +182,26 @@ describe("parseDotConfig", () => {
       'permissions.computer.exe: unknown permission "computer.exe"',
     ]);
     expect(issuesOf({ ...MINIMAL, permissions: { "computer.exec": "maybe" } })[0]).toMatch(/^permissions\.computer\.exec:/);
+  });
+
+  it("accepts the summary model role", () => {
+    expect(parseDotConfig({ ...MINIMAL, models: { summary: "openai/gpt-5-mini" } }).models).toEqual({
+      summary: "openai/gpt-5-mini",
+    });
+  });
+
+  it("refuses a model role the engine never asks for, naming the roles there are", () => {
+    expect(issuesOf({ ...MINIMAL, models: { fast: "openai/gpt-5-mini" } })).toEqual([
+      'models.fast: unknown model role "fast" (the roles are: summary)',
+    ]);
+    expect(issuesOf({ ...MINIMAL, models: { summary: "a/b", Vision: "a/b", fast: "a/b" } })).toEqual([
+      'models.Vision: unknown model role "Vision" (the roles are: summary)',
+      'models.fast: unknown model role "fast" (the roles are: summary)',
+    ]);
+  });
+
+  it("refuses an empty model id for a role", () => {
+    expect(issuesOf({ ...MINIMAL, models: { summary: "" } })[0]).toBe("models.summary: model id must not be empty");
   });
 
   it.each(["web.fetch", "web.search", "subagents", "message.send", "memory.write"])(

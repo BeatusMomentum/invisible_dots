@@ -34,6 +34,27 @@ def test_names_the_model_the_workspace_and_maps_the_limits(make_config: Callable
     assert result.max_tool_result_chars == MAX_TOOL_RESULT_CHARS == 12000
 
 
+def test_the_summary_role_names_a_model_and_defaults_to_the_dots_own(
+    config_body: Callable[..., dict[str, Any]],
+) -> None:
+    plain = settings(parse_runtime_config(config_body()))
+    assert plain.models == ()
+    assert plain.model_for("summary") == plain.model_id == "z-ai/glm-5.3-flash"
+
+    named = settings(parse_runtime_config(config_body(models={"summary": "openai/gpt-5-mini"})))
+    assert named.models == (("summary", "openai/gpt-5-mini"),)
+    assert named.model_for("summary") == "openai/gpt-5-mini"
+    assert named.model_id == "z-ai/glm-5.3-flash"
+
+
+def test_asking_for_a_role_there_is_not_is_an_error_not_the_dots_model(
+    config_body: Callable[..., dict[str, Any]],
+) -> None:
+    result = settings(parse_runtime_config(config_body(models={"summary": "a/b"})))
+    with pytest.raises(ValueError, match="unknown model role"):
+        result.model_for("fast")
+
+
 def test_the_limits_follow_the_config(config_body: Callable[..., dict[str, Any]]) -> None:
     body = config_body()
     body["limits"].update(max_steps_per_task=7, context_tokens=4000, max_cost_per_task_usd=0.25)

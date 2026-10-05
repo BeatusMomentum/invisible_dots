@@ -285,6 +285,12 @@ class TurnRunner:
         runtime = LLMRuntime.capture(
             provider, settings.model_id, context_window_tokens=settings.context_window_tokens
         )
+        # The summary of an outgrown thread may be written by another model (the `summary` role), through
+        # the same metered provider, so its cost counts. Its window is the Dot's budget, not its own.
+        summary_model = settings.model_for("summary")
+        summary_runtime = LLMRuntime.capture(
+            provider, summary_model, context_window_tokens=settings.context_window_tokens
+        )
         tools = self._base_registry.view(settings.offered_tools)
         builder = ContextBuilder(
             settings.dot_prompt,
@@ -323,9 +329,11 @@ class TurnRunner:
             checkpoint_callback=commit,
             consolidate_history=partial(
                 self._consolidator.summarize_transcript,
-                runtime=runtime,
+                runtime=summary_runtime,
                 session_key=session_key,
-                tools=tools.get_definitions(),
+                # The turn's own model sends the tools it was given, which keeps its prompt cache; another
+                # model may not take tool definitions at all.
+                tools=tools.get_definitions() if summary_model == settings.model_id else [],
             ),
             injection_callback=self._injected if session_key == CHAT_SESSION_KEY else None,
             gate=self._gate,

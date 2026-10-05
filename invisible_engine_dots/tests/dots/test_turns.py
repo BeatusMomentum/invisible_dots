@@ -30,6 +30,8 @@ from nanobot.providers.base import LLMResponse
 
 CHAT = s.CHAT_SESSION_KEY
 MakeHarness = Callable[..., Harness]
+# What a Dot with only files.read is offered.
+READ_TOOLS = ["find_files", "grep", "list_dir", "read_file"]
 
 
 def chat_unit(text: str = "hello", inbound_id: str = "in1") -> TurnUnit:
@@ -38,6 +40,25 @@ def chat_unit(text: str = "hello", inbound_id: str = "in1") -> TurnUnit:
 
 def roles(messages: list[dict[str, Any]]) -> list[str]:
     return [message["role"] for message in messages]
+
+
+def outgrow_the_window(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A chat thread too long for its budget, with a message waiting: the turn's first request is the summary."""
+
+    def four_characters_a_token(provider: Any, model: str, messages: list[dict[str, Any]], tools: Any) -> Any:
+        return sum(len(json.dumps(message)) for message in messages) // 4, "test"
+
+    for module in ("nanobot.agent.context_governance", "nanobot.agent.memory"):
+        monkeypatch.setattr(f"{module}.estimate_prompt_tokens_chain", four_characters_a_token)
+    h.settings_override = {"context_window_tokens": 2500}
+    old: list[dict[str, Any]] = []
+    for index in range(6):
+        old += [
+            {"role": "user", "content": f"question {index} " + "x" * 300},
+            {"role": "assistant", "content": f"answer {index} " + "y" * 300},
+        ]
+    h.store.write(lambda conn: s.append_messages(conn, CHAT, old, final_index=None))
+    h.accept("in1")
 
 
 def approval_of(h: Harness, status: s.ApprovalStatus = "pending") -> s.Approval:
@@ -297,6 +318,56 @@ class TestCommitPoints:
         # The next turn replays from the boundary.
         session = h.store.read(lambda conn: s.load_session(conn, CHAT))
         assert [m["content"] for m in session.get_history()] == ["a fresh answer"]
+
+    async def test_the_summary_is_asked_of_the_model_of_the_summary_role_and_offers_it_no_tools(
+        self, make_harness: MakeHarness, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        h = make_harness(
+            [says("the summary"), says("a fresh answer")],
+            {"files.read": "allow"},
+            max_tokens=500,
+            models={"summary": "cheap/summarizer"},
+        )
+        outgrow_the_window(h, monkeypatch)
+
+        outcome = await h.run(chat_unit("a new question"))
+
+        assert outcome.kind == "completed"
+        summary_request, answer_request = h.provider.requests
+        assert summary_request["model"] == "cheap/summarizer"
+        assert summary_request["tools"] == []
+        assert answer_request["model"] == "z-ai/glm-5.3-flash"
+        assert h.provider.tool_names[1] == READ_TOOLS
+        metadata = h.store.read(lambda conn: s.read_session_metadata(conn, CHAT))
+        assert metadata["_last_summary"]["text"] == "the summary"
+
+    async def test_without_a_summary_role_the_dots_own_model_writes_the_summary_with_the_tools_of_the_turn(
+        self, make_harness: MakeHarness, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        h = make_harness([says("the summary"), says("a fresh answer")], {"files.read": "allow"}, max_tokens=500)
+        outgrow_the_window(h, monkeypatch)
+
+        outcome = await h.run(chat_unit("a new question"))
+
+        assert outcome.kind == "completed"
+        summary_request, answer_request = h.provider.requests
+        assert summary_request["model"] == answer_request["model"] == "z-ai/glm-5.3-flash"
+        assert h.provider.tool_names == [READ_TOOLS, READ_TOOLS]
+
+    async def test_the_summary_role_naming_the_dots_own_model_keeps_the_tools(
+        self, make_harness: MakeHarness, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        h = make_harness(
+            [says("the summary"), says("a fresh answer")],
+            {"files.read": "allow"},
+            max_tokens=500,
+            models={"summary": "z-ai/glm-5.3-flash"},
+        )
+        outgrow_the_window(h, monkeypatch)
+
+        await h.run(chat_unit("a new question"))
+
+        assert h.provider.tool_names == [READ_TOOLS, READ_TOOLS]
 
 
     async def test_the_messages_of_the_turn_after_the_summarized_request_stay_after_the_marker(

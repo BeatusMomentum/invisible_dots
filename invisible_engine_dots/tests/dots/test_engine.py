@@ -779,6 +779,52 @@ class TestConfig:
 
         assert [asked[1] for asked in h.providers.asked] == ["z-ai/glm-5.3-flash", "other/model"]
 
+    async def test_a_new_summary_role_applies_to_the_next_turn_only(
+        self, make_engine: MakeEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def four_characters_a_token(provider: Any, model: str, messages: list[dict[str, Any]], tools: Any) -> Any:
+            return sum(len(json.dumps(message)) for message in messages) // 4, "test"
+
+        for module in ("nanobot.agent.context_governance", "nanobot.agent.memory"):
+            monkeypatch.setattr(f"{module}.estimate_prompt_tokens_chain", four_characters_a_token)
+
+        def small_window(role_model: str) -> dict[str, Any]:
+            limits = {"max_steps_per_task": 60, "context_tokens": 6000, "max_cost_per_task_usd": 1}
+            return cfg(limits=limits, models={"summary": role_model})
+
+        def outgrow_the_window() -> None:
+            # Over the request budget (3976 tokens) and inside what the summary may read (5000), the second
+            # time with the summary of the first turn in it.
+            old: list[dict[str, Any]] = []
+            for index in range(11):
+                old += [
+                    {"role": "user", "content": f"question {index} " + "x" * 700},
+                    {"role": "assistant", "content": f"answer {index} " + "y" * 700},
+                ]
+            h.store.write(lambda conn: s.append_messages(conn, CHAT, old, final_index=None))
+
+        gate = Gate()
+        h = make_engine([gate.holds(says("summary one")), says("one"), says("summary two"), says("two")])
+        h.engine.start()
+        h.configure(small_window("first/summarizer"))
+        outgrow_the_window()
+        h.engine.accept(user_message("m1"))
+        await gate.wait_reached()
+
+        h.engine.set_config(small_window("second/summarizer"))
+        gate.release.set()
+        await h.idle()
+        outgrow_the_window()
+        h.engine.accept(user_message("m2"))
+        await h.idle()
+
+        assert [request["model"] for request in h.provider.requests] == [
+            "first/summarizer",
+            "z-ai/glm-5.3-flash",
+            "second/summarizer",
+            "z-ai/glm-5.3-flash",
+        ]
+
     async def test_the_permissions_pushed_between_two_calls_of_a_turn_apply_to_the_second(
         self, make_engine: MakeEngine
     ) -> None:
