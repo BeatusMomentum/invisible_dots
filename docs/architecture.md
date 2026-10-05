@@ -1321,7 +1321,7 @@ files applied in order at start.
 - `events(id bigserial pk, dot_id, type, data jsonb, source 'host'|'guest', guest_seq bigint, created_at)`, unique `(dot_id, guest_seq)`
 - `approvals(id text pk, dot_id, task_id, tool, permission, arguments jsonb, reason, status 'pending'|'approved'|'rejected'|'expired', note, created_at, resolved_at)`: an approval whose task reached a terminal state before anyone decided is `expired`, in the same statement that ends the task, and an `approval.requested` for a task that is already terminal is stored as `expired`, never `pending`
 - `inbound_events(seq bigserial pk, id text unique, dot_id fk, type, data jsonb, ts, task_id, run_id, created_at, sent_at, delivered_at, dropped_at, drop_reason, failures int, last_error, retry_at)`: the outbox of host to guest events (section 9.2)
-- `secrets(scope text, name text, value_enc bytea, updated_at, pk(scope, name))`: `scope` is `global` or a dot id
+- `secrets(scope text, name text, value_enc bytea, updated_at, pk(scope, name))`: `scope` is `global` or a dot id; no foreign key can cover that, so deleting a Dot deletes the secrets scoped to it in the same statement (`DotsRepository.delete`)
 
 Secrets are encrypted with AES-256-GCM under `master.key`. The OpenRouter key
 is looked up as `(<dot_id>, openrouter_api_key)` first, then
@@ -1429,7 +1429,7 @@ POST   /api/dots                     body: { config: <yaml string> | <object> }
 GET    /api/dots
 GET    /api/dots/:id
 PATCH  /api/dots/:id                 body: { config }   (pushed to the guest if running)
-DELETE /api/dots/:id                 destroys the VM and its disk
+DELETE /api/dots/:id                 destroys the VM and its disk, then deletes the Dot, its rows and its own secrets
 
 POST   /api/dots/:id/messages        body: { text }
 GET    /api/dots/:id/messages        conversation, from the event log

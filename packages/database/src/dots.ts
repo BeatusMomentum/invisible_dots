@@ -95,8 +95,16 @@ export class DotsRepository {
     return rows[0] ? toRecord(rows[0]) : null;
   }
 
+  /**
+   * Delete the Dot and every secret scoped to it in ONE statement. `secrets.scope`
+   * holds a Dot id or `global`, so no foreign key can cascade it; leaving the
+   * rows would keep a deleted Dot's OpenRouter key and channel tokens forever.
+   */
   async delete(id: string): Promise<boolean> {
-    const { rowCount } = await this.q.query("DELETE FROM dots WHERE id = $1", [id]);
+    const { rowCount } = await this.q.query(
+      "WITH gone AS (DELETE FROM secrets WHERE scope = $1) DELETE FROM dots WHERE id = $1",
+      [id],
+    );
     return (rowCount ?? 0) > 0;
   }
 }

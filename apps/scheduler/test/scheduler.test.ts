@@ -424,6 +424,17 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     await expect(scheduler.requireDot("goner")).rejects.toMatchObject({ status: 404 });
   });
 
+  it("delete removes the Dot's own OpenRouter key and keeps the global one", async () => {
+    const { scheduler } = make();
+    const dot = await readyDot(scheduler, "keyed");
+    await scheduler.setOpenRouterKey("sk-or-own", dot.id);
+    expect(await db.secrets.get(dot.id, "openrouter_api_key")).toBe("sk-or-own");
+    await scheduler.deleteDot("keyed");
+    await scheduler.settle();
+    expect(await db.secrets.get(dot.id, "openrouter_api_key")).toBeNull();
+    expect(await db.secrets.get("global", "openrouter_api_key")).toBe("sk-or-test");
+  });
+
   it("recovery: reattaches to running VMs, marks powered-off ones STOPPED and delivers undelivered tasks", async () => {
     const driver = new FakeDriver();
     const first = make(driver).scheduler;

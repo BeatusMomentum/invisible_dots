@@ -358,6 +358,20 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect(await db.events.list({ dotId: dot.id })).toHaveLength(1);
   });
 
+  it("deleting a Dot deletes its own secrets and leaves the global and other Dots' secrets", async () => {
+    const gone = await seedDot(db, "hotel-secrets");
+    const kept = await seedDot(db, "india-secrets");
+    await db.secrets.put("global", "openrouter_api_key", "sk-global");
+    await db.secrets.put(gone.id, "openrouter_api_key", "sk-gone");
+    await db.secrets.put(gone.id, "telegram_bot_token", "123:abc");
+    await db.secrets.put(kept.id, "openrouter_api_key", "sk-kept");
+    expect(await db.dots.delete(gone.id)).toBe(true);
+    const { rows } = await db.query<{ scope: string; name: string }>("SELECT scope, name FROM secrets ORDER BY scope, name");
+    expect(rows.filter((r) => r.scope === gone.id)).toEqual([]);
+    expect(await db.secrets.openRouterKey(gone.id)).toBe("sk-global");
+    expect(await db.secrets.openRouterKey(kept.id)).toBe("sk-kept");
+  });
+
   it("a transaction rolls back when its function throws, and refuses the outer repositories inside it", async () => {
     await expect(
       db.transaction(async (tx) => {
