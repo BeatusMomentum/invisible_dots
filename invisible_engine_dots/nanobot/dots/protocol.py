@@ -70,6 +70,22 @@ MODEL_ROLES = ("summary",)
 # keeps the two equal, and packages/shared/test/events.test.ts pins the unit).
 TOOL_TARGET_MAX = 160
 
+# Where the browser identities of a Dot live, and the display their browsers draw on (GUEST_PATHS.browsers and
+# GUEST_DISPLAY in packages/shared protocol.ts; tests/repo/vendored-nanobot.test.ts keeps them equal).
+BROWSERS_DIR = "/home/dot/browsers"
+GUEST_DISPLAY = ":0"
+
+# The environment of one identity's invisible-playwright-mcp process: each key is the name in ENV of
+# packages/shared protocol.ts and its value the variable (tests/repo/vendored-nanobot.test.ts keeps them equal).
+BROWSER_ENV = {
+    "MCP_HOME": "INVISIBLE_MCP_HOME",
+    "MCP_SESSION_ID": "INVISIBLE_MCP_SESSION_ID",
+    "PROFILE_DIR": "STEALTHFOX_PROFILE_DIR",
+    "HEADLESS": "STEALTHFOX_HEADLESS",
+    "PROXY": "STEALTHFOX_PROXY",
+    "DISPLAY": "DISPLAY",
+}
+
 # The `system.event` name of a cancelled task; its data is `{"task_id": ...}`.
 TASK_CANCELLED_EVENT = "task.cancelled"
 

@@ -17,6 +17,9 @@ import { fileURLToPath } from "node:url";
 import {
   AGENT_ROUTES,
   AGENT_STATES,
+  ENV,
+  GUEST_DISPLAY,
+  GUEST_PATHS,
   INBOUND_EVENT_TYPES,
   MODEL_ROLES,
   OPENROUTER_KEY_PATTERN,
@@ -136,6 +139,15 @@ describe("the vendored nanobot fork", () => {
     expect(/^TASK_CANCELLED_EVENT = "([^"]+)"/m.exec(protocol)?.[1]).toBe(TASK_CANCELLED_SYSTEM_EVENT);
     // The longest `target` of a `tool.called`: the engine cuts to it, the host's schema refuses more.
     expect(Number(/^TOOL_TARGET_MAX = (\d+)$/m.exec(protocol)?.[1])).toBe(TOOL_TARGET_MAX);
+
+    // Where the browser identities live, the display they draw on, and the environment of each one's MCP process.
+    expect(/^BROWSERS_DIR = "([^"]+)"/m.exec(protocol)?.[1]).toBe(GUEST_PATHS.browsers);
+    expect(/^GUEST_DISPLAY = "([^"]+)"/m.exec(protocol)?.[1]).toBe(GUEST_DISPLAY);
+    const browserEnv = /^BROWSER_ENV = \{([^}]*)\}/m.exec(protocol);
+    expect(browserEnv, "BROWSER_ENV").not.toBeNull();
+    const engineEnv = Object.fromEntries([...browserEnv![1]!.matchAll(/"(\w+)":\s*"([^"]+)"/g)].map((m) => [m[1]!, m[2]!]));
+    const { MCP_HOME, MCP_SESSION_ID, PROFILE_DIR, HEADLESS, PROXY, DISPLAY } = ENV;
+    expect(engineEnv).toEqual({ MCP_HOME, MCP_SESSION_ID, PROFILE_DIR, HEADLESS, PROXY, DISPLAY });
   });
 
   it("refuses an OpenRouter key by the one rule packages/shared names: the engine's text and pattern are its copy", () => {

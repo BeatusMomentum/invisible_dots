@@ -1242,6 +1242,22 @@ state.
   decides every call by the same table. nanobot's MCP client is wired in with
   no server configured; the tools of a server would register on the registry
   and still be neither offered nor allowed until the table names them.
+- Browser identities. `BrowserManager` (`nanobot/dots/browser.py`) owns the
+  identities (their rows in `dots_browser_identities`, their directories under
+  `/home/dot/browsers`, made and removed as dot through the Computer) and one
+  `invisible-playwright-mcp` process per open identity, started as dot through
+  `dot-agentd relay` with the environment of section 6 and nanobot's MCP client
+  on a registry of its own. Launch, close and delete run one at a time; calls on
+  one identity run one at a time. At `max_open` a launch closes the least
+  recently used identity first; a lower `max_identities` deletes nothing. A
+  browser action on an identity that is not open fails with `not_open` and
+  never launches it. A browser that the server reports gone while its process
+  lives is opened again once and the call repeated; a process that ended (the
+  client reports it instead of reconnecting, because a restarted process has
+  lost its browser) is a crash: the identity is closed, `browser.identity.closed`
+  is emitted once and the call fails with `crashed`. A close calls
+  `browser_close` first, so Firefox flushes its profile, then ends the process.
+  Every `browser.identity.*` event commits with the row change it describes.
 - Approvals. `ask` inside a turn stores the call with its full arguments in
   `dots_approvals` (`pending`), emits `approval.requested` and records the
   decision `park`, in one transaction; the model gets a result saying the call
@@ -1284,8 +1300,9 @@ state.
   SSRF guard), subagents, skills, the web tools, image and document reading,
   the usage telemetry, the configuration files and every provider but
   OpenRouter.
-- Not yet: the browser identities (`GET` lists none, `POST` and `DELETE` answer
-  `501`) and the screenshot tool.
+- Not yet: the browser identities in the engine's API and tools (`GET` lists
+  none, `POST` and `DELETE` answer `501`; `BrowserManager` exists and is tested
+  but nothing calls it) and the screenshot tool.
 
 ## 9. Control plane
 

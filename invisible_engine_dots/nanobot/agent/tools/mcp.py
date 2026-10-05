@@ -1196,9 +1196,19 @@ class MCPProvider:
         self,
         servers: Mapping[str, MCPServerConfig],
         registry: ToolRegistry,
+        on_terminated: Callable[[str], None] | None = None,
     ) -> None:
+        """Own `servers`, registering their tools on `registry`.
+
+        A server whose session ended (its process exited, its connection dropped) is
+        reconnected, the failed call repeated once. A caller that must know of the end
+        itself, because the server's state is lost with its process, passes
+        `on_terminated`: it is then called with the server's name, nothing is
+        reconnected, and the failed call returns its error.
+        """
         self._servers = dict(servers)
         self._registry = registry
+        self._on_terminated = on_terminated
         self._connections: dict[str, MCPConnection] = {}
         self._lock = asyncio.Lock()
         self._closing = False
@@ -1263,13 +1273,27 @@ class MCPProvider:
                 stale_tool,
             )
 
+        handler: _ReconnectCallback = reconnect
+        on_terminated = self._on_terminated
+        if on_terminated is not None:
+
+            async def report(
+                server_name: str,
+                tool_name: str,
+                stale_tool: Tool,
+            ) -> Tool | None:
+                on_terminated(server_name)
+                return None
+
+            handler = report
+
         for server_name in server_names:
             for tool_name in list(self._registry.tool_names):
                 tool = self._registry.get(tool_name)
                 if not _tool_belongs_to_server(tool, tool_name, server_name):
                     continue
                 if isinstance(tool, _MCPWrapperBase):
-                    tool.set_reconnect_handler(reconnect)
+                    tool.set_reconnect_handler(handler)
 
     async def _refresh_terminated_server(
         self,

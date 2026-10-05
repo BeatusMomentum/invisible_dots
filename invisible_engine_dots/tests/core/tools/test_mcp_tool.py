@@ -1618,6 +1618,32 @@ def test_long_server_name_tools_are_matched_by_server_name() -> None:
     assert other_wrapper.name in registry.tool_names
 
 
+async def test_a_provider_with_on_terminated_reports_a_dead_session_and_does_not_reconnect() -> None:
+    from mcp.shared.exceptions import McpError
+
+    session = SimpleNamespace(call_tool=AsyncMock(side_effect=McpError(message="Connection closed")))
+    wrapper = MCPToolWrapper(
+        session,
+        "srv",
+        SimpleNamespace(name="act", description="act", inputSchema={"type": "object", "properties": {}}),
+    )
+    registry = ToolRegistry()
+    registry.register(wrapper)
+    ended: list[str] = []
+    provider = MCPProvider({"srv": MCPServerConfig(command="fake")}, registry, on_terminated=ended.append)
+    provider._attach_reconnect_handlers({"srv"})
+    reconnects = AsyncMock()
+    provider._refresh_terminated_server = reconnects  # type: ignore[method-assign]
+
+    result = await wrapper.execute()
+
+    assert ended == ["srv"]
+    reconnects.assert_not_awaited()
+    session.call_tool.assert_awaited_once()
+    assert is_tool_error_result(result)
+    assert result.startswith("(MCP tool call failed: ")
+
+
 @pytest.mark.parametrize("params, error", [
     ({"team": "nanobot", "query": "bug"}, None),
     ({"team": "nanobot", "customView": "saved-view"}, None),
