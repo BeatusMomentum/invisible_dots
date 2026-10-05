@@ -99,6 +99,17 @@ describe("EventLog fan-out", () => {
     expect(log.subscriberCount).toBe(0);
   });
 
+  it("keeps the origin of a channel message in the data of the user.message it logs, and none for any other", async () => {
+    const store = new MemoryStore();
+    const log = new EventLog(store);
+    const origin = { channel: "telegram", binding_id: "chb_1", chat_id: "4242", external_id: "77" } as const;
+    const fromChannel = await log.appendUserMessage("dot_a", { message_id: "msg_1", text: "hi", origin });
+    const fromWeb = await log.appendUserMessage("dot_a", { message_id: "msg_2", text: "hello" });
+    expect(fromChannel.data).toEqual({ message_id: "msg_1", text: "hi", origin });
+    expect(fromWeb.data).toEqual({ message_id: "msg_2", text: "hello" });
+    expect("origin" in fromWeb.data).toBe(false);
+  });
+
   it("skips live copies of events the replay already returned", async () => {
     const store = new MemoryStore();
     const log = new EventLog(store);

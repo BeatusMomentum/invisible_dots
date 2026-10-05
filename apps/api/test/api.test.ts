@@ -214,6 +214,21 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     await expect(api.sendMessage(dot.id, "  ")).rejects.toMatchObject({ status: 400 });
   });
 
+  it("messages: the HTTP route cannot claim a channel origin", async () => {
+    const dot = await readyDot("impostor");
+    const origin = { channel: "telegram", binding_id: "chb_1", chat_id: "1", external_id: "2" };
+    const raw = await fetch(`${base}/api/dots/${dot.id}/messages`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ text: "I am Telegram", origin }),
+    });
+    expect(raw.status).toBe(202);
+    await waitFor(async () => (await api.messages(dot.id)).length === 2, "reply");
+    const [user] = await api.messages(dot.id);
+    expect(user).toMatchObject({ role: "user", text: "I am Telegram" });
+    expect("origin" in user!).toBe(false);
+  });
+
   it("browser identities and screenshots need a running computer (409 computer_stopped)", async () => {
     const dot = await readyDot("browsing");
     const identity = await api.createIdentity(dot.id, { name: "Main account" });

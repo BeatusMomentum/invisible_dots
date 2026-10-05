@@ -7,7 +7,7 @@
  * Browser-safe: type imports only. The SDK re-exports this module.
  */
 import type { DotConfig } from "./config.js";
-import type { StoredEvent } from "./events.js";
+import type { ChannelKind, ChannelStatus, MessageOrigin, StoredEvent } from "./events.js";
 import type { BrowserIdentity, SystemAnswer } from "./protocol.js";
 import type { ApprovalStatus, DotState, TaskState, VmState } from "./states.js";
 
@@ -98,6 +98,8 @@ export interface ConversationMessage {
   role: "user" | "assistant";
   text: string;
   in_reply_to: string | null;
+  /** The channel chat a user message came from; absent for the web, the CLI and the SDK, and for every assistant message. */
+  origin?: MessageOrigin;
   created_at: string;
 }
 
@@ -133,6 +135,57 @@ export interface ApprovalDecisionRequest {
 export interface PutOpenRouterSecretRequest {
   value: string;
   dot_id?: string;
+}
+
+/** What a channel sends to the person without being asked (decisions of 2026-10-05: replies and approvals always, task results switchable). */
+export interface ChannelSettings {
+  /** Approvals are asked in the chat, with Approve and Reject buttons, for the paired owner. */
+  approvals: boolean;
+  /** `task.completed` and `task.failed` are sent to the owner's chat. */
+  notify_tasks: boolean;
+}
+
+export interface ChannelPeerRecord {
+  /** The channel's own id for the person (a Telegram user id). */
+  peer_id: string;
+  role: "owner" | "user";
+  label: string;
+  created_at: string;
+}
+
+/** A Dot's binding to one channel. Never carries a token or any other credential. */
+export interface ChannelRecord {
+  kind: ChannelKind;
+  enabled: boolean;
+  status: ChannelStatus;
+  /** Why the status is `error`, or null. */
+  status_detail: string | null;
+  /** The bot's public name on Telegram, null for a channel without one. */
+  bot_username: string | null;
+  settings: ChannelSettings;
+  peers: ChannelPeerRecord[];
+  created_at: string;
+}
+
+export interface ChannelsAnswer {
+  channels: ChannelRecord[];
+}
+
+export interface PutTelegramChannelRequest {
+  /** The bot token from @BotFather; checked with Telegram, stored encrypted, never returned. */
+  token: string;
+}
+
+export interface PatchChannelRequest {
+  settings: Partial<ChannelSettings>;
+}
+
+/** A one-time code that pairs a person's chat to the Dot (valid for ten minutes, stored hashed). */
+export interface ChannelPairingAnswer {
+  code: string;
+  /** `https://t.me/<bot>?start=<code>` for Telegram; null where a channel has no link. */
+  deep_link: string | null;
+  expires_at: string;
 }
 
 export interface HealthResponse {

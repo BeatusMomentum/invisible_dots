@@ -10,7 +10,7 @@
  * `publish` is the one place that has to become a NOTIFY.
  */
 import type { EventQuery, EventsRepository, Queryable } from "@invisible-dots/database";
-import type { HostEventDataMap, HostEventType, OutboundEvent, StoredEvent } from "@invisible-dots/shared";
+import type { HostEventDataMap, HostEventType, MessageOrigin, OutboundEvent, StoredEvent } from "@invisible-dots/shared";
 
 /**
  * Type of the event a user message is logged as. The conversation of
@@ -22,6 +22,8 @@ export const USER_MESSAGE_EVENT = "user.message";
 export interface UserMessageData {
   message_id: string;
   text: string;
+  /** Set when the message came through a channel; absent for the control plane's own API (the web, the CLI, the SDK). */
+  origin?: MessageOrigin;
 }
 
 export interface EventFilter {

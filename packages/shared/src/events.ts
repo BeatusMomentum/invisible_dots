@@ -45,11 +45,49 @@ export const HOST_EVENT_TYPES = [
   "task.created",
   "task.cancelled",
   "approval.resolved",
+  "channel.status",
+  "channel.peer.paired",
 ] as const;
 export type HostEventType = (typeof HOST_EVENT_TYPES)[number];
 
 /** Every type that can appear in the host event log. */
 export type EventType = OutboundEventType | HostEventType;
+
+/** The messaging channels the control plane can bridge a Dot to. */
+export const CHANNEL_KINDS = ["telegram", "whatsapp"] as const;
+export type ChannelKind = (typeof CHANNEL_KINDS)[number];
+
+/** Where a channel's connection stands; `needs_relink` is a login the person has to redo. */
+export const CHANNEL_STATUSES = ["connecting", "connected", "needs_relink", "error"] as const;
+export type ChannelStatus = (typeof CHANNEL_STATUSES)[number];
+
+/**
+ * Where a user message came from when it did not come from the web, the CLI or the SDK: the channel
+ * binding of a Dot, the chat on that channel and the message's id there. It is stored in the data of
+ * the `user.message` event and nowhere else, so the event log owns the fact and a reply is routed back
+ * by it. The guest never sees it. Absent means the control plane's own API.
+ */
+export interface MessageOrigin {
+  channel: ChannelKind;
+  binding_id: string;
+  chat_id: string;
+  external_id: string;
+}
+
+const originField = z.string().min(1).max(256);
+
+export const messageOriginSchema = z.strictObject({
+  channel: z.enum(CHANNEL_KINDS),
+  binding_id: originField,
+  chat_id: originField,
+  external_id: originField,
+});
+
+/** The origin in `value` (the data of a stored `user.message`), or null when there is none or it is not one. */
+export function parseMessageOrigin(value: unknown): MessageOrigin | null {
+  const result = messageOriginSchema.safeParse(value);
+  return result.success ? result.data : null;
+}
 
 export type ApprovalDecision = "approve" | "reject";
 export type PolicyDecision = "allow" | "ask" | "deny";
@@ -153,6 +191,10 @@ export interface HostEventDataMap {
   "task.created": { task_id: string; description: string; priority: number };
   "task.cancelled": { task_id: string };
   "approval.resolved": { approval_id: string; decision: ApprovalDecision; note?: string };
+  /** A channel's connection changed (`detail` is a reason for `error`, never a credential). */
+  "channel.status": { kind: ChannelKind; status: ChannelStatus; detail?: string };
+  /** A person was paired to the Dot's channel; `peer_id` is the channel's own id for them. */
+  "channel.peer.paired": { kind: ChannelKind; peer_id: string; label: string };
 }
 
 export type InboundEvent<T extends InboundEventType = InboundEventType> = {

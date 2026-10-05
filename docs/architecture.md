@@ -766,7 +766,21 @@ reused for another event.
 
 The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
 `computer.state {state}`, `computer.started`, `computer.stopped`,
-`task.created`, `task.cancelled`, `approval.resolved`.
+`task.created`, `task.cancelled`, `approval.resolved`, and the two of a messaging
+channel: `channel.status {kind, status, detail?}` (`kind` is `telegram` or
+`whatsapp`; `status` is `connecting`, `connected`, `needs_relink` or `error`,
+and `detail` never holds a credential) and `channel.peer.paired {kind, peer_id,
+label}`. A channel lives in the control plane only: the Dot never sees one, so
+no inbound or outbound type names it.
+
+The message a person sends is logged as a `user.message` host event
+`{message_id, text, origin?}`. `origin` is `{channel, binding_id, chat_id,
+external_id}` for a message that came through a channel and is absent for the
+web, the CLI and the SDK. The event log is the one place that says where a
+message came from, and a reply is routed back by it; the guest receives the
+event with `{text}` only. Only code inside the control plane can set an origin
+(`Scheduler.sendMessage`): `POST /api/dots/:id/messages` takes `{text}` and
+ignores anything else.
 
 ## 6. Browser identities
 
@@ -1464,7 +1478,7 @@ PATCH  /api/dots/:id                 body: { config }   (pushed to the guest if 
 DELETE /api/dots/:id                 destroys the VM and its disk, then deletes the Dot, its rows and its own secrets
 
 POST   /api/dots/:id/messages        body: { text }
-GET    /api/dots/:id/messages        conversation, from the event log
+GET    /api/dots/:id/messages        conversation, from the event log (a user message carries `origin` when it came through a channel)
 POST   /api/dots/:id/tasks           body: { description, priority?, scheduled_at? }
 GET    /api/dots/:id/tasks
 GET    /api/tasks/:id

@@ -24,6 +24,7 @@ import {
   DotConfigError,
   newId,
   parseDotConfig,
+  parseMessageOrigin,
   parseSize,
   TASK_CANCELLED_SYSTEM_EVENT,
   TERMINAL_TASK_STATES,
@@ -33,6 +34,7 @@ import {
   type CreateBrowserIdentityRequest,
   type DotConfig,
   type InboundEvent,
+  type MessageOrigin,
   type StoredEvent,
   type SystemAnswer,
 } from "@invisible-dots/shared";
@@ -289,11 +291,17 @@ export class Scheduler {
   /**
    * Log the message and store it for the guest in one transaction, so a
    * message the person saw accepted always reaches the Dot, also across a
-   * failed wake or a control plane restart.
+   * failed wake or a control plane restart. `origin` names the channel chat
+   * the message came from; it is kept in the event log (the one place a reply
+   * is routed back by) and never sent to the guest. Only code inside the
+   * control plane passes one: the HTTP route does not take it.
    */
-  async sendMessage(idOrName: string, text: string): Promise<MessageAnswer> {
+  async sendMessage(idOrName: string, text: string, origin?: MessageOrigin): Promise<MessageAnswer> {
     if (typeof text !== "string" || text.trim() === "") {
       throw new ControlPlaneError(400, "invalid_request", "text must be a non-empty string");
+    }
+    if (origin !== undefined && parseMessageOrigin(origin) === null) {
+      throw new ControlPlaneError(400, "invalid_request", "origin must be a channel, a binding id, a chat id and an external id");
     }
     const dot = await this.requireDot(idOrName);
     const messageId = newId("msg");
@@ -305,7 +313,7 @@ export class Scheduler {
     };
     const stored = await this.db.transaction(async (tx) => {
       // The event first: its insert takes the event-order lock (database events.ts).
-      const logged = await this.events.appendUserMessageIn(tx, dot.id, { message_id: messageId, text });
+      const logged = await this.events.appendUserMessageIn(tx, dot.id, { message_id: messageId, text, ...(origin && { origin }) });
       await tx.inbound.enqueue(dot.id, event);
       return logged;
     });
@@ -321,14 +329,19 @@ export class Scheduler {
       types: [USER_MESSAGE_EVENT, "message.assistant"],
       limit,
     });
-    return events.map((e) => ({
-      event_id: e.id,
+    return events.map((e) => {
       // StoredEvent.type lists the contract's event types; the user side is logged as USER_MESSAGE_EVENT.
-      role: (e.type as string) === USER_MESSAGE_EVENT ? "user" : "assistant",
-      text: String(e.data.text ?? ""),
-      in_reply_to: typeof e.data.in_reply_to === "string" ? e.data.in_reply_to : null,
-      created_at: e.created_at,
-    }));
+      const user = (e.type as string) === USER_MESSAGE_EVENT;
+      const origin = user ? parseMessageOrigin(e.data.origin) : null;
+      return {
+        event_id: e.id,
+        role: user ? "user" : "assistant",
+        text: String(e.data.text ?? ""),
+        in_reply_to: typeof e.data.in_reply_to === "string" ? e.data.in_reply_to : null,
+        ...(origin && { origin }),
+        created_at: e.created_at,
+      };
+    });
   }
 
   /**

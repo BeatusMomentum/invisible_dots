@@ -275,6 +275,46 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     expect(direct.delivery).toBe("delivered");
   });
 
+  it("keeps where a message came from in the log and answers it in the conversation, never to the guest", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "bridged");
+    const origin = { channel: "telegram", binding_id: "chb_1", chat_id: "4242", external_id: "77" } as const;
+    const fromChannel = await scheduler.sendMessage(dot.id, "from my phone", origin);
+    const fromApi = await scheduler.sendMessage(dot.id, "from the web");
+    await waitFor(async () => (await scheduler.conversation(dot.id)).length === 4, "both replies");
+    // The event log owns the fact.
+    const logged = (await db.events.list({ dotId: dot.id, types: ["user.message"] })).map((e) => e.data);
+    expect(logged).toEqual([
+      { message_id: fromChannel.message_id, text: "from my phone", origin },
+      { message_id: fromApi.message_id, text: "from the web" },
+    ]);
+    const conversation = await scheduler.conversation(dot.id);
+    expect(conversation.filter((m) => m.role === "user").map((m) => m.origin)).toEqual([origin, undefined]);
+    expect(conversation.some((m) => m.role === "assistant" && "origin" in m)).toBe(false);
+    // The guest still gets {text}: nothing in the Dot knows about a channel.
+    const received = driver.guestOf(dot.id).inbound.filter((e) => e.type === "user.message");
+    expect(received.map((e) => e.data)).toEqual([{ text: "from my phone" }, { text: "from the web" }]);
+  });
+
+  it("refuses a message whose origin is not a channel chat, and logs nothing for it", async () => {
+    const { scheduler } = make();
+    const dot = await readyDot(scheduler, "strict");
+    const before = (await db.events.list({ dotId: dot.id })).length;
+    const bad = { channel: "sms", binding_id: "chb_1", chat_id: "1", external_id: "2" };
+    await expect(scheduler.sendMessage(dot.id, "hi", bad as never)).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+    await expect(scheduler.sendMessage(dot.id, "hi", { ...bad, channel: "telegram", extra: 1 } as never)).rejects.toMatchObject({ status: 400 });
+    expect((await db.events.list({ dotId: dot.id })).length).toBe(before);
+  });
+
+  it("leaves out an origin it cannot read in a stored message instead of failing the conversation", async () => {
+    const { scheduler } = make();
+    const dot = await readyDot(scheduler, "old-rows");
+    await scheduler.events.appendUserMessage(dot.id, { message_id: "msg_old", text: "odd", origin: { channel: "sms" } as never });
+    const [message] = await scheduler.conversation(dot.id);
+    expect(message).toMatchObject({ role: "user", text: "odd" });
+    expect("origin" in message!).toBe(false);
+  });
+
   it("READY fails without an OpenRouter key and succeeds once one is set", async () => {
     await db.secrets.delete("global", "openrouter_api_key");
     try {
