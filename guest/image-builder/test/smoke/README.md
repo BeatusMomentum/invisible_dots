@@ -26,8 +26,37 @@ disk lay them out. This smoke does, in one Linux container, with no QEMU:
   its credential masked, a token flag and a `curl -U` proxy login alike, the path a file tool wrote and none of the content), the tools offered
   for each permission map, the summary of an outgrown thread going to the
   `models.summary` model with no tool in the request, the text sent to the model, the key reaching no file,
-  log or process environment, and the engine refusing to start on a lock that is not
+  log or process environment, the browser seams (below), and the engine refusing to start on a lock that is not
   the golden image's or on a key in a dotenv file.
+
+## The browser seams
+
+The Dot's browser is `invisible-playwright-mcp`, one process per open identity, started by the
+engine through `dot-agentd`'s relay so that it runs as `dot`. The smoke installs a stand-in for it as
+`INVISIBLE_DOTS_MCP_COMMAND`: the engine's own test fake (`invisible_engine_dots/tests/fakes/fake_mcp_server.py`,
+the one owner of what a stand-in answers) on the engine's python, serving the tool list captured from
+the pinned server (`invisible_engine_dots/tests/fixtures/mcp-tools-<version>.json`). It records its
+environment, its working directory and every call it receives in `$INVISIBLE_MCP_HOME/record.jsonl`,
+and the checks read that file. What they pin:
+
+- an identity is created over HTTP (201, `browser.identity.created`, its directories are `dot`'s) and
+  launched by the model's `browser_identity_launch`; the server runs as `dot`, never as `dotengine`, with
+  the profile, the display, the session id and its home in its environment and none of the engine's
+  variables nor the key;
+- a page tool reaches the server as the real tool with `browser: "main"` and shows in `tool.called` with
+  its permission and its target; a screenshot reaches the model's next request as an image part;
+- the fourth launch with `max_open` 3 closes the least recently used identity through `browser_close`;
+  an action on a closed identity fails with the launch message and starts nothing; a server whose
+  browser closed under it is reopened once and the call repeated;
+- `managed_by_dot` false drops the tools that create and delete identities from the offered list, whatever
+  the permissions say;
+- `browser.identity.delete: ask` parks the call and the approval survives `kill -9`, which also ends every
+  server; after the restart every identity is `available`; SIGTERM asks an open browser to close before
+  its server ends; a host `DELETE` of an open identity closes it first;
+- a proxy password is in no approval, event, engine log or `dot-agentd` log; `/health` counts the identities
+  and the open ones.
+
+The real server and a real Firefox are not run by this smoke.
 
 ## Run it
 
@@ -61,7 +90,7 @@ removes the volume and the container on exit.
 | `run.sh` | the entry: builds `dot-agentd` in `golang:1.26`, starts `ubuntu:24.04` with the tree, checks the exit status and the summary line |
 | `prepare-engine.sh` | in the container: `uv`, the engine's environment, the staged engine source; then it runs `smoke.sh` |
 | `smoke.sh` | the checks; prints `PASS:` or `FAIL:` per check and the summary line |
-| `fake_openrouter.py` | the stand-in for OpenRouter's chat completions: answers by the last message (`RUN-EXEC <cmd>` makes it call the engine's `exec` tool, `SAY-RUN-EXEC <text> :: <cmd>` the same with `<text>` written beside the call, `WRITE-NOTE <path> :: <text>` a `write_file` into `/home/dot/memory/<path>`, `FIND-NOTE <word>` a `memory_search`, `REPEAT-EXEC <cmd>` an `exec` after every result too, a `COST <usd>` line the cost every response reports in its usage) and logs every request whole |
+| `fake_openrouter.py` | the stand-in for OpenRouter's chat completions: answers by the last message (`RUN-EXEC <cmd>` makes it call the engine's `exec` tool, `SAY-RUN-EXEC <text> :: <cmd>` the same with `<text>` written beside the call, `WRITE-NOTE <path> :: <text>` a `write_file` into `/home/dot/memory/<path>`, `FIND-NOTE <word>` a `memory_search`, `REPEAT-EXEC <cmd>` an `exec` after every result too, a `COST <usd>` line the cost every response reports in its usage, `RUN-TOOL <name> <json>` a call of any tool with those arguments) and logs every request whole |
 | `host-stream.sh` | the fake host's event reader: reads `/v1/agent/events/stream` from its last `seq`, reconnects after a drop, pushes the key and the config on every `agent.started` |
 
 `smoke.sh` is written against the engine as it is: a check that pins something the

@@ -5,7 +5,7 @@
  * the job runs the entry and the gate waits for it, and the entry exits
  * non-zero on a failed check and on a skipped one.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -89,6 +89,36 @@ describe("the engine smoke", () => {
     expect(needed).toContain("smoke");
     expect([...needed].sort()).toEqual([...jobs].sort());
     expect(gate).toContain(`names.length !== ${jobs.length}`);
+  });
+
+  it("runs the browser seams against the engine's one MCP stand-in and the tool list captured from the pinned server", () => {
+    const checks = read(join(smoke, "smoke.sh"));
+    const fake = "invisible_engine_dots/tests/fakes/fake_mcp_server.py";
+    expect(existsSync(join(repo, fake)), fake).toBe(true);
+    // The smoke copies that file, not a second stand-in of its own, and the tool list beside it.
+    expect(checks).toContain("fakes/fake_mcp_server.py");
+    expect(checks).toContain("fixtures/mcp-tools-*.json");
+    expect(readdirSync(join(repo, "invisible_engine_dots/tests/fixtures")).filter((n) => /^mcp-tools-.*\.json$/.test(n))).toHaveLength(1);
+    expect(existsSync(join(smoke, "fake_mcp.py"))).toBe(false);
+    // It is the program the engine runs for a browser, under the name the engine reads.
+    expect(code(checks)).toContain("export INVISIBLE_DOTS_MCP_COMMAND=");
+    expect(read(join(repo, "invisible_engine_dots/nanobot/dots/main.py"))).toContain('"INVISIBLE_DOTS_MCP_COMMAND"');
+    expect(read(join(smoke, "fake_openrouter.py"))).toContain("RUN-TOOL");
+  });
+
+  it("pins the offered tools of a Dot granted everything to the permission table, tool for tool", () => {
+    const table = read(join(repo, "invisible_engine_dots/nanobot/dots/permissions.py"));
+    const tools = [...table.matchAll(/^ {8}"(\w+)": ToolEntry\(/gm)].map((m) => m[1]!).sort();
+    expect(tools.length).toBeGreaterThan(30);
+    const checks = read(join(smoke, "smoke.sh"));
+    const first = /check_offered 1 [^\n]*\\\n[^\n]*\\\n\s+'(\[[^\n]*\])'/.exec(checks);
+    expect(first, "check_offered 1").not.toBeNull();
+    expect(JSON.parse(first![1]!)).toEqual(tools);
+    // Without managed_by_dot the two tools that create and delete identities are the only ones missing.
+    const unmanaged = /check_offered 5 [^\n]*\\\n[^\n]*\\\n\s+'(\[[^\n]*\])'/.exec(checks);
+    expect(unmanaged, "check_offered 5").not.toBeNull();
+    const browserOnly = tools.filter((t) => t.startsWith("browser_") || t === "computer_screenshot");
+    expect(JSON.parse(unmanaged![1]!)).toEqual(browserOnly.filter((t) => t !== "browser_identity_create" && t !== "browser_identity_delete"));
   });
 
   it("exits non-zero on a failed check and on a skipped one, and prints the summary", () => {
