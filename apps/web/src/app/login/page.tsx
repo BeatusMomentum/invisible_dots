@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { pathAfterLogin } from "../../lib/session";
 
 /**
  * Sign in to this web server with the API token (architecture section 9.7).
@@ -23,9 +24,7 @@ export default function LoginPage() {
         body: JSON.stringify({ token }),
       });
       if (response.ok) {
-        const next = new URLSearchParams(window.location.search).get("next");
-        // Only a path of this site, never a URL somewhere else.
-        window.location.assign(next && next.startsWith("/") && !next.startsWith("//") ? next : "/");
+        window.location.assign(pathAfterLogin(window.location.search));
         return;
       }
       const body = (await response.json().catch(() => ({}))) as { message?: string };

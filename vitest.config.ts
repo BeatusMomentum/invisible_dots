@@ -1,15 +1,19 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  // The web app's tsconfig keeps JSX for Next to compile; a test compiles it itself.
+  oxc: { jsx: { runtime: "automatic" } },
   test: {
     include: [
-      "apps/*/{src,test}/**/*.test.ts",
+      "apps/*/{src,test}/**/*.test.{ts,tsx}",
       "packages/*/{src,test}/**/*.test.ts",
       "guest/image-builder/{src,test}/**/*.test.ts",
       // Checks over the whole repository, such as the platform branches of section 1.1.
       "tests/repo/**/*.test.ts",
     ],
-    // The web client's tests need no DOM: they run here with everything else.
+    // The web client's tests run here with everything else: the ones of plain functions in
+    // node, the component tests (.test.tsx) in jsdom, chosen by the file's own
+    // "@vitest-environment jsdom" line so that no other test pays for a DOM.
     // invisible_engine_dots/ holds the nanobot fork: Python, with its own pytest suite
     // (the engine job of the CI workflow); nothing of it runs here.
     exclude: ["**/node_modules/**", "**/.next/**", "invisible_engine_dots/**"],

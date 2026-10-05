@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { DotApprovalsTab } from "../../../../components/DotApprovalsTab";
+import { DotApprovalsTab } from "../../../../../components/DotApprovalsTab";
 
 export const metadata: Metadata = { title: "Approvals" };
 

@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { IdentitiesTab } from "../../../../components/IdentitiesTab";
+import { IdentitiesTab } from "../../../../../components/IdentitiesTab";
 
 export const metadata: Metadata = { title: "Browser identities" };
 

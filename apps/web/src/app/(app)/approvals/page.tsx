@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import { ApprovalsList } from "../../components/ApprovalsList";
-import { EventStreamProvider, StreamIndicator } from "../../components/events";
+import { ApprovalsList } from "../../../components/ApprovalsList";
+import { EventStreamProvider, StreamIndicator } from "../../../components/events";
 
 export const metadata: Metadata = { title: "Approvals" };
 

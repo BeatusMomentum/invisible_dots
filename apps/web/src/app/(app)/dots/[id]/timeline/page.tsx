@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { TimelineTab } from "../../../../components/TimelineTab";
+import { TimelineTab } from "../../../../../components/TimelineTab";
 
 export const metadata: Metadata = { title: "Timeline" };
 

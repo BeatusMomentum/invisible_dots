@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { ComputerTab } from "../../../../components/ComputerTab";
+import { ComputerTab } from "../../../../../components/ComputerTab";
 
 export const metadata: Metadata = { title: "Computer" };
 

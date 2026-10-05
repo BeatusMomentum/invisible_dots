@@ -1526,11 +1526,17 @@ token and listens on the host's loopback, which every guest reaches as
   answers with the cookie `idots_session`: an HMAC of the token, never the
   token itself, so it changes when the token does. It is `HttpOnly` (no
   script reads it) and `SameSite=Strict` (no other site's page makes the
-  browser send it). `DELETE /session` clears it.
+  browser send it). `DELETE /session` clears it; the header's "Sign out"
+  button sends it and then loads `/login` afresh.
 - Every proxied request without that session answers
   `401 { error: "login_required" }` with the header
   `x-invisible-dots-login: required`, before the API is contacted; the page
-  then goes to `/login`.
+  then goes to `/login?next=<the page>`. `/login` is the one page that never
+  does: it is outside the route group that holds the header (the API check
+  and the sign-out button), calls nothing, and a refusal seen from it
+  redirects nowhere, because loading it again could only meet the same
+  refusal. After signing in, `next` is followed only when it is a path of
+  this site other than `/login`.
 - The Host, Origin and `Sec-Fetch-Site` checks stay in front of it, as a
   defence against DNS rebinding and cross-site pages only: they are written
   by the client, so they never let a request through on their own. The Host

@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
-import { DotShell } from "../../../components/DotShell";
-import { EventStreamProvider } from "../../../components/events";
+import { DotShell } from "../../../../components/DotShell";
+import { EventStreamProvider } from "../../../../components/events";
 
 export default async function DotLayout({
   children,
