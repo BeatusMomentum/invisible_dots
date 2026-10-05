@@ -88,6 +88,7 @@ packages/
   database/        PostgreSQL schema (PGlite embedded or an external server), migrations, repositories, durable queue
   iso/             ISO 9660 + Joliet writer in plain TypeScript (seed and runtime disks)
   events/          event types, the host event log and its fan-out to SSE subscribers
+  channels/        the messaging channel hub (section 9.8): pairing, who may talk, the messages between a chat and its Dot; runs inside the control plane process
   sdk/             typed HTTP client for the API (used by cli and web)
 guest/
   dot-agentd/             the computer daemon (Go): the guest endpoint, exec, files, screenshots
@@ -1357,8 +1358,9 @@ event and changes other rows inserts the event first, so the lock is never
 taken while holding a row lock another event writer waits for.
 
 Tables: `dots`, `computers`, `tasks`, `task_runs`, `events`, `approvals`,
-`inbound_events`, `secrets`, `schema_migrations`. Migrations are plain SQL
-files applied in order at start.
+`inbound_events`, `secrets`, `channel_bindings`, `channel_peers`,
+`channel_pairings`, `channel_inbound`, `schema_migrations`. Migrations are plain
+SQL files applied in order at start.
 
 - `dots(id text pk, name text unique, config jsonb, status text, created_at, updated_at)`
 - `computers(dot_id pk fk, vm_name, guest_port int null, pid int null, state text, golden_image text, runtime_image text, token_enc bytea, event_cursor bigint default 0, last_active_at, last_error, updated_at)`: `guest_port` and `pid` are null while no QEMU runs, and `guest_port` is not unique (a crashed VM's row may name a port since reused); both are copies of `qemu.json` (section 3.2), which wins on reconciliation
@@ -1368,6 +1370,11 @@ files applied in order at start.
 - `approvals(id text pk, dot_id, task_id, tool, permission, arguments jsonb, reason, status 'pending'|'approved'|'rejected'|'expired', note, created_at, resolved_at)`: an approval whose task reached a terminal state before anyone decided is `expired`, in the same statement that ends the task, and an `approval.requested` for a task that is already terminal is stored as `expired`, never `pending`
 - `inbound_events(seq bigserial pk, id text unique, dot_id fk, type, data jsonb, ts, task_id, run_id, created_at, sent_at, delivered_at, dropped_at, drop_reason, failures int, last_error, retry_at)`: the outbox of host to guest events (section 9.2)
 - `secrets(scope text, name text, value_enc bytea, updated_at, pk(scope, name))`: `scope` is `global` or a dot id; no foreign key can cover that, so deleting a Dot deletes the secrets scoped to it in the same statement (`DotsRepository.delete`)
+
+- `channel_bindings(id text pk, dot_id fk cascade, kind 'telegram'|'whatsapp', enabled bool, settings jsonb, status, status_detail, account, event_cursor bigint, created_at)`, unique `(dot_id, kind)`: one Dot's link to one channel kind (section 9.8); `settings` is `{approvals, notify_tasks}` and never a credential; `account` is the channel's public name for the account (a bot's username); `event_cursor` is the id of the last event of the Dot the hub dealt with
+- `channel_peers(binding_id fk cascade, peer_id, chat_id, role 'owner'|'user', label, created_at, pk(binding_id, peer_id))`: the people allowed to talk through the binding, by the channel's stable id, with the chat they paired from
+- `channel_pairings(binding_id fk cascade, code_hash, expires_at, consumed_at, pk(binding_id, code_hash))`: one-time pairing codes, stored hashed
+- `channel_inbound(binding_id fk cascade, external_id, message_id, created_at, pk(binding_id, external_id))`: the channel messages already handed to the Dot, by the channel's own id, so a redelivery is dropped; only idempotency lives here, where a message came from is in its `user.message` event (section 5.4). An index on `events` by `(dot_id, data->>'message_id')` for `user.message` lets an answer find the message it answers
 
 Secrets are encrypted with AES-256-GCM under `master.key`. The OpenRouter key
 is looked up as `(<dot_id>, openrouter_api_key)` first, then
@@ -1549,6 +1556,62 @@ token and listens on the host's loopback, which every guest reaches as
   defence against DNS rebinding and cross-site pages only: they are written
   by the client, so they never let a request through on their own. The Host
   must be loopback or listed in `INVISIBLE_DOTS_WEB_ALLOWED_HOSTS`.
+
+### 9.8 Messaging channels
+
+A person can talk to a Dot from a chat (Telegram, WhatsApp). This is the control
+plane's business only: the Dot never sees a channel, no guest route or event
+type names one, and the Dot has no tool that sends a message anywhere.
+`packages/channels` holds the **channel hub**, built in `startServer` right after
+the Scheduler, started after `scheduler.start()` and closed before it. It runs in
+the server process because the database is single-process (section 9.1) and the
+credentials live in it. It uses only what the Scheduler offers: `sendMessage`
+(with an origin), `requireDot` and the event log.
+
+An adapter (`Channel`) is transport only: `run(sink, signal)` connects and
+delivers until aborted, `sendText`, optionally `typing`. A `ChannelType` makes the
+adapter for a binding and names the secrets a binding of its kind keeps. The hub
+owns every policy:
+
+- **Who may talk.** Only a person paired with a one-time code, by the channel's
+  stable id (a Telegram numeric user id, never a mutable name). The code is eight
+  symbols (40 bits), valid ten minutes, used once, stored as a SHA-256 hash with
+  the binding id, and pairs the sender as an `owner` together with their chat.
+  Anyone else, a chat that is not a private one, an empty message: dropped
+  before anything is written, so a stranger costs no row and no model call. A
+  paired person is held to a token bucket (10 messages at once, then 20 per
+  minute, told once) and to 8000 characters per message.
+- **Inbound.** A message becomes `Scheduler.sendMessage(dot, text, {channel,
+  binding_id, chat_id, external_id})`; the guest receives `{text}` only. The
+  channel's own message id is recorded in `channel_inbound` once the Dot has the
+  message, and `sink.inbound` resolves only then, so an adapter commits its offset
+  after the hub is done with the message. A redelivered message is recognised and
+  dropped, also across a restart. A crash between handing the message over and
+  recording it hands it over once more: delivery is at least once.
+- **Outbound.** One `events.stream({dotId}, {after: event_cursor})` per binding.
+  `message.assistant` goes to the chat of the `user.message` its `in_reply_to`
+  names, when that message came through this binding and its person is still
+  paired; an answer that answers nothing (an automation's) goes to every owner's
+  chat; an answer to a message from the web or another channel is not mirrored.
+  `task.completed` and `task.failed` go to the owners unless `notify_tasks` is off.
+  `agent.state` THINKING shows typing in the chat of the last message while the
+  Dot has not answered it. Text is split at the adapter's `maxText` on paragraph,
+  line and word boundaries. The cursor moves after a send succeeded (events that
+  need no send are written in batches), so a restart resumes where it stopped;
+  a crash between a send and the cursor write sends that message again. A send
+  that fails is retried with backoff (a channel's `retry_after` is honoured); one
+  the channel refuses for good (the person blocked the bot) is dropped.
+- **Failure.** An adapter that fails is started again after an exponential backoff
+  (1 s up to 60 s, with jitter) on a fresh instance; `ChannelNeedsRelinkError`
+  (a revoked token, a logged-out device) stops it until the person relinks.
+  Every change of status is a `channel.status` host event, once; the reason is
+  cut to 300 characters and has the binding's credentials replaced, whatever
+  the adapter wrote. A new binding starts after the Dot's latest event: history
+  is not replayed into the chat. When the Dot is deleted its bindings go with it
+  (foreign keys) and the hub stops the adapter on `dot.deleted`.
+- **Credentials.** Stored as secrets scoped to the Dot, under the names the
+  channel type declares, encrypted like the OpenRouter key, never returned,
+  never pushed to the guest, deleted with the binding and with the Dot.
 
 ## 10. Out of scope for this version
 

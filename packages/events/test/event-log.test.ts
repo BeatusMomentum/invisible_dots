@@ -32,6 +32,10 @@ class MemoryStore implements EventStore {
   async tail(dotId: string, count: number): Promise<StoredEvent[]> {
     return this.rows.filter((r) => r.dot_id === dotId).slice(-count);
   }
+
+  async userMessage(dotId: string, messageId: string): Promise<StoredEvent | null> {
+    return this.rows.find((r) => r.dot_id === dotId && (r.type as string) === "user.message" && r.data.message_id === messageId) ?? null;
+  }
 }
 
 async function take<T>(iterator: AsyncIterator<T>, n: number): Promise<T[]> {
@@ -160,6 +164,20 @@ describe.each(testAdapters())("EventLog on %s", { timeout: 60_000 }, (kind) => {
       const host = await log.appendHost("dot_x", "computer.state", { state: "STOPPED" });
       expect((await log.query({ dotId: "dot_x" })).map((e) => e.id)).toEqual([stored!.id, host.id]);
       expect((await log.tail("dot_x", 1))[0]?.id).toBe(host.id);
+    } finally {
+      await t.drop();
+    }
+  });
+
+  it("finds the logged user message of a message id, in its own Dot only", async () => {
+    const t = await createTestDatabase(kind);
+    try {
+      const log = new EventLog(t.db.events);
+      const sent = await log.appendUserMessage("dot_x", { message_id: "msg_a", text: "hi" });
+      await log.appendUserMessage("dot_y", { message_id: "msg_b", text: "other" });
+      expect((await log.userMessage("dot_x", "msg_a"))?.id).toBe(sent.id);
+      expect(await log.userMessage("dot_x", "msg_b")).toBeNull();
+      expect(await log.userMessage("dot_x", "msg_unknown")).toBeNull();
     } finally {
       await t.drop();
     }

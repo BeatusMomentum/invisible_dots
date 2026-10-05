@@ -1,5 +1,6 @@
 import { ENV, hostPaths } from "@invisible-dots/shared";
 import { ApprovalsRepository } from "./approvals.js";
+import { ChannelsRepository } from "./channels.js";
 import { ComputersRepository } from "./computers.js";
 import { SecretBox } from "./crypto.js";
 import type { Db, Queryable, QueryResult, Row } from "./db.js";
@@ -24,6 +25,7 @@ export class Repositories {
   readonly inbound: InboundRepository;
   readonly approvals: ApprovalsRepository;
   readonly secrets: SecretsRepository;
+  readonly channels: ChannelsRepository;
 
   constructor(q: Queryable, box: SecretBox) {
     this.dots = new DotsRepository(q);
@@ -33,6 +35,7 @@ export class Repositories {
     this.inbound = new InboundRepository(q);
     this.approvals = new ApprovalsRepository(q);
     this.secrets = new SecretsRepository(q, box);
+    this.channels = new ChannelsRepository(q);
   }
 }
 

@@ -96,6 +96,15 @@ export class EventsRepository {
     return rows.map(toStored);
   }
 
+  /** The `user.message` event whose data carries this message id, or null. */
+  async userMessage(dotId: string, messageId: string): Promise<StoredEvent | null> {
+    const { rows } = await this.q.query<EventRow>(
+      "SELECT * FROM events WHERE dot_id = $1 AND type = 'user.message' AND data->>'message_id' = $2 LIMIT 1",
+      [dotId, messageId],
+    );
+    return rows[0] ? toStored(rows[0]) : null;
+  }
+
   /** The newest events of a Dot, returned oldest first (for `logs`-style tails). */
   async tail(dotId: string, count: number): Promise<StoredEvent[]> {
     const { rows } = await this.q.query<EventRow>(

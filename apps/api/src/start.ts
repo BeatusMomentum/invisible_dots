@@ -4,6 +4,7 @@
  * first start needs. `invisible-dots server` calls `runServer`; tests call
  * `startServer` and close the handle themselves.
  */
+import { ChannelHub, type ChannelType } from "@invisible-dots/channels";
 import type { Database } from "@invisible-dots/database";
 import { errorMessage, prefixedStderrLogger, Scheduler, type ComputerDriver, type Logger, type SchedulerOptions } from "@invisible-dots/scheduler";
 import { ensureDir, ENV, hostPaths, type HostPaths } from "@invisible-dots/shared";
@@ -23,6 +24,8 @@ export interface StartServerOptions {
   driver?: ComputerDriver;
   /** Passed through to the Scheduler (timers, lifecycle and dispatcher tuning). */
   scheduler?: Omit<SchedulerOptions, "db" | "driver" | "logger">;
+  /** The kinds of messaging channel this server can run; default the real adapters. Tests pass fakes. */
+  channelTypes?: readonly ChannelType[];
 }
 
 export interface RunningServer {
@@ -37,8 +40,10 @@ export interface RunningServer {
   created: { apiToken: boolean; masterKey: boolean };
   app: FastifyInstance;
   scheduler: Scheduler;
+  /** The messaging channels of the Dots: pairing, and the messages between a chat and its Dot. */
+  channels: ChannelHub;
   db: Database;
-  /** Stop the API, the scheduler and the database. VMs keep running. Idempotent. */
+  /** Stop the API, the channels, the scheduler and the database. VMs keep running. Idempotent. */
   close(): Promise<void>;
 }
 
@@ -86,10 +91,19 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
       logger: options.logger ?? prefixedStderrLogger("scheduler", debug),
     });
     cleanup.push(() => scheduler.close());
+    // Next to the Scheduler, using only what it offers; registered after it, so it stops first.
+    const channels = new ChannelHub({
+      db,
+      host: scheduler,
+      types: options.channelTypes ?? [],
+      logger: options.logger ?? prefixedStderrLogger("channels", debug),
+    });
+    cleanup.push(() => channels.close());
     const app = buildServer({ scheduler, token: token.value, logger });
     cleanup.push(() => app.close());
 
     await scheduler.start();
+    await channels.start();
     await app.listen({ host: listen.host, port: listen.port });
     const bound = app.server.address();
     const address: ListenAddress = typeof bound === "object" && bound ? { host: listen.host, port: bound.port } : listen;
@@ -107,6 +121,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
       created: { apiToken: token.created, masterKey: masterKey.created },
       app,
       scheduler,
+      channels,
       db,
       close: () => (closing ??= unwind()),
     };

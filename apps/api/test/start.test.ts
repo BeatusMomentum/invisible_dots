@@ -8,9 +8,10 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FakeDriver } from "@invisible-dots/scheduler/testing";
+import { FakeChannelType } from "@invisible-dots/channels/testing";
+import { FakeDriver, waitFor } from "@invisible-dots/scheduler/testing";
 import { InvisibleDotsClient } from "@invisible-dots/sdk";
-import { permissionBitsEnforced } from "@invisible-dots/shared";
+import { newId, parseDotConfig, permissionBitsEnforced } from "@invisible-dots/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { startServer, STOP_SIGNALS, untilStopSignal, type RunningServer, type StartServerOptions } from "../src/index.js";
 
@@ -114,6 +115,25 @@ describe("startServer on an empty INVISIBLE_DOTS_HOME", { timeout: 120_000 }, ()
     expect(second.created).toEqual({ apiToken: false, masterKey: false });
     expect(second.token).toBe(token);
     expect(await second.db.secrets.openRouterKey("dot_none")).toBe("sk-or-kept");
+  });
+
+  it("starts the channels stored in the database with the server and stops them when it closes", async () => {
+    const first = await start({ channelTypes: [new FakeChannelType()] });
+    const dotId = newId("dot");
+    await first.db.dots.insert({
+      id: dotId,
+      config: parseDotConfig("name: channeled\ngoal: test goal\nmodel:\n  provider: openrouter\n  id: test/model\n"),
+      status: "DISABLED",
+    });
+    await first.channels.add(dotId, "telegram");
+    await stopped(first);
+
+    const type = new FakeChannelType();
+    const second = await start({ channelTypes: [type] });
+    const channel = await waitFor(() => type.channels.at(-1)?.sink && type.channels.at(-1), "the stored channel to run");
+    expect(await second.channels.list(dotId)).toHaveLength(1);
+    await stopped(second);
+    expect(channel.sink).toBeNull();
   });
 
   it("refuses a second server on the same home while the first runs", async () => {

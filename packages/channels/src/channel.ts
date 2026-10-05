@@ -1,0 +1,112 @@
+/**
+ * What a messaging channel is to the hub. An adapter (Telegram, WhatsApp) is transport only: it
+ * connects, turns what arrives into `InboundChat`, and sends text. Every policy lives in the hub:
+ * who may talk, pairing, rate limits, idempotency, where a reply goes, retries and backoff.
+ */
+import type { ChannelKind, ChannelStatus } from "@invisible-dots/shared";
+import type { ChannelBindingRecord, SecretsRepository } from "@invisible-dots/database";
+
+/** One message from a person, as the adapter saw it. */
+export interface InboundChat {
+  /** The channel's own id for this message (a Telegram update id), unique per binding: a redelivery has the same one. */
+  externalId: string;
+  /** The channel's stable id for the sender (a Telegram numeric user id), never a mutable name. */
+  peerId: string;
+  /** Where the sender wrote from; the answer goes back to it. */
+  chatId: string;
+  text: string;
+  /** A private chat with the bot. The hub drops everything else: a group would show prompts and answers to its members. */
+  direct: boolean;
+  /** How the sender is named in the channel, for the list of paired people; the hub falls back to `peerId`. */
+  label?: string;
+}
+
+/** A person who sent the one-time code from `/start <code>` or the like. */
+export interface PairingAttempt {
+  code: string;
+  peerId: string;
+  chatId: string;
+  label?: string;
+}
+
+/** Where the connection stands, as the adapter reports it. `account` is the channel's public name for the account (a bot's username). */
+export interface ChannelStatusReport {
+  status: ChannelStatus;
+  /** Why, for `error`. Never a credential: the hub stores and publishes it. */
+  detail?: string;
+  account?: string;
+}
+
+/** What the hub gives an adapter to report to. */
+export interface ChannelSink {
+  /**
+   * An authorized-or-not message arrived. Resolves once the hub is done with it (handed to the Dot, or
+   * dropped), and only then may the adapter commit its offset; rejects when it could not be recorded, so the
+   * adapter keeps the message and offers it again.
+   */
+  inbound(message: InboundChat): Promise<void>;
+  /** Resolves true when the code paired the sender, false when it is wrong, expired or used (the adapter says nothing to a stranger). */
+  pairing(attempt: PairingAttempt): Promise<boolean>;
+  status(report: ChannelStatusReport): void;
+}
+
+export interface ChannelCapabilities {
+  /** The most characters one message can hold; the hub splits longer text. */
+  maxText: number;
+  /** `typing` shows a typing indicator. */
+  typing: boolean;
+}
+
+export interface Channel {
+  readonly capabilities: ChannelCapabilities;
+  /**
+   * Connect and deliver messages to `sink` until `signal` aborts, then disconnect and resolve. Report
+   * `connecting` and `connected` through `sink.status`. Rejecting means the connection cannot continue: the
+   * hub reports `error`, waits (exponential backoff) and calls `run` again on a fresh instance. Rejecting with
+   * `ChannelNeedsRelinkError` means only the person can fix it (a revoked token, a logged-out device): the
+   * hub reports `needs_relink` and does not call `run` again.
+   */
+  run(sink: ChannelSink, signal: AbortSignal): Promise<void>;
+  /** Send one message of at most `capabilities.maxText` characters. Failures: see `ChannelSendError`. */
+  sendText(chatId: string, text: string): Promise<void>;
+  /** Show that the Dot is working on an answer; best effort, a failure is ignored. */
+  typing?(chatId: string): Promise<void>;
+}
+
+/** A send that failed. A plain `Error` counts as retryable (a network failure); only this class can say it is not. */
+export class ChannelSendError extends Error {
+  constructor(
+    message: string,
+    readonly options: {
+      /** False when sending again cannot work (the person blocked the bot): the hub drops the message. */
+      retryable: boolean;
+      /** What the channel asked for (a 429's `retry_after`); the hub waits at least this long. */
+      retryAfterMs?: number;
+    },
+  ) {
+    super(message);
+    this.name = "ChannelSendError";
+  }
+}
+
+/** Only the person can fix the connection: a revoked token, a logged-out device. */
+export class ChannelNeedsRelinkError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ChannelNeedsRelinkError";
+  }
+}
+
+/** One kind of channel: how to make its adapter for a binding, and what a binding of it owns besides its rows. */
+export interface ChannelType {
+  readonly kind: ChannelKind;
+  /**
+   * The names of the secrets (scope = the Dot's id) a binding of this kind keeps. They are the only credential
+   * names the hub stores for it, and they are deleted with the binding; they are never pushed to the guest.
+   */
+  readonly secretNames: readonly string[];
+  /** The adapter for `binding`, reading its credentials from `secrets`. Throws when they are missing. */
+  create(binding: ChannelBindingRecord, secrets: Pick<SecretsRepository, "get">): Promise<Channel>;
+  /** The link that opens the channel with the code filled in, or null when the channel has none. `account` is what the adapter reported. */
+  pairingLink?(account: string | null, code: string): string | null;
+}

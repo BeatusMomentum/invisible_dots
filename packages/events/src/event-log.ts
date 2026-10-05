@@ -53,7 +53,7 @@ function matches(filter: EventFilter, event: StoredEvent): boolean {
 }
 
 /** The part of the events repository the log needs; tests can hand in an in-memory one. */
-export type EventStore = Pick<EventsRepository, "insertHost" | "list" | "tail">;
+export type EventStore = Pick<EventsRepository, "insertHost" | "list" | "tail" | "userMessage">;
 
 export class EventLog {
   readonly #subscribers = new Set<Subscriber>();
@@ -120,6 +120,11 @@ export class EventLog {
 
   tail(dotId: string, count: number): Promise<StoredEvent[]> {
     return this.repo.tail(dotId, count);
+  }
+
+  /** The logged `user.message` of this message id (the `in_reply_to` of an answer), or null. */
+  userMessage(dotId: string, messageId: string): Promise<StoredEvent | null> {
+    return this.repo.userMessage(dotId, messageId);
   }
 
   /** Hand a stored event to every matching subscriber. A throwing listener does not stop the others. */
