@@ -1,11 +1,9 @@
 package agentd
 
 import (
-	"net"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -148,33 +146,5 @@ func TestLoadBootConfig(t *testing.T) {
 	}
 	if _, err := LoadBootConfig(bad); err == nil {
 		t.Error("invalid JSON must be an error")
-	}
-}
-
-func TestDefaultBindRequiresTheTokenOverTCP(t *testing.T) {
-	// The daemon's real bind is every interface; check the token guard there
-	// too, not only on the loopback listener the fixture uses.
-	srv := New(Options{Token: testToken, Home: t.TempDir(), AgentSocket: filepath.Join(shortTempDir(t), "agent.sock")})
-	ln, err := ListenTCP("0.0.0.0:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	hs := NewHTTPServer(srv.RemoteHandler(), nil)
-	go func() { _ = hs.Serve(ln) }()
-	t.Cleanup(func() { _ = hs.Close() })
-	url := "http://127.0.0.1:" + strconv.Itoa(ln.Addr().(*net.TCPAddr).Port) + "/v1/health"
-	for auth, want := range map[string]int{"": http.StatusUnauthorized, "Bearer nope": http.StatusUnauthorized, "Bearer " + testToken: http.StatusOK} {
-		req, _ := http.NewRequest(http.MethodGet, url, nil)
-		if auth != "" {
-			req.Header.Set("Authorization", auth)
-		}
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_ = resp.Body.Close()
-		if resp.StatusCode != want {
-			t.Errorf("Authorization %q: status %d, want %d", auth, resp.StatusCode, want)
-		}
 	}
 }

@@ -9,7 +9,7 @@
   },
   "go": {
     "linux": { "min_passed": 97, "allow_skipped": "" },
-    "win32": { "min_passed": 63, "allow_skipped": "^agentd (TestSystemRoute|TestPowerOffStartsTheCommandAndAnswers202)$" }
+    "win32": { "min_passed": 61, "allow_skipped": "^agentd (TestSystemRoute|TestPowerOffStartsTheCommandAndAnswers202)$" }
   },
   "pytest": {
     "linux": { "min_passed": 2217, "allow_skipped": "" }

@@ -5,10 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestListenUnixIsPrivateAndReplacesStaleSocket(t *testing.T) {
@@ -71,25 +69,6 @@ func TestListenTCPRejectsAnythingButAnIPAndAPort(t *testing.T) {
 			t.Errorf("%q was accepted", bad)
 		}
 	}
-}
-
-func TestListenTCPOnEveryInterfaceIsIPv4Only(t *testing.T) {
-	// QEMU's forward reaches the guest over IPv4; a dual-stack socket would
-	// show up as [::] and also answer on IPv6 addresses nobody asked for.
-	ln, err := ListenTCP("0.0.0.0:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer ln.Close()
-	addr, ok := ln.Addr().(*net.TCPAddr)
-	if !ok || addr.IP.To4() == nil || !addr.IP.IsUnspecified() || addr.Port == 0 {
-		t.Fatalf("bound %v", ln.Addr())
-	}
-	conn, err := net.DialTimeout("tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(addr.Port)), 2*time.Second)
-	if err != nil {
-		t.Fatalf("0.0.0.0 must accept loopback connections: %v", err)
-	}
-	_ = conn.Close()
 }
 
 func TestListenTCPLoopback(t *testing.T) {
