@@ -213,11 +213,24 @@ describe("computerResources", () => {
 });
 
 describe("toRuntimeConfig / parseRuntimeConfig", () => {
-  it("drops the computer section and nothing else", () => {
+  it("drops the computer section and resolves permissions, and changes nothing else", () => {
     const config = parseDotConfig(FULL_YAML);
     const runtime = toRuntimeConfig(config);
     expect(runtime).not.toHaveProperty("computer");
-    expect({ ...runtime, computer: config.computer }).toEqual(config);
+    const { permissions, ...rest } = runtime;
+    const { computer: _computer, permissions: _explicit, ...expectedRest } = config;
+    expect(rest).toEqual(expectedRest);
+    expect(Object.keys(permissions).sort()).toEqual([...PERMISSIONS].sort());
+  });
+
+  it("gives the guest every permission's decision, so the guest never needs the defaults", () => {
+    const config = parseDotConfig({ ...MINIMAL, permissions: { "computer.exec": "deny" } });
+    const runtime = toRuntimeConfig(config);
+    for (const permission of PERMISSIONS) {
+      expect(runtime.permissions[permission]).toBe(resolvePermission(config, permission));
+    }
+    expect(runtime.permissions["computer.exec"]).toBe("deny");
+    expect(runtime.permissions["message.send"]).toBe("ask");
   });
 
   it("round-trips through the guest validator", () => {
@@ -234,9 +247,10 @@ describe("toRuntimeConfig / parseRuntimeConfig", () => {
 describe("resolvePermission", () => {
   const defaults = parseDotConfig(MINIMAL);
 
-  it("allows every known permission by default except identity deletion", () => {
+  it("allows every known permission by default except those that act beyond the Dot's computer", () => {
+    const asks = new Set(["browser.identity.delete", "message.send", "automations", "subagents"]);
     for (const permission of PERMISSIONS) {
-      expect(resolvePermission(defaults, permission)).toBe(permission === "browser.identity.delete" ? "ask" : "allow");
+      expect(resolvePermission(defaults, permission)).toBe(asks.has(permission) ? "ask" : "allow");
     }
   });
 

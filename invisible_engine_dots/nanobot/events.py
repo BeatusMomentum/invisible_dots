@@ -59,15 +59,6 @@ class RetryStatusEvent(AgentEvent):
 
 
 @dataclass(frozen=True)
-class RecoveryStateEvent(AgentEvent):
-    status: str
-    recovery_id: str
-    reason: str | None = None
-    attempts: int = 0
-    can_continue: bool | None = None
-
-
-@dataclass(frozen=True)
 class EventSink:
     """A thin send callback bound to one operation's MessageBus route.
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, cast
 
 from nanobot.agent.tools.base import ToolResult, tool_parameters
@@ -14,7 +13,8 @@ from nanobot.agent.tools.schema import (
     StringSchema,
     tool_parameters_schema,
 )
-from nanobot.utils.file_edit_events import FileDiff, FileEditResult, display_file_edit_path
+from nanobot.dots.computer import WRONG_KIND, ComputerError
+from nanobot.utils.file_diff import FileDiff
 
 
 class _PatchError(ValueError):
@@ -48,7 +48,7 @@ def _append_text(content: str, addition: str) -> str:
             items=ObjectSchema(
                 path=StringSchema(
                     "Path to the file to edit. Relative paths resolve against the "
-                    "workspace; absolute paths and '..' obey the workspace access policy."
+                    "workspace (/home/dot/workspace)."
                 ),
                 action=StringSchema(
                     "Operation type: replace or add.",
@@ -77,7 +77,6 @@ def _append_text(content: str, addition: str) -> str:
 )
 class ApplyPatchTool(_FsTool):
     """Apply file edits by providing structured edit instructions."""
-    _scopes = {"core", "subagent"}
 
     @property
     def name(self) -> str:
@@ -89,7 +88,7 @@ class ApplyPatchTool(_FsTool):
             "Default tool for code edits. Supports multi-file changes in a single call. "
             "Provide a list of structured edits, each specifying a file path, action "
             "(replace/add), and the exact text to change. "
-            "Paths are resolved by the current workspace access policy. "
+            "Relative paths resolve against /home/dot/workspace. "
             "Set dry_run=true to validate and preview without writing files. "
             "Use edit_file only for small exact replacements on a single file."
         )
@@ -104,9 +103,9 @@ class ApplyPatchTool(_FsTool):
             if not edits:
                 raise _PatchError("must provide edits")
 
-            writes: dict[Path, str] = {}
-            originals: dict[Path, str] = {}
-            actions: dict[Path, str] = {}
+            writes: dict[str, str] = {}
+            originals: dict[str, str] = {}
+            actions: dict[str, str] = {}
 
             for edit_value in edits:
                 if not isinstance(edit_value, dict):
@@ -119,7 +118,7 @@ class ApplyPatchTool(_FsTool):
                 action = edit.get("action")
                 if not isinstance(action, str):
                     raise _PatchError(f"action required for edit: {path}")
-                source = self._resolve_write(path)
+                source = self._resolve(path)
 
                 if action == "add":
                     new_text = edit.get("new_text")
@@ -131,16 +130,17 @@ class ApplyPatchTool(_FsTool):
                     if pending is not None:
                         content = pending
                         exists = True
-                    elif source.exists():
-                        raw = source.read_bytes()
-                        try:
-                            content = raw.decode("utf-8")
-                        except UnicodeDecodeError:
-                            raise _PatchError(f"file is not UTF-8 text: {path}")
-                        exists = True
                     else:
-                        content = ""
-                        exists = False
+                        raw = await self.computer.read_bytes(source)
+                        if raw is not None:
+                            try:
+                                content = raw.decode("utf-8")
+                            except UnicodeDecodeError:
+                                raise _PatchError(f"file is not UTF-8 text: {path}")
+                            exists = True
+                        else:
+                            content = ""
+                            exists = False
 
                     if exists:
                         uses_crlf = "\r\n" in content
@@ -169,17 +169,19 @@ class ApplyPatchTool(_FsTool):
                     pending = writes.get(source)
                     if pending is not None:
                         content = pending
-                    elif source.exists():
-                        raw = source.read_bytes()
+                    else:
+                        try:
+                            raw = await self.computer.read_bytes(source)
+                        except ComputerError as exc:
+                            if exc.status_code == WRONG_KIND:
+                                raise _PatchError(f"path to update is not a file: {path}")
+                            raise
+                        if raw is None:
+                            raise _PatchError(f"file to update does not exist: {path}")
                         try:
                             content = raw.decode("utf-8")
                         except UnicodeDecodeError:
                             raise _PatchError(f"file is not UTF-8 text: {path}")
-                    else:
-                        raise _PatchError(f"file to update does not exist: {path}")
-
-                    if pending is None and not source.is_file():
-                        raise _PatchError(f"path to update is not a file: {path}")
 
                     uses_crlf = "\r\n" in content
                     norm_content = content.replace("\r\n", "\n")
@@ -210,42 +212,33 @@ class ApplyPatchTool(_FsTool):
                 originals.setdefault(source, content)
                 actions.setdefault(source, action_name)
 
-            diffs = {
-                source: FileDiff.from_text(originals[source], content)
-                for source, content in writes.items()
-            }
             summaries: list[str] = []
-            for source, diff in diffs.items():
-                action_name = actions[source]
-                path = display_file_edit_path(source, self._display_workspace())
-                added, deleted = diff.added, diff.deleted
-                stats = f" (+{added}/-{deleted})" if added or deleted else ""
-                summaries.append(f"- {action_name} {path}{stats}")
+            for source, content in writes.items():
+                diff = FileDiff.from_text(originals[source], content)
+                stats = f" (+{diff.added}/-{diff.deleted})" if diff.added or diff.deleted else ""
+                summaries.append(f"- {actions[source]} {self._display_path(source)}{stats}")
 
             if dry_run:
                 return "Patch dry-run succeeded:\n" + "\n".join(summaries)
 
-            backups: dict[Path, bytes | None] = {}
-            for path in writes:
-                backups[path] = path.read_bytes() if path.exists() else None
+            backups: dict[str, bytes | None] = {}
+            for source in writes:
+                backups[source] = await self.computer.read_bytes(source)
 
             try:
-                for path, content in writes.items():
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text(content, encoding="utf-8", newline="")
+                for source, content in writes.items():
+                    await self.computer.write_bytes(source, content.encode("utf-8"))
             except Exception:
-                for path, data in backups.items():
+                for source, data in backups.items():
                     if data is None:
-                        if path.exists():
-                            path.unlink()
+                        await self.computer.run(["rm", "-f", "--", source])
                     else:
-                        path.parent.mkdir(parents=True, exist_ok=True)
-                        path.write_bytes(data)
+                        await self.computer.write_bytes(source, data)
                 raise
 
-            for path in writes:
-                self._file_states.record_write(path)
-            return FileEditResult("Patch applied:\n" + "\n".join(summaries), diffs)
+            for source in writes:
+                self._file_states.record_write(source)
+            return "Patch applied:\n" + "\n".join(summaries)
         except PermissionError as exc:
             return ToolResult.error(f"Error: {exc}")
         except _PatchError as exc:

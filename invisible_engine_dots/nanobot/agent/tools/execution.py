@@ -1,50 +1,51 @@
-"""Execute tool calls and turn their outcomes into model observations."""
+"""Execute tool calls and turn their outcomes into model observations.
+
+`_admit_tool_call` and `_run_tool_call` are the one boundary every tool execution
+crosses. The policy gate (a `ToolGate`, required: no call runs without one) decides
+in `_admit_tool_call`, on the final arguments the tool would run with and before
+anything runs: nothing else in the engine can start a tool. A batch of calls that
+run together is decided in full, in the order of the response, before any of its
+calls starts.
+"""
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import nullcontext
+from dataclasses import dataclass
 from functools import cache
-from typing import Any, cast
-
-from loguru import logger
+from typing import Any
 
 from nanobot.agent.hook import AgentHook, AgentHookContext
-from nanobot.agent.tools.context import tool_log_content_allowed
+from nanobot.agent.tools.base import Tool, ToolResult
 from nanobot.agent.tools.file_state import file_read_context
+from nanobot.agent.tools.gate_types import SKIPPED_MESSAGE, Deny, GateCall, Park, ToolGate
 from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
 from nanobot.providers.base import ToolCallRequest
-from nanobot.utils.runtime import (
-    repeated_external_lookup_error,
-    repeated_workspace_violation_error,
-)
 
 _RETRY_HINT = "\n\n[Analyze the error above and try a different approach.]"
-# SSRF is a hard security block at the tool boundary, but the agent turn
-# should recover conversationally instead of aborting the runtime.
-_SSRF_MARKERS: tuple[str, ...] = (
-    "internal/private url detected",
-    "private/internal address",
-    "private address",
-)
-_SSRF_BOUNDARY_NOTE = (
-    "This is a non-bypassable security boundary. Stop trying to access "
-    "private/internal URLs. Do not retry with curl, wget, encoded IPs, "
-    "alternate DNS, redirects, proxies, or another tool. Ask the user for "
-    "local files, logs, screenshots, or an explicit safe public URL instead. "
-    "If the user explicitly trusts this private URL, ask them to whitelist "
-    "the exact IP/CIDR via tools.ssrfWhitelist."
-)
-# Non-SSRF boundary markers returned to the model as recoverable tool errors.
-_WORKSPACE_VIOLATION_MARKERS: tuple[str, ...] = (
-    "outside the configured workspace",
-    "outside allowed directory",
-    "working_dir is outside",
-    "working_dir could not be resolved",
-    "path outside working dir",
-    "path traversal detected",
-)
+
+# Event statuses besides "ok" and "error": a call that waits for the user's approval,
+# and a call of the same response that came after it and was not run either.
+STATUS_PARKED = "parked"
+STATUS_SKIPPED = "skipped"
+
+
+@dataclass(frozen=True)
+class _Admitted:
+    """A call the gate let through: the tool and the arguments it runs with."""
+
+    tool: Tool
+    params: Any
+
+
+# What a call came to without running: its result and its event.
+_Outcome = tuple[Any, dict[str, str]]
+
+
+# Awaited with a call, its result and its event as soon as the call has one.
+ResultCallback = Callable[[ToolCallRequest, Any, dict[str, str]], Awaitable[None]]
 
 
 def _with_retry_hint(payload: str) -> str:
@@ -59,14 +60,22 @@ async def execute_tool_calls(
     tool_calls: list[ToolCallRequest],
     *,
     concurrent: bool,
-    external_lookup_counts: dict[str, int],
-    workspace_violation_counts: dict[str, int],
     hook: AgentHook,
     context: AgentHookContext,
+    gate: ToolGate,
     model_messages: list[dict[str, Any]] | None = None,
     compacted_tool_results: set[str] | None = None,
+    on_result: ResultCallback | None = None,
 ) -> tuple[list[Any], list[dict[str, str]]]:
-    """Execute one model response's tool calls in stable result order."""
+    """Execute one model response's tool calls in stable result order.
+
+    The gate decides every call of a batch, in order, before any call of the batch
+    runs. A call it parks ends the round: every call of the response after it, in
+    its batch or in a later one, is not decided, not run and says so. The calls
+    before it were allowed and run. `on_result` is awaited with each call's result
+    and event in the order of the calls: right after the call when it runs alone,
+    after its batch when it ran concurrently.
+    """
     @cache
     def read_results() -> dict[str, str]:
         """Index once, on the first read-dedup check in this batch."""
@@ -78,73 +87,64 @@ async def execute_tool_calls(
             and isinstance(message.get("content"), str)
             and message["tool_call_id"] not in (compacted_tool_results or ())
         }
-    tool_results: list[tuple[Any, dict[str, str]]] = []
+    tool_results: list[_Outcome] = []
+    parked = False
     for batch in _partition_tool_batches(tools, tool_calls, concurrent=concurrent):
-        if concurrent and len(batch) > 1:
-            batch_results = await asyncio.gather(*(
-                _execute_tool_call(
-                    tools,
-                    tool_call,
-                    external_lookup_counts,
-                    workspace_violation_counts,
-                    hook,
-                    context,
-                    read_results,
-                )
-                for tool_call in batch
-            ))
-            tool_results.extend(batch_results)
+        admissions: list[_Admitted | _Outcome] = []
+        for tool_call in batch:
+            admission = (
+                _skip_tool_call(tool_call, context, gate)
+                if parked
+                else _admit_tool_call(tools, tool_call, context, gate)
+            )
+            admissions.append(admission)
+            if not isinstance(admission, _Admitted) and admission[1]["status"] == STATUS_PARKED:
+                parked = True
+        runs = [
+            (tool_call, admission)
+            for tool_call, admission in zip(batch, admissions)
+            if isinstance(admission, _Admitted)
+        ]
+        if len(runs) > 1:
+            ran = iter(await asyncio.gather(*(
+                _run_tool_call(tool_call, admission, hook, context, read_results)
+                for tool_call, admission in runs
+            )))
         else:
-            for tool_call in batch:
-                result = await _execute_tool_call(
-                    tools,
-                    tool_call,
-                    external_lookup_counts,
-                    workspace_violation_counts,
-                    hook,
-                    context,
-                    read_results,
-                )
-                tool_results.append(result)
+            ran = iter([
+                await _run_tool_call(tool_call, admission, hook, context, read_results)
+                for tool_call, admission in runs
+            ])
+        outcomes = [next(ran) if isinstance(admission, _Admitted) else admission for admission in admissions]
+        for tool_call, (result, event) in zip(batch, outcomes):
+            if on_result is not None:
+                await on_result(tool_call, result, event)
+            tool_results.append((result, event))
 
     results = [result for result, _event in tool_results]
     events = [event for _result, event in tool_results]
     return results, events
 
 
-async def _execute_tool_call(
+def _skip_tool_call(tool_call: ToolCallRequest, context: AgentHookContext, gate: ToolGate) -> _Outcome:
+    """The outcome of a call that is not run because an earlier call of its response parked."""
+    gate.skip(tool_call.id, context.session_key)
+    event = {
+        "name": tool_call.name,
+        "status": STATUS_SKIPPED,
+        "detail": "an earlier call is waiting for approval",
+    }
+    return SKIPPED_MESSAGE, event
+
+
+def _admit_tool_call(
     tools: ToolRegistry,
     tool_call: ToolCallRequest,
-    external_lookup_counts: dict[str, int],
-    workspace_violation_counts: dict[str, int],
-    hook: AgentHook,
     context: AgentHookContext,
-    read_results: Callable[[], dict[str, str]],
-) -> tuple[Any, dict[str, str]]:
-    lookup_error = repeated_external_lookup_error(
-        tool_call.name,
-        tool_call.arguments,
-        external_lookup_counts,
-    )
-    if lookup_error:
-        event = {
-            "name": tool_call.name,
-            "status": "error",
-            "detail": "repeated external lookup blocked",
-        }
-        return _with_retry_hint(lookup_error), event
-
-    prepare_call = cast(
-        Callable[[str, Any], object] | None,
-        getattr(tools, "prepare_call", None),
-    )
-    tool, params, prep_error = None, tool_call.arguments, None
-    if callable(prepare_call):
-        prepared = prepare_call(tool_call.name, tool_call.arguments)
-        if isinstance(prepared, tuple):
-            prepared_tuple = cast(tuple[object, ...], prepared)
-            if len(prepared_tuple) == 3:
-                tool, params, prep_error = cast(tuple[Any, Any, str | None], prepared_tuple)
+    gate: ToolGate,
+) -> _Admitted | _Outcome:
+    """Prepare one call and put it to the gate: the call to run, or the outcome that stands in for it."""
+    tool, params, prep_error = tools.prepare_call(tool_call.name, tool_call.arguments)
     if prep_error:
         payload = _with_retry_hint(prep_error)
         event = {
@@ -152,27 +152,43 @@ async def _execute_tool_call(
             "status": "error",
             "detail": prep_error.split(": ", 1)[-1][:120],
         }
-        handled = _classify_violation(
-            raw_text=prep_error,
-            soft_payload=payload,
-            event=event,
-            tool_call=tool_call,
-            workspace_violation_counts=workspace_violation_counts,
-        )
-        if handled is not None:
-            return handled
         return payload, event
+    assert tool is not None  # prepare_call yields the tool whenever it reports no error
 
+    decision = gate.decide(GateCall(tool_call.name, params, tool_call.id, context.session_key))
+    if isinstance(decision, Deny):
+        # A policy denial is final: no hint to try another way round it.
+        event = {
+            "name": tool_call.name,
+            "status": "error",
+            "detail": decision.reason[:120],
+        }
+        return ToolResult.error(decision.reason), event
+    if isinstance(decision, Park):
+        event = {
+            "name": tool_call.name,
+            "status": STATUS_PARKED,
+            "detail": f"waiting for approval {decision.approval_id}",
+        }
+        return decision.message, event
+    return _Admitted(tool, params)
+
+
+async def _run_tool_call(
+    tool_call: ToolCallRequest,
+    admitted: _Admitted,
+    hook: AgentHook,
+    context: AgentHookContext,
+    read_results: Callable[[], dict[str, str]],
+) -> _Outcome:
+    tool, params = admitted.tool, admitted.params
     await hook.before_execute_tool(context, tool_call, tool, params)
     try:
         with (
             file_read_context(tool_call.id, read_results)
             if tool_call.name == "read_file" else nullcontext()
         ):
-            if tool is not None:
-                result = await tool.execute(**params)
-            else:
-                result = await tools.execute(tool_call.name, params)
+            result = await tool.execute(**params)
     except asyncio.CancelledError:
         raise
     except Exception as exc:
@@ -183,15 +199,6 @@ async def _execute_tool_call(
             "detail": str(exc),
         }
         payload = _with_retry_hint(f"Error: {type(exc).__name__}: {exc}")
-        handled = _classify_violation(
-            raw_text=str(exc),
-            soft_payload=payload,
-            event=event,
-            tool_call=tool_call,
-            workspace_violation_counts=workspace_violation_counts,
-        )
-        if handled is not None:
-            return handled
         return payload, event
 
     if is_tool_error_result(result):
@@ -202,15 +209,6 @@ async def _execute_tool_call(
             "status": "error",
             "detail": result.replace("\n", " ").strip()[:120],
         }
-        handled = _classify_violation(
-            raw_text=result,
-            soft_payload=payload,
-            event=event,
-            tool_call=tool_call,
-            workspace_violation_counts=workspace_violation_counts,
-        )
-        if handled is not None:
-            return handled
         return payload, event
 
     await hook.after_execute_tool(context, tool_call, tool, params, result)
@@ -222,73 +220,6 @@ async def _execute_tool_call(
     elif len(detail) > 120:
         detail = detail[:120] + "..."
     return result, {"name": tool_call.name, "status": "ok", "detail": detail}
-
-
-def is_ssrf_violation(text: str) -> bool:
-    """Return whether a tool error describes a blocked private-network request."""
-    if not text:
-        return False
-    lowered = text.lower()
-    return any(marker in lowered for marker in _SSRF_MARKERS)
-
-
-def _is_workspace_violation(text: str) -> bool:
-    """Return whether text describes any workspace or network boundary rejection."""
-    if not text:
-        return False
-    lowered = text.lower()
-    if is_ssrf_violation(lowered):
-        return True
-    return any(marker in lowered for marker in _WORKSPACE_VIOLATION_MARKERS)
-
-
-def _classify_violation(
-    *,
-    raw_text: str,
-    soft_payload: str,
-    event: dict[str, str],
-    tool_call: ToolCallRequest,
-    workspace_violation_counts: dict[str, int],
-) -> tuple[Any, dict[str, str]] | None:
-    if is_ssrf_violation(raw_text):
-        logger.warning(
-            "Tool {} blocked by SSRF guard; returning non-retryable tool error: {}",
-            tool_call.name,
-            raw_text.replace("\n", " ").strip()[:200]
-            if tool_log_content_allowed() else "[content hidden]",
-        )
-        event["detail"] = _event_detail("ssrf_violation: ", raw_text)
-        return _ssrf_soft_payload(raw_text), event
-
-    if _is_workspace_violation(raw_text):
-        escalation = repeated_workspace_violation_error(
-            tool_call.name,
-            tool_call.arguments,
-            workspace_violation_counts,
-        )
-        event["detail"] = _event_detail("workspace_violation: ", raw_text)
-        if escalation is not None:
-            logger.warning(
-                "Tool {} hit workspace boundary repeatedly; escalating hint",
-                tool_call.name,
-            )
-            event["detail"] = _event_detail(
-                "workspace_violation_escalated: ",
-                raw_text,
-            )
-            return escalation, event
-        return soft_payload, event
-
-    return None
-
-
-def _ssrf_soft_payload(raw_text: str) -> str:
-    text = raw_text.strip() or "Error: request blocked by SSRF guard"
-    return f"{text}\n\n{_SSRF_BOUNDARY_NOTE}"
-
-
-def _event_detail(prefix: str, text: str, limit: int = 160) -> str:
-    return (prefix + text.replace("\n", " ").strip())[:limit]
 
 
 def _partition_tool_batches(
@@ -303,8 +234,7 @@ def _partition_tool_batches(
     batches: list[list[ToolCallRequest]] = []
     current: list[ToolCallRequest] = []
     for tool_call in tool_calls:
-        get_tool = cast(Callable[[str], Any] | None, getattr(tools, "get", None))
-        tool = get_tool(tool_call.name) if callable(get_tool) else None
+        tool = tools.get(tool_call.name)
         can_batch = bool(tool and tool.concurrency_safe)
         if can_batch:
             current.append(tool_call)

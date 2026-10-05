@@ -4,7 +4,7 @@ import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-
 import { Scheduler } from "@invisible-dots/scheduler";
 import { FakeDriver, ManualClock, waitFor, waitUntilSettledReady } from "@invisible-dots/scheduler/testing";
 import { ApiError, InvisibleDotsClient } from "@invisible-dots/sdk";
-import type { StoredEvent } from "@invisible-dots/shared";
+import { OPENROUTER_KEY_RULE, type StoredEvent } from "@invisible-dots/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildServer, type FastifyInstance } from "../src/index.js";
 
@@ -210,6 +210,26 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     const task = await api.createTask(dot.id, { description: "wake up" });
     await waitFor(async () => (await api.getTask(task.id)).status === "COMPLETED", "task after wake");
     expect((await api.computer(dot.id)).state).toBe("RUNNING");
+  });
+
+  it("the secret route refuses a key that cannot travel in a header with 400, naming the rule and never the key", async () => {
+    const dot = await readyDot("key-check");
+    expect(await api.setOpenRouterKey("sk-or-good", dot.id)).toEqual({ pushed: 1 });
+
+    for (const bad of ["sk-or-v1-SECRETHEAD\nSECRETTAIL", "sk-or-v1-SECRET HEAD", "sk-or-v1-SECRETüHEAD", "SECRET\u0000HEAD"]) {
+      const refused = await api.setOpenRouterKey(bad, dot.id).catch((error: unknown) => error);
+      expect(refused).toBeInstanceOf(ApiError);
+      expect(refused).toMatchObject({ status: 400, code: "invalid_request" });
+      expect((refused as ApiError).message).toContain(OPENROUTER_KEY_RULE);
+      expect((refused as ApiError).message).not.toContain("SECRET");
+    }
+    // Nothing was stored or pushed by the refusals.
+    expect(await db.secrets.get(dot.id, "openrouter_api_key")).toBe("sk-or-good");
+    expect(driver.guestOf(dot.id).openrouterKey).toBe("sk-or-good");
+
+    // A pasted key with its ends trimmed is the key.
+    await api.setOpenRouterKey("  sk-or-padded\n", dot.id);
+    expect(driver.guestOf(dot.id).openrouterKey).toBe("sk-or-padded");
   });
 
   it("PATCH updates the config; DELETE removes the Dot; the secret route stores the key", async () => {

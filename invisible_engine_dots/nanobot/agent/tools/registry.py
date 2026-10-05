@@ -3,13 +3,10 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, cast
+from collections.abc import Iterable
+from typing import Any, cast
 
 from nanobot.agent.tools.base import Tool, ToolResult
-from nanobot.agent.tools.context import ContextAware, current_request_context
-
-if TYPE_CHECKING:
-    from nanobot.runtime_context import RuntimeContextProvider
 
 
 def is_tool_error_result(result: Any) -> bool:
@@ -20,7 +17,8 @@ class ToolRegistry:
     """
     Registry for agent tools.
 
-    Allows dynamic registration and execution of tools.
+    Holds the tools and resolves a call to one of them. Running it belongs to
+    ``execute_tool_calls``, the one path that does.
     """
 
     def __init__(self):
@@ -40,15 +38,6 @@ class ToolRegistry:
     def get(self, name: str) -> Tool | None:
         """Get a tool by name."""
         return self._tools.get(name)
-
-    def get_runtime_context_providers(self) -> list[RuntimeContextProvider]:
-        """Return tool-owned providers in stable tool-name order."""
-        providers: list[RuntimeContextProvider] = []
-        for name in sorted(self._tools):
-            provider = self._tools[name].runtime_context_provider()
-            if provider is not None:
-                providers.append(provider)
-        return providers
 
     @staticmethod
     def _lookup_key(name: str) -> str:
@@ -122,12 +111,6 @@ class ToolRegistry:
                     f"Error: Tool '{name}' not found.{hint} Available: {', '.join(self.tool_names)}"
                 )
             )
-        # Compatibility for external tools that still implement the legacy
-        # setter protocol. Built-ins read the authoritative ContextVar
-        # directly and never copy routing state.
-        if isinstance(tool, ContextAware) and (ctx := current_request_context()) is not None:
-            tool.set_context(ctx)
-
         params = self._coerce_params(tool, params)
         if not isinstance(params, dict):
             return tool, params, (
@@ -184,21 +167,14 @@ class ToolRegistry:
             return arguments_payload
         return cls._coerce_argument_value(arguments_payload.get("arguments"))
 
-    async def execute(self, name: str, params: Any) -> Any:
-        """Execute a tool by name with given parameters."""
-        hint = "\n\n[Analyze the error above and try a different approach.]"
-        tool, params, error = self.prepare_call(name, params)
-        if error:
-            return ToolResult.error(str(error) + hint)
-
-        try:
-            assert tool is not None  # guarded by prepare_call()
-            result = await tool.execute(**params)
-            if is_tool_error_result(result):
-                return ToolResult.error(str(result) + hint)
-            return result
-        except Exception as e:
-            return ToolResult.error(f"Error executing {name}: {str(e)}" + hint)
+    def view(self, names: Iterable[str]) -> ToolRegistry:
+        """A new registry holding only the registered tools called `names`."""
+        wanted = set(names)
+        subset = ToolRegistry()
+        for name, tool in self._tools.items():
+            if name in wanted:
+                subset.register(tool)
+        return subset
 
     @property
     def tool_names(self) -> list[str]:

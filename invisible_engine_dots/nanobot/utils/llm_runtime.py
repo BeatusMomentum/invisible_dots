@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
 
 from nanobot.providers.base import GenerationSettings, LLMProvider
-
-if TYPE_CHECKING:
-    from nanobot.providers.factory import ProviderSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,7 +21,6 @@ class LLMRuntime:
     generation: GenerationSettings
     context_window_tokens: int
     model_preset: str | None = None
-    snapshot_signature: tuple[object, ...] | None = None
 
     @classmethod
     def capture(
@@ -35,7 +30,6 @@ class LLMRuntime:
         *,
         context_window_tokens: int,
         model_preset: str | None = None,
-        snapshot_signature: tuple[object, ...] | None = None,
     ) -> LLMRuntime:
         """Capture provider defaults without retaining mutable generation state."""
         defaults = GenerationSettings()
@@ -54,51 +48,4 @@ class LLMRuntime:
             ),
             context_window_tokens=context_window_tokens,
             model_preset=model_preset,
-            snapshot_signature=snapshot_signature,
         )
-
-    def with_generation_overrides(
-        self,
-        *,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        reasoning_effort: str | None = None,
-    ) -> LLMRuntime:
-        """Return a derived runtime for explicit per-run generation overrides."""
-        generation = self.generation
-        return replace(
-            self,
-            generation=GenerationSettings(
-                temperature=(
-                    generation.temperature if temperature is None else temperature
-                ),
-                max_tokens=generation.max_tokens if max_tokens is None else max_tokens,
-                reasoning_effort=(
-                    generation.reasoning_effort
-                    if reasoning_effort is None
-                    else reasoning_effort
-                ),
-            ),
-        )
-
-
-def runtime_from_provider_snapshot(
-    snapshot: ProviderSnapshot,
-) -> LLMRuntime:
-    """Convert a provider factory snapshot into the canonical runtime value."""
-    if snapshot.generation is not None:
-        return LLMRuntime(
-            provider=snapshot.provider,
-            model=snapshot.model,
-            generation=snapshot.generation,
-            context_window_tokens=snapshot.context_window_tokens,
-            model_preset=snapshot.model_preset,
-            snapshot_signature=snapshot.signature,
-        )
-    return LLMRuntime.capture(
-        snapshot.provider,
-        snapshot.model,
-        context_window_tokens=snapshot.context_window_tokens,
-        model_preset=snapshot.model_preset,
-        snapshot_signature=snapshot.signature,
-    )

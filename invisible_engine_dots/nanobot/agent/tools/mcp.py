@@ -4,10 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
-import os
 import re
-import shutil
 import urllib.parse
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from contextlib import AsyncExitStack, suppress
@@ -15,17 +12,11 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, cast
 
 import httpx
 from loguru import logger
+from pydantic import BaseModel, Field
 
 from nanobot.agent.tools.base import Tool, ToolResult
 from nanobot.agent.tools.context import tool_log_content_allowed
 from nanobot.agent.tools.registry import ToolRegistry
-from nanobot.security.network import (
-    PinnedDNSAsyncTransport,
-    env_proxy_applies_to_url,
-    httpx_env_proxy_mounts,
-    resolve_url_target,
-    validate_url_target,
-)
 from nanobot.utils.cancellation import task_is_cancelling
 
 if TYPE_CHECKING:
@@ -33,8 +24,24 @@ if TYPE_CHECKING:
     from mcp.types import Prompt, Resource
     from mcp.types import Tool as MCPToolDefinition
 
-    from nanobot.agent.tools.mcp_oauth import MCPOAuthHandlers
-    from nanobot.config.schema import Config, MCPServerConfig
+
+
+class MCPServerConfig(BaseModel):
+    """MCP server connection configuration (stdio or HTTP)."""
+
+    type: Literal["stdio", "sse", "streamableHttp"] | None = None  # auto-detected if omitted
+    command: str = ""  # Stdio: command to run (e.g. "npx")
+    args: list[str] = Field(default_factory=list)  # Stdio: command arguments
+    env: dict[str, str] = Field(default_factory=dict)  # Stdio: extra env vars
+    cwd: str = ""  # Stdio: working directory for MCP server runtime artifacts
+    url: str = ""  # HTTP/SSE: endpoint URL
+    headers: dict[str, str] = Field(default_factory=dict)  # HTTP/SSE: custom headers
+    tool_timeout: int = 30  # seconds before a tool call is cancelled
+    # Only register these tools; accepts raw MCP names or wrapped mcp_<server>_<tool> names.
+    # ["*"] = all capabilities (tools, resources, prompts); any restriction = only the
+    # listed tools, no resources or prompts.
+    enabled_tools: list[str] = Field(default_factory=lambda: ["*"])
+
 
 # Transient connection errors that warrant a single retry.
 # These typically happen when an MCP server restarts or a network
@@ -50,14 +57,10 @@ _TRANSIENT_EXC_NAMES: frozenset[str] = frozenset((
     "ConnectionError",
 ))
 
-_WINDOWS_SHELL_LAUNCHERS: frozenset[str] = frozenset(("npx", "npm", "pnpm", "yarn", "bunx"))
-
-# Characters allowed in tool names by model providers (Anthropic, OpenAI, etc.).
+# Characters allowed in tool names by model providers.
 # Replace anything outside [a-zA-Z0-9_-] with underscore and collapse runs.
 _SANITIZE_RE = re.compile(r"_+")
 _ReconnectCallback = Callable[[str, str, Tool], Awaitable[Tool | None]]
-MCPServerLoader = Callable[[], Mapping[str, "MCPServerConfig"]]
-MCPRuntimeStatus = Literal["connecting", "connected", "failed"]
 
 
 class MCPConnection(Protocol):
@@ -242,7 +245,7 @@ async def _probe_http_url(url: str, timeout: float = 3.0) -> bool:
     """Quick TCP probe to check if an HTTP MCP server is reachable.
 
     Avoids entering ``streamable_http_client`` / ``sse_client`` when the port is
-    closed — those transports use anyio task groups whose cleanup can raise
+    closed - those transports use anyio task groups whose cleanup can raise
     ``RuntimeError`` / ``ExceptionGroup`` that escape the caller's try/except
     and crash the event loop.
     """
@@ -251,24 +254,17 @@ async def _probe_http_url(url: str, timeout: float = 3.0) -> bool:
     port = parsed.port
     if not port:
         port = 443 if parsed.scheme == "https" else 80
-    ok, _, resolved_ips = resolve_url_target(url)
-    if not ok:
-        return False
-    if env_proxy_applies_to_url(url):
+    try:
+        _reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(host, port),
+            timeout=timeout,
+        )
+        writer.close()
+        with suppress(OSError, asyncio.TimeoutError):
+            await asyncio.wait_for(writer.wait_closed(), timeout=0.2)
         return True
-    for target_host in resolved_ips or (host,):
-        try:
-            _reader, writer = await asyncio.wait_for(
-                asyncio.open_connection(target_host, port),
-                timeout=timeout,
-            )
-            writer.close()
-            with suppress(OSError, asyncio.TimeoutError):
-                await asyncio.wait_for(writer.wait_closed(), timeout=0.2)
-            return True
-        except (OSError, asyncio.TimeoutError):
-            continue
-    return False
+    except (OSError, asyncio.TimeoutError):
+        return False
 
 
 def _redact_url(url: str) -> str:
@@ -288,60 +284,6 @@ def _redact_url(url: str) -> str:
         return urllib.parse.urlunsplit((parts.scheme, netloc, path, "", ""))
     except Exception:
         return "<redacted-url>"
-
-
-def _pinned_transport_kwargs() -> dict[str, Any]:
-    kwargs: dict[str, Any] = {"transport": PinnedDNSAsyncTransport()}
-    mounts = httpx_env_proxy_mounts()
-    if mounts:
-        kwargs["mounts"] = mounts
-    return kwargs
-
-
-async def _validate_mcp_request_url(request: httpx.Request) -> None:
-    """Validate each outgoing MCP HTTP request, including redirect targets."""
-    ok, error = validate_url_target(str(request.url))
-    if not ok:
-        raise httpx.RequestError(
-            f"Blocked unsafe MCP URL {_redact_url(str(request.url))} ({error})",
-            request=request,
-        )
-
-
-def _windows_command_basename(command: str) -> str:
-    """Return the lowercase basename for a Windows command or path."""
-    return command.replace("\\", "/").rsplit("/", maxsplit=1)[-1].lower()
-
-
-def _normalize_windows_stdio_command(
-    command: str,
-    args: list[str] | None,
-    env: dict[str, str] | None,
-) -> tuple[str, list[str], dict[str, str] | None]:
-    """Wrap Windows shell launchers so MCP stdio servers start reliably."""
-    normalized_args = list(args or [])
-    if os.name != "nt":
-        return command, normalized_args, env
-
-    basename = _windows_command_basename(command)
-    if basename in {"cmd", "cmd.exe", "powershell", "powershell.exe", "pwsh", "pwsh.exe"}:
-        return command, normalized_args, env
-
-    if basename.endswith((".exe", ".com")):
-        return command, normalized_args, env
-
-    resolved = shutil.which(command, path=(env or {}).get("PATH")) or command
-    resolved_basename = _windows_command_basename(resolved)
-    should_wrap = (
-        basename in _WINDOWS_SHELL_LAUNCHERS
-        or basename.endswith((".cmd", ".bat"))
-        or resolved_basename.endswith((".cmd", ".bat"))
-    )
-    if not should_wrap:
-        return command, normalized_args, env
-
-    comspec = (env or {}).get("COMSPEC") or os.environ.get("COMSPEC") or "cmd.exe"
-    return comspec, ["/d", "/c", command, *normalized_args], env
 
 
 def _extract_nullable_branch(options: Any) -> tuple[dict[str, Any], bool] | None:
@@ -506,7 +448,6 @@ def _normalize_schema_for_openai(schema: Any) -> dict[str, Any]:
 class _MCPWrapperBase(Tool):
     """Common reconnect handling for wrappers bound to one MCP server session."""
 
-    _plugin_discoverable = False
     _session: ClientSession
     _server_name: str
     _name: str
@@ -547,57 +488,31 @@ class _MCPWrapperBase(Tool):
         return True
 
 
-def _image_block_data_url(block: Any, types: Any) -> str | None:
-    """Return a base64 ``data:`` URL for an MCP image-bearing content block.
+def _image_block_mime(block: Any, types: Any) -> str | None:
+    """Return the MIME type of an MCP image-bearing content block, or ``None``.
 
     Handles ``ImageContent`` directly and ``EmbeddedResource`` wrapping a binary
-    blob with an ``image/*`` MIME type. Returns ``None`` for anything else.
-    ``getattr`` guards keep this safe when the installed/faked ``mcp`` SDK does
-    not expose a given type.
+    blob with an ``image/*`` MIME type. ``getattr`` guards keep this safe when
+    the installed/faked ``mcp`` SDK does not expose a given type.
     """
     image_cls = getattr(types, "ImageContent", None)
     if image_cls is not None and isinstance(block, image_cls):
-        mime = getattr(block, "mimeType", None) or "image/png"
-        return f"data:{mime};base64,{block.data}"
+        return getattr(block, "mimeType", None) or "image/png"
 
     embedded_cls = getattr(types, "EmbeddedResource", None)
     blob_cls = getattr(types, "BlobResourceContents", None)
     if embedded_cls is not None and isinstance(block, embedded_cls):
         resource = getattr(block, "resource", None)
         if blob_cls is not None and isinstance(resource, blob_cls):
-            blob_resource = cast(Any, resource)
-            mime = getattr(blob_resource, "mimeType", None) or ""
+            mime = getattr(cast(Any, resource), "mimeType", None) or ""
             if isinstance(mime, str) and mime.startswith("image/"):
-                return f"data:{mime};base64,{blob_resource.blob}"
+                return mime
     return None
-
-
-def _mcp_image_tool_result(text_parts: list[str], artifacts: list[dict[str, Any]]) -> str:
-    """Build the compact tool result for an MCP call that returned image(s).
-
-    The base64 stays out of the model context entirely — only artifact paths and
-    metadata are returned, so the result is small and the channel can deliver the
-    saved file via the message tool.
-    """
-    payload: dict[str, Any] = {
-        "artifacts": artifacts,
-        "next_step": (
-            "These images were returned by an MCP tool and saved as local artifacts. "
-            "Call the message tool with the artifact 'path' values in the media "
-            "parameter to deliver the images to the user. Do not paste base64 or raw "
-            "paths into your reply unless the user asks for debug details."
-        ),
-    }
-    text = "\n".join(part for part in text_parts if part)
-    if text:
-        payload["text"] = text
-    return json.dumps(payload, ensure_ascii=False)
 
 
 class MCPToolWrapper(_MCPWrapperBase):
     """Wraps a single MCP server tool as a nanobot Tool."""
 
-    _plugin_discoverable = False
 
     def __init__(
         self,
@@ -667,7 +582,7 @@ class MCPToolWrapper(_MCPWrapperBase):
                         )
                         await asyncio.sleep(1)  # Brief backoff before retry
                         continue
-                    # Second transient failure — give up with retry-specific message
+                    # Second transient failure - give up with retry-specific message
                     logger.opt(exception=tool_log_content_allowed()).error(
                         "MCP tool '{}' failed after retry: {}",
                         self._name,
@@ -686,9 +601,9 @@ class MCPToolWrapper(_MCPWrapperBase):
                     f"(MCP tool call failed: {type(exc).__name__})"
                 )
             else:
-                # Success — extract text and persist any image content as artifacts.
+                # Success: render the content blocks as text.
                 try:
-                    rendered = self._render_call_result(result.content, kwargs)
+                    rendered = self._render_call_result(result.content)
                     if getattr(result, "isError", False):
                         return ToolResult.error(rendered)
                     return rendered
@@ -703,63 +618,31 @@ class MCPToolWrapper(_MCPWrapperBase):
                         f"(MCP tool returned malformed content: {type(exc).__name__})"
                     )
 
-    def _render_call_result(self, content: Any, arguments: Mapping[str, Any]) -> str:
+    @staticmethod
+    def _render_call_result(content: Any) -> str:
         """Turn MCP content blocks into a tool result string.
 
-        Text is concatenated as before. Image blocks are decoded and saved as
-        local artifacts (mirroring the built-in image generation tool) so the
-        model can deliver them via the message tool instead of trying to forward
-        base64 — which would be truncated and bloat the context window.
+        Text is concatenated. The Dot has no image understanding, so an image
+        block is reported by MIME type and its bytes never reach the model.
         """
         from mcp import types
 
         text_parts: list[str] = []
-        artifacts: list[dict[str, Any]] = []
         for block in content:
             if isinstance(block, types.TextContent):
                 text_parts.append(block.text)
                 continue
-            data_url = _image_block_data_url(block, types)
-            if data_url is not None:
-                stored = self._store_image_block(data_url, arguments)
-                if stored is not None:
-                    artifacts.append(stored)
-                else:
-                    text_parts.append("(MCP tool returned an image that could not be stored)")
+            mime = _image_block_mime(block, types)
+            if mime is not None:
+                text_parts.append(f"(MCP tool returned an image ({mime}); images are not supported)")
                 continue
             text_parts.append(str(block))
-
-        if artifacts:
-            return _mcp_image_tool_result(text_parts, artifacts)
         return "\n".join(text_parts) or "(no output)"
-
-    def _store_image_block(
-        self, data_url: str, arguments: Mapping[str, Any]
-    ) -> dict[str, Any] | None:
-        """Persist one image data URL as an artifact; return its metadata or None."""
-        from nanobot.utils.artifacts import ArtifactError, store_generated_image_artifact
-
-        try:
-            return store_generated_image_artifact(
-                data_url,
-                prompt=str(arguments.get("prompt") or ""),
-                model=str(arguments.get("model") or ""),
-                save_dir="generated",
-                provider=f"mcp:{self._server_name}",
-            )
-        except (ArtifactError, OSError) as exc:
-            logger.warning(
-                "MCP tool '{}' returned an image that could not be stored: {}",
-                self._name,
-                exc if tool_log_content_allowed() else type(exc).__name__,
-            )
-            return None
 
 
 class MCPResourceWrapper(_MCPWrapperBase):
     """Wraps an MCP resource URI as a read-only nanobot Tool."""
 
-    _plugin_discoverable = False
 
     def __init__(
         self,
@@ -863,7 +746,6 @@ class MCPResourceWrapper(_MCPWrapperBase):
 class MCPPromptWrapper(_MCPWrapperBase):
     """Wraps an MCP prompt as a read-only nanobot Tool."""
 
-    _plugin_discoverable = False
 
     def __init__(
         self,
@@ -1002,8 +884,6 @@ class MCPPromptWrapper(_MCPWrapperBase):
 async def connect_mcp_servers(
     mcp_servers: dict[str, MCPServerConfig],
     registry: ToolRegistry,
-    *,
-    oauth_handlers: Mapping[str, MCPOAuthHandlers] | None = None,
 ) -> dict[str, MCPConnection]:
     """Connect to configured MCP servers and register their tools, resources, prompts.
 
@@ -1032,50 +912,11 @@ async def connect_mcp_servers(
                     logger.warning("MCP server '{}': no command or url configured, skipping", name)
                     return False
 
-            if transport_type in {"sse", "streamableHttp"}:
-                ok, error = validate_url_target(cfg.url)
-                if not ok:
-                    logger.warning(
-                        "MCP server '{}': blocked unsafe URL {} ({})",
-                        name,
-                        _redact_url(cfg.url),
-                        error,
-                    )
-                    return False
-
-            oauth_auth: httpx.Auth | None = None
-            if cfg.auth == "oauth":
-                if transport_type not in {"sse", "streamableHttp"}:
-                    logger.warning(
-                        "MCP server '{}': OAuth requires an SSE or Streamable HTTP transport",
-                        name,
-                    )
-                    return False
-                from nanobot.agent.tools.mcp_oauth import (
-                    MCPAuthorizationRequiredError,
-                    create_mcp_oauth_auth,
-                )
-
-                try:
-                    oauth_auth = await create_mcp_oauth_auth(
-                        name,
-                        cfg.url,
-                        (oauth_handlers or {}).get(name),
-                    )
-                except MCPAuthorizationRequiredError:
-                    logger.info("MCP server '{}': waiting for browser authorization", name)
-                    return False
-
             if transport_type == "stdio":
-                command, args, env = _normalize_windows_stdio_command(
-                    cfg.command,
-                    cfg.args,
-                    cfg.env or None,
-                )
                 params = StdioServerParameters(
-                    command=command,
-                    args=args,
-                    env=env,
+                    command=cfg.command,
+                    args=cfg.args,
+                    env=cfg.env or None,
                     cwd=cfg.cwd or None,
                 )
                 read, write = await server_stack.enter_async_context(stdio_client(params))
@@ -1096,37 +937,25 @@ async def connect_mcp_servers(
                     }
                     return httpx.AsyncClient(
                         headers=merged_headers or None,
-                        event_hooks={"request": [_validate_mcp_request_url]},
                         follow_redirects=True,
                         timeout=timeout,
                         auth=auth,
-                        **_pinned_transport_kwargs(),
                     )
 
-                sse_kwargs: dict[str, Any] = {
-                    "httpx_client_factory": httpx_client_factory,
-                }
-                if oauth_auth is not None:
-                    sse_kwargs["auth"] = oauth_auth
                 read, write = await server_stack.enter_async_context(
-                    sse_client(cfg.url, **sse_kwargs)
+                    sse_client(cfg.url, httpx_client_factory=httpx_client_factory)
                 )
             elif transport_type == "streamableHttp":
                 if not await _probe_http_url(cfg.url):
                     logger.warning("MCP server '{}': {} unreachable, skipping", name, _redact_url(cfg.url))
                     return False
 
-                http_client_kwargs: dict[str, Any] = {
-                    "headers": cfg.headers or None,
-                    "event_hooks": {"request": [_validate_mcp_request_url]},
-                    "follow_redirects": True,
-                    "timeout": httpx.Timeout(30.0, connect=10.0),
-                    **_pinned_transport_kwargs(),
-                }
-                if oauth_auth is not None:
-                    http_client_kwargs["auth"] = oauth_auth
                 http_client = await server_stack.enter_async_context(
-                    httpx.AsyncClient(**http_client_kwargs)
+                    httpx.AsyncClient(
+                        headers=cfg.headers or None,
+                        follow_redirects=True,
+                        timeout=httpx.Timeout(30.0, connect=10.0),
+                    )
                 )
                 read, write, _ = await server_stack.enter_async_context(
                     streamable_http_client(cfg.url, http_client=http_client)
@@ -1197,7 +1026,7 @@ async def connect_mcp_servers(
             # prompts have no equivalent name filter, so they must be skipped
             # whenever the operator specified a tool subset.  An empty list
             # (deny-all) or a list of specific tool names both indicate that
-            # the operator intended to restrict capabilities — registering
+            # the operator intended to restrict capabilities - registering
             # unrestricted resource/prompt wrappers would violate that intent.
             # The default ["*"] (allow-all) means no restriction was intended.
             register_extras = allow_all_tools
@@ -1240,7 +1069,7 @@ async def connect_mcp_servers(
             else:
                 logger.info(
                     "MCP server '{}': skipping resource/prompt registration "
-                    "(enabledTools does not include '*' — only tools allowed)",
+                    "(enabledTools does not include '*' - only tools allowed)",
                     name,
                 )
 
@@ -1335,27 +1164,6 @@ async def connect_mcp_servers(
     return server_stacks
 
 
-def session_extra(metadata: Mapping[str, Any] | None) -> dict[str, Any]:
-    """Return persisted session kwargs for MCP preset attachments."""
-    mcp_presets = metadata.get("mcp_presets") if isinstance(metadata, Mapping) else None
-    return {"mcp_presets": mcp_presets} if isinstance(mcp_presets, list) and mcp_presets else {}
-
-
-def _configured_servers(config: Config) -> dict[str, MCPServerConfig]:
-    from nanobot.agent.plugins import agent_plugin_mcp_servers
-
-    return agent_plugin_mcp_servers(
-        config.workspace_path,
-        config.tools.mcp_servers,
-    )
-
-
-def _load_current_servers() -> dict[str, MCPServerConfig]:
-    from nanobot.config.loader import load_config, resolve_config_env_vars
-
-    return _configured_servers(resolve_config_env_vars(load_config()))
-
-
 class MCPProvider:
     """Own configured MCP connections and their dynamic tool registrations."""
 
@@ -1363,106 +1171,31 @@ class MCPProvider:
         self,
         servers: Mapping[str, MCPServerConfig],
         registry: ToolRegistry,
-        *,
-        server_loader: MCPServerLoader | None = None,
     ) -> None:
         self._servers = dict(servers)
         self._registry = registry
-        self._server_loader = server_loader or _load_current_servers
         self._connections: dict[str, MCPConnection] = {}
-        self._runtime_statuses: dict[str, MCPRuntimeStatus] = {}
         self._lock = asyncio.Lock()
         self._closing = False
-
-    @classmethod
-    def from_config(
-        cls,
-        config: Config,
-        registry: ToolRegistry,
-        *,
-        server_loader: MCPServerLoader | None = None,
-    ) -> MCPProvider:
-        return cls(
-            _configured_servers(config),
-            registry,
-            server_loader=server_loader,
-        )
-
-    @property
-    def configured_server_names(self) -> set[str]:
-        return set(self._servers)
-
-    @property
-    def connected_server_names(self) -> set[str]:
-        return set(self._connections)
-
-    def runtime_status(self) -> dict[str, MCPRuntimeStatus]:
-        """Return the latest connection-attempt result for configured servers."""
-        return {
-            name: status
-            for name, status in self._runtime_statuses.items()
-            if name in self._servers
-        }
-
-    def _set_runtime_status(
-        self,
-        server_names: Iterable[str],
-        status: MCPRuntimeStatus,
-    ) -> None:
-        for name in server_names:
-            self._runtime_statuses[name] = status
-
-    def _record_connection_result(
-        self,
-        attempted: Iterable[str],
-        connected: Iterable[str],
-    ) -> None:
-        attempted_names = set(attempted)
-        connected_names = set(connected)
-        self._set_runtime_status(connected_names, "connected")
-        self._set_runtime_status(attempted_names - connected_names, "failed")
 
     async def connect(self) -> None:
         """Connect configured servers that are not currently live."""
         async with self._lock:
             if self._closing:
                 return
-            configured_missing = {
+            missing_servers = {
                 name: cfg
                 for name, cfg in self._servers.items()
                 if name not in self._connections
             }
-            oauth_servers = {
-                name: cfg
-                for name, cfg in configured_missing.items()
-                if cfg.auth == "oauth"
-            }
-            authorization_pending: set[str] = set()
-            if oauth_servers:
-                from nanobot.agent.tools.mcp_oauth import mcp_oauth_has_credentials
-
-                authorization_pending = {
-                    name
-                    for name, cfg in oauth_servers.items()
-                    if not mcp_oauth_has_credentials(name, cfg.url)
-                }
-            for name in authorization_pending:
-                self._runtime_statuses.pop(name, None)
-            missing_servers = {
-                name: cfg
-                for name, cfg in configured_missing.items()
-                if name not in authorization_pending
-            }
             if not missing_servers:
                 return
-            self._set_runtime_status(missing_servers, "connecting")
             try:
                 connected = await connect_mcp_servers(missing_servers, self._registry)
                 if self._closing:
                     await _close_mcp_connections(connected)
                     return
                 self._connections.update(connected)
-                self._record_connection_result(missing_servers, connected)
                 self._attach_reconnect_handlers(connected)
                 if connected:
                     logger.info("MCP connected servers: {}", sorted(connected))
@@ -1472,138 +1205,17 @@ class MCPProvider:
                         "(will retry on the next readiness check)"
                     )
             except asyncio.CancelledError:
-                self._set_runtime_status(missing_servers, "failed")
                 if task_is_cancelling():
                     raise
                 logger.warning(
                     "MCP connection cancelled (will retry on the next readiness check)"
                 )
             except BaseException as exc:
-                self._set_runtime_status(missing_servers, "failed")
                 logger.warning(
                     "Failed to connect MCP servers "
                     "(will retry on the next readiness check): {}",
                     exc,
                 )
-
-    async def reload(self) -> dict[str, Any]:
-        """Reconcile live MCP connections with the current configuration."""
-        async with self._lock:
-            if self._closing:
-                return self._closing_result()
-            try:
-                next_servers = dict(self._server_loader())
-            except Exception as exc:
-                logger.warning("MCP hot reload could not read config: {}", exc)
-                return {
-                    "ok": False,
-                    "message": "Could not reload MCP config. Restart nanobot to pick up changes.",
-                    "requires_restart": True,
-                    "error": str(exc),
-                }
-
-            current_servers = dict(self._servers)
-            current_names = set(current_servers)
-            next_names = set(next_servers)
-            from nanobot.agent.tools.mcp_oauth import mcp_oauth_has_credentials
-
-            authorization_pending = {
-                name
-                for name, cfg in next_servers.items()
-                if cfg.auth == "oauth" and not mcp_oauth_has_credentials(name, cfg.url)
-            }
-            removed = sorted(current_names - next_names)
-            added = sorted(next_names - current_names)
-            changed = sorted(
-                name
-                for name in current_names & next_names
-                if _server_signature(current_servers[name])
-                != _server_signature(next_servers[name])
-            )
-
-            tools_removed = 0
-            for name in [*removed, *changed]:
-                tools_removed += _unregister_server_tools(self._registry, name)
-                await self._close_server(name)
-
-            for name in [*removed, *authorization_pending]:
-                self._runtime_statuses.pop(name, None)
-
-            self._servers = next_servers
-            retry_missing = sorted(
-                name
-                for name in next_names
-                if name not in self._connections
-                and name not in set(added) | set(changed)
-                and name not in authorization_pending
-            )
-            to_connect_names = sorted(
-                (set(added) | set(changed) | set(retry_missing))
-                - authorization_pending
-            )
-            to_connect = {name: next_servers[name] for name in to_connect_names}
-            connected: dict[str, MCPConnection] = {}
-            if to_connect:
-                self._set_runtime_status(to_connect, "connecting")
-                try:
-                    connected = await connect_mcp_servers(to_connect, self._registry)
-                except BaseException:
-                    self._set_runtime_status(to_connect, "failed")
-                    raise
-                if self._closing:
-                    await _close_mcp_connections(connected)
-                    return self._closing_result()
-                self._connections.update(connected)
-                self._record_connection_result(to_connect, connected)
-                self._attach_reconnect_handlers(connected)
-
-            failed = sorted(set(to_connect) - set(connected))
-            unchanged = not removed and not added and not changed and not retry_missing
-            ok = not failed
-            if failed:
-                message = (
-                    "MCP config reloaded, but some servers did not connect: "
-                    + ", ".join(failed)
-                )
-            elif unchanged:
-                message = "MCP config is already live."
-            elif retry_missing and not added and not changed and not removed:
-                message = "MCP connections refreshed without restarting nanobot."
-            else:
-                message = "MCP config reloaded without restarting nanobot."
-
-            logger.info(
-                "MCP hot reload: added={} changed={} removed={} retried={} "
-                "connected={} failed={} tools_removed={}",
-                added,
-                changed,
-                removed,
-                retry_missing,
-                sorted(connected),
-                failed,
-                tools_removed,
-            )
-            return {
-                "ok": ok,
-                "message": message,
-                "added": added,
-                "changed": changed,
-                "removed": removed,
-                "retried": retry_missing,
-                "connected": sorted(self._connections),
-                "configured": sorted(self._servers),
-                "failed": failed,
-                "tools_removed": tools_removed,
-                "requires_restart": False,
-            }
-
-    @staticmethod
-    def _closing_result() -> dict[str, Any]:
-        return {
-            "ok": False,
-            "message": "MCP connections are shutting down.",
-            "requires_restart": True,
-        }
 
     def _attach_reconnect_handlers(self, server_names: Iterable[str]) -> None:
         async def reconnect(
@@ -1657,7 +1269,6 @@ class MCPProvider:
             _unregister_server_tools(self._registry, server_name)
             await self._close_server(server_name)
 
-            self._set_runtime_status({server_name}, "connecting")
             connected = await connect_mcp_servers(
                 {server_name: cfg},
                 self._registry,
@@ -1666,7 +1277,6 @@ class MCPProvider:
                 await _close_mcp_connections(connected)
                 return None
             self._connections.update(connected)
-            self._record_connection_result({server_name}, connected)
             self._attach_reconnect_handlers(connected)
             if server_name not in connected:
                 logger.warning(
@@ -1688,16 +1298,9 @@ class MCPProvider:
         async with self._lock:
             connections = dict(self._connections)
             self._connections.clear()
-            self._runtime_statuses.clear()
             for name in self._servers:
                 _unregister_server_tools(self._registry, name)
             await _close_mcp_connections(connections)
-
-
-def _server_signature(cfg: Any) -> Any:
-    if hasattr(cfg, "model_dump"):
-        return cfg.model_dump(mode="json")
-    return cfg
 
 
 def _tool_prefix(server_name: str) -> str:

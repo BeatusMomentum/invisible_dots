@@ -10,13 +10,12 @@ import uuid
 from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
 from nanobot.agent.tools.context import (
-    ToolContext,
     current_request_session_key,
     tool_log_content_allowed,
 )
@@ -26,6 +25,9 @@ from nanobot.agent.tools.schema import (
     StringSchema,
     tool_parameters_schema,
 )
+
+if TYPE_CHECKING:
+    from nanobot.dots.computer import Computer
 
 DEFAULT_YIELD_MS = 1000
 MAX_YIELD_MS = 30_000
@@ -78,6 +80,7 @@ class _BoundedOutputBuffer:
 
     @property
     def retained_chars(self) -> int:
+        """How much the buffer holds now: never more than its bound, whatever was appended."""
         return len(self._content) + self._tail_chars
 
     def append(self, text: str) -> None:
@@ -131,14 +134,12 @@ class _ExecSession:
         cwd: str,
         timeout: int | None,
         owner_session_key: str | None = None,
-        process_tree: bool = False,
     ) -> None:
         self.session_id = session_id
         self.process = process
         self.command = command
         self.cwd = cwd
         self.owner_session_key = owner_session_key
-        self._process_tree = process_tree
         self.started_at = time.monotonic()
         # timeout None/0 means no limit; an infinite deadline is never reached.
         self.deadline = time.monotonic() + timeout if timeout else float("inf")
@@ -230,7 +231,7 @@ class _ExecSession:
             await self.kill()
 
         if self._kill_task is not None:
-            # Finish termination before releasing process-tree ownership or returning output.
+            # Finish termination before returning output.
             await asyncio.shield(self._kill_task)
 
         if self.process.returncode is not None:
@@ -240,12 +241,9 @@ class _ExecSession:
                     timeout=2.0,
                 )
             # Safety-net reap after normal exit.
-            from nanobot.agent.tools.shell import (  # pyright: ignore[reportPrivateUsage]
-                ExecTool,
-                _reap_pid,  # pyright: ignore[reportPrivateUsage]
-            )
-            ExecTool._release_process_tree(self.process)  # pyright: ignore[reportPrivateUsage]
-            _reap_pid(self.process.pid)  # pyright: ignore[reportPrivateUsage]
+            from nanobot.agent.tools.shell import _reap_pid  # pyright: ignore[reportPrivateUsage]
+
+            _reap_pid(self.process.pid)
         elif yield_time_ms > 0:
             await self._wait_for_buffered_output()
 
@@ -291,10 +289,7 @@ class _ExecSession:
         from nanobot.agent.tools.shell import ExecTool
 
         try:
-            if self._process_tree:
-                await ExecTool._kill_process_tree(self.process)  # pyright: ignore[reportPrivateUsage]
-            else:
-                await ExecTool._kill_process(self.process)  # pyright: ignore[reportPrivateUsage]
+            await ExecTool._kill_process_tree(self.process)  # pyright: ignore[reportPrivateUsage]
         finally:
             with suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(
@@ -326,23 +321,25 @@ class ExecSessionManager:
     async def start(
         self,
         *,
+        computer: Computer,
         command: str | list[str],
         cwd: str,
-        env: dict[str, str],
         timeout: int | None,
-        shell_program: str | None,
-        login: bool,
         yield_time_ms: int,
         max_output_chars: int,
         owner_session_key: str | None = None,
     ) -> tuple[str, _SessionPoll]:
+        from nanobot.agent.tools.shell import ExecTool
+
         async with self._lock:
             if self._closed:
                 raise RuntimeError("exec session manager is closed")
             await self._cleanup_locked()
             if len(self._sessions) >= self.max_sessions:
                 raise RuntimeError(f"maximum exec sessions reached ({self.max_sessions})")
-            process = await self._spawn(command, cwd, env, shell_program, login)
+            process = await ExecTool._spawn(  # pyright: ignore[reportPrivateUsage]
+                computer, command, cwd, stdin=asyncio.subprocess.PIPE
+            )
             session_id = uuid.uuid4().hex[:12]
             session = _ExecSession(
                 session_id=session_id,
@@ -351,7 +348,6 @@ class ExecSessionManager:
                 cwd=cwd,
                 timeout=timeout,
                 owner_session_key=owner_session_key,
-                process_tree=True,
             )
             self._sessions[session_id] = session
 
@@ -449,34 +445,6 @@ class ExecSessionManager:
             )
         return len(sessions)
 
-    async def terminate_by_owner(self, owner_session_key: str) -> int:
-        """Terminate all sessions owned by owner_session_key. Returns count."""
-        async with self._lock:
-            victims: list[_ExecSession] = []
-            for sid, s in list(self._sessions.items()):
-                if s.owner_session_key == owner_session_key:
-                    victims.append(self._sessions.pop(sid))
-        results: list[None | BaseException] = list(await asyncio.gather(
-            *(s.kill() for s in victims),
-            return_exceptions=True,
-        ))
-        failures: list[tuple[_ExecSession, BaseException]] = [
-            (session, result)
-            for session, result in zip(victims, results, strict=True)
-            if isinstance(result, BaseException)
-        ]
-        if failures:
-            async with self._lock:
-                for session, _ in failures:
-                    self._sessions[session.session_id] = session
-            if len(failures) == 1:
-                raise failures[0][1]
-            raise BaseExceptionGroup(
-                "failed to terminate exec sessions by owner",
-                [result for _, result in failures],
-            )
-        return len(victims)
-
     async def _cleanup_locked(self) -> None:
         now = time.monotonic()
         stale = [
@@ -488,25 +456,6 @@ class ExecSessionManager:
             session = self._sessions[session_id]
             await session.kill()
             self._sessions.pop(session_id, None)
-
-    async def _spawn(
-        self,
-        command: str | list[str],
-        cwd: str,
-        env: dict[str, str],
-        shell_program: str | None,
-        login: bool,
-    ) -> asyncio.subprocess.Process:
-        from nanobot.agent.tools.shell import ExecTool
-
-        return await ExecTool._spawn(  # pyright: ignore[reportPrivateUsage]
-            command, cwd, env, shell_program, login,
-            stdin=asyncio.subprocess.PIPE,
-            process_tree=True,
-        )
-
-
-DEFAULT_EXEC_SESSION_MANAGER = ExecSessionManager()
 
 
 def clamp_session_int(value: int | None, default: int, minimum: int, maximum: int) -> int:
@@ -578,29 +527,12 @@ def format_session_poll(session_id: str, poll: _SessionPoll) -> str:
 class ExecSessionTool(Tool):
     """Interact with or wait for a running exec session."""
 
-    _scopes = {"core", "subagent"}
-    config_key = "exec"
-
-    @classmethod
-    def config_cls(cls):
-        from nanobot.agent.tools.shell import ExecToolConfig
-
-        return ExecToolConfig
-
-    @classmethod
-    def enabled(cls, ctx: ToolContext) -> bool:
-        return ctx.config.exec.enable
-
     def __init__(
         self,
         *,
-        manager: ExecSessionManager | None = None,
+        manager: ExecSessionManager,
     ) -> None:
-        self._manager = manager or DEFAULT_EXEC_SESSION_MANAGER
-
-    @classmethod
-    def create(cls, ctx: ToolContext) -> Tool:
-        return cls(manager=ctx.exec_session_manager)
+        self._manager = manager
 
     @property
     def exclusive(self) -> bool:
@@ -739,29 +671,12 @@ class ExecSessionTool(Tool):
 class ListExecSessionsTool(Tool):
     """List active exec sessions."""
 
-    _scopes = {"core", "subagent"}
-    config_key = "exec"
-
-    @classmethod
-    def config_cls(cls):
-        from nanobot.agent.tools.shell import ExecToolConfig
-
-        return ExecToolConfig
-
-    @classmethod
-    def enabled(cls, ctx: ToolContext) -> bool:
-        return ctx.config.exec.enable
-
     def __init__(
         self,
         *,
-        manager: ExecSessionManager | None = None,
+        manager: ExecSessionManager,
     ) -> None:
-        self._manager = manager or DEFAULT_EXEC_SESSION_MANAGER
-
-    @classmethod
-    def create(cls, ctx: ToolContext) -> Tool:
-        return cls(manager=ctx.exec_session_manager)
+        self._manager = manager
 
     @property
     def name(self) -> str:

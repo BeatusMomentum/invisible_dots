@@ -85,40 +85,6 @@ class IntegerSchema(Schema):
         return d
 
 
-class NumberSchema(Schema):
-    """Numeric parameter (JSON number): description and optional bounds."""
-
-    def __init__(
-        self,
-        *,
-        description: str = "",
-        minimum: float | None = None,
-        maximum: float | None = None,
-        enum: tuple[float, ...] | list[float] | None = None,
-        nullable: bool = False,
-    ) -> None:
-        self._description = description
-        self._minimum = minimum
-        self._maximum = maximum
-        self._enum = tuple(enum) if enum is not None else None
-        self._nullable = nullable
-
-    def to_json_schema(self) -> dict[str, Any]:
-        t: Any = "number"
-        if self._nullable:
-            t = ["number", "null"]
-        d: dict[str, Any] = {"type": t}
-        if self._description:
-            d["description"] = self._description
-        if self._minimum is not None:
-            d["minimum"] = self._minimum
-        if self._maximum is not None:
-            d["maximum"] = self._maximum
-        if self._enum is not None:
-            d["enum"] = list(self._enum)
-        return d
-
-
 class BooleanSchema(Schema):
     """Boolean parameter (standalone class because Python forbids subclassing ``bool``)."""
 

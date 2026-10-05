@@ -18,6 +18,7 @@ import type {
   TaskRecord,
 } from "@invisible-dots/shared";
 import {
+  checkOpenRouterKey,
   computerResources,
   DotConfigError,
   newId,
@@ -588,15 +589,14 @@ export class Scheduler {
 
   /** Store the OpenRouter key (global or per Dot) and push it to the READY guests it applies to. */
   async setOpenRouterKey(value: unknown, dotIdOrName?: unknown): Promise<{ pushed: number }> {
-    if (typeof value !== "string" || value.trim() === "") {
-      throw new ControlPlaneError(400, "invalid_request", "value must be a non-empty string");
-    }
+    const checked = checkOpenRouterKey(value);
+    if (!checked.ok) throw new ControlPlaneError(400, "invalid_request", checked.problem);
     let scope = GLOBAL_SCOPE;
     if (dotIdOrName !== undefined && dotIdOrName !== null) {
       if (typeof dotIdOrName !== "string") throw new ControlPlaneError(400, "invalid_request", "dot_id must be a string");
       scope = (await this.requireDot(dotIdOrName)).id;
     }
-    await this.db.secrets.put(scope, OPENROUTER_KEY_NAME, value.trim());
+    await this.db.secrets.put(scope, OPENROUTER_KEY_NAME, checked.key);
     let pushed = 0;
     // Every Dot it applies to, READY or not: one whose READY is under way must notice the change too.
     const targets = scope === GLOBAL_SCOPE ? (await this.db.dots.list()).map((d) => d.id) : [scope];

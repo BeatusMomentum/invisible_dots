@@ -32,11 +32,6 @@ from nanobot.providers.conversation_state import (
     ProviderConversationStateController,
     allows_conversation_message_merge,
 )
-from nanobot.runtime_context import (
-    RUNTIME_CONTEXT_MESSAGE_META,
-    detach_runtime_context,
-    reattach_runtime_context,
-)
 from nanobot.session.history_visibility import is_hidden_history_message
 from nanobot.session.summary import (
     SUMMARY_CONTINUATION_TEXT,
@@ -66,7 +61,7 @@ ProviderCompactionConsolidator = Callable[
 
 # read_file has its own bound; exempt it to avoid persist->read->persist loops.
 TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS = frozenset({"read_file"})
-BACKFILL_CONTENT = "[Tool result unavailable — call was interrupted or lost]"
+BACKFILL_CONTENT = "[Tool result unavailable - call was interrupted or lost]"
 PLACEHOLDER_TEXTS = frozenset({
     "[Previous assistant message omitted.]",
 })
@@ -151,12 +146,10 @@ class ContextCompactionState:
                     transcript_input,
                     history=[],
                     current_message=None,
-                    media=None,
                     session_summary={
                         "text": summary,
                         "last_active": datetime.now().astimezone().isoformat(),
                     },
-                    runtime_context_blocks=None,
                 )
             )
 
@@ -169,47 +162,6 @@ class ContextCompactionState:
                 if transcript_input.session_summary is not None
                 else None
             ),
-            summary_transcript_builder=build_summary_transcript,
-            consolidate_history=consolidate_history,
-            consolidate_provider_compaction=consolidate_provider_compaction,
-        )
-
-    @classmethod
-    def from_messages(
-        cls,
-        messages: list[dict[str, Any]],
-        consolidate_history: HistoryConsolidator,
-        consolidate_provider_compaction: ProviderCompactionConsolidator | None,
-    ) -> ContextCompactionState:
-        """Create compaction state for a standalone runner transcript."""
-        raw_messages = list(messages)
-        instruction_prefix: list[dict[str, Any]] = []
-        for message in raw_messages:
-            if message.get("role") not in {"system", "developer"}:
-                break
-            instruction_prefix.append(dict(message))
-
-        def build_summary_transcript(summary: str) -> list[dict[str, Any]]:
-            archived_context = (
-                "[Archived Context Summary]\n\n"
-                "Previous conversation summary:\n"
-                f"{summary}"
-            )
-            prefix = deepcopy(instruction_prefix)
-            for index in range(len(prefix) - 1, -1, -1):
-                content = prefix[index].get("content")
-                if isinstance(content, str):
-                    prefix[index]["content"] = (
-                        f"{content}\n\n---\n\n{archived_context}"
-                    )
-                    return prefix
-            return [{"role": "system", "content": archived_context}, *prefix]
-
-        return cls(
-            raw_messages=raw_messages,
-            accepted_messages=deepcopy(raw_messages),
-            raw_accepted_boundary=len(raw_messages),
-            active_summary=None,
             summary_transcript_builder=build_summary_transcript,
             consolidate_history=consolidate_history,
             consolidate_provider_compaction=consolidate_provider_compaction,
@@ -299,67 +251,10 @@ class ContextGovernor:
                 and allows_conversation_message_merge(prepared[-1])
             ):
                 merged = dict(prepared[-1])
-                left_meta = merged.get("_meta")
-                right_meta = injection.get("_meta")
-                left_meta_dict = (
-                    cast(dict[str, Any], left_meta) if isinstance(left_meta, dict) else None
+                merged["content"] = cls._merge_message_content(
+                    merged.get("content"),
+                    injection.get("content"),
                 )
-                right_meta_dict = (
-                    cast(dict[str, Any], right_meta) if isinstance(right_meta, dict) else None
-                )
-                left_marker = (
-                    left_meta_dict.get(RUNTIME_CONTEXT_MESSAGE_META)
-                    if left_meta_dict is not None
-                    else None
-                )
-                right_marker = (
-                    right_meta_dict.get(RUNTIME_CONTEXT_MESSAGE_META)
-                    if right_meta_dict is not None
-                    else None
-                )
-                left_marker_dict = (
-                    cast(dict[str, Any], left_marker) if isinstance(left_marker, dict) else None
-                )
-                right_marker_dict = (
-                    cast(dict[str, Any], right_marker) if isinstance(right_marker, dict) else None
-                )
-                empty_sources: list[str] = []
-                empty_blocks: list[dict[str, Any]] = []
-                detached_left = (
-                    detach_runtime_context(merged.get("content"), left_marker_dict)
-                    if left_marker_dict is not None
-                    else (merged.get("content"), empty_sources, empty_blocks)
-                )
-                detached_right = (
-                    detach_runtime_context(injection.get("content"), right_marker_dict)
-                    if right_marker_dict is not None
-                    else (injection.get("content"), empty_sources, empty_blocks)
-                )
-                if detached_left is not None and detached_right is not None:
-                    left_content, left_sources, left_blocks = detached_left
-                    right_content, right_sources, right_blocks = detached_right
-                    merged_content = cls._merge_message_content(left_content, right_content)
-                    context_blocks = [*left_blocks, *right_blocks]
-                    if context_blocks:
-                        merged_content, marker = reattach_runtime_context(
-                            merged_content,
-                            [*left_sources, *right_sources],
-                            context_blocks,
-                        )
-                        internal_meta = (
-                            dict(left_meta_dict) if left_meta_dict is not None else {}
-                        )
-                        if right_meta_dict is not None:
-                            for key, value in right_meta_dict.items():
-                                internal_meta.setdefault(key, value)
-                        internal_meta[RUNTIME_CONTEXT_MESSAGE_META] = marker
-                        merged["_meta"] = internal_meta
-                    merged["content"] = merged_content
-                else:
-                    merged["content"] = cls._merge_message_content(
-                        merged.get("content"),
-                        injection.get("content"),
-                    )
                 prepared[-1] = merged
                 continue
             prepared.append(injection)
@@ -862,7 +757,13 @@ class ContextGovernor:
     def drop_orphan_tool_results(
         messages: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """Drop invalid tool results before history is sent back to providers."""
+        """Drop invalid tool results before history is sent back to providers.
+
+        A result answers the latest call that has its id: an assistant message that makes a call
+        opens the id again, so a later response that reuses "call_0" (models behind OpenRouter number
+        their calls from zero every time) gets its own result kept, and only a second result for one
+        call is a duplicate.
+        """
         declared: set[str] = set()
         fulfilled: set[str] = set()
         updated: list[dict[str, Any]] | None = None
@@ -874,6 +775,7 @@ class ContextGovernor:
                         tool_call = cast(dict[str, Any], tc)
                         if tool_call.get("id"):
                             declared.add(str(tool_call["id"]))
+                            fulfilled.discard(str(tool_call["id"]))
             if role == "tool":
                 tid = msg.get("tool_call_id")
                 tid_str = str(tid) if tid else ""
@@ -893,9 +795,13 @@ class ContextGovernor:
     def backfill_missing_tool_results(
         messages: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """Insert synthetic error results for assistant tool_calls with missing tool outputs."""
-        declared: list[tuple[int, str, str]] = []
-        fulfilled: set[str] = set()
+        """Insert synthetic error results for assistant tool_calls with missing tool outputs.
+
+        A result answers the latest call that has its id (see drop_orphan_tool_results): a call whose
+        id a later response reuses before it got a result is missing its own.
+        """
+        open_calls: dict[str, tuple[int, str]] = {}
+        missing: list[tuple[int, str, str]] = []
         for idx, msg in enumerate(messages):
             role = msg.get("role")
             if role == "assistant":
@@ -909,13 +815,18 @@ class ContextGovernor:
                                 func_data = cast(dict[str, Any], func)
                                 raw_name = func_data.get("name", "")
                                 name = raw_name if isinstance(raw_name, str) else str(raw_name)
-                            declared.append((idx, str(tool_call["id"]), name))
+                            call_id = str(tool_call["id"])
+                            if call_id in open_calls:
+                                earlier_idx, earlier_name = open_calls[call_id]
+                                missing.append((earlier_idx, call_id, earlier_name))
+                            open_calls[call_id] = (idx, name)
             elif role == "tool":
                 tid = msg.get("tool_call_id")
                 if tid:
-                    fulfilled.add(str(tid))
+                    open_calls.pop(str(tid), None)
 
-        missing = [(ai, cid, name) for ai, cid, name in declared if cid not in fulfilled]
+        missing.extend((ai, cid, name) for cid, (ai, name) in open_calls.items())
+        missing.sort(key=lambda entry: entry[0])
         if not missing:
             return messages
 

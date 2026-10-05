@@ -1,4 +1,4 @@
-"""Build one bounded grep page from streams of located source lines."""
+"""Build one bounded grep page from streams of source lines."""
 
 from __future__ import annotations
 
@@ -8,11 +8,17 @@ from dataclasses import dataclass, field
 from itertools import chain, islice
 from typing import Iterable, Literal
 
-from nanobot.utils.document import LocatedDocumentLine
+
+@dataclass(frozen=True, slots=True)
+class SourceLine:
+    """One text line of a searched file and its 1-based line number."""
+
+    text: str
+    line_no: int
 
 
 class MatchTooLargeError(ValueError):
-    """A match and its source locator cannot fit in an empty page."""
+    """A match and its line number cannot fit in an empty page."""
 
 
 def _clip_line(text: str, limit: int, match_start: int | None) -> str:
@@ -32,27 +38,13 @@ def _clip_line(text: str, limit: int, match_start: int | None) -> str:
     return prefix + visible + suffix
 
 
-def _format_line(line: LocatedDocumentLine, start: int | None, limit: int) -> str:
+def _format_line(line: SourceLine, start: int | None, limit: int) -> str:
     marker = ">" if start is not None else " "
-    coordinate = str(line.extracted_line)
-    if line.locator:
-        coordinate += f" [{line.locator}]"
-    return f"{marker} {coordinate}| {_clip_line(line.text, limit, start)}"
+    return f"{marker} {line.line_no}| {_clip_line(line.text, limit, start)}"
 
 
-def _format_header(path: str, line: LocatedDocumentLine, start: int) -> str:
-    locator = line.locator
-    if locator.startswith("sheet="):
-        column_index = line.text[:start].count("\t") + 1
-        column = ""
-        while column_index:
-            column_index, remainder = divmod(column_index - 1, 26)
-            column = chr(ord("A") + remainder) + column
-        row = re.search(r",row=(\d+)$", locator)
-        if row:
-            locator += f",cell={column}{row[1]}"
-    suffix = f" [{locator}]" if locator else ""
-    return f"{path}:{line.extracted_line}{suffix}"
+def _format_header(path: str, line: SourceLine) -> str:
+    return f"{path}:{line.line_no}"
 
 
 @dataclass
@@ -70,11 +62,11 @@ class ContentPage:
     stopped: Literal["limit", "size"] | None = field(default=None, init=False)
 
     def scan(
-        self, path: str, lines: Iterable[LocatedDocumentLine], regex: re.Pattern[str],
+        self, path: str, lines: Iterable[SourceLine], regex: re.Pattern[str],
         before: int, after: int,
     ) -> None:
-        source = (line for line in lines if line.searchable)
-        history: deque[LocatedDocumentLine] = deque(maxlen=before)
+        source = iter(lines)
+        history: deque[SourceLine] = deque(maxlen=before)
         following = deque(islice(source, after + 1))
         positions: dict[int, int] = {}
         while following:
@@ -93,21 +85,21 @@ class ContentPage:
                 following.append(line)
 
     def _append_match(
-        self, path: str, history: deque[LocatedDocumentLine],
-        following: deque[LocatedDocumentLine], start: int, positions: dict[int, int],
+        self, path: str, history: deque[SourceLine],
+        following: deque[SourceLine], start: int, positions: dict[int, int],
     ) -> None:
         match = following[0]
         last_line = next(reversed(positions), 0)
         first_line = history[0] if history else match
-        merge = bool(positions and first_line.extracted_line <= last_line)
-        header = "" if merge else _format_header(path, match, start)
+        merge = bool(positions and first_line.line_no <= last_line)
+        header = "" if merge else _format_header(path, match)
         replacement = _format_line(match, start, self.line_limit)
         additions = [
-            (line.extracted_line, replacement if line is match else _format_line(line, None, self.line_limit))
+            (line.line_no, replacement if line is match else _format_line(line, None, self.line_limit))
             for line in chain(history, following)
-            if not merge or line.extracted_line > last_line
+            if not merge or line.line_no > last_line
         ]
-        replace_at = positions.get(match.extracted_line) if merge else None
+        replace_at = positions.get(match.line_no) if merge else None
         replacement_chars = (
             len(replacement) - len(self.blocks[-1][replace_at]) if replace_at is not None else 0
         )
@@ -118,7 +110,7 @@ class ContentPage:
             if self.blocks:
                 return
             # Even an oversized first context must return a match and advance the offset.
-            additions = [(match.extracted_line, replacement)]
+            additions = [(match.line_no, replacement)]
             added_chars = header_chars + len(replacement) + 1
             if added_chars > self.max_chars:
                 raise MatchTooLargeError("match exceeds output budget; narrow path or pattern")

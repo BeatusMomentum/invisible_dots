@@ -35,6 +35,11 @@ export const PERMISSIONS = [
   "browser.navigate",
   "browser.read",
   "browser.act",
+  "web.fetch",
+  "web.search",
+  "message.send",
+  "automations",
+  "subagents",
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 

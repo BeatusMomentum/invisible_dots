@@ -17,8 +17,9 @@ describe("tool table", () => {
     expect(getTool("browser_reload")?.permission).toBe("browser.act");
     expect(getTool("browser_identity_delete")?.permission).toBe("browser.identity.delete");
     expect(getTool("nope")).toBeUndefined();
-    // Every declared permission is used by some tool, and every tool uses a declared one.
-    expect(new Set(TOOLS.map((t) => t.permission))).toEqual(new Set(PERMISSIONS));
+    // Every tool here uses a declared permission. That every declared permission is
+    // used by some tool, here or in the engine's own table, is tests/repo/permission-registry.test.ts.
+    for (const tool of TOOLS) expect(PERMISSIONS).toContain(tool.permission);
   });
 
   it("declares argument schemas that agree with section 8.3", () => {

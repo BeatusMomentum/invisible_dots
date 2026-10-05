@@ -9,16 +9,13 @@ from datetime import datetime
 from typing import Any
 
 from nanobot.agent.tools.base import Tool, ToolResult, tool_parameters
-from nanobot.agent.tools.context import ToolContext, current_request_context
 from nanobot.agent.tools.schema import (
     IntegerSchema,
     StringSchema,
     tool_parameters_schema,
 )
 from nanobot.cron.service import CronService
-from nanobot.cron.session_turns import is_cron_turn
-from nanobot.cron.types import CronJob, CronJobState, CronSchedule
-from nanobot.session.keys import UNIFIED_SESSION_KEY
+from nanobot.cron.types import CronJobState, CronSchedule
 
 _CRON_PARAMETERS = tool_parameters_schema(
     action=StringSchema("Action to perform", enum=["add", "list", "remove"]),
@@ -28,7 +25,7 @@ _CRON_PARAMETERS = tool_parameters_schema(
     ),
     message=StringSchema(
         "REQUIRED when action='add'. Instruction for the agent to execute when the job triggers "
-        "(e.g., 'Send a reminder to WeChat: xxx' or 'Check system status and report'). "
+        "(e.g., 'Remind the user to stand up and stretch' or 'Check system status and report'). "
         "Not used for action='list' or action='remove'."
     ),
     every_seconds=IntegerSchema(
@@ -49,7 +46,7 @@ _CRON_PARAMETERS = tool_parameters_schema(
         "Action-specific parameters: add requires a non-empty message plus one schedule "
         "(every_seconds, cron_expr, or at); remove requires job_id; list only needs action. "
         "Per-action requirements are enforced at runtime (see field descriptions) so the "
-        "top-level schema stays compatible with providers (e.g. OpenAI Codex/Responses) that "
+        "top-level schema stays compatible with providers that "
         "reject oneOf/anyOf/allOf/enum/not at the root of function parameters."
     ),
 )
@@ -62,29 +59,6 @@ class CronTool(Tool):
     def __init__(self, cron_service: CronService, default_timezone: str = "UTC"):
         self._cron = cron_service
         self._default_timezone = default_timezone
-
-    @classmethod
-    def enabled(cls, ctx: ToolContext) -> bool:
-        return ctx.cron_service is not None
-
-    @classmethod
-    def create(cls, ctx: ToolContext) -> Tool:
-        cron_service = ctx.cron_service
-        if cron_service is None:
-            raise RuntimeError("CronTool requires an initialized cron service")
-        return cls(cron_service=cron_service, default_timezone=ctx.timezone)
-
-    @staticmethod
-    def _request_route() -> tuple[str, str, str, dict[str, Any]]:
-        """Return routing from the authoritative request snapshot."""
-        ctx = current_request_context()
-        if ctx is None:
-            return "", "", "", {}
-        raw_key = f"{ctx.channel}:{ctx.chat_id}" if ctx.channel and ctx.chat_id else ""
-        session_key = (
-            raw_key if ctx.session_key == UNIFIED_SESSION_KEY else (ctx.session_key or "")
-        )
-        return session_key, ctx.channel or "", ctx.chat_id or "", dict(ctx.metadata or {})
 
     @staticmethod
     def _validate_timezone(tz: str) -> str | None:
@@ -139,9 +113,6 @@ class CronTool(Tool):
         job_id: str | None = None,
     ) -> str:
         if action == "add":
-            request = current_request_context()
-            if request is not None and is_cron_turn(request.metadata):
-                return ToolResult.error("Error: cannot schedule new jobs from within a cron job execution")
             return self._add_job(name, message, every_seconds, cron_expr, tz, at)
         elif action == "list":
             return self._list_jobs()
@@ -164,11 +135,6 @@ class CronTool(Tool):
                 "describing what to do when the job triggers "
                 "(e.g. the reminder text). Retry including message=\"...\"."
             )
-        session_key, origin_channel, origin_chat_id, origin_metadata = self._request_route()
-        if not session_key:
-            return ToolResult.error("Error: scheduled cron jobs must be created from a chat session")
-        if not origin_channel or not origin_chat_id:
-            return ToolResult.error("Error: scheduled cron jobs must be created from a chat session")
         if tz and not cron_expr:
             return ToolResult.error("Error: tz can only be used with cron_expr")
         if tz:
@@ -221,10 +187,6 @@ class CronTool(Tool):
             schedule=schedule,
             message=message,
             delete_after_run=delete_after,
-            session_key=session_key,
-            origin_channel=origin_channel,
-            origin_chat_id=origin_chat_id,
-            origin_metadata=origin_metadata,
         )
         return f"Created job '{job.name}' (id: {job.id})"
 
@@ -253,7 +215,7 @@ class CronTool(Tool):
         if state.last_run_at_ms:
             info = (
                 f"  Last run: {self._format_timestamp(state.last_run_at_ms, display_tz)}"
-                f" — {state.last_status or 'unknown'}"
+                f" - {state.last_status or 'unknown'}"
             )
             if state.last_error:
                 info += f" ({state.last_error})"
@@ -261,12 +223,6 @@ class CronTool(Tool):
         if state.next_run_at_ms:
             lines.append(f"  Next run: {self._format_timestamp(state.next_run_at_ms, display_tz)}")
         return lines
-
-    @staticmethod
-    def _system_job_purpose(job: CronJob) -> str:
-        if job.name == "dream":
-            return "Dream memory consolidation for long-term memory."
-        return "System-managed internal job."
 
     def _list_jobs(self) -> str:
         jobs = self._cron.list_jobs()
@@ -277,7 +233,7 @@ class CronTool(Tool):
             timing = self._format_timing(j.schedule)
             parts = [f"- {j.name} (id: {j.id}, {timing})"]
             if j.payload.kind == "system_event":
-                parts.append(f"  Purpose: {self._system_job_purpose(j)}")
+                parts.append("  Purpose: System-managed internal job.")
                 parts.append("  Protected: visible for inspection, but cannot be removed.")
             parts.extend(self._format_state(j.state, j.schedule))
             lines.append("\n".join(parts))
@@ -290,13 +246,6 @@ class CronTool(Tool):
         if result == "removed":
             return f"Removed job {job_id}"
         if result == "protected":
-            job = self._cron.get_job(job_id)
-            if job and job.name == "dream":
-                return (
-                    "Cannot remove job `dream`.\n"
-                    "This is a system-managed Dream memory consolidation job for long-term memory.\n"
-                    "It remains visible so you can inspect it, but it cannot be removed."
-                )
             return (
                 f"Cannot remove job `{job_id}`.\n"
                 "This is a protected system-managed cron job."

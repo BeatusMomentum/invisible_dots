@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import base64
-import errno
 import json
 import os
 import re
@@ -11,7 +9,6 @@ import shutil
 import stat
 import time
 import uuid
-from collections.abc import Iterable
 from contextlib import suppress
 from datetime import datetime
 from pathlib import Path
@@ -24,7 +21,6 @@ from nanobot.utils.token_encoding import get_token_encoding as _get_token_encodi
 if TYPE_CHECKING:
     from tiktoken import Encoding
 
-    from nanobot.providers.base import LLMUsage
 
 _TOOLS_TOKEN_CACHE_MAX_ENTRIES = 64
 _TOOLS_TOKEN_CACHE: dict[int, tuple[tuple[int, ...], dict[bool, int]]] = {}
@@ -173,12 +169,12 @@ def strip_think(text: str) -> str:
       1. Well-formed `<think>...</think>`, `<thinking>...</thinking>`,
          and `<thought>...</thought>` blocks.
       2. Streaming prefixes where the block is never closed.
-      3. *Malformed* opening tags missing the `>` — e.g. `<think广场…`. The
+      3. *Malformed* opening tags missing the `>` - e.g. `<think广场…`. The
          model sometimes emits the tag name directly followed by user-facing
          content with no delimiter; without this step the literal `<think`
          leaks into the rendered message.
       4. Harmony-style channel markers like `<channel|>` / `<|channel|>`
-         **at the start of the text** — conservative to avoid eating
+         **at the start of the text** - conservative to avoid eating
          explanatory prose that mentions these tokens.
       5. Orphan closing tags `</think>` / `</thinking>` / `</thought>`
          **at the very start or end of the text** only, for the same reason.
@@ -202,7 +198,7 @@ def strip_think(text: str) -> str:
     # Malformed opening tags: `<think` / `<thinking` / `<thought` where the next char is
     # NOT one that could continue a valid tag / identifier name. Explicitly
     # listing ASCII tag-name chars (letters, digits, `_`, `-`, `:`) plus
-    # `>` / `/` — we can't use `\w` here because in Python's default
+    # `>` / `/` - we can't use `\w` here because in Python's default
     # Unicode regex mode it matches CJK characters too, which would defeat
     # the primary fix for `<think广场…` leaks.
     text = re.sub(rf"<{_THINKING_TAG}(?![A-Za-z0-9_\-:>/])", "", text)
@@ -241,7 +237,7 @@ def extract_think(text: str) -> tuple[str | None, str]:
 
     Returns ``(thinking_text, cleaned_text)``. Only closed blocks are
     extracted; unclosed streaming prefixes are stripped from the cleaned
-    text but not surfaced — :func:`strip_think` handles that case.
+    text but not surfaced - :func:`strip_think` handles that case.
     """
     if "<" not in text:
         return None, text.strip()
@@ -250,42 +246,6 @@ def extract_think(text: str) -> tuple[str | None, str]:
         parts.append(m.group(2).strip())
     thinking = "\n\n".join(parts) if parts else None
     return thinking, strip_think(text)
-
-
-class IncrementalThinkExtractor:
-    """Stateful inline ``<think>`` extractor for streaming buffers.
-
-    Streaming providers expose only a single content delta channel. When a
-    model embeds reasoning in ``<think>...</think>`` blocks inside that
-    channel, callers need to surface the reasoning incrementally as it
-    arrives without re-emitting earlier text. This holds the "already
-    emitted" cursor so the runner and the loop hook share one shape.
-    """
-
-    __slots__ = ("_emitted",)
-
-    def __init__(self) -> None:
-        self._emitted = ""
-
-    def reset(self) -> None:
-        self._emitted = ""
-
-    async def feed(self, buf: str, emit: Any) -> bool:
-        """Emit any new thinking text found in ``buf``.
-
-        Returns True if anything was emitted this call. ``emit`` is an
-        async callable taking a single string (typically
-        ``hook.emit_reasoning``).
-        """
-        thinking, _ = extract_think(buf)
-        if not thinking or thinking == self._emitted:
-            return False
-        new = thinking[len(self._emitted) :].strip()
-        self._emitted = thinking
-        if not new:
-            return False
-        await emit(new)
-        return True
 
 
 def extract_reasoning(
@@ -299,8 +259,8 @@ def extract_reasoning(
     what answer text remains after we peel it out". Fallback order:
 
     1. Dedicated ``reasoning_content`` (DeepSeek-R1, Kimi, MiMo, OpenAI
-       reasoning models, Bedrock).
-    2. Anthropic ``thinking_blocks``.
+       reasoning models).
+    2. Extended ``thinking_blocks``.
     3. Inline ``<think>`` / ``<thought>`` blocks in ``content``.
 
     Only one source contributes per response; lower-priority sources are
@@ -321,34 +281,6 @@ def extract_reasoning(
     if content:
         return extract_think(content)
     return None, content
-
-
-def detect_image_mime(data: bytes) -> str | None:
-    """Detect image MIME type from magic bytes, ignoring file extension."""
-    if data[:8] == b"\x89PNG\r\n\x1a\n":
-        return "image/png"
-    if data[:3] == b"\xff\xd8\xff":
-        return "image/jpeg"
-    if data[:6] in (b"GIF87a", b"GIF89a"):
-        return "image/gif"
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return "image/webp"
-    return None
-
-
-def build_image_content_blocks(
-    raw: bytes, mime: str, path: str, label: str
-) -> list[dict[str, Any]]:
-    """Build native image blocks plus a short text label."""
-    b64 = base64.b64encode(raw).decode()
-    return [
-        {
-            "type": "image_url",
-            "image_url": {"url": f"data:{mime};base64,{b64}"},
-            "_meta": {"path": path},
-        },
-        {"type": "text", "text": label},
-    ]
 
 
 def ensure_dir(path: Path) -> Path:
@@ -552,51 +484,6 @@ def _cleanup_tool_result_buckets(root: Path, current_bucket: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
-def atomic_write_lines(path: Path, lines: Iterable[str], *, fsync: bool = True) -> None:
-    """Atomically replace *path* with already-serialized record lines.
-
-    Each item is one record. A trailing newline is added when the item does
-    not already end with one. The bytes are written to a uniquely named temp
-    file in the same directory, then published with ``os.replace``.
-
-    ``fsync=True`` (the default) flushes and fsyncs the file before the
-    replace, then fsyncs the parent directory. ``fsync=False`` skips both,
-    which session saves use when the caller does not ask for durability.
-    Directory fsync suppresses ``PermissionError`` (Windows cannot open a
-    directory this way) and ``EINVAL`` (filesystems that reject directory
-    fsync). Any other directory fsync error propagates. The temp file is
-    removed on every ``BaseException``.
-    """
-    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    try:
-        with open(tmp, "x", encoding="utf-8") as handle:
-            for line in lines:
-                handle.write(line if line.endswith("\n") else f"{line}\n")
-            if fsync:
-                handle.flush()
-                os.fsync(handle.fileno())
-        os.replace(tmp, path)
-        if fsync:
-            _fsync_directory_after_replace(path.parent)
-    finally:
-        if tmp.exists():
-            tmp.unlink(missing_ok=True)
-
-
-def _fsync_directory_after_replace(directory: Path) -> None:
-    """Fsync *directory* after a replace, ignoring unsupported platforms."""
-    with suppress(PermissionError):
-        fd = os.open(str(directory), os.O_RDONLY)
-        try:
-            try:
-                os.fsync(fd)
-            except OSError as exc:
-                if exc.errno != errno.EINVAL:
-                    raise
-        finally:
-            os.close(fd)
-
-
 def _write_text_atomic(path: Path, content: str) -> None:
     tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
     existing_mode: int | None = None
@@ -665,89 +552,6 @@ def maybe_persist_tool_result(
         truncated_preview=True,
         max_chars=max_chars,
     )
-
-
-def split_message(content: str, max_len: int = 2000) -> list[str]:
-    """
-    Split content into chunks within max_len, preferring line breaks.
-
-    Args:
-        content: The text content to split.
-        max_len: Maximum length per chunk (default 2000 for Discord compatibility).
-
-    Returns:
-        List of message chunks, each within max_len.
-    """
-    if not content:
-        return []
-    # Non-positive max_len cannot advance the cut pointer; return unsplit.
-    if max_len <= 0:
-        return [content]
-    if len(content) <= max_len:
-        return [content]
-    original_content = content
-    chunks: list[str] = []
-    while content:
-        if len(content) <= max_len:
-            if content.strip():
-                chunks.append(content)
-            break
-        cut = content[:max_len]
-        # Consume only the newline itself so indentation starts the next chunk.
-        newline_pos = cut.rfind("\n")
-        if newline_pos >= 0:
-            # Exclude both bytes of a CRLF boundary from the emitted chunk.
-            line_end = newline_pos
-            if line_end > 0 and content[line_end - 1] == "\r":
-                line_end -= 1
-            chunk = content[:line_end]
-            if chunk.strip():
-                chunks.append(chunk)
-            content = content[newline_pos + 1 :]
-            continue
-
-        # Keep the existing word-boundary behavior, but avoid emitting a
-        # whitespace-only chunk when an indented line exceeds max_len.
-        space_pos = cut.rfind(" ")
-        if space_pos > 0 and cut[:space_pos].strip():
-            chunks.append(content[:space_pos])
-            content = content[space_pos:].lstrip(" \t")
-            # A space boundary may sit immediately before a line break. Drop
-            # that delimiter too, without stripping the next line's indent.
-            if content.startswith("\r\n"):
-                content = content[2:]
-            elif content.startswith("\n"):
-                content = content[1:]
-            continue
-
-        # Do not split between the two code points of a CRLF delimiter.
-        if cut.endswith("\r") and content[max_len : max_len + 1] == "\n":
-            chunk = cut[:-1]
-            if chunk.strip():
-                chunks.append(chunk)
-            content = content[max_len + 1 :]
-            continue
-
-        chunk = content[:max_len]
-        if chunk.strip():
-            chunks.append(chunk)
-        content = content[max_len:]
-        if not chunk.strip():
-            # Keep any remaining indentation so the final non-blank chunk can
-            # retain as much of it as the channel limit permits.
-            continue
-        # A delimiter can sit immediately after the hard-break boundary. Keep
-        # ordinary space trimming, but consume only the newline so indentation
-        # on the following line is preserved.
-        content = content.lstrip(" \t")
-        if content.startswith("\r\n"):
-            content = content[2:]
-        elif content.startswith("\n"):
-            content = content[1:]
-    # Preserve the historical non-empty-input contract for callers that take
-    # the first chunk directly. This fallback is only reachable for content
-    # made entirely of whitespace.
-    return chunks or [original_content[:max_len]]
 
 
 def build_assistant_message(
@@ -895,124 +699,3 @@ def estimate_prompt_tokens_chain(
     if estimated > 0:
         return int(estimated), source
     return 0, "none"
-
-
-def build_status_content(
-    *,
-    version: str,
-    model: str,
-    start_time: float,
-    last_usage: LLMUsage | None,
-    context_window_tokens: int,
-    session_msg_count: int,
-    context_tokens_estimate: int,
-    search_usage_text: str | None = None,
-    active_task_count: int = 0,
-    max_completion_tokens: int = 8192,
-) -> str:
-    """Build a human-readable runtime status snapshot.
-
-    Args:
-        search_usage_text: Optional pre-formatted web search usage string
-                           (produced by SearchUsageInfo.format()). When provided
-                           it is appended as an extra section.
-    """
-    uptime_s = int(time.time() - start_time)
-    uptime = (
-        f"{uptime_s // 3600}h {(uptime_s % 3600) // 60}m"
-        if uptime_s >= 3600
-        else f"{uptime_s // 60}m {uptime_s % 60}s"
-    )
-    last_in = last_usage.input_tokens if last_usage else 0
-    last_out = last_usage.output_tokens if last_usage else 0
-    cached = last_usage.cache_read_tokens if last_usage else None
-    ctx_total = max(context_window_tokens, 0)
-    # Budget mirrors Consolidator formula: ctx_window - max_completion - _SAFETY_BUFFER
-    ctx_budget = max(ctx_total - int(max_completion_tokens) - 1024, 1)
-    ctx_pct = min(int((context_tokens_estimate / ctx_budget) * 100), 999) if ctx_budget > 0 else 0
-    ctx_used_str = (
-        f"{context_tokens_estimate // 1000}k"
-        if context_tokens_estimate >= 1000
-        else str(context_tokens_estimate)
-    )
-    ctx_total_str = f"{ctx_total // 1000}k" if ctx_total > 0 else "n/a"
-    token_line = f"\U0001f4ca Tokens: {last_in} in / {last_out} out"
-    if cached and last_in:
-        token_line += f" ({cached * 100 // last_in}% cached)"
-    lines = [
-        f"\U0001f408 nanobot v{version}",
-        f"\U0001f9e0 Model: {model}",
-        token_line,
-        f"\U0001f4da Context: {ctx_used_str}/{ctx_total_str} ({ctx_pct}% of input budget)",
-        f"\U0001f4ac Session: {session_msg_count} messages",
-        f"\u23f1 Uptime: {uptime}",
-        f"\u26a1 Tasks: {active_task_count} active",
-    ]
-    if search_usage_text:
-        lines.append(search_usage_text)
-    return "\n".join(lines)
-
-
-def sync_workspace_templates(workspace: Path, silent: bool = False) -> list[str]:
-    """Sync bundled templates to workspace. Creates missing files without overwriting user files."""
-    from importlib.resources import files as pkg_files
-
-    try:
-        tpl = pkg_files("nanobot") / "templates"
-    except Exception:
-        return []
-    if not tpl.is_dir():
-        return []
-
-    added: list[str] = []
-
-    def _write(src: Any, dest: Path) -> None:
-        content = src.read_text(encoding="utf-8") if src else ""
-        if dest.exists():
-            return
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(content, encoding="utf-8")
-        added.append(str(dest.relative_to(workspace)))
-
-    for item in tpl.iterdir():
-        if item.name.endswith(".md") and not item.name.startswith("."):
-            _write(item, workspace / item.name)
-    _write(tpl / "memory" / "MEMORY.md", workspace / "memory" / "MEMORY.md")
-    _write(tpl / "prompts" / "README.md", workspace / "prompts" / "README.md")
-    _write(None, workspace / "memory" / "history.jsonl")
-    (workspace / "skills").mkdir(exist_ok=True)
-
-    if added and not silent:
-        from rich.console import Console
-
-        for name in added:
-            Console().print(f"  [dim]Created {name}[/dim]")
-
-    # Initialize git for memory version control
-    try:
-        from nanobot.utils.gitstore import GitStore
-
-        gs = GitStore(
-            workspace,
-            tracked_files=[
-                "SOUL.md",
-                "USER.md",
-                "memory/MEMORY.md",
-            ],
-        )
-        gs.init()
-    except Exception:
-        logger.exception("Failed to initialize git store for {}", workspace)
-
-    return added
-
-
-def load_bundled_template(template_name: str) -> str | None:
-    """Read a bundled template file from the nanobot package."""
-    from importlib.resources import files as pkg_files
-
-    with suppress(Exception):
-        tpl = pkg_files("nanobot") / "templates" / template_name
-        if tpl.is_file():
-            return tpl.read_text(encoding="utf-8")
-    return None

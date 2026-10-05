@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import hashlib
+import posixpath
 from collections import OrderedDict
 from collections.abc import Callable, Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
-from pathlib import Path
 
 
 @dataclass(frozen=True)
@@ -38,16 +38,14 @@ def file_read_context(
 class ReadState:
     offset: int
     limit: int | None
-    content_hash: str | None
+    content_hash: str
     call_id: str | None
     result_hash: str | None
 
 
-def _hash_file(p: str) -> str | None:
-    try:
-        return hashlib.sha256(Path(p).read_bytes()).hexdigest()
-    except OSError:
-        return None
+def _key(path: str) -> str:
+    """The identity of a file on the Dot's computer: its normalized absolute path."""
+    return posixpath.normpath(path)
 
 
 class FileStates:
@@ -59,30 +57,30 @@ class FileStates:
         self._state: dict[str, ReadState] = {}
 
     def record_read(
-        self, path: str | Path, offset: int = 1, limit: int | None = None, *,
-        content_hash: str | None = None, result: str | None = None,
+        self, path: str, offset: int = 1, limit: int | None = None, *,
+        content_hash: str, result: str | None = None,
     ) -> None:
         """Record the file snapshot and complete result of a successful text read."""
-        p = str(Path(path).resolve())
+        p = _key(path)
         context = _current_file_read.get()
         self._state[p] = ReadState(
             offset=offset,
             limit=limit,
-            content_hash=content_hash if content_hash is not None else _hash_file(p),
+            content_hash=content_hash,
             call_id=context.call_id if context is not None else None,
             result_hash=hashlib.sha256(result.encode("utf-8")).hexdigest() if result else None,
         )
 
-    def record_write(self, path: str | Path) -> None:
+    def record_write(self, path: str) -> None:
         """Invalidate a prior read after a write; a write summary is not file content."""
-        self._state.pop(str(Path(path).resolve()), None)
+        self._state.pop(_key(path), None)
 
     def is_unchanged(
-        self, path: str | Path, offset: int = 1, limit: int | None = None, *,
-        content_hash: str | None = None,
+        self, path: str, offset: int = 1, limit: int | None = None, *,
+        content_hash: str,
     ) -> bool:
         """Check both file identity and the original result in the actual model input."""
-        p = str(Path(path).resolve())
+        p = _key(path)
         entry = self._state.get(p)
         context = _current_file_read.get()
         if entry is None or context is None or not entry.call_id or not entry.result_hash:
@@ -93,12 +91,11 @@ class FileStates:
         if result is None or hashlib.sha256(result.encode("utf-8")).hexdigest() != entry.result_hash:
             self._state.pop(p, None)
             return False
-        current_hash = content_hash if content_hash is not None else _hash_file(p)
-        return current_hash is not None and current_hash == entry.content_hash
+        return content_hash == entry.content_hash
 
-    def get(self, path: str | Path) -> ReadState | None:
+    def get(self, path: str) -> ReadState | None:
         """Return the raw ReadState entry for a path, or None."""
-        return self._state.get(str(Path(path).resolve()))
+        return self._state.get(_key(path))
 
     def clear(self) -> None:
         """Clear all tracked state (useful for testing)."""

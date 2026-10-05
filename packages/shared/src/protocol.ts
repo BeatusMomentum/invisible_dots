@@ -89,12 +89,11 @@ export const GUEST_PATHS = {
   downloads: "/home/dot/downloads",
   documents: "/home/dot/documents",
   memory: "/home/dot/memory",
-  stateDir: "/home/dot/state",
-  database: "/home/dot/state/dot.db",
   browsers: "/home/dot/browsers",
   runDir: "/run/invisible-dots",
   agentdSocket: "/run/invisible-dots/agentd.sock",
-  agentSocket: "/run/invisible-dots/agent.sock",
+  /** The engine's API, in a directory of the engine's user dot cannot write (architecture 4.2). */
+  agentSocket: "/run/invisible-dots-agent/agent.sock",
 } as const;
 
 /** Paths of one browser identity under a browsers root (default `/home/dot/browsers`). */
@@ -241,6 +240,26 @@ export interface FileListAnswer {
 /** `POST /secrets`. */
 export interface SecretsRequest {
   openrouter_api_key: string;
+}
+
+/**
+ * What an OpenRouter key is made of, as one rule with two readers: the host refuses a key that breaks it when the
+ * user enters it (`checkOpenRouterKey`), and the guest engine refuses it again on `POST /secrets`
+ * (nanobot/dots/protocol.py keeps a copy of these two constants; tests/repo/vendored-nanobot.test.ts keeps the
+ * copy equal). The key travels in an Authorization header, so it is printable ASCII with no space; any other
+ * character makes the HTTP stack refuse the request with an error whose text is the whole header.
+ */
+export const OPENROUTER_KEY_PATTERN = "[!-~]+";
+export const OPENROUTER_KEY_RULE = "the key must be printable ASCII without spaces, as it travels in a header";
+
+/** A key as the host stores it (the value with its ends trimmed), or why the value is not one. The key is never in the problem. */
+export type OpenRouterKeyCheck = { ok: true; key: string } | { ok: false; problem: string };
+
+export function checkOpenRouterKey(value: unknown): OpenRouterKeyCheck {
+  if (typeof value !== "string" || value.trim() === "") return { ok: false, problem: "value must be a non-empty string" };
+  const key = value.trim();
+  if (!new RegExp(`^${OPENROUTER_KEY_PATTERN}$`).test(key)) return { ok: false, problem: `value is not an OpenRouter key: ${OPENROUTER_KEY_RULE}` };
+  return { ok: true, key };
 }
 
 /** `PUT /config` body. */

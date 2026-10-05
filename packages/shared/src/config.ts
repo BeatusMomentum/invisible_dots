@@ -9,7 +9,7 @@
  */
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
-import { isPermission, type Permission } from "./tools.js";
+import { isPermission, PERMISSIONS, type Permission } from "./tools.js";
 
 const KIB = 1024;
 const MIB = KIB * 1024;
@@ -286,9 +286,17 @@ export function parseRuntimeConfig(input: unknown): DotRuntimeConfig {
   return toRuntimeConfig(parseDotConfig(value));
 }
 
+/**
+ * What the guest is given (`PUT /config`): the Dot config without its
+ * computer section, with `permissions` resolved for every permission the
+ * registry knows. The defaults live here and nowhere else; the engine in the
+ * guest applies the map as it comes and denies a permission it does not
+ * find in it.
+ */
 export function toRuntimeConfig(config: DotConfig): DotRuntimeConfig {
   const { computer: _computer, ...runtime } = config;
-  return runtime;
+  const permissions = Object.fromEntries(PERMISSIONS.map((permission) => [permission, resolvePermission(config, permission)]));
+  return { ...runtime, permissions };
 }
 
 export interface ComputerResources {
@@ -313,10 +321,12 @@ export function computerResources(config: Pick<DotConfig, "computer">): Computer
 
 /**
  * The decision for one permission (section 7). An explicit entry in the
- * config wins. Otherwise everything under computer.*, files.*, browser.* and
- * memory.* is allowed except browser.identity.delete, which asks. A
- * permission the tool registry does not know is denied whatever the config
- * says.
+ * config wins. Otherwise everything under computer.*, files.*, browser.*,
+ * memory.* and web.* is allowed, except browser.identity.delete, which asks;
+ * sending a message, creating an automation and starting a sub-agent ask too,
+ * because each acts outside the Dot's own computer or keeps working after the
+ * turn. A permission the tool registry does not know is denied whatever the
+ * config says.
  */
 export function resolvePermission(
   config: Pick<DotRuntimeConfig, "permissions">,
@@ -328,10 +338,15 @@ export function resolvePermission(
   return defaultPermission(permission);
 }
 
+const ASK_BY_DEFAULT: ReadonlySet<Permission> = new Set<Permission>([
+  "browser.identity.delete",
+  "message.send",
+  "automations",
+  "subagents",
+]);
+const ALLOWED_NAMESPACES: ReadonlySet<string> = new Set(["computer", "files", "browser", "memory", "web"]);
+
 function defaultPermission(permission: Permission): PermissionDecision {
-  if (permission === "browser.identity.delete") return "ask";
-  const namespace = permission.split(".")[0];
-  return namespace === "computer" || namespace === "files" || namespace === "browser" || namespace === "memory"
-    ? "allow"
-    : "deny";
+  if (ASK_BY_DEFAULT.has(permission)) return "ask";
+  return ALLOWED_NAMESPACES.has(permission.split(".")[0] ?? "") ? "allow" : "deny";
 }

@@ -1,6 +1,9 @@
-"""Background initialization of the fallback token counter."""
+"""Background initialization of the fallback token counter.
 
-import os
+The vocabulary cache location is left to the environment (``TIKTOKEN_CACHE_DIR``);
+when the encoding cannot be loaded, token counts fall back to UTF-8 byte estimates.
+"""
+
 from threading import Lock, Thread
 
 import tiktoken
@@ -14,10 +17,6 @@ _warmup_lock = Lock()
 def _load_encoding() -> None:
     global _encoding
     try:
-        if "TIKTOKEN_CACHE_DIR" not in os.environ and "DATA_GYM_CACHE_DIR" not in os.environ:
-            from nanobot.config.paths import get_data_dir
-
-            os.environ.setdefault("TIKTOKEN_CACHE_DIR", str(get_data_dir() / "cache" / "tiktoken"))
         _encoding = tiktoken.get_encoding("cl100k_base")
     except Exception as exc:
         logger.warning(

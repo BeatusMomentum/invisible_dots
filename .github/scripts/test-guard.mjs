@@ -1,6 +1,6 @@
 // Reads a test run's report and refuses a run that only looks green.
 //
-// vitest and `go test` exit 0 when nothing failed, which is also what they do
+// vitest, `go test` and pytest exit 0 when nothing failed, which is also what they do
 // when a whole file stopped being collected, when a suite skipped itself
 // because a tool or a database was missing, or when a build constraint left
 // a file out. Each of those reads exactly like a pass. So the count of tests
@@ -10,8 +10,11 @@
 //   node .github/scripts/test-guard.mjs <report> --suite <name> [--floors <file>]
 //
 // <report>  vitest's JSON report (--reporter=json --outputFile) for the
-//           vitest suites, the output of `go test -json` for "go".
-// --suite   the entry of the floors file to apply: vitest, postgres or go.
+//           vitest suites, the output of `go test -json` for "go", and a
+//           JUnit XML report (a file ending in .xml, pytest --junitxml) for
+//           the Python engine.
+// --suite   the entry of the floors file to apply: vitest, postgres, go or
+//           pytest.
 // --floors  default .github/test-floors.json. The entry is chosen by the
 //           host this runs on (linux, win32), so CI and the pre-push hook
 //           read the same numbers from the same file.
@@ -31,7 +34,7 @@ function fail(message) {
 
 const args = process.argv.slice(2);
 const reportPath = args.shift();
-const usage = "usage: test-guard.mjs <report> --suite <vitest|postgres|go> [--floors <file>]";
+const usage = "usage: test-guard.mjs <report> --suite <vitest|postgres|go|pytest> [--floors <file>]";
 if (!reportPath) fail(usage);
 let suite;
 let floorsPath = ".github/test-floors.json";
@@ -91,6 +94,51 @@ function vitestTests() {
   return { tests, broken, files: report.testResults.length };
 }
 
+/** The text an XML attribute value stands for. */
+function xmlText(value) {
+  return value
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#([0-9]+);/g, (_, dec) => String.fromCodePoint(parseInt(dec, 10)))
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+/** The attributes of one start tag, as an object. */
+function xmlAttributes(tag) {
+  const attributes = {};
+  for (const match of tag.matchAll(/([\w:.-]+)="([^"]*)"/g)) attributes[match[1]] = xmlText(match[2]);
+  return attributes;
+}
+
+/**
+ * JUnit XML, the report of pytest --junitxml: one testcase element per test.
+ * A testcase holding a failure or an error element failed (a module that could
+ * not be collected is reported as one), one holding a skipped element was
+ * skipped, and any other passed. The name a skip is allowed by is
+ * "<classname> <name>".
+ */
+function junitTests() {
+  if (!/<testsuites?[\s>]/.test(text)) fail(`${reportPath} is not a JUnit XML report; run pytest with --junitxml`);
+  const tests = [];
+  const classes = new Set();
+  for (const match of text.matchAll(/<testcase\b([^>]*?)(\/?)>/g)) {
+    const attributes = xmlAttributes(match[1]);
+    let body = "";
+    if (match[2] !== "/") {
+      const end = text.indexOf("</testcase>", match.index);
+      body = end === -1 ? "" : text.slice(match.index + match[0].length, end);
+    }
+    const status = /<(failure|error)\b/.test(body) ? "failed" : /<skipped\b/.test(body) ? "skipped" : "passed";
+    const classname = attributes.classname ?? "";
+    classes.add(classname);
+    tests.push({ fullName: `${classname} ${attributes.name ?? ""}`.trim(), status, file: classname });
+  }
+  return { tests, broken: [], files: classes.size };
+}
+
 function goTests() {
   const tests = [];
   const broken = [];
@@ -118,7 +166,7 @@ function goTests() {
   return { tests, broken, files: packages.size };
 }
 
-const { tests, broken, files } = suite === "go" ? goTests() : vitestTests();
+const { tests, broken, files } = reportPath.endsWith(".xml") ? junitTests() : suite === "go" ? goTests() : vitestTests();
 const passed = tests.filter((test) => test.status === "passed");
 const failed = tests.filter((test) => test.status === "failed");
 const skipped = tests.filter((test) => test.status === "skipped");
