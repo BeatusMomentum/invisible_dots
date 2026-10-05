@@ -62,9 +62,12 @@ every package at an exact version with the SHA-256 of its files, so nothing is
 resolved from the index at build time and a dependency missing from it fails
 the build. It is the one place the versions of `invisible-playwright-mcp` and
 `invisible-playwright` are written (`pins.env` and the manifest read them from
-it), and its header has the command that regenerates it. A new
-`invisible-playwright-mcp` version also needs a new capture of its tool list
-once the browser phase of the engine holds a test to one.
+it), and its header has the command that regenerates it. The engine holds a
+capture of the pinned version's tool list
+(`invisible_engine_dots/tests/fixtures/mcp-tools-<version>.json`, names and
+input schemas from the real server's `tools/list`), and a test that the
+capture's version equals the one pinned here: a new `invisible-playwright-mcp`
+version needs a new capture, named for it, in the same change.
 
 `builder/engine-requirements.lock` is the same for the engine
 (`invisible_engine_dots/pyproject.toml`): the one place its dependency

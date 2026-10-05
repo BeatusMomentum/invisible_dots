@@ -1,0 +1,621 @@
+{
+  "//": "One behavior of the browser identity rules (architecture section 6) in two languages: packages/shared/test/identity-rules.test.ts runs these cases against packages/shared/src/identity-rules.ts and ids.ts, invisible_engine_dots/tests/dots/test_identity_rules.py runs the same cases against nanobot/dots/identity_rules.py. A case changes here and in both implementations, or not at all. `input` of a check case is the request body: a key that is absent is `undefined`, a JSON null is null. `existing` and `max` default to 0 and 20. `ok.proxy` is absent when the request has no proxy.",
+  "name_max": 80,
+  "id_max": 64,
+  "check_request": [
+    {
+      "case": "a plain name",
+      "input": {
+        "name": "Shopping"
+      },
+      "ok": {
+        "name": "Shopping"
+      }
+    },
+    {
+      "case": "the name is trimmed",
+      "input": {
+        "name": "  Work\t\n"
+      },
+      "ok": {
+        "name": "Work"
+      }
+    },
+    {
+      "case": "the name is trimmed of what JavaScript trims: no-break space, BOM, em space",
+      "input": {
+        "name": "\u00a0\ufeffWork\u2003"
+      },
+      "ok": {
+        "name": "Work"
+      }
+    },
+    {
+      "case": "U+0085 is not whitespace to JavaScript",
+      "input": {
+        "name": "\u0085x"
+      },
+      "ok": {
+        "name": "\u0085x"
+      }
+    },
+    {
+      "case": "80 characters are allowed",
+      "input": {
+        "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "ok": {
+        "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "case": "80 characters after trimming are allowed",
+      "input": {
+        "name": "  bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  "
+      },
+      "ok": {
+        "name": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    },
+    {
+      "case": "81 characters are refused",
+      "input": {
+        "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "error": {
+        "code": "invalid",
+        "message": "an identity name is at most 80 characters"
+      }
+    },
+    {
+      "case": "the length counts UTF-16 units like JavaScript: 41 emoji are 82",
+      "input": {
+        "name": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+      },
+      "error": {
+        "code": "invalid",
+        "message": "an identity name is at most 80 characters"
+      }
+    },
+    {
+      "case": "40 emoji are 80 units",
+      "input": {
+        "name": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+      },
+      "ok": {
+        "name": "\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00\ud83d\ude00"
+      }
+    },
+    {
+      "case": "an empty name",
+      "input": {
+        "name": ""
+      },
+      "error": {
+        "code": "invalid",
+        "message": "an identity needs a non-empty name"
+      }
+    },
+    {
+      "case": "a blank name",
+      "input": {
+        "name": "   \t "
+      },
+      "error": {
+        "code": "invalid",
+        "message": "an identity needs a non-empty name"
+      }
+    },
+    {
+      "case": "a missing name",
+      "input": {},
+      "error": {
+        "code": "invalid",
+        "message": "an identity needs a non-empty name"
+      }
+    },
+    {
+      "case": "a name that is null",
+      "input": {
+        "name": null
+      },
+      "error": {
+        "code": "invalid",
+        "message": "an identity needs a non-empty name"
+      }
+    },
+    {
+      "case": "a name that is a number",
+      "input": {
+        "name": 7
+      },
+      "error": {
+        "code": "invalid",
+        "message": "an identity needs a non-empty name"
+      }
+    },
+    {
+      "case": "a name that is a list",
+      "input": {
+        "name": [
+          "a"
+        ]
+      },
+      "error": {
+        "code": "invalid",
+        "message": "an identity needs a non-empty name"
+      }
+    },
+    {
+      "case": "no proxy",
+      "input": {
+        "name": "Work"
+      },
+      "ok": {
+        "name": "Work"
+      }
+    },
+    {
+      "case": "a proxy that is the empty string means none",
+      "input": {
+        "name": "Work",
+        "proxy": ""
+      },
+      "ok": {
+        "name": "Work"
+      }
+    },
+    {
+      "case": "a blank proxy means none",
+      "input": {
+        "name": "Work",
+        "proxy": "  \t"
+      },
+      "ok": {
+        "name": "Work"
+      }
+    },
+    {
+      "case": "an http proxy",
+      "input": {
+        "name": "Work",
+        "proxy": "http://proxy.example.com:8080"
+      },
+      "ok": {
+        "name": "Work",
+        "proxy": "http://proxy.example.com:8080"
+      }
+    },
+    {
+      "case": "an https proxy",
+      "input": {
+        "name": "Work",
+        "proxy": "https://proxy.example.com"
+      },
+      "ok": {
+        "name": "Work",
+        "proxy": "https://proxy.example.com"
+      }
+    },
+    {
+      "case": "a socks4 proxy",
+      "input": {
+        "name": "Work",
+        "proxy": "socks4://10.0.0.1:1080"
+      },
+      "ok": {
+        "name": "Work",
+        "proxy": "socks4://10.0.0.1:1080"
+      }
+    },
+    {
+      "case": "a socks5 proxy with credentials, trimmed, returned as given",
+      "input": {
+        "name": "Work",
+        "proxy": "  socks5://user:s3cret@10.0.0.1:1080  "
+      },
+      "ok": {
+        "name": "Work",
+        "proxy": "socks5://user:s3cret@10.0.0.1:1080"
+      }
+    },
+    {
+      "case": "the scheme is case insensitive and the value is returned as given",
+      "input": {
+        "name": "Work",
+        "proxy": "HTTP://Proxy.Example.COM:8080"
+      },
+      "ok": {
+        "name": "Work",
+        "proxy": "HTTP://Proxy.Example.COM:8080"
+      }
+    },
+    {
+      "case": "an IPv6 host",
+      "input": {
+        "name": "Work",
+        "proxy": "http://[::1]:3128"
+      },
+      "ok": {
+        "name": "Work",
+        "proxy": "http://[::1]:3128"
+      }
+    },
+    {
+      "case": "an @ in the password",
+      "input": {
+        "name": "Work",
+        "proxy": "http://user:p@ss@host:8080"
+      },
+      "ok": {
+        "name": "Work",
+        "proxy": "http://user:p@ss@host:8080"
+      }
+    },
+    {
+      "case": "a proxy that is a number",
+      "input": {
+        "name": "Work",
+        "proxy": 8080
+      },
+      "error": {
+        "code": "invalid",
+        "message": "proxy must be a string"
+      }
+    },
+    {
+      "case": "a proxy that is null",
+      "input": {
+        "name": "Work",
+        "proxy": null
+      },
+      "error": {
+        "code": "invalid",
+        "message": "proxy must be a string"
+      }
+    },
+    {
+      "case": "a proxy that is a boolean",
+      "input": {
+        "name": "Work",
+        "proxy": true
+      },
+      "error": {
+        "code": "invalid",
+        "message": "proxy must be a string"
+      }
+    },
+    {
+      "case": "a proxy that is not a URL",
+      "input": {
+        "name": "Work",
+        "proxy": "not a url"
+      },
+      "error": {
+        "code": "invalid",
+        "message": "proxy must be a URL such as http://user:pass@host:port or socks5://host:port"
+      }
+    },
+    {
+      "case": "an http proxy with no host",
+      "input": {
+        "name": "Work",
+        "proxy": "http://"
+      },
+      "error": {
+        "code": "invalid",
+        "message": "proxy must be a URL such as http://user:pass@host:port or socks5://host:port"
+      }
+    },
+    {
+      "case": "a port that is not a number",
+      "input": {
+        "name": "Work",
+        "proxy": "http://host:abc"
+      },
+      "error": {
+        "code": "invalid",
+        "message": "proxy must be a URL such as http://user:pass@host:port or socks5://host:port"
+      }
+    },
+    {
+      "case": "a port above 65535",
+      "input": {
+        "name": "Work",
+        "proxy": "http://host:70000"
+      },
+      "error": {
+        "code": "invalid",
+        "message": "proxy must be a URL such as http://user:pass@host:port or socks5://host:port"
+      }
+    },
+    {
+      "case": "a scheme that is not a proxy scheme",
+      "input": {
+        "name": "Work",
+        "proxy": "ftp://host"
+      },
+      "error": {
+        "code": "invalid",
+        "message": "proxy must use http, https, socks4 or socks5 and name a host; got \"ftp://host\""
+      }
+    },
+    {
+      "case": "the message never carries the password",
+      "input": {
+        "name": "Work",
+        "proxy": "ftp://user:hunter2@host"
+      },
+      "error": {
+        "code": "invalid",
+        "message": "proxy must use http, https, socks4 or socks5 and name a host; got \"ftp://user:***@host\""
+      }
+    },
+    {
+      "case": "host and port with no scheme read as a scheme",
+      "input": {
+        "name": "Work",
+        "proxy": "localhost:8080"
+      },
+      "error": {
+        "code": "invalid",
+        "message": "proxy must use http, https, socks4 or socks5 and name a host; got \"localhost:8080\""
+      }
+    },
+    {
+      "case": "one below the limit",
+      "input": {
+        "name": "Work"
+      },
+      "ok": {
+        "name": "Work"
+      },
+      "existing": 19,
+      "max": 20
+    },
+    {
+      "case": "at the limit",
+      "input": {
+        "name": "Work"
+      },
+      "error": {
+        "code": "limit",
+        "message": "this Dot already has 20 browser identities, the most its configuration allows (max_identities 20); delete one first"
+      },
+      "existing": 20,
+      "max": 20
+    },
+    {
+      "case": "above the limit",
+      "input": {
+        "name": "Work"
+      },
+      "error": {
+        "code": "limit",
+        "message": "this Dot already has 25 browser identities, the most its configuration allows (max_identities 20); delete one first"
+      },
+      "existing": 25,
+      "max": 20
+    },
+    {
+      "case": "a limit of zero",
+      "input": {
+        "name": "Work"
+      },
+      "error": {
+        "code": "limit",
+        "message": "this Dot already has 0 browser identities, the most its configuration allows (max_identities 0); delete one first"
+      },
+      "existing": 0,
+      "max": 0
+    },
+    {
+      "case": "the name is checked before the limit",
+      "input": {
+        "name": ""
+      },
+      "error": {
+        "code": "invalid",
+        "message": "an identity needs a non-empty name"
+      },
+      "existing": 20,
+      "max": 20
+    },
+    {
+      "case": "the proxy is checked before the limit",
+      "input": {
+        "name": "Work",
+        "proxy": "not a url"
+      },
+      "error": {
+        "code": "invalid",
+        "message": "proxy must be a URL such as http://user:pass@host:port or socks5://host:port"
+      },
+      "existing": 20,
+      "max": 20
+    }
+  ],
+  "redact_proxy": [
+    {
+      "case": "a password is replaced",
+      "input": "http://user:secret@host:8080",
+      "expect": "http://user:***@host:8080"
+    },
+    {
+      "case": "a trailing slash is dropped",
+      "input": "http://user:secret@host:8080/",
+      "expect": "http://user:***@host:8080"
+    },
+    {
+      "case": "no password, nothing replaced",
+      "input": "http://user@host:8080",
+      "expect": "http://user@host:8080"
+    },
+    {
+      "case": "no credentials",
+      "input": "http://host:8080",
+      "expect": "http://host:8080"
+    },
+    {
+      "case": "a socks5 proxy",
+      "input": "socks5://u:p@host:1080",
+      "expect": "socks5://u:***@host:1080"
+    },
+    {
+      "case": "an encoded password",
+      "input": "http://user:p%40ss@host",
+      "expect": "http://user:***@host"
+    },
+    {
+      "case": "an @ in the password",
+      "input": "http://user:p@ss@host:8080",
+      "expect": "http://user:***@host:8080"
+    },
+    {
+      "case": "an empty user name",
+      "input": "http://:secret@host",
+      "expect": "http://:***@host"
+    },
+    {
+      "case": "the default port is dropped",
+      "input": "http://user:secret@host:80",
+      "expect": "http://user:***@host"
+    },
+    {
+      "case": "the default https port, host lower-cased, path kept without its last slash",
+      "input": "https://user:secret@Host.Example:443/path/",
+      "expect": "https://user:***@host.example/path"
+    },
+    {
+      "case": "a query is kept",
+      "input": "http://user:secret@host:8080/a?token=1",
+      "expect": "http://user:***@host:8080/a?token=1"
+    },
+    {
+      "case": "an IPv6 host",
+      "input": "http://u:p@[::1]:3128",
+      "expect": "http://u:***@[::1]:3128"
+    },
+    {
+      "case": "not a URL",
+      "input": "not a url",
+      "expect": "<unparseable proxy>"
+    },
+    {
+      "case": "the empty string",
+      "input": "",
+      "expect": "<unparseable proxy>"
+    },
+    {
+      "case": "a bad port",
+      "input": "http://host:abc",
+      "expect": "<unparseable proxy>"
+    }
+  ],
+  "slugify": [
+    {
+      "case": "lower-case and dashes",
+      "input": "Shopping Account #2",
+      "expect": "shopping-account-2"
+    },
+    {
+      "case": "combining accents are dropped",
+      "input": "  Cafe\u0301 Ole\u0301  ",
+      "expect": "cafe-ole"
+    },
+    {
+      "case": "precomposed accents are dropped",
+      "input": "Z\u00fcrich M\u00fcller",
+      "expect": "zurich-muller"
+    },
+    {
+      "case": "path separators never survive",
+      "input": "../../etc/passwd",
+      "expect": "etc-passwd"
+    },
+    {
+      "case": "runs of separators are one dash",
+      "input": "A_B  c--d",
+      "expect": "a-b-c-d"
+    },
+    {
+      "case": "digits stay",
+      "input": "2026",
+      "expect": "2026"
+    },
+    {
+      "case": "nothing usable gives the default",
+      "input": "!!!",
+      "expect": "identity"
+    },
+    {
+      "case": "nothing usable gives the given fallback",
+      "input": "",
+      "expect": "dot",
+      "fallback": "dot"
+    },
+    {
+      "case": "letters outside a-z are not usable",
+      "input": "\u65e5\u672c\u8a9e",
+      "expect": "identity"
+    },
+    {
+      "case": "a long name is cut at 32 characters",
+      "input": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "expect": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    },
+    {
+      "case": "a cut never ends in a dash",
+      "input": "a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a ",
+      "expect": "a-a-a-a-a-a-a-a-a-a-a-a-a-a-a-a"
+    }
+  ],
+  "identity_id": {
+    "valid": [
+      "a",
+      "a1",
+      "a-b",
+      "work-profile-abc123",
+      "0",
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    ],
+    "invalid": [
+      "",
+      "..",
+      "a/b",
+      "a\\b",
+      "A",
+      "-a",
+      "a-",
+      "a--b",
+      "a b",
+      "a_b",
+      "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "work\n",
+      "\n",
+      "caf\u00e9"
+    ],
+    "new": [
+      {
+        "case": "a plain name",
+        "name": "Work Profile",
+        "pattern": "^work-profile-[0-9a-hjkmnp-tv-z]{6}$"
+      },
+      {
+        "case": "nothing usable",
+        "name": "!!!",
+        "pattern": "^identity-[0-9a-hjkmnp-tv-z]{6}$"
+      },
+      {
+        "case": "accents",
+        "name": "Z\u00fcrich",
+        "pattern": "^zurich-[0-9a-hjkmnp-tv-z]{6}$"
+      },
+      {
+        "case": "a long name keeps the id short",
+        "name": "a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a a ",
+        "pattern": "^a(-a){15}-[0-9a-hjkmnp-tv-z]{6}$"
+      }
+    ]
+  }
+}

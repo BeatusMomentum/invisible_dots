@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { idTimestamp, isValidIdentityId, newId, newIdentityId, slugify } from "../src/index.js";
+import { idTimestamp, newId } from "../src/index.js";
 
 describe("newId", () => {
   it("has the prefix, a fixed length and a lowercase alphabet", () => {
@@ -28,39 +28,5 @@ describe("newId", () => {
     expect(() => newId("")).toThrow(/invalid id prefix/);
     expect(() => newId("Dot")).toThrow(/invalid id prefix/);
     expect(() => newId("a/b")).toThrow(/invalid id prefix/);
-  });
-});
-
-describe("slugify", () => {
-  it("makes lowercase dash-separated slugs", () => {
-    expect(slugify("Shopping Account #2")).toBe("shopping-account-2");
-    expect(slugify("  Cafe\u0301 Ole\u0301  ")).toBe("cafe-ole");
-    expect(slugify("Z\u00fcrich M\u00fcller")).toBe("zurich-muller");
-    expect(slugify("../../etc/passwd")).toBe("etc-passwd");
-  });
-
-  it("is never empty and never too long", () => {
-    expect(slugify("!!!")).toBe("identity");
-    expect(slugify("", "dot")).toBe("dot");
-    const long = slugify("a ".repeat(100));
-    expect(long.length).toBeLessThanOrEqual(32);
-    expect(long.endsWith("-")).toBe(false);
-  });
-});
-
-describe("newIdentityId", () => {
-  it("is the slug plus a short random suffix, and valid", () => {
-    const id = newIdentityId("Work Profile");
-    expect(id).toMatch(/^work-profile-[0-9a-hjkmnp-tv-z]{6}$/);
-    expect(isValidIdentityId(id)).toBe(true);
-    expect(newIdentityId("Work Profile")).not.toBe(id);
-  });
-
-  it("rejects ids that could escape the browsers directory", () => {
-    expect(isValidIdentityId("..")).toBe(false);
-    expect(isValidIdentityId("a/b")).toBe(false);
-    expect(isValidIdentityId("A")).toBe(false);
-    expect(isValidIdentityId("")).toBe(false);
-    expect(isValidIdentityId("-a")).toBe(false);
   });
 });
