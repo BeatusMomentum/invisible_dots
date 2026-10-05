@@ -683,7 +683,7 @@ text, spent_usd?}`, `task.completed {task_id, summary, spent_usd?}`,
 `task.failed {task_id, error, spent_usd?}`,
 `approval.requested {approval_id, task_id?, tool, permission, arguments,
 reason}`, `tool.called {task_id?, tool, permission, decision, ok,
-duration_ms, interrupted?}`, `browser.identity.created|deleted|launched|closed
+duration_ms, target?, interrupted?}`, `browser.identity.created|deleted|launched|closed
 {identity_id, name}`, `memory.written {key}`. `interrupted: true` marks a call
 the engine stopped during: its outcome is unknown and it was not run again, so
 `ok` is false and `duration_ms` is 0.
@@ -697,6 +697,28 @@ cut at 2000 characters, the last one an ellipsis. A message with no text beside
 its calls sends nothing, and neither does the chat: the answer of a chat turn
 is its `message.assistant`, and the final answer of a task is its
 `task.completed`.
+
+`tool.called.target` is what the call acted on, in one line of at most 160
+characters (`TOOL_TARGET_MAX`; the host's schema refuses a longer, empty or
+multi-line one), so a client can say "ran `make test`" and not only "exec ok".
+It is a name or a place, never content. The permission table
+(`nanobot/dots/permissions.py`) gives each tool a function that states what of
+its arguments may be shown: `exec` the first line of the command, cut at 120
+characters, with the credentials it carries masked as `***` (the user and
+password of a URL, a `Bearer` or `Basic` credential, an `Authorization`, API
+key or cookie header, a `NAME=value` or `--flag value` whose name says it holds
+a password, token, key or secret; best effort, so a command that hides a secret
+in another form is shown as it is and the full command stays with the approval);
+`read_file`, `list_dir`, `write_file` and `edit_file` the path; `find_files` the
+query, else the glob, else the path; `grep` the pattern; `apply_patch` the path,
+or `N files, first <path>`; `memory_search` the query; `memory_get` the note
+name; `cron` the action and the name or job id (`add daily-standup`);
+`exec_session` `input to <id>`, `terminate <id>` or `output of <id>`, and never
+the input; `list_exec_sessions` nothing. The engine computes it when the call
+starts and keeps it with the call's intent, so a call cut by a stop is reported
+with what it was doing. A call that never started has no intent and no target:
+a denied call, a call to a tool that is not offered, one whose arguments did not
+fit. The key is then absent, as it is for a tool with nothing to name.
 
 `spent_usd` on `message.assistant`, `task.progress`, `task.completed` and
 `task.failed` is the model spend of the session the event belongs to, in USD,
@@ -1108,7 +1130,7 @@ state.
   any other assistant message of a running task that has tool calls and text
   beside them emits `task.progress` (section 5.4);
   a tool result emits `tool.called`, its duration measured from the call's
-  intent, which it removes. A turn that fails fails its task in its own
+  intent and its `target` read from it (section 5.4), which it removes. A turn that fails fails its task in its own
   transaction; a chat turn that fails answers "I could not answer: ...".
 - Closing open calls (`close_open_calls`, `gate.py`), at every start, at the
   beginning of every turn and at the end of a cancelled or failed one. For

@@ -430,6 +430,8 @@ class TestThePolicy:
             "files.read",
             0,
         )
+        # The call never started: nothing of it is shown, not even where it pointed.
+        assert "target" not in called
         denial = h.provider.requests[1]["messages"][-1]
         assert denial["role"] == "tool"
         assert denial["content"] == "The Dot's policy denies files.read."
@@ -592,6 +594,81 @@ class TestThePolicy:
         approvals = h.store.read(lambda conn: s.list_approvals(conn, "pending"))
         assert [a.arguments["content"] for a in approvals] == ["DIFFERENT"]
         assert h.store.read(lambda conn: s.get_approval(conn, first.approval_id)).status == "granted"
+
+
+class TestToolTargets:
+    """`tool.called` names what each call acted on (architecture 5.4, 8.3), from the arguments the runner passed."""
+
+    async def test_each_call_reports_the_target_of_its_tool(self, make_harness: MakeHarness) -> None:
+        h = make_harness(
+            [
+                calls(call("c1", "write_file", path="/home/dot/workspace/a.txt", content="HUNTER2 BODY")),
+                calls(call("c2", "read_file", path="/home/dot/workspace/a.txt")),
+                calls(call("c3", "grep", pattern="HUNTER2", path="/home/dot/workspace")),
+                calls(
+                    call(
+                        "c4",
+                        "apply_patch",
+                        edits=[
+                            {"path": "/home/dot/workspace/b.txt", "action": "add", "new_text": "x"},
+                            {"path": "/home/dot/workspace/c.txt", "action": "add", "new_text": "y"},
+                        ],
+                    )
+                ),
+                calls(call("c5", "memory_search", query="rome")),
+                says("done"),
+            ],
+            {"files.read": "allow", "files.write": "allow", "memory.read": "allow"},
+        )
+        h.accept("in1")
+
+        outcome = await h.run(chat_unit())
+
+        assert outcome.kind == "completed"
+        assert [(c["tool"], c["ok"], c.get("target")) for c in h.events_of("tool.called")] == [
+            ("write_file", True, "/home/dot/workspace/a.txt"),
+            ("read_file", True, "/home/dot/workspace/a.txt"),
+            ("grep", True, "HUNTER2"),
+            ("apply_patch", True, "2 files, first /home/dot/workspace/b.txt"),
+            ("memory_search", True, "rome"),
+        ]
+        assert "HUNTER2 BODY" not in str(h.events())
+
+    async def test_a_command_is_shown_by_its_first_line_with_its_credentials_masked(
+        self, make_harness: MakeHarness
+    ) -> None:
+        h = make_harness(
+            [
+                calls(call("c1", "exec", command="curl -H 'Authorization: Bearer abc123' https://u:pw@e.com/x\necho second")),
+                says("done"),
+            ],
+            {"computer.exec": "allow"},
+        )
+        h.accept("in1")
+
+        await h.run(chat_unit())
+
+        (called,) = h.events_of("tool.called")
+        assert called["tool"] == "exec"
+        assert called["target"] == "curl -H 'Authorization: ***' https://e.com/x"
+        assert "abc123" not in str(h.events()) and "pw@" not in str(h.events())
+
+    async def test_a_task_call_that_fails_still_names_its_target(self, make_harness: MakeHarness) -> None:
+        h = make_harness([calls(call("c1", "read_file", path="/home/dot/workspace/missing.txt")), says("done")], {"files.read": "allow"})
+        session = h.start_task()
+
+        await h.run(TurnUnit(session, "t1", (OpeningMessage("do it"),)))
+
+        (called,) = h.events_of("tool.called")
+        assert (called["task_id"], called["ok"], called["target"]) == ("t1", False, "/home/dot/workspace/missing.txt")
+
+    async def test_the_intent_row_is_gone_once_the_result_reported_it(self, make_harness: MakeHarness) -> None:
+        h = make_harness([calls(call("c1", "read_file", path="/home/dot/workspace/a.txt")), says("done")], {"files.read": "allow"})
+        h.accept("in1")
+
+        await h.run(chat_unit())
+
+        assert h.store.read(lambda conn: conn.execute("SELECT COUNT(*) FROM dots_tool_intents").fetchone()[0]) == 0
 
 
 class TestMemoryNotes:

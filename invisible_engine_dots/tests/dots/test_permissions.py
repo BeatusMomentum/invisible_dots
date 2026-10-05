@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.dots.permissions import TOOL_PERMISSIONS, offered_tools, tool_permission
+from nanobot.dots.permissions import TOOL_PERMISSIONS, offered_tools, tool_permission, tool_target
 
 
 def test_every_tool_maps_to_the_permission_of_the_design() -> None:
@@ -34,6 +34,15 @@ def test_a_terminal_is_an_argument_of_exec_under_the_permission_of_exec(tmp_path
     assert exec_tool.parameters["properties"]["tty"]["type"] == "boolean"
     assert tool_permission("exec") == "computer.exec"
     assert not {name for name in TOOL_PERMISSIONS if "tty" in name or "terminal" in name or "pty" in name}
+
+
+def test_every_tool_of_the_table_states_what_of_its_call_may_be_shown() -> None:
+    for name, entry in TOOL_PERMISSIONS.items():
+        assert callable(entry.target), name
+        # Nothing to name is None, not an error.
+        assert entry.target({}) is None, name
+    assert tool_target("exec", {"command": "ls"}) == "ls"
+    assert tool_target("web_search", {"query": "ls"}) is None
 
 
 def test_the_table_cannot_be_changed_by_a_caller() -> None:

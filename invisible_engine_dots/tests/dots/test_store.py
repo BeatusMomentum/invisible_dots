@@ -598,6 +598,21 @@ class TestToolIntents:
         assert dot_store.write(lambda c: s.take_tool_intent(c, "s", "c1")) == with_notes
         assert [i.memory_keys for i in dot_store.read(s.list_tool_intents)] == [()]
 
+    def test_an_intent_carries_the_target_its_call_acted_on_and_none_by_default(self, dot_store: DotStore) -> None:
+        named = s.ToolIntent("c1", "exec", "s", "t1", 100, (), "ls -la")
+        dot_store.write(lambda c: s.record_tool_intent(c, named))
+        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c2", "exec", "s", None, 200)))
+        assert s.ToolIntent("c2", "exec", "s", None, 200).target is None
+        assert dot_store.read(lambda c: s.peek_tool_intent(c, "s", "c1")) == named
+        assert dot_store.read(lambda c: s.peek_tool_intent(c, "s", "c2")).target is None  # type: ignore[union-attr]
+        assert dot_store.write(lambda c: s.take_tool_intent(c, "s", "c1")) == named
+        assert [i.target for i in dot_store.read(s.list_tool_intents)] == [None]
+
+    def test_the_first_start_of_a_call_keeps_its_target_too(self, dot_store: DotStore) -> None:
+        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c1", "exec", "s", None, 1, (), "first")))
+        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c1", "exec", "s", None, 2, (), "second")))
+        assert dot_store.read(lambda c: s.peek_tool_intent(c, "s", "c1")).target == "first"  # type: ignore[union-attr]
+
     def test_the_first_start_of_a_call_keeps_its_notes_too(self, dot_store: DotStore) -> None:
         dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c1", "write_file", "s", None, 1, ("a.md",))))
         dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c1", "write_file", "s", None, 2, ("z.md",))))

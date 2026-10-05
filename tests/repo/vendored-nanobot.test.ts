@@ -23,6 +23,7 @@ import {
   OPENROUTER_KEY_RULE,
   OUTBOUND_EVENT_TYPES,
   TASK_CANCELLED_SYSTEM_EVENT,
+  TOOL_TARGET_MAX,
 } from "@invisible-dots/shared";
 import { describe, expect, it } from "vitest";
 
@@ -133,6 +134,8 @@ describe("the vendored nanobot fork", () => {
     expect(engineRoutes).toEqual(sharedRoutes);
 
     expect(/^TASK_CANCELLED_EVENT = "([^"]+)"/m.exec(protocol)?.[1]).toBe(TASK_CANCELLED_SYSTEM_EVENT);
+    // The longest `target` of a `tool.called`: the engine cuts to it, the host's schema refuses more.
+    expect(Number(/^TOOL_TARGET_MAX = (\d+)$/m.exec(protocol)?.[1])).toBe(TOOL_TARGET_MAX);
   });
 
   it("refuses an OpenRouter key by the one rule packages/shared names: the engine's text and pattern are its copy", () => {

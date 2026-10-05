@@ -19,9 +19,11 @@ this process's memory.
   calls and text beside them: `task.progress` with that text (the model saying
   what it is about to do), never for the chat and never for the final answer;
 - a tool result in the chat or in a task: `tool.called`, with the duration
-  measured from the call's intent row and the decision the gate recorded for
-  it (gate.py); a call that did not run (parked, skipped, closed as not run)
-  gets none;
+  measured from the call's intent row, the decision the gate recorded for
+  it (gate.py) and the target the intent holds (permissions.tool_target: what
+  the call acted on, redacted; a call that never started, such as a denied
+  one, has no intent and so no target); a call that did not run (parked,
+  skipped, closed as not run) gets none;
 - the notes a tool call wrote, when it ran ok: one `memory.written` per note
   (`key` is the path relative to the memory directory), right after its
   `tool.called`, in the same transaction. The intent holds the keys, set before
@@ -175,6 +177,8 @@ def _record_tool_result(
         "ok": decision != "deny" and not interrupted and not tool_result_is_error(message),
         "duration_ms": 0 if interrupted or intent is None else max(0, now_ms - intent.started_at),
     }
+    if intent is not None and intent.target:
+        event["target"] = intent.target
     if interrupted:
         event["interrupted"] = True
     store.append_outbox(conn, "tool.called", event)

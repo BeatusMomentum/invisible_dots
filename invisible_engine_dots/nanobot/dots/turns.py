@@ -40,6 +40,7 @@ from nanobot.dots import store as dots_store
 from nanobot.dots.computer import Computer, ComputerError, Entry
 from nanobot.dots.gate import close_open_calls
 from nanobot.dots.memory_tools import MEMORY_DIR, memory_keys_written
+from nanobot.dots.permissions import tool_target
 from nanobot.dots.projection import EngineSettings
 from nanobot.dots.provider import OpenRouterProviders
 from nanobot.dots.secrets import KeyHolder
@@ -169,6 +170,7 @@ class DotsTurnHook(AgentHook):
                 task_id=self._unit.task_id,
                 started_at=dots_store.clock_ms(),
                 memory_keys=memory_keys_written(tool_call.name, params, self._resolve),
+                target=tool_target(tool_call.name, params),
             )
         )
 

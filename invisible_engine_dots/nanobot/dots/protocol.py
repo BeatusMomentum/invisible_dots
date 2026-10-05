@@ -65,6 +65,10 @@ AGENT_STATES = (
 # a config is created or patched; tests/repo/vendored-nanobot.test.ts keeps the two equal).
 MODEL_ROLES = ("summary",)
 
+# The longest `target` of a `tool.called` event, in characters (TOOL_TARGET_MAX in packages/shared events.ts, whose
+# schema refuses more; tests/repo/vendored-nanobot.test.ts keeps the two equal).
+TOOL_TARGET_MAX = 160
+
 # The `system.event` name of a cancelled task; its data is `{"task_id": ...}`.
 TASK_CANCELLED_EVENT = "task.cancelled"
 

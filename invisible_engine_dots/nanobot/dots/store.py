@@ -12,7 +12,8 @@ transaction atomic per file only.
 - dots_tasks: the local task queue (one at a time, priority then arrival);
 - dots_tool_intents: a tool call that started and has no result yet (an intent
   left by a crash is a call the agent stopped during), with the notes the call
-  writes (`memory_keys_json`), which its result reports as `memory.written`;
+  writes (`memory_keys_json`), which its result reports as `memory.written`, and the
+  line that names what it acts on (`target`), which its result reports in `tool.called`;
 - dots_spend: what the model requests of a session have cost, in USD (see `nanobot.dots.spend`);
 - dots_kv: the runtime config the host pushed and the last agent state;
 - dots_approvals: a tool call the policy answered "ask", with its full
@@ -58,7 +59,7 @@ T = TypeVar("T")
 # The version of the database layout, kept in the file's `user_version`. Change it with any
 # change of `_SCHEMA`: an engine refuses a file of another version rather than run on a layout
 # it does not know. There is no migration (no engine of an older layout has run on a real Dot).
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 # How long open() waits for the file's lock before it says another engine owns it.
 OPEN_TIMEOUT_S = 2.0
@@ -119,6 +120,7 @@ _SCHEMA: tuple[str, ...] = (
       task_id TEXT,
       started_at INTEGER NOT NULL,
       memory_keys_json TEXT NOT NULL DEFAULT '[]',
+      target TEXT,
       PRIMARY KEY (session_key, tool_call_id)
     ) STRICT
     """,
@@ -731,9 +733,11 @@ class ToolIntent:
     started_at: int
     # The notes the call writes, as keys (paths under the memory directory): see memory_tools.memory_keys_written.
     memory_keys: tuple[str, ...] = ()
+    # The redacted line `tool.called` shows of the call (permissions.tool_target); None when there is none.
+    target: str | None = None
 
 
-_INTENT_COLUMNS = "session_key, tool_call_id, tool, task_id, started_at, memory_keys_json"
+_INTENT_COLUMNS = "session_key, tool_call_id, tool, task_id, started_at, memory_keys_json, target"
 
 
 def _intent(row: sqlite3.Row) -> ToolIntent:
@@ -744,6 +748,7 @@ def _intent(row: sqlite3.Row) -> ToolIntent:
         row["task_id"],
         int(row["started_at"]),
         tuple(json.loads(row["memory_keys_json"])),
+        row["target"],
     )
 
 
@@ -751,7 +756,7 @@ def record_tool_intent(conn: sqlite3.Connection, intent: ToolIntent) -> None:
     """Record that a tool call started. A second start of the same call of the same session keeps the first."""
     conn.execute(
         f"""
-        INSERT INTO dots_tool_intents ({_INTENT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO dots_tool_intents ({_INTENT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (session_key, tool_call_id) DO NOTHING
         """,
         (
@@ -761,6 +766,7 @@ def record_tool_intent(conn: sqlite3.Connection, intent: ToolIntent) -> None:
             intent.task_id,
             intent.started_at,
             json.dumps(list(intent.memory_keys)),
+            intent.target,
         ),
     )
 

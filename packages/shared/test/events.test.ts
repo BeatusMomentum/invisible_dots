@@ -8,6 +8,7 @@ import {
   OUTBOUND_EVENT_TYPES,
   parseInboundEvent,
   parseOutboundEvent,
+  TOOL_TARGET_MAX,
   USAGE_EVENT_TYPES,
 } from "../src/index.js";
 
@@ -124,5 +125,19 @@ describe("parseOutboundEvent", () => {
     expect(parsed.data).toEqual({ ...data, interrupted: true });
     expect(parseOutboundEvent({ seq: 5, id: "e", type: "tool.called", ts, data }).data).toEqual(data);
     expect(() => parseOutboundEvent({ seq: 6, id: "e", type: "tool.called", ts, data: { ...data, interrupted: false } })).toThrow(/interrupted/);
+  });
+
+  it("keeps the one-line target of a tool call and refuses one that is empty, long or on several lines", () => {
+    const data = { task_id: "t1", tool: "exec", permission: "computer.exec", decision: "allow", ok: true, duration_ms: 12 };
+    const parse = (target: unknown) => parseOutboundEvent({ seq: 7, id: "e", type: "tool.called", ts, data: { ...data, target } });
+    expect(parse("ls -la /home/dot").data).toEqual({ ...data, target: "ls -la /home/dot" });
+    expect(parse("x".repeat(TOOL_TARGET_MAX)).data).toMatchObject({ target: "x".repeat(TOOL_TARGET_MAX) });
+    expect(parseOutboundEvent({ seq: 8, id: "e", type: "tool.called", ts, data }).data).toEqual(data);
+    expect(() => parse("x".repeat(TOOL_TARGET_MAX + 1))).toThrow(/target/);
+    expect(() => parse("")).toThrow(/target/);
+    expect(() => parse("one\ntwo")).toThrow(/target/);
+    expect(() => parse("one\rtwo")).toThrow(/target/);
+    expect(() => parse(5)).toThrow(/target/);
+    expect(() => parse(null)).toThrow(/target/);
   });
 });

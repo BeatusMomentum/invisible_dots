@@ -444,6 +444,64 @@ class TestMemoryWritten:
         assert [kind for kind, _ in transcript.events()] == ["tool.called", "tool.called"]
 
 
+class TestToolTarget:
+    """`tool.called` names what the call acted on, from the target its intent holds (permissions.tool_target)."""
+
+    def intent(self, store: DotStore, target: str | None, session: str = CHAT) -> None:
+        task_id = None if session == CHAT else "t1"
+        store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("call-1", "exec", session, task_id, 5, (), target)))
+
+    def test_a_call_that_ran_reports_the_target_of_its_intent(self, dot_store: DotStore, transcript: Transcript) -> None:
+        self.intent(dot_store, "ls -la")
+        transcript.append(CHAT, tool_result("call-1", content="done"))
+        ((kind, data),) = transcript.events()
+        assert kind == "tool.called" and data["target"] == "ls -la"
+        assert data["ok"] is True
+
+    def test_a_task_call_reports_it_beside_the_task_id(self, dot_store: DotStore, transcript: Transcript) -> None:
+        session = start_task(dot_store)
+        self.intent(dot_store, "make test", session)
+        transcript.append(session, tool_result("call-1"))
+        ((_, data),) = transcript.events()
+        assert (data["task_id"], data["target"]) == ("t1", "make test")
+
+    def test_a_failed_call_still_says_what_it_tried(self, dot_store: DotStore, transcript: Transcript) -> None:
+        self.intent(dot_store, "cat missing.txt")
+        transcript.append(CHAT, tool_result("call-1", content="Error: no such file"))
+        ((_, data),) = transcript.events()
+        assert (data["ok"], data["target"]) == (False, "cat missing.txt")
+
+    def test_an_interrupted_call_says_what_was_cut(self, dot_store: DotStore, transcript: Transcript) -> None:
+        self.intent(dot_store, "sleep 600")
+        transcript.append(CHAT, tool_result("call-1", content="interrupted", dots_closed=t.CLOSED_INTERRUPTED))
+        ((_, data),) = transcript.events()
+        assert (data["interrupted"], data["target"]) == (True, "sleep 600")
+
+    def test_an_approved_call_reports_it_with_the_ask_decision(self, dot_store: DotStore, transcript: Transcript) -> None:
+        self.intent(dot_store, "rm build")
+        dot_store.write(lambda c: s.record_tool_decision(c, CHAT, "call-1", "ask"))
+        transcript.append(CHAT, tool_result("call-1"))
+        ((_, data),) = transcript.events()
+        assert (data["decision"], data["target"]) == ("ask", "rm build")
+
+    @pytest.mark.parametrize("target", [None, ""])
+    def test_an_intent_without_a_target_leaves_the_key_out(
+        self, dot_store: DotStore, transcript: Transcript, target: str | None
+    ) -> None:
+        self.intent(dot_store, target)
+        transcript.append(CHAT, tool_result("call-1"))
+        ((_, data),) = transcript.events()
+        assert "target" not in data
+
+    def test_a_call_that_never_started_has_no_intent_and_so_no_target(
+        self, dot_store: DotStore, transcript: Transcript
+    ) -> None:
+        dot_store.write(lambda c: s.record_tool_decision(c, CHAT, "call-1", "deny"))
+        transcript.append(CHAT, tool_result("call-1", content="The Dot's policy denied this call."))
+        ((_, data),) = transcript.events()
+        assert data["decision"] == "deny" and "target" not in data
+
+
 class TestClosedCalls:
     def test_an_interrupted_call_reports_tool_called_interrupted(self, dot_store: DotStore, transcript: Transcript) -> None:
         dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("call-1", "exec", CHAT, None, 5)))

@@ -92,6 +92,9 @@ export interface SpentUsd {
  */
 export const USAGE_EVENT_TYPES = ["task.completed", "task.failed", "message.assistant"] as const satisfies readonly OutboundEventType[];
 
+/** The longest `target` of a `tool.called` event, in characters (the engine's copy is in nanobot/dots/protocol.py). */
+export const TOOL_TARGET_MAX = 160;
+
 export interface OutboundEventDataMap {
   /**
    * The agent process started (a boot, or a restart by systemd inside a
@@ -114,6 +117,13 @@ export interface OutboundEventDataMap {
     decision: PolicyDecision;
     ok: boolean;
     duration_ms: number;
+    /**
+     * What the call acted on, in one redacted line of at most TOOL_TARGET_MAX characters: the first
+     * line of a command, a path, a search term, an action and a name (architecture section 8.3).
+     * Never what a person typed into a program or the text a browser field was given. Absent for a
+     * call that never started (denied, not offered) and for a tool with nothing to name.
+     */
+    target?: string;
     /**
      * The agent stopped while the call ran, so its outcome is unknown and it
      * was not run again (architecture section 8.7). `ok` is false and
@@ -259,6 +269,12 @@ export const outboundEventSchema = z.discriminatedUnion("type", [
       decision: z.enum(["allow", "ask", "deny"]),
       ok: z.boolean(),
       duration_ms: z.number().nonnegative(),
+      target: z
+        .string()
+        .min(1)
+        .max(TOOL_TARGET_MAX)
+        .regex(/^[^\r\n]*$/, "a target is one line")
+        .optional(),
       interrupted: z.literal(true).optional(),
     }),
   }),
