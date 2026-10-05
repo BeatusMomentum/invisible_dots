@@ -222,6 +222,25 @@ ev msg-kill user.message '{"text":"KILL-SESSION"}' >/dev/null
 check "the model terminates the session" "wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-kill\"'"
 check "terminating the exec session ended its command and its background child within 10 s" "gone_within 10 'sleep 6[34]'"
 
+# --- exec on a pseudo-terminal (the tty argument): a real terminal from the real relay ---
+# The program asks a question in color on a terminal; the model answers it through exec_session and
+# reads the screen's text, not the byte stream (no escape sequence, no carriage return).
+cat > /tmp/tty-ask.sh <<'TTYASK'
+#!/bin/bash
+if [ -t 0 ] && [ -t 1 ]; then echo "stdio-is-a-tty"; else echo "stdio-is-not-a-tty"; fi
+echo "term=$TERM size=$(stty size)"
+printf '\033[1;32mname?\033[0m '
+read -r name
+printf 'hello %s\n' "$name"
+TTYASK
+chmod 755 /tmp/tty-ask.sh
+ev msg-tty1 user.message '{"text":"RUN-TTY bash /tmp/tty-ask.sh"}' >/dev/null
+check "a tty exec starts a session, the program saw a terminal of 80x24 with a TERM, and the result has no escape sequence" "wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-tty1\" and (.data.text|test(\"stdio-is-a-tty\")) and (.data.text|test(\"term=xterm-256color size=24 80\")) and (.data.text|test(\"name\\\\? \")) and (.data.text|test(\"session_id\")) and (.data.text|test(\"\\u001b\")|not) and (.data.text|test(\"\\r\")|not)'"
+check "the terminal program runs as dot, waiting for its answer" "pgrep -u dot -f 'bash /tmp/tty-ask.sh' >/dev/null"
+ev msg-tty2 user.message '{"text":"TTY-ANSWER Ada"}' >/dev/null
+check "the answer reaches the program: the model reads its reply and the exit, with no escape sequence or carriage return" "wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-tty2\" and (.data.text|test(\"hello Ada\")) and (.data.text|test(\"Exit code: 0\")) and (.data.text|test(\"\\u001b\")|not) and (.data.text|test(\"\\r\")|not)'"
+check "the terminal program ended" "gone_within 10 'bash /tmp/tty-ask.sh'"
+
 # --- SIGTERM while a tool runs: the engine is gone within systemd's TimeoutStopSec=30 ---
 ev task-ev-6 task.created '{"task_id":"t6","description":"RUN-EXEC sleep 70; echo late6 > /home/dot/workspace/late6.txt","priority":0}' >/dev/null
 for _ in $(seq 1 60); do pgrep -u dot -f 'sleep 70' >/dev/null && break; sleep 1; done

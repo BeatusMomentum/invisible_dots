@@ -7,6 +7,9 @@ last user text, substring matches):
 - a user message with REPEAT-EXEC <cmd>: a call of the exec tool with <cmd>, after every result too
   (a model that never stops, for the cost cap);
 - a user message with RUN-EXEC <cmd>: a call of the exec tool with <cmd>;
+- a user message with RUN-TTY <cmd>: a call of the exec tool with <cmd> on a pseudo-terminal (tty: true);
+- a user message with TTY-ANSWER <text>: a call of exec_session that sends <text> and a newline to the
+  session the last tool result named, and waits for the session to end;
 - a user message with SAY-RUN-EXEC <text> :: <cmd>: the same call with <text> written beside it;
 - a user message with WRITE-NOTE <path> :: <text>: a call of write_file on /home/dot/memory/<path>;
 - a user message with FIND-NOTE <word>: a call of memory_search for <word>;
@@ -73,6 +76,15 @@ def cost_of(messages: list[dict]) -> float:
     return float(found.group(1)) if found else 0
 
 
+def last_session_id(conversation: list[dict]) -> str | None:
+    """The exec session id named by the most recent tool result that names one."""
+    for message in reversed(conversation):
+        found = re.search(r"session_id: (\S+)", text_of(message.get("content"))) if message.get("role") == "tool" else None
+        if found:
+            return found.group(1)
+    return None
+
+
 def decide(messages: list[dict]) -> dict:
     conversation = [m for m in messages if m.get("role") not in ("system", "developer")]
     last = conversation[-1] if conversation else {}
@@ -92,11 +104,20 @@ def decide(messages: list[dict]) -> dict:
         return {"tool": {"name": granted.group(1), "args": json.loads(granted.group(2))}}
     if "KILL-SESSION" in said:
         # Terminate the exec session the last RUN-SESSION started: its id is in that call's result.
-        for message in reversed(conversation):
-            found = re.search(r"session_id: (\S+)", text_of(message.get("content"))) if message.get("role") == "tool" else None
-            if found:
-                return {"tool": {"name": "exec_session", "args": {"session_id": found.group(1), "terminate": True}}}
+        session_id = last_session_id(conversation)
+        if session_id:
+            return {"tool": {"name": "exec_session", "args": {"session_id": session_id, "terminate": True}}}
         return {"text": "no session to kill"}
+    answer = re.search(r"TTY-ANSWER (.+)$", said, re.M)
+    if answer:
+        session_id = last_session_id(conversation)
+        if session_id:
+            args = {"session_id": session_id, "input": answer.group(1).strip() + "\n", "until_exit": True, "timeout_ms": 10000}
+            return {"tool": {"name": "exec_session", "args": args}}
+        return {"text": "no terminal session to answer"}
+    terminal = re.search(r"RUN-TTY (.+)$", said, re.M)
+    if terminal:
+        return {"tool": {"name": "exec", "args": {"command": terminal.group(1).strip(), "tty": True}}}
     session = re.search(r"RUN-SESSION (.+)$", said, re.M)
     if session:
         # exec as a background session: it answers after 200 ms with a session id while the command runs on.

@@ -114,6 +114,80 @@ async def test_exec_sessions_run_through_the_relay_too(
     assert record["cwd"] == str(tmp_path / "workspace")
 
 
+async def test_exec_with_a_tty_asks_the_relay_for_one_and_runs_as_a_session(
+    computer: LocalComputer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("TERM", raising=False)
+    manager = ExecSessionManager()
+    tool = ExecTool(computer, session_manager=manager)
+    try:
+        started = await tool.execute(command='echo "term=$TERM"; cat', tty=True, yield_time_ms=300)
+        assert "term=xterm-256color" in started
+        assert "session_id:" in started
+        session_id = started.split("session_id:")[1].split()[0]
+        answer = await ExecSessionTool(manager=manager).execute(
+            session_id=session_id, input="hello\n", timeout_ms=1500, close_stdin=True,
+        )
+        assert "hello" in answer
+    finally:
+        await manager.close_all()
+
+    (record,) = _records(tmp_path / "relay.log")
+    assert record["tty"] is True
+    assert record["program"] == ["/bin/bash", "-lc", 'echo "term=$TERM"; cat']
+    assert record["cwd"] == str(tmp_path / "workspace")
+
+
+async def test_a_tty_without_yield_time_still_starts_a_session(
+    computer: LocalComputer, tmp_path: Path
+) -> None:
+    manager = ExecSessionManager()
+    try:
+        started = await ExecTool(computer, session_manager=manager).execute(command="cat", tty=True)
+        assert "Process running. session_id:" in started
+    finally:
+        await manager.close_all()
+
+    (record,) = _records(tmp_path / "relay.log")
+    assert record["tty"] is True
+
+
+async def test_a_tty_command_that_ends_at_once_answers_in_the_same_call(
+    computer: LocalComputer,
+) -> None:
+    result = await ExecTool(computer, session_manager=ExecSessionManager()).execute(
+        command="echo quick", tty=True
+    )
+
+    assert "quick" in result
+    assert "Exit code: 0" in result
+    assert "session_id" not in result
+
+
+async def test_a_tty_keeps_the_terminal_type_the_engine_was_given(
+    computer: LocalComputer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TERM", "vt100")
+
+    result = await ExecTool(computer, session_manager=ExecSessionManager()).execute(
+        command='echo "term=$TERM"', tty=True
+    )
+
+    assert "term=vt100" in result
+
+
+async def test_without_a_tty_the_terminal_type_of_the_engine_does_not_reach_the_command(
+    computer: LocalComputer, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("TERM", "vt100")
+
+    result = await ExecTool(computer).execute(command='echo "term=${TERM:-absent}"', tty=False)
+
+    assert "term=vt100" not in result  # the engine's TERM stays with the engine (bash itself says dumb)
+    (record,) = _records(tmp_path / "relay.log")
+    assert record["tty"] is False
+
+
 async def test_a_timeout_ends_the_command_started_through_the_relay(
     computer: LocalComputer, tmp_path: Path
 ) -> None:

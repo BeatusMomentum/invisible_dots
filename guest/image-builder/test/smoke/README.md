@@ -18,7 +18,9 @@ disk lay them out. This smoke does, in one Linux container, with no QEMU:
   rule and cannot read the host's token, `dot` cannot read the engine's state),
   the event stream (`seq` 1..N across `kill -9`, no loss, no repeat), commands
   that run as `dot` and end with the call that started them (cancel, terminate,
-  SIGTERM within systemd's 30 s), approvals that survive a crash, the cost cap that
+  SIGTERM within systemd's 30 s), a program on a pseudo-terminal (`exec` with `tty`) that
+  sees an 80x24 terminal and is answered through `exec_session`, its output read as the
+  screen's text with no escape sequence, approvals that survive a crash, the cost cap that
   stops a task and a chat turn and still holds after a crash, the `spent_usd` the
   events of tasks and chat answers carry, the tools offered
   for each permission map, the summary of an outgrown thread going to the

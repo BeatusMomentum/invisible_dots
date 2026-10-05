@@ -896,8 +896,8 @@ does not know.
 
 | tool | permission | what it does |
 |---|---|---|
-| `exec` | `computer.exec` | runs a command through `bash -lc` in a working directory with a timeout (60 s by default, 600 s at most); with `yield_time_ms` it returns while the command still runs, which makes it a background job |
-| `exec_session` | `computer.exec` | sends input to, waits for, reads or terminates a background job |
+| `exec` | `computer.exec` | runs a command through `bash -lc` in a working directory with a timeout (60 s by default, 600 s at most); with `yield_time_ms` it returns while the command still runs, which makes it a background job; with `tty: true` it runs on a pseudo-terminal, as a background job that `exec_session` drives (no new tool, the same permission) |
+| `exec_session` | `computer.exec` | sends input to, waits for, reads or terminates a background job (a terminal's output is the text of its screen, section 8.8) |
 | `list_exec_sessions` | `computer.exec` | lists the background jobs |
 | `read_file` | `files.read` | reads a text file, by line window; reports a binary file as binary |
 | `list_dir` | `files.read` | lists a directory, optionally recursively |
@@ -1129,7 +1129,18 @@ state.
   relay lives exactly as long as the remote command, and killing it (a
   timeout, a cancel, `terminate`, the engine's death) makes dot-agentd kill
   the remote process group. A background job is an `exec` that outlived its
-  `yield_time_ms`; `exec_session` and `list_exec_sessions` act on it. The file
+  `yield_time_ms`; `exec_session` and `list_exec_sessions` act on it. With
+  `tty: true` (always a background job: a terminal program is interactive) the
+  relay gets `--tty` and `TERM` (the engine's, else `xterm-256color`) and
+  dot-agentd runs the command on an 80x24 pseudo-terminal, so what it writes is
+  one stream and its input is echoed back; `close_stdin` is ^D and the
+  character with code 3 is ^C. The model reads the text of the screen, not the
+  byte stream: `terminal_text` (`exec_session.py`) drops escape sequences,
+  turns `\r\n` into a newline, lets a lone `\r`, a backspace and erase-in-line
+  overwrite, and holds back an escape sequence cut by the end of one poll until
+  the next. A program that paints the whole screen (vim, htop) is not
+  rendered. There is no terminal for the person: a person's keystrokes are not
+  tool calls and would bypass the approval system (section 10). The file
   tools read and write through the `GET /v1/files`, `PUT /v1/files` and
   `GET /v1/files/list` routes of `agentd.sock` (relative paths resolve against
   `/home/dot/workspace`), keeping nanobot's line windows, read-before-write
@@ -1237,8 +1248,7 @@ state.
   the usage telemetry, the configuration files and every provider but
   OpenRouter.
 - Not yet: the browser identities (`GET` lists none, `POST` and `DELETE` answer
-  `501`), the screenshot tool, and a pseudo-terminal tool (`exec` and `exec_session` cover jobs and
-  their input; `dot-agentd relay --tty` is there for it).
+  `501`) and the screenshot tool.
 
 ## 9. Control plane
 

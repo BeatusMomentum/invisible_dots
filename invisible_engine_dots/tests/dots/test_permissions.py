@@ -25,6 +25,17 @@ def test_every_tool_maps_to_the_permission_of_the_design() -> None:
     }
 
 
+def test_a_terminal_is_an_argument_of_exec_under_the_permission_of_exec(tmp_path) -> None:
+    from nanobot.dots.permissions import build_registry
+
+    exec_tool = build_registry(_deps(tmp_path)).get("exec")
+
+    assert exec_tool is not None
+    assert exec_tool.parameters["properties"]["tty"]["type"] == "boolean"
+    assert tool_permission("exec") == "computer.exec"
+    assert not {name for name in TOOL_PERMISSIONS if "tty" in name or "terminal" in name or "pty" in name}
+
+
 def test_the_table_cannot_be_changed_by_a_caller() -> None:
     with pytest.raises(TypeError):
         TOOL_PERMISSIONS["web_search"] = TOOL_PERMISSIONS["exec"]  # type: ignore[index]

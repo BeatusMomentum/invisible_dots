@@ -21,6 +21,7 @@ from nanobot.agent.tools.exec_session import (
     format_session_poll,
 )
 from nanobot.agent.tools.schema import (
+    BooleanSchema,
     IntegerSchema,
     StringSchema,
     tool_parameters_schema,
@@ -70,6 +71,17 @@ def _reap_pid(pid: int) -> None:
             minimum=1000,
             maximum=MAX_OUTPUT_CHARS,
             nullable=True,
+        ),
+        tty=BooleanSchema(
+            description=(
+                "Run on a pseudo-terminal, for programs that ask questions or need a terminal "
+                "(REPLs, ssh, sudo prompts, installers). Implies a session: yield_time_ms applies, "
+                "and exec_session reads, answers and ends it. What you send is echoed back, "
+                "close_stdin sends ^D, and the single character with code 3 is ^C. "
+                "The terminal is 80x24 and you get its text: colors and cursor moves are dropped, "
+                "so full-screen programs (vim, htop) do not work."
+            ),
+            default=False,
         ),
     )
 )
@@ -142,19 +154,22 @@ class ExecTool(Tool):
         cwd: str,
         *,
         stdin: int = asyncio.subprocess.DEVNULL,
+        tty: bool = False,
     ) -> asyncio.subprocess.Process:
         """Start `command` on the Dot's computer through the relay.
 
         The one spawn of the model's commands: exec and the exec sessions use it.
         `cwd` is an absolute path on the Dot's computer. The relay itself runs with
-        PATH as its only variable: no variable of the engine reaches the command,
-        whose environment is its login shell's.
+        PATH as its only variable (and TERM with a tty): no variable of the engine
+        reaches the command, whose environment is its login shell's. With `tty` the
+        command runs on a pseudo-terminal that dot-agentd allocates, and what it
+        writes to stdout and stderr is one stream.
         """
         script = shlex.join(command) if isinstance(command, list) else command
-        argv = computer.relay_argv(["/bin/bash", "-lc", script], cwd=cwd)
+        argv = computer.relay_argv(["/bin/bash", "-lc", script], cwd=cwd, tty=tty)
         return await asyncio.create_subprocess_exec(
             *argv,
-            env=computer.spawn_env(),
+            env=computer.spawn_env(tty=tty),
             stdin=stdin,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
@@ -171,6 +186,7 @@ class ExecTool(Tool):
         yield_time_ms: int | None = None,
         max_output_chars: int | None = None,
         max_output_tokens: int | None = None,
+        tty: bool = False,
         **kwargs: Any,
     ) -> str:
         command = command or cmd
@@ -183,9 +199,10 @@ class ExecTool(Tool):
         cwd = self.computer.resolve(working_dir or ".")
         effective_timeout = self._resolve_timeout(timeout)
 
-        if yield_time_ms is not None:
+        if yield_time_ms is not None or tty:
+            # A terminal program is interactive: it always runs as a session that exec_session drives.
             return await self._execute_session(
-                command, cwd, effective_timeout, yield_time_ms, max_output_chars
+                command, cwd, effective_timeout, yield_time_ms, max_output_chars, tty
             )
 
         process: asyncio.subprocess.Process | None = None
@@ -246,6 +263,7 @@ class ExecTool(Tool):
         timeout: int | None,
         yield_time_ms: int | None,
         max_output_chars: int | None,
+        tty: bool,
     ) -> str:
         try:
             session_id, poll = await self._session_manager.start(
@@ -255,6 +273,7 @@ class ExecTool(Tool):
                 timeout=timeout,
                 yield_time_ms=clamp_session_int(yield_time_ms, DEFAULT_YIELD_MS, 0, MAX_YIELD_MS),
                 owner_session_key=current_request_session_key(),
+                tty=tty,
                 max_output_chars=clamp_session_int(
                     max_output_chars,
                     DEFAULT_MAX_OUTPUT_CHARS,

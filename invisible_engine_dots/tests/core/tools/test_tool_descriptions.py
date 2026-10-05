@@ -69,6 +69,10 @@ def test_exec_tool_descriptions_are_concise(tmp_path) -> None:
 
     exec_parameters = exec_tool.parameters["properties"]
     assert "omit to wait for exit" in exec_parameters["yield_time_ms"]["description"]
+    assert exec_parameters["tty"]["type"] == "boolean"
+    tty_description = exec_parameters["tty"]["description"]
+    for said in ("pseudo-terminal", "session", "exec_session", "echo", "80x24", "full-screen"):
+        assert said in tty_description
 
     session_parameters = ExecSessionTool(manager=manager).parameters["properties"]
     assert set(session_parameters) == {

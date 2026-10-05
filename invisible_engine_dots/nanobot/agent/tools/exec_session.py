@@ -39,6 +39,114 @@ MAX_OUTPUT_CHARS = 50_000
 OUTPUT_DRAIN_GRACE_S = 0.1
 
 
+_ESC = "\x1b"
+# What a terminal session may hold back between two polls: the start of an escape sequence the
+# program has not finished writing. A string (OSC, DCS...) that never ends is dropped past this.
+MAX_PENDING_ESCAPE_CHARS = 4096
+_STRING_INTRODUCERS = "]PX^_"
+_CHARSET_INTRODUCERS = "()*+#%"
+
+
+def _escape_end(text: str, start: int) -> int | None:
+    """Where the escape sequence that starts at `text[start]` (an ESC) ends.
+
+    None when `text` stops inside it. A sequence that turns out not to be one (a control
+    character or another ESC right after the ESC) ends after the ESC alone, so what follows
+    is read as text again.
+    """
+    length = len(text)
+    if start + 1 >= length:
+        return None
+    introducer = text[start + 1]
+    if introducer == "[":
+        index = start + 2
+        while index < length and "0" <= text[index] <= "?":  # parameter bytes
+            index += 1
+        while index < length and " " <= text[index] <= "/":  # intermediate bytes
+            index += 1
+        if index >= length:
+            return None
+        return index + 1 if "@" <= text[index] <= "~" else index
+    if introducer in _STRING_INTRODUCERS:
+        index = start + 2
+        while index < length:
+            char = text[index]
+            if char == "\x07":
+                return index + 1
+            if char == _ESC:
+                if index + 1 >= length:
+                    return None
+                return index + 2 if text[index + 1] == "\\" else index
+            if char == "\n":
+                return index
+            index += 1
+        return None
+    if introducer in _CHARSET_INTRODUCERS:
+        return start + 3 if start + 2 < length else None
+    if introducer < " ":
+        return start + 1
+    return start + 2
+
+
+def terminal_text(raw: str, *, final: bool = False) -> tuple[str, str]:
+    """The text a terminal would show for what a program wrote, and what is still waiting.
+
+    Escape sequences (colors, cursor moves, window titles) are dropped, `\\r\\n` is a line
+    ending, a lone `\\r` and `\\b` move the cursor back so what is written next overwrites,
+    and erase-in-line (`ESC [ K`) is honored: a progress bar reads as its last state. Other
+    control characters are dropped. The screen is not modelled: a cursor move up or down,
+    or a program that paints the whole screen (vim, htop), is not rendered.
+
+    An escape sequence cut off by the end of `raw` is returned as the second value, to be put
+    in front of the next chunk; `final` says there is no next chunk, so it is dropped. A line
+    that continues in the next chunk is not overwritten by it: the text of each chunk stands
+    alone.
+    """
+    out: list[str] = []
+    line: list[str] = []
+    column = 0
+    pending = ""
+    index = 0
+    length = len(raw)
+    while index < length:
+        char = raw[index]
+        if char == _ESC:
+            end = _escape_end(raw, index)
+            if end is None:
+                if not final and length - index <= MAX_PENDING_ESCAPE_CHARS:
+                    pending = raw[index:]
+                break
+            if raw.startswith("\x1b[", index) and raw[end - 1] == "K":
+                mode = raw[index + 2 : end - 1]
+                if mode in ("", "0"):
+                    del line[column:]
+                elif mode == "1":
+                    line[: column + 1] = [" "] * min(column + 1, len(line))
+                elif mode == "2":
+                    line.clear()
+            index = end
+            continue
+        index += 1
+        if char == "\n":
+            out.append("".join(line) + "\n")
+            line = []
+            column = 0
+        elif char == "\r":
+            column = 0
+        elif char == "\b":
+            column = max(0, column - 1)
+        elif char == "\t" or (char >= " " and char != "\x7f" and not "\x80" <= char <= "\x9f"):
+            if column > len(line):
+                line.extend(" " * (column - len(line)))
+            if column < len(line):
+                line[column] = char
+            else:
+                line.append(char)
+            column += 1
+    out.append("".join(line))
+    return "".join(out), pending
+
+
 @dataclass(slots=True)
 class _SessionPoll:
     output: str
@@ -61,6 +169,7 @@ class ExecSessionInfo:
     remaining_s: float
     returncode: int | None
     owner_session_key: str | None = None
+    tty: bool = False
 
 
 class _BoundedOutputBuffer:
@@ -134,12 +243,17 @@ class _ExecSession:
         cwd: str,
         timeout: int | None,
         owner_session_key: str | None = None,
+        tty: bool = False,
     ) -> None:
         self.session_id = session_id
         self.process = process
         self.command = command
         self.cwd = cwd
         self.owner_session_key = owner_session_key
+        self.tty = tty
+        # The end of an escape sequence the terminal program has not finished writing, kept for
+        # the next poll (terminal_text).
+        self._pending_escape = ""
         self.started_at = time.monotonic()
         # timeout None/0 means no limit; an infinite deadline is never reached.
         self.deadline = time.monotonic() + timeout if timeout else float("inf")
@@ -250,6 +364,13 @@ class _ExecSession:
         async with self._lock:
             stdout, stdout_truncated = self._stdout.drain()
             stderr, stderr_truncated = self._stderr.drain()
+            if self.tty:
+                # One stream: the relay reads the terminal's master, so stderr only carries the
+                # relay's own messages, plain text. The stream's end flushes a cut sequence.
+                ended = self.process.returncode is not None and self._stdout_task.done()
+                stdout, self._pending_escape = terminal_text(
+                    self._pending_escape + stdout, final=ended
+                )
 
         output_parts = [stdout] if stdout else []
         if stderr:
@@ -328,6 +449,7 @@ class ExecSessionManager:
         yield_time_ms: int,
         max_output_chars: int,
         owner_session_key: str | None = None,
+        tty: bool = False,
     ) -> tuple[str, _SessionPoll]:
         from nanobot.agent.tools.shell import ExecTool
 
@@ -338,7 +460,7 @@ class ExecSessionManager:
             if len(self._sessions) >= self.max_sessions:
                 raise RuntimeError(f"maximum exec sessions reached ({self.max_sessions})")
             process = await ExecTool._spawn(  # pyright: ignore[reportPrivateUsage]
-                computer, command, cwd, stdin=asyncio.subprocess.PIPE
+                computer, command, cwd, stdin=asyncio.subprocess.PIPE, tty=tty
             )
             session_id = uuid.uuid4().hex[:12]
             session = _ExecSession(
@@ -348,6 +470,7 @@ class ExecSessionManager:
                 cwd=cwd,
                 timeout=timeout,
                 owner_session_key=owner_session_key,
+                tty=tty,
             )
             self._sessions[session_id] = session
 
@@ -413,6 +536,7 @@ class ExecSessionManager:
                     remaining_s=max(0.0, session.deadline - now),
                     returncode=session.process.returncode,
                     owner_session_key=session.owner_session_key,
+                    tty=session.tty,
                 )
                 for session_id, session in sorted(self._sessions.items())
                 if session.owner_session_key == owner_session_key
@@ -703,6 +827,8 @@ class ListExecSessionsTool(Tool):
                 if len(command) > 120:
                     command = command[:119] + "..."
                 status = "exited" if info.returncode is not None else "running"
+                if info.tty:
+                    status += " | tty"
                 lines.append(
                     f"{info.session_id} | {status} | elapsed={info.elapsed_s:.1f}s "
                     f"| idle={info.idle_s:.1f}s | remaining={info.remaining_s:.1f}s "

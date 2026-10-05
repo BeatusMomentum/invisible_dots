@@ -87,6 +87,10 @@ dot-agentd; the engine user never runs a model command or touches a model file.
   as a prefilter (argv, no shell) and read only the files that can match, so no
   tree is walked over the socket; the tools' own filtering, sorting, paging and
   limits are unchanged.
+- added: `exec` takes `tty` (upstream has no pseudo-terminal): the relay is started
+  with `--tty` and `TERM`, the call is always an exec session, and a tty session's
+  output goes through `terminal_text` (exec_session.py), the text of the screen
+  without escape sequences, instead of the raw stream.
 - tests use `tests/fakes/local_computer.py` (the same protocol over a tmp
   directory) and `tests/fakes/fake_relay.py` (parses the relay flags as relay.go
   does and execs the program); production has only `AgentdComputer`.
