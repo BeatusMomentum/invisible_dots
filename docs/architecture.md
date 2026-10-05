@@ -770,10 +770,17 @@ The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
 
 ## 6. Browser identities
 
-- An identity is a directory under `/home/dot/browsers/<identity_id>/`. Its id
-  is a slug of its name plus a short random suffix. The guest's database is the
-  only record of which identities exist; the host never mirrors the list, it
-  asks the guest.
+- An identity is a row of the engine's `dots_browser_identities` table (id,
+  name, proxy, created, last used, archived) and a directory under
+  `/home/dot/browsers/<identity_id>/`. Its id is a slug of its name plus a short
+  random suffix. The guest's database is the only record of which identities
+  exist; the host never mirrors the list, it asks the guest. Whether an
+  identity is open is never stored: it is derived from the live browser
+  sessions of the running engine, so a file never claims an open browser for a
+  process that is gone. The proxy is stored as given, password included, in
+  the engine's database (`dotengine`'s state directory, 0700, which the model
+  cannot read); everything shown to a model, a person, an event or a log has
+  the password replaced.
 - The fingerprint seed of an identity is stored by the browser layer in the
   profile itself (`profile/.stealth-identity.json`). invisible_dots never stores
   or passes a seed: the first launch of a profile picks one and every later
@@ -1113,7 +1120,7 @@ state.
   (`/home/dotengine/state`, 0700), opened in WAL mode with
   `synchronous=FULL` and the exclusive locking mode. It holds the Dot's tables
   (`dots_outbox`, `dots_inbound`, `dots_tasks`, `dots_tool_intents`,
-  `dots_tool_decisions`, `dots_approvals`, `dots_spend`, `dots_kv`) and the transcripts
+  `dots_tool_decisions`, `dots_approvals`, `dots_spend`, `dots_browser_identities`, `dots_kv`) and the transcripts
   (`sessions`, `messages`): SQLite makes a transaction atomic per file only,
   and this is what lets an event commit with the transcript row it describes.
   `DotStore` (`store.py`) is the one place a write transaction begins and

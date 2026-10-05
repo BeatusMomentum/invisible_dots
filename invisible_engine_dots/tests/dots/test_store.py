@@ -39,6 +39,7 @@ class TestOpen:
             "dots_tasks",
             "dots_tool_intents",
             "dots_spend",
+            "dots_browser_identities",
             "dots_kv",
             "dots_approvals",
             "dots_tool_decisions",
@@ -49,7 +50,7 @@ class TestOpen:
     def test_every_table_is_strict(self, dot_store: DotStore) -> None:
         rows = dot_store.read(lambda c: c.execute("PRAGMA table_list").fetchall())
         user_tables = [r for r in rows if r["schema"] == "main" and not r["name"].startswith("sqlite_")]
-        assert len(user_tables) == 10
+        assert len(user_tables) == 11
         assert all(r["strict"] == 1 for r in user_tables)
 
     def test_the_connection_is_wal_full_and_exclusive(self, dot_store: DotStore) -> None:
@@ -577,6 +578,117 @@ class TestSpend:
             assert second.read(lambda c: s.get_spend(c, "task:t1")) == 0.4
         finally:
             second.close()
+
+
+class TestBrowserIdentities:
+    def test_a_new_identity_is_never_used_and_not_archived(self, dot_store: DotStore) -> None:
+        added = dot_store.write(
+            lambda c: s.insert_identity(c, identity_id="research-abc123", name="Research", now_ms=1000)
+        )
+        assert added is True
+        assert dot_store.read(lambda c: s.get_identity(c, "research-abc123")) == s.BrowserIdentityRow(
+            "research-abc123", "Research", None, 1000, None, False
+        )
+
+    def test_the_proxy_is_kept_as_given_and_the_clock_stamps_the_creation_when_no_time_is_given(
+        self, dot_store: DotStore
+    ) -> None:
+        proxy = "http://user:secret@proxy.example:8080"
+        before = s.clock_ms()
+        dot_store.write(lambda c: s.insert_identity(c, identity_id="a-1", name="A", proxy=proxy))
+        row = dot_store.read(lambda c: s.get_identity(c, "a-1"))
+        assert row is not None and row.proxy == proxy
+        assert before <= row.created_at <= s.clock_ms()
+
+    def test_an_id_known_already_keeps_the_first_identity(self, dot_store: DotStore) -> None:
+        assert dot_store.write(lambda c: s.insert_identity(c, identity_id="a-1", name="First", now_ms=1)) is True
+        second = dot_store.write(
+            lambda c: s.insert_identity(c, identity_id="a-1", name="Second", proxy="http://p", now_ms=2)
+        )
+        assert second is False
+        assert dot_store.read(lambda c: s.get_identity(c, "a-1")) == s.BrowserIdentityRow(
+            "a-1", "First", None, 1, None, False
+        )
+
+    def test_an_identity_that_does_not_exist_is_none_and_every_change_of_it_says_so(self, dot_store: DotStore) -> None:
+        assert dot_store.read(lambda c: s.get_identity(c, "nobody")) is None
+        assert dot_store.write(lambda c: s.touch_identity(c, "nobody")) is False
+        assert dot_store.write(lambda c: s.set_identity_archived(c, "nobody", True)) is False
+        assert dot_store.write(lambda c: s.delete_identity(c, "nobody")) is False
+
+    def test_the_list_is_oldest_first_and_the_count_agrees(self, dot_store: DotStore) -> None:
+        assert dot_store.read(s.list_identities) == []
+        assert dot_store.read(s.count_identities) == 0
+        for identity_id, created in (("c-3", 30), ("a-1", 10), ("b-2", 20), ("b-1", 20)):
+            dot_store.write(
+                lambda c, i=identity_id, t=created: s.insert_identity(c, identity_id=i, name=i.upper(), now_ms=t)
+            )
+        assert [r.id for r in dot_store.read(s.list_identities)] == ["a-1", "b-1", "b-2", "c-3"]
+        assert dot_store.read(s.count_identities) == 4
+
+    def test_touching_stamps_the_last_use_and_changes_nothing_else(self, dot_store: DotStore) -> None:
+        dot_store.write(lambda c: s.insert_identity(c, identity_id="a-1", name="A", proxy="socks5://p:1", now_ms=5))
+        dot_store.write(lambda c: s.insert_identity(c, identity_id="b-1", name="B", now_ms=6))
+        assert dot_store.write(lambda c: s.touch_identity(c, "a-1", 700)) is True
+        assert dot_store.read(lambda c: s.get_identity(c, "a-1")) == s.BrowserIdentityRow(
+            "a-1", "A", "socks5://p:1", 5, 700, False
+        )
+        assert dot_store.write(lambda c: s.touch_identity(c, "a-1", 900)) is True
+        a = dot_store.read(lambda c: s.get_identity(c, "a-1"))
+        assert a is not None and a.last_used_at == 900
+        b = dot_store.read(lambda c: s.get_identity(c, "b-1"))
+        assert b is not None and b.last_used_at is None
+
+    def test_archiving_is_reversible_and_leaves_the_identity_counted(self, dot_store: DotStore) -> None:
+        dot_store.write(lambda c: s.insert_identity(c, identity_id="a-1", name="A", now_ms=5))
+        assert dot_store.write(lambda c: s.set_identity_archived(c, "a-1", True)) is True
+        row = dot_store.read(lambda c: s.get_identity(c, "a-1"))
+        assert row is not None and row.archived is True
+        assert dot_store.read(s.count_identities) == 1
+        dot_store.write(lambda c: s.set_identity_archived(c, "a-1", False))
+        row = dot_store.read(lambda c: s.get_identity(c, "a-1"))
+        assert row is not None and row.archived is False
+
+    def test_deleting_removes_one_identity_and_frees_its_place_in_the_count(self, dot_store: DotStore) -> None:
+        for identity_id in ("a-1", "b-1"):
+            dot_store.write(lambda c, i=identity_id: s.insert_identity(c, identity_id=i, name=i, now_ms=1))
+        assert dot_store.write(lambda c: s.delete_identity(c, "a-1")) is True
+        assert dot_store.write(lambda c: s.delete_identity(c, "a-1")) is False
+        assert [r.id for r in dot_store.read(s.list_identities)] == ["b-1"]
+        assert dot_store.read(s.count_identities) == 1
+
+    def test_the_table_refuses_an_archived_flag_that_is_not_a_boolean(self, dot_store: DotStore) -> None:
+        dot_store.write(lambda c: s.insert_identity(c, identity_id="a-1", name="A", now_ms=1))
+        with pytest.raises(sqlite3.IntegrityError):
+            dot_store.write(lambda c: c.execute("UPDATE dots_browser_identities SET archived = 2"))
+
+    def test_a_row_written_in_a_transaction_that_fails_is_not_there(self, dot_store: DotStore) -> None:
+        def write_then_fail(c: sqlite3.Connection) -> None:
+            s.insert_identity(c, identity_id="a-1", name="A", now_ms=1)
+            raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            dot_store.write(write_then_fail)
+        assert dot_store.read(s.count_identities) == 0
+
+    def test_the_identities_are_there_after_the_file_is_opened_again(self, tmp_path: Path) -> None:
+        path = tmp_path / "engine.sqlite"
+        first = DotStore.open(path)
+        first.write(lambda c: s.insert_identity(c, identity_id="a-1", name="A", proxy="http://p:1", now_ms=3))
+        first.write(lambda c: s.touch_identity(c, "a-1", 4))
+        first.write(lambda c: s.set_identity_archived(c, "a-1", True))
+        first.close()
+        second = DotStore.open(path)
+        try:
+            assert second.read(s.list_identities) == [s.BrowserIdentityRow("a-1", "A", "http://p:1", 3, 4, True)]
+        finally:
+            second.close()
+
+    def test_a_file_of_the_layout_before_the_identities_is_refused(self, tmp_path: Path) -> None:
+        path = tmp_path / "engine.sqlite"
+        TestOpen.a_file_with_tables_and_version(path, 4)
+        with pytest.raises(StoreVersionError, match="layout 4"):
+            DotStore.open(path)
 
 
 class TestToolIntents:

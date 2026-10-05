@@ -15,6 +15,10 @@ transaction atomic per file only.
   writes (`memory_keys_json`), which its result reports as `memory.written`, and the
   line that names what it acts on (`target`), which its result reports in `tool.called`;
 - dots_spend: what the model requests of a session have cost, in USD (see `nanobot.dots.spend`);
+- dots_browser_identities: the browser identities of the Dot (id, name, proxy, created, last used,
+  archived). Whether one is open is never stored: it is derived from the live browser sessions of
+  this process, so a file never says "open" about a process that is gone. Its profile is a
+  directory of the Computer (`browsers/<id>`), not a row;
 - dots_kv: the runtime config the host pushed and the last agent state;
 - dots_approvals: a tool call the policy answered "ask", with its full
   arguments, from the request to the call that ran it or the rejection the
@@ -59,7 +63,7 @@ T = TypeVar("T")
 # The version of the database layout, kept in the file's `user_version`. Change it with any
 # change of `_SCHEMA`: an engine refuses a file of another version rather than run on a layout
 # it does not know. There is no migration (no engine of an older layout has run on a real Dot).
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 # How long open() waits for the file's lock before it says another engine owns it.
 OPEN_TIMEOUT_S = 2.0
@@ -130,6 +134,17 @@ _SCHEMA: tuple[str, ...] = (
       usd REAL NOT NULL
     ) STRICT
     """,
+    """
+    CREATE TABLE dots_browser_identities (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      proxy TEXT,
+      created_at INTEGER NOT NULL,
+      last_used_at INTEGER,
+      archived INTEGER NOT NULL DEFAULT 0 CHECK (archived IN (0, 1))
+    ) STRICT
+    """,
+    "CREATE INDEX dots_browser_identities_order ON dots_browser_identities (created_at, id)",
     """
     CREATE TABLE dots_kv (
       key TEXT PRIMARY KEY,
@@ -805,6 +820,98 @@ def take_all_tool_intents(conn: sqlite3.Connection) -> list[ToolIntent]:
     intents = list_tool_intents(conn)
     conn.execute("DELETE FROM dots_tool_intents")
     return intents
+
+
+# ---------------------------------------------------------------------------
+# Browser identities
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class BrowserIdentityRow:
+    id: str
+    name: str
+    # The proxy URL as the person gave it, password included: the browser needs it at every launch.
+    # Anything shown to a model, a person, an event or a log goes through `identity_rules.redact_proxy`.
+    proxy: str | None
+    created_at: int
+    last_used_at: int | None
+    archived: bool
+
+
+_IDENTITY_COLUMNS = "id, name, proxy, created_at, last_used_at, archived"
+
+
+def _identity(row: sqlite3.Row) -> BrowserIdentityRow:
+    return BrowserIdentityRow(
+        row["id"],
+        row["name"],
+        row["proxy"],
+        int(row["created_at"]),
+        None if row["last_used_at"] is None else int(row["last_used_at"]),
+        bool(row["archived"]),
+    )
+
+
+def insert_identity(
+    conn: sqlite3.Connection,
+    *,
+    identity_id: str,
+    name: str,
+    proxy: str | None = None,
+    now_ms: int | None = None,
+) -> bool:
+    """Record a new identity, never used and not archived; False when its id is known already.
+
+    The rules a name, a proxy and an id meet are `nanobot.dots.identity_rules`'s: the caller checks
+    them, this stores what it is given.
+    """
+    cursor = conn.execute(
+        f"""
+        INSERT INTO dots_browser_identities ({_IDENTITY_COLUMNS}) VALUES (?, ?, ?, ?, NULL, 0)
+        ON CONFLICT (id) DO NOTHING
+        """,
+        (identity_id, name, proxy, clock_ms() if now_ms is None else now_ms),
+    )
+    return cursor.rowcount == 1
+
+
+def get_identity(conn: sqlite3.Connection, identity_id: str) -> BrowserIdentityRow | None:
+    row = conn.execute(
+        f"SELECT {_IDENTITY_COLUMNS} FROM dots_browser_identities WHERE id = ?", (identity_id,)
+    ).fetchone()
+    return _identity(row) if row else None
+
+
+def list_identities(conn: sqlite3.Connection) -> list[BrowserIdentityRow]:
+    """Every identity, oldest first."""
+    rows = conn.execute(f"SELECT {_IDENTITY_COLUMNS} FROM dots_browser_identities ORDER BY created_at, id").fetchall()
+    return [_identity(row) for row in rows]
+
+
+def count_identities(conn: sqlite3.Connection) -> int:
+    """How many identities exist (archived ones too: they still hold a profile)."""
+    return int(conn.execute("SELECT count(*) FROM dots_browser_identities").fetchone()[0])
+
+
+def touch_identity(conn: sqlite3.Connection, identity_id: str, now_ms: int | None = None) -> bool:
+    """Record that an identity was launched now; False when there is no such identity."""
+    cursor = conn.execute(
+        "UPDATE dots_browser_identities SET last_used_at = ? WHERE id = ?",
+        (clock_ms() if now_ms is None else now_ms, identity_id),
+    )
+    return cursor.rowcount == 1
+
+
+def set_identity_archived(conn: sqlite3.Connection, identity_id: str, archived: bool) -> bool:
+    """Archive or restore an identity; False when there is no such identity."""
+    cursor = conn.execute("UPDATE dots_browser_identities SET archived = ? WHERE id = ?", (int(archived), identity_id))
+    return cursor.rowcount == 1
+
+
+def delete_identity(conn: sqlite3.Connection, identity_id: str) -> bool:
+    """Remove an identity's row; False when there is no such identity. Its profile directory is the caller's."""
+    return conn.execute("DELETE FROM dots_browser_identities WHERE id = ?", (identity_id,)).rowcount == 1
 
 
 # ---------------------------------------------------------------------------
