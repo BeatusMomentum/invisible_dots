@@ -92,7 +92,7 @@ export interface SpentUsd {
  */
 export const USAGE_EVENT_TYPES = ["task.completed", "task.failed", "message.assistant"] as const satisfies readonly OutboundEventType[];
 
-/** The longest `target` of a `tool.called` event, in characters (the engine's copy is in nanobot/dots/protocol.py). */
+/** The longest `target` of a `tool.called` event, in characters: code points, which is how zod 4 measures a string (the engine's copy is in nanobot/dots/protocol.py). */
 export const TOOL_TARGET_MAX = 160;
 
 export interface OutboundEventDataMap {

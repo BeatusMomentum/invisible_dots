@@ -699,16 +699,21 @@ is its `message.assistant`, and the final answer of a task is its
 `task.completed`.
 
 `tool.called.target` is what the call acted on, in one line of at most 160
-characters (`TOOL_TARGET_MAX`; the host's schema refuses a longer, empty or
-multi-line one), so a client can say "ran `make test`" and not only "exec ok".
+characters (`TOOL_TARGET_MAX`, in code points as the host's schema counts them;
+it refuses a longer, empty or multi-line one), so a client can say "ran `make test`" and not only "exec ok".
 It is a name or a place, never content. The permission table
 (`nanobot/dots/permissions.py`) gives each tool a function that states what of
 its arguments may be shown: `exec` the first line of the command, cut at 120
-characters, with the credentials it carries masked as `***` (the user and
-password of a URL, a `Bearer` or `Basic` credential, an `Authorization`, API
-key or cookie header, a `NAME=value` or `--flag value` whose name says it holds
-a password, token, key or secret; best effort, so a command that hides a secret
-in another form is shown as it is and the full command stays with the approval);
+characters, redacted by an allowlist and not by the shapes a secret takes: the
+program of each command, its plain words, long options whose name does not say
+they hold a credential, short flags run together (`-rf`), a URL without its
+user and password and with its query values masked, and `host:port` are shown;
+the value of every single-letter option (`-p`, `-u`, `-H`, `-x`; only a plain
+path stays), a value written against its flag (`-phunter2`), the value of a
+`--flag` or `NAME=` named for a credential, a quoted word with spaces, any
+`user:password` word and the word after `Bearer` or `Basic` are masked as `***`
+(a header keeps its name). A secret written as a bare word of a command stays
+visible, so the full command stays with the approval;
 `read_file`, `list_dir`, `write_file` and `edit_file` the path; `find_files` the
 query, else the glob, else the path; `grep` the pattern; `apply_patch` the path,
 or `N files, first <path>`; `memory_search` the query; `memory_get` the note
@@ -725,8 +730,10 @@ fit. The key is then absent, as it is for a tool with nothing to name.
 read from the same ledger the cost cap uses (section 8.2) in the transaction
 that stores the event, to the hundred-millionth of a USD. On a task's events it
 is the spend of the task so far (it only grows, and survives a restart, an
-approval and a resume); on the chat's `message.assistant` it is the spend of the
-turn that answered, because the chat's spend starts again with every turn. The
+approval and a resume); on the chat's `message.assistant` it is what the chat
+spent since its last answer, because the answer takes the chat's spend with it
+(a chat that parked a call for approval reports the spend before and after the
+approval in the one answer it gives). The
 engine always sends it (0 when nothing was spent); the schema makes it optional
 so events logged before it existed stay valid. The host reads it as the
 guest's report: it is never used to enforce anything (the cap is the guest's).
@@ -883,8 +890,8 @@ section 8.5, or the run ends without an answer; or after being interrupted
 three times (section 8.7). A chat turn has the same limits; a failed chat turn
 answers "I could not answer: ...".
 
-`limits.max_cost_per_task_usd` caps the model spend of a task, or of one turn of
-the chat. The events that end work carry the spend (section 5.4). The cost of a request is what OpenRouter reports for it in the usage
+`limits.max_cost_per_task_usd` caps the model spend of a task, or of the chat
+between one answer and the next. The events that end work carry the spend (section 5.4). The cost of a request is what OpenRouter reports for it in the usage
 of the last chunk of its response (`usage.cost`, USD; for a BYOK request the
 upstream cost it reports beside it is added, which may count more than was
 charged and never less). The engine adds the cost of every response of a turn,
@@ -899,7 +906,8 @@ the cap may be exceeded by the last request, and an answer that crosses it is
 delivered and the task completes: the cap only stops the work from going on. A
 request that failed has no cost and counts for nothing. A task's spend is kept
 across a restart, an approval and a resume (a task that was cut by a crash goes
-on from what it had spent); the chat's spend starts again with every chat turn.
+on from what it had spent); the chat's spend starts again with each answer it gives, so an approval or a
+restart does not reset it.
 A lowered cap applies from the next turn, like the step limit. A response that
 reports no cost fails the turn at its next check, `stopped: OpenRouter reported
 no cost for a request, so limits.max_cost_per_task_usd cannot be enforced`: the
@@ -1468,10 +1476,11 @@ stored, which `invisible-dots doctor` reports.
 USD, since `since` (the first event when omitted; a malformed `since` is a 400).
 The event log is its one source: it sums `spent_usd` over the events that end a
 unit of spend, a task's `task.completed` and `task.failed` (each carries the
-whole task) and the chat's `message.assistant` (each carries its turn), by the
+whole task) and the chat's `message.assistant` (each carries what the chat spent
+since its last answer), by the
 time the host stored them. `task.progress` is left out because its value is the
 running total of a task that ends with one of those events. Work that never
-reported an end (a cancelled task, a chat turn cut by a restart) is not in the
+reported an end (a cancelled task) is not in the
 total; the task's own `spent_usd` still shows what was heard of it. Like
 `/events`, it reads the history of a deleted Dot by id.
 

@@ -264,9 +264,6 @@ class TurnRunner:
 
         def open_turn(conn: sqlite3.Connection) -> Session:
             close_open_calls(conn, session_key)
-            if session_key == CHAT_SESSION_KEY:
-                # A chat turn is capped on its own; a task's spend is the task's, whatever turn it is on.
-                dots_store.reset_spend(conn, session_key)
             if unit.opening:
                 dots_store.append_messages(
                     conn,

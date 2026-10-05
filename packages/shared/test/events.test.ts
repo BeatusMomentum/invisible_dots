@@ -134,6 +134,14 @@ describe("parseOutboundEvent", () => {
     expect(parse("x".repeat(TOOL_TARGET_MAX)).data).toMatchObject({ target: "x".repeat(TOOL_TARGET_MAX) });
     expect(parseOutboundEvent({ seq: 8, id: "e", type: "tool.called", ts, data }).data).toEqual(data);
     expect(() => parse("x".repeat(TOOL_TARGET_MAX + 1))).toThrow(/target/);
+    // The limit is in code points, as the engine cuts (zod 4 does not count UTF-16 units): a path of 200
+    // emoji is cut to 159 and an ellipsis (invisible_engine_dots/tests/dots/test_targets.py), 160 in all.
+    const emoji = String.fromCodePoint(0x1f600);
+    const ellipsis = String.fromCodePoint(0x2026);
+    expect(parse(emoji.repeat(TOOL_TARGET_MAX - 1) + ellipsis).data).toMatchObject({
+      target: emoji.repeat(TOOL_TARGET_MAX - 1) + ellipsis,
+    });
+    expect(() => parse(emoji.repeat(TOOL_TARGET_MAX + 1))).toThrow(/target/);
     expect(() => parse("")).toThrow(/target/);
     expect(() => parse("one\ntwo")).toThrow(/target/);
     expect(() => parse("one\rtwo")).toThrow(/target/);

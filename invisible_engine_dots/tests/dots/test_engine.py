@@ -934,6 +934,52 @@ class TestApprovals:
         assert h.events_of("message.assistant") == [{"text": "written", "in_reply_to": "m1", "spent_usd": 0.0}]
         assert h.engine.state == "IDLE"
 
+    async def test_the_answer_of_a_chat_that_waited_for_an_approval_reports_what_it_spent_before_and_after(
+        self, make_engine: MakeEngine
+    ) -> None:
+        arguments = {"path": "a.txt", "content": "x"}
+        h = started(
+            make_engine(
+                [
+                    calls(call("c1", "write_file", **arguments), cost=0.25),
+                    calls(call("c2", "write_file", **arguments), cost=0.125),
+                    says("written", cost=0.0625),
+                    says("again", cost=0.5),
+                ]
+            ),
+            {**ALLOW_ALL, "files.write": "ask"},
+        )
+        h.engine.accept(user_message("m1", "write it"))
+        await h.idle()
+        (approval,) = h.pending_approvals()
+        h.engine.accept(decision("d1", approval.approval_id, "approve"))
+        await h.idle()
+
+        assert h.events_of("message.assistant") == [{"text": "written", "in_reply_to": "m1", "spent_usd": 0.4375}]
+        # What the answer took is spent once: the next answer starts from nothing.
+        h.engine.accept(user_message("m2", "again"))
+        await h.idle()
+        assert [e["spent_usd"] for e in h.events_of("message.assistant")] == [0.4375, 0.5]
+
+    async def test_a_chat_that_spent_the_cap_before_an_approval_does_not_start_again_with_it(
+        self, make_engine: MakeEngine
+    ) -> None:
+        arguments = {"path": "a.txt", "content": "x"}
+        h = started(
+            make_engine([calls(call("c1", "write_file", **arguments), cost=1.5), says("never asked")]),
+            {**ALLOW_ALL, "files.write": "ask"},
+        )
+        h.engine.accept(user_message("m1", "write it"))
+        await h.idle()
+        (approval,) = h.pending_approvals()
+        h.engine.accept(decision("d1", approval.approval_id, "approve"))
+        await h.idle()
+
+        assert h.asked() == 1
+        (answer,) = h.events_of("message.assistant")
+        assert answer["text"].startswith("I could not answer: stopped: the turn reached limits.max_cost_per_task_usd")
+        assert answer["spent_usd"] == 1.5
+
     async def test_an_approved_call_runs_once_even_when_the_model_makes_it_a_second_time(
         self, make_engine: MakeEngine
     ) -> None:

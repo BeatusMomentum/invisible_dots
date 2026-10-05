@@ -13,8 +13,9 @@ session:
   when the session has spent the cap: the turn ends as a failure whose text is the exception's.
 
 The spend lives in `dots_spend`, keyed by the session. A task's row is never reset, so the
-cap holds across a restart, an approval and a resume. The chat's row starts again with every
-chat turn, so a chat turn is capped on its own.
+cap holds across a restart, an approval and a resume. The chat's row is emptied by the answer
+that reports it (`store.append_outbox_spent`), so the chat is capped between one answer and the
+next: a call parked for approval, a restart or a sleep does not start the count again.
 
 A request cannot be priced before it is answered, so the cap stops the turn from starting
 another request: it may be exceeded by the last one, and an answer that crosses the cap is
@@ -30,7 +31,7 @@ from nanobot.dots import store as dots_store
 from nanobot.dots.store import DotStore
 from nanobot.providers.base import LLMResponse
 
-# What the cap is a cap of, in the text that says it was reached: a task, or one turn of the chat.
+# What the cap is a cap of, in the text that says it was reached: a task, or the chat's next answer.
 Scope = Literal["task", "turn"]
 
 

@@ -27,7 +27,7 @@ class EngineSettings:
     # The tools the model is offered: those whose permission is not denied.
     offered_tools: tuple[str, ...]
     max_iterations: int
-    # What a task, or a chat turn, may spend on the model, in USD (see nanobot.dots.spend).
+    # What a task, or the chat between two answers, may spend on the model, in USD (see nanobot.dots.spend).
     max_cost_usd: float
     context_window_tokens: int
     max_tool_result_chars: int

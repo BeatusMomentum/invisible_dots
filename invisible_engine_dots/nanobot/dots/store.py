@@ -711,11 +711,15 @@ def append_outbox_spent(
     """Append one outbound event with `spent_usd`, what `session_key` has spent so far, read in this transaction.
 
     The one place the spend of an event is told: a task's events carry the task's spend, the chat's
-    `message.assistant` the spend of the turn that answered (the chat's row starts again with every turn).
+    `message.assistant` what the chat spent since its last answer. The answer takes that spend with it
+    (the chat's row starts again), so each dollar of the chat is reported by exactly one answer, however
+    many turns it took to give it: a call parked for approval, a restart, a sleep.
     """
     if event_type not in SPEND_EVENT_TYPES:
         raise ValueError(f"not an event that reports spend: {event_type}")
     spent = round(get_spend(conn, session_key), SPENT_USD_DECIMALS)
+    if event_type == "message.assistant":
+        reset_spend(conn, session_key)
     return append_outbox(conn, event_type, {**data, "spent_usd": spent})
 
 

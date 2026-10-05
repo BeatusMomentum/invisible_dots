@@ -65,8 +65,9 @@ AGENT_STATES = (
 # a config is created or patched; tests/repo/vendored-nanobot.test.ts keeps the two equal).
 MODEL_ROLES = ("summary",)
 
-# The longest `target` of a `tool.called` event, in characters (TOOL_TARGET_MAX in packages/shared events.ts, whose
-# schema refuses more; tests/repo/vendored-nanobot.test.ts keeps the two equal).
+# The longest `target` of a `tool.called` event, in characters: code points, which is how zod 4 measures a string
+# (TOOL_TARGET_MAX in packages/shared events.ts, whose schema refuses more; tests/repo/vendored-nanobot.test.ts
+# keeps the two equal, and packages/shared/test/events.test.ts pins the unit).
 TOOL_TARGET_MAX = 160
 
 # The `system.event` name of a cancelled task; its data is `{"task_id": ...}`.

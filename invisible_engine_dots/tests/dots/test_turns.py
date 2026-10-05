@@ -1213,17 +1213,19 @@ class TestTheCostCap:
         assert len(h.provider.requests) == 1
         assert not (h.tmp_path / "home" / "dot" / "workspace" / "a.txt").exists()
 
-    async def test_the_chat_starts_every_turn_with_nothing_spent(self, make_harness: MakeHarness) -> None:
+    async def test_the_chat_starts_every_answer_with_nothing_spent(self, make_harness: MakeHarness) -> None:
         h = make_harness([says("one", cost=0.9), says("two", cost=0.9)], limits=cap_limits(1))
         h.accept("in1")
         assert (await h.run(chat_unit())).kind == "completed"
-        assert h.store.read(lambda conn: s.get_spend(conn, CHAT)) == 0.9
+        # The answer took what the turn spent with it.
+        assert h.store.read(lambda conn: s.get_spend(conn, CHAT)) == 0.0
 
         h.accept("in2")
         outcome = await h.run(chat_unit("again", "in2"))
 
         assert outcome.kind == "completed"
-        assert h.store.read(lambda conn: s.get_spend(conn, CHAT)) == 0.9
+        assert h.store.read(lambda conn: s.get_spend(conn, CHAT)) == 0.0
+        assert [data["spent_usd"] for data in h.events_of("message.assistant")] == [0.9, 0.9]
 
     async def test_the_cap_is_the_one_the_settings_have_when_the_turn_starts(self, make_harness: MakeHarness) -> None:
         h = make_harness(

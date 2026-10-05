@@ -536,6 +536,19 @@ class TestSpend:
         stored = dot_store.read(lambda c: s.read_outbox_after(c, 0, 10))
         assert [e["data"]["spent_usd"] for e in stored] == [0.25, 0.75, 0.125]
 
+    def test_an_answer_of_the_chat_takes_its_spend_with_it_and_a_task_event_leaves_the_spend_of_its_task(
+        self, dot_store: DotStore
+    ) -> None:
+        dot_store.write(lambda c: s.add_spend(c, "chat", 0.25))
+        dot_store.write(lambda c: s.add_spend(c, "task:t1", 0.5))
+        dot_store.write(lambda c: s.append_outbox_spent(c, "task.progress", {"task_id": "t1", "text": "x"}, "task:t1"))
+        dot_store.write(lambda c: s.add_spend(c, "chat", 0.125))
+        first = dot_store.write(lambda c: s.append_outbox_spent(c, "message.assistant", {"text": "a"}, "chat"))
+        second = dot_store.write(lambda c: s.append_outbox_spent(c, "message.assistant", {"text": "b"}, "chat"))
+        assert (first["data"]["spent_usd"], second["data"]["spent_usd"]) == (0.375, 0.0)
+        assert dot_store.read(lambda c: s.get_spend(c, "chat")) == 0.0
+        assert dot_store.read(lambda c: s.get_spend(c, "task:t1")) == 0.5
+
     def test_a_session_that_spent_nothing_reports_zero_and_the_sum_shows_no_float_noise(
         self, dot_store: DotStore
     ) -> None:
