@@ -11,7 +11,7 @@ winget install -e --id OpenJS.NodeJS.LTS; winget install -e --id GoLang.Go; wing
 $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
 git clone https://github.com/feder-cr/dots; cd dots
 npm ci
-npm run build --workspace @invisible-dots/invisible-dots-agent --workspace @invisible-dots/cli
+npm run build --workspace @invisible-dots/cli
 $env:CGO_ENABLED = "0"; $env:GOOS = "linux"; $env:GOARCH = "amd64"
 go -C guest/dot-agentd build -trimpath -o bin/dot-agentd ./cmd/dot-agentd
 Remove-Item Env:CGO_ENABLED, Env:GOOS, Env:GOARCH
@@ -33,7 +33,7 @@ sudo apt-get install -y nodejs git
 sudo snap install go --classic
 git clone https://github.com/feder-cr/dots && cd dots
 npm ci
-npm run build --workspace @invisible-dots/invisible-dots-agent --workspace @invisible-dots/cli
+npm run build --workspace @invisible-dots/cli
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C guest/dot-agentd build -trimpath -o bin/dot-agentd ./cmd/dot-agentd
 node apps/cli/dist/invisible-dots.mjs setup
 node apps/cli/dist/invisible-dots.mjs image build
@@ -68,25 +68,32 @@ Open http://127.0.0.1:3000 and sign in with the first line of
 
 - **A computer.** Its own QEMU virtual machine with a persistent disk. It
   sleeps when it has nothing to do and wakes for the next task or message.
-- **An agent inside it.** It reasons with any model on OpenRouter and works
-  through tools: a shell, files, screenshots, memory and the browser.
+- **An agent inside it.** Its engine is a fork of nanobot, in Python. It
+  reasons with any model on OpenRouter and works through tools: a shell with
+  background jobs, files, memory notes and scheduled automations. The shell and
+  the files are the Dot's own, run as the Dot's user through its computer's
+  daemon.
 - **Browser identities.** Each one is a separate browser profile with its own
-  cookies, logins and fingerprint, kept from one task to the next.
+  cookies, logins and fingerprint, kept from one task to the next. The control
+  plane and the browser layer have them; the new engine does not offer them to
+  the model yet.
 - **Rules you set.** Every tool runs as allow, ask or deny; an ask waits for
   `invisible-dots approve`, and a pending approval survives a restart.
 
 The same code runs on Linux (KVM) and Windows (Windows Hypervisor Platform).
-The full run, from an empty machine to a Dot that browses, asks for approval,
-sleeps and wakes with everything kept, is tested on Linux; the Windows path
-is not verified on real hardware yet.
+The Windows path is not verified on real hardware yet. The engine's own tests
+(`invisible_engine_dots`, pytest) run on Linux, in CI's `engine` job. There is
+no end-to-end run against real VMs right now: the one that drove the earlier
+engine is gone, and the browser phase of the new one brings its replacement.
 
 How it works, and the contract every part is written against:
 [docs/architecture.md](docs/architecture.md).
 
 ---
 
-Not affiliated with OpenAI. MIT licensed. Parts of the agent engine come from
-Open Multi-Agent, also MIT, with its notice in
+Not affiliated with OpenAI. MIT licensed. The agent engine is a fork of
+nanobot, also MIT, and parts of this repository's history come from Open
+Multi-Agent, also MIT, with their notices in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). QEMU, the guest operating
 system, the browser engine and the packages a host downloads keep their own
 licenses (docs/architecture.md, section 11.3).

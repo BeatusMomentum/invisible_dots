@@ -24,7 +24,9 @@ image's SHA-256; `invisible-dots doctor` checks an image against it with
    each Dot's overlay is larger and cloud-init grows the filesystem).
 3. Writes the builder seed with `@invisible-dots/iso`: one ISO labelled
    `cidata` holding `user-data`, `meta-data`, `provision.sh`, `pins.env`,
-   `mcp-requirements.lock` and both tarballs.
+   `mcp-requirements.lock`, both tarballs, `engine-requirements.lock` and
+   `build-engine-env.sh`. The engine's own source is not on it: it is ours, so
+   it travels on the runtime ISO.
 4. Boots it once with the QEMU the host runs Dots with, on the accelerator
    the vm-manager chose (`-accel kvm` or `-accel whpx`, never emulation), the
    same machine, CPU model and devices as a Dot (its command line is built
@@ -35,13 +37,23 @@ image's SHA-256; `invisible-dots doctor` checks an image against it with
    `uv pip install --require-hashes -r mcp-requirements.lock`, links its
    `invisible-playwright-mcp` into `~/.local/bin`, and runs
    `invisible-playwright fetch` from that environment, so the cached browser
-   engine is the one the MCP server expects. It removes any sudo rule the
+   engine is the one the MCP server expects. It then builds the engine's Python
+   environment with `build-engine-env.sh <lock> /opt/invisible-dots-engine
+   /opt/invisible-dots/engine`: a venv from `/usr/bin/python3` (CPython 3.12)
+   filled with `uv pip install --require-hashes --only-binary :all:` from
+   `engine-requirements.lock` (wheels only, so no build script of a
+   third-party package runs as root), a `.pth` file naming the engine's source
+   directory on the runtime disk, a copy of the lock at
+   `/opt/invisible-dots-engine/requirements.lock`, tiktoken's encoding table
+   prefetched into `share/tiktoken`, and the whole venv owned by root and not
+   writable by anyone else. It removes any sudo rule the
    image had (the builder seed gives `dot` none; each Dot's seed adds its own
    single poweroff rule), cleans the instance state and powers off.
 5. Follows the serial console while the VM runs: `idots-build:` lines are
    progress, `IDOTS-BUILD-COMPONENT:` lines go into the manifest as what was
    installed, and `IDOTS-BUILD-RESULT: ok` is the verdict. A VM that does not
-   power off within the timeout (default one hour) is killed.
+   power off within the timeout (default two hours) is killed. The builder
+   VM gets 2 vCPUs and 4 GiB of memory by default.
 6. Converts the disk into `golden-<version>.qcow2`, writes the manifest first
    and then the image, read-only.
 
@@ -51,12 +63,19 @@ resolved from the index at build time and a dependency missing from it fails
 the build. It is the one place the versions of `invisible-playwright-mcp` and
 `invisible-playwright` are written (`pins.env` and the manifest read them from
 it), and its header has the command that regenerates it. A new
-`invisible-playwright-mcp` version also needs a new capture of its tool list,
-`guest-runtime/browser-manager/test/fixtures/mcp-tools.json`, which the
-browser tests hold the fake MCP server to.
+`invisible-playwright-mcp` version also needs a new capture of its tool list
+once the browser phase of the engine holds a test to one.
 
-The default version is `<UTC build time>-<digest of every input>`, the lock
-included. The control
+`builder/engine-requirements.lock` is the same for the engine
+(`invisible_engine_dots/pyproject.toml`): the one place its dependency
+versions are fixed, regenerated with the command in its header. The same
+parser checks it (`src/python-lock.ts`: a hash on every requirement, no
+package twice), a test checks that every dependency `pyproject.toml` declares
+is pinned in it, and its SHA-256 goes into the manifest as `engine.lock_sha256`.
+
+The default version is `<UTC build time>-<digest of every input>`, the two
+locks, `provision.sh` and `build-engine-env.sh` included (the engine's source is
+not an input: it is on the runtime ISO). The control
 plane gives a new Dot the golden image with the highest version, so the time
 prefix makes the newest build win, and a second run with the same inputs finds
 the image with that digest and stops. On failure the work directory
@@ -71,9 +90,11 @@ named in the error.
 |---|---|
 | `install.sh` | `runtime/install.sh` |
 | `VERSION` | the version |
-| `invisible-dots-agent.mjs` | `guest/invisible-dots-agent/dist/` (`npm run build --workspace guest/invisible-dots-agent`) |
 | `bin/dot-agentd` | `guest/dot-agentd/bin/` (`CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o bin/dot-agentd ./cmd/dot-agentd`), refused unless it is a linux/amd64 ELF |
 | `bin/dot-desktop` | `runtime/dot-desktop.sh` |
+| `engine/nanobot/...` | `invisible_engine_dots/nanobot/`: every `*.py` and the `*.md` under `templates/` |
+| `engine/requirements.lock` | `builder/engine-requirements.lock`, byte for byte: the engine refuses to start when it differs from the venv's copy |
+| `engine/LICENSE`, `engine/UPSTREAM.md` | `invisible_engine_dots/` |
 | `units/*.service` | `units/` |
 
 The version is `<UTC build time>-<digest of the contents>`: every VM start
@@ -84,9 +105,10 @@ bit has to survive a Windows host.
 
 Each Dot's seed mounts the ISO by label at `/opt/invisible-dots` and runs
 `install.sh` on every boot. The hook copies the units into
-`/etc/systemd/system`, creates `/run/invisible-dots` through tmpfiles, enables
-lingering for `dot`, then enables and starts the units (restarting any whose
-unit file changed).
+`/etc/systemd/system`, creates the two socket directories through tmpfiles and
+the engine's state directory, refuses a golden image without
+`/opt/invisible-dots-engine/bin/python`, enables lingering for `dot`, then
+enables and starts the units (restarting any whose unit file changed).
 
 ## Guest units
 
@@ -94,9 +116,9 @@ unit file changed).
 |---|---|
 | `dot-desktop.service` | `Xvfb :0 -nolisten tcp` and `xfce4-session` under `dbus-launch` |
 | `dot-agentd.service` | `/opt/invisible-dots/bin/dot-agentd`, on TCP port 1024 of every guest address (QEMU's user-mode NAT delivers the host's forward to 10.0.2.15) |
-| `invisible-dots-agent.service` | `node --disable-sigusr1 /opt/invisible-dots/invisible-dots-agent.mjs` (no process of the same user can open its inspector and read the OpenRouter key, architecture section 4.3) |
+| `invisible-dots-agent.service` | `/opt/invisible-dots-engine/bin/python -I -B -m nanobot`, as `dotengine`: the Dot's engine (architecture sections 4.1 and 8.8) |
 
-All run as `dot` with `DISPLAY=:0` and `PATH` starting with
+The first two run as `dot`, the engine as `dotengine`; all with `DISPLAY=:0` and `PATH` starting with
 `/home/dot/.local/bin`, where the provisioner linked `invisible-playwright-mcp`. The guest
 enables no firewall: X listens on no TCP port, and port 1024 must stay
 reachable from the NAT; every request to it needs the Dot's token.
@@ -106,3 +128,12 @@ reachable from the NAT; every request to it needs the Dot's token.
 Every file under `builder/`, `runtime/` and `units/` runs inside the guest. They
 must stay LF-only ASCII (`.gitattributes` keeps them so on a Windows checkout,
 and the builder refuses a CRLF file instead of shipping it).
+
+## The engine smoke
+
+`test/smoke/` runs `dot-agentd` and the engine under their two users in one Linux
+container, with the engine's environment built by `builder/build-engine-env.sh` on the
+hashed lock, as `provision.sh` builds it, and the engine's source staged as the runtime
+ISO stages it. `test/smoke/run.sh` is the entry, and the `smoke` job of
+`.github/workflows/tests.yml` runs it; its README says what it proves and how to run it
+from Linux or WSL.

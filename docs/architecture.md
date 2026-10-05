@@ -42,19 +42,23 @@ One more branch exists only to let tests run on a Windows developer host:
 there, because Node cannot serve a unix socket on Windows. The guest
 code that serves sockets decides from the path (`socketIsAFile()`), never
 from the platform. dot-agentd ships for linux/amd64 only, and the build
-constraints of six of its files let its package compile and its tests run on a
-Windows developer host; no shipped binary contains the `!unix` side:
+constraints of eight of its files let its package compile and its tests run on a
+Windows developer host; no shipped binary contains the `!unix` or `!linux` side:
 
 - `setProcessGroup`: `guest/dot-agentd/internal/agentd/exec_unix.go`, `guest/dot-agentd/internal/agentd/exec_other.go`
 - `listenUnixPrivate`: `guest/dot-agentd/internal/agentd/listen_unix.go`, `guest/dot-agentd/internal/agentd/listen_other.go`
 - `diskUsage`: `guest/dot-agentd/internal/agentd/platform_unix.go`, `guest/dot-agentd/internal/agentd/platform_other.go`
+- the process route and its relay (`startProc`, `killGroup`, `TerminalSize`, `MakeRaw`, `WatchTerminalSize`, `ForwardedSignals`; pseudo-terminals are Linux ioctls): `guest/dot-agentd/internal/agentd/proc_linux.go`, `guest/dot-agentd/internal/agentd/proc_other.go`
 
 `tests/repo/platform-branches.test.ts` reads every product source file
 (TypeScript and JavaScript, the build scripts, the guest's shell scripts and
 dot-agentd's Go) and fails on a platform check outside this list: Node's
 platform and OS probes, `getuid`, the Windows path module, a platform name
 as a string, Go's `runtime.GOOS`, build constraints and platform file name
-suffixes.
+suffixes. The engine under `invisible_engine_dots/` (section 2) is Python and
+the test does not read it: it runs only inside the Linux guest, uses unix
+sockets and process groups, and has no platform branch (the Windows, macOS and
+service-manager code of the nanobot it was forked from is gone).
 
 QEMU has no monitor (no QMP, no HMP) on either host. The control plane sees a
 VM's QEMU only as a process, through `process.kill(pid, 0)` and the guest
@@ -86,35 +90,42 @@ packages/
   events/          event types, the host event log and its fan-out to SSE subscribers
   sdk/             typed HTTP client for the API (used by cli and web)
 guest/
-  invisible-dots-agent/   the Dot's main process (Node), bundled into one file
   dot-agentd/             the computer daemon (Go): the guest endpoint, exec, files, screenshots
   image-builder/          golden image and runtime disk builders (TypeScript), guest systemd units
-guest-runtime/
-  engine/             the agent engine: state machine, reasoning loop, policy gate, context budget, crash
-                      recovery; derived in part from Open Multi-Agent (MIT, see THIRD_PARTY_NOTICES.md)
-  openrouter-client/  the only LLM client
-  memory/             local SQLite state: conversation, memories, outbox, intents, summaries
-  task-runtime/       local task queue and lifecycle
-  tools/              tool registry: computer, files, memory tools
-  browser-manager/    browser identities and their MCP sessions
+invisible_engine_dots/
+                   the Dot's engine, run by `python -I -B -m nanobot` in the guest: a hard fork of
+                   nanobot (HKUDS/nanobot, MIT, commit f75470e7), Python 3.11 or newer, provenance
+                   and everything removed since the import in invisible_engine_dots/UPSTREAM.md.
+                   Import package `nanobot`, distribution `invisible-dots-engine`. Only
+                   the engine core is kept: no channel, web UI, TUI, audio, pairing, skill,
+                   subagent, web tool or CLI (the one entry point answers `--version` and refuses
+                   every other command). What it carries: nanobot's tool-calling turn runner,
+                   chat completions to OpenRouter and no other provider, the tools of the
+                   permission table (section 8.8), nanobot's cron service and its MCP client
+                   (no server is configured). The Dot's own layer, the contract of sections 5.3
+                   to 5.4, is `nanobot/dots/`. Its own pytest suite runs in CI's `engine` job
+                   (`.github/workflows/tests.yml`, Linux only: unix sockets)
 virtualization/
   qemu/            the pinned QEMU version for Windows setup (installer URL + SHA-256) and argv notes
   cloud-init/      NoCloud templates
   images/          pinned base image metadata
 tests/
   repo/            checks over the whole repository (the platform branches of section 1.1)
-  e2e/             end-to-end run against real VMs (local only, needs an accelerator)
 docs/
 ```
 
 There is no host installer script, no service unit and no container: the host
 needs Node 24 and QEMU, and `invisible-dots setup` gets QEMU (section 11).
 
-Everything under `apps/`, `packages/`, `guest-runtime/`,
-`guest/invisible-dots-agent/` and `guest/image-builder/` is TypeScript in one
-npm workspace. `dot-agentd`
-is a Go module. Node 24 or newer everywhere (the guest uses the built-in
-`node:sqlite`). Go 1.25 or newer.
+Everything under `apps/`, `packages/` and `guest/image-builder/` is TypeScript in one
+npm workspace. `invisible_engine_dots/` is not part of it: it is a Python project
+(`pyproject.toml`, pytest) of its own, and this repository's TypeScript project,
+vitest run and npm workspaces all leave `invisible_engine_dots/` out
+(`tests/repo/vendored-nanobot.test.ts` checks it). It is a hard fork: it is
+changed in place and upstream changes are never merged. `dot-agentd`
+is a Go module. Node 24 or newer for the TypeScript (the earlier guest agent
+uses the built-in `node:sqlite`). Go 1.25 or newer. Python 3.11 or newer for
+the engine; the guest runs it on Ubuntu 24.04's CPython 3.12.
 
 The control plane runs as ONE process (`invisible-dots server`) that composes
 `api`, `scheduler` and `vm-manager`. They are separate packages so that each
@@ -131,7 +142,9 @@ own package; the number lives in `MIN_QEMU_VERSION`, `apps/vm-manager/src/host.t
 `/dev/kvm` readable and writable by the user on Linux, the Windows Hypervisor
 Platform feature enabled on Windows. No administrator rights are needed at run
 time. `invisible-dots doctor` checks each item and names the command that fixes
-it; `invisible-dots setup` performs those commands (section 11).
+it; `invisible-dots setup` performs those commands (section 11). Building the
+golden image boots a builder VM with 2 vCPUs and 4 GiB of memory by default
+(`GOLDEN_DEFAULTS` in `guest/image-builder/src/golden.ts`).
 
 QEMU is found in `INVISIBLE_DOTS_QEMU_DIR` alone when that is set (a QEMU from
 there mixed with a `qemu-img` from somewhere else would run two versions on the
@@ -224,9 +237,34 @@ QEMU on the same disk would corrupt it.
 - The **golden image** carries the operating system and third-party software:
   Ubuntu 24.04, Xvfb and a minimal XFCE session, the libraries
   the browser needs, Node 24, `uv`, `invisible-playwright-mcp` in its own
-  Python environment, and the browser engine already downloaded. It changes
+  Python environment, the browser engine already downloaded, and the Python
+  environment of the Dot's engine (`/opt/invisible-dots-engine`). It changes
   rarely. It is never modified once a VM uses it: a new one gets a new version
   in its name.
+- The engine's environment holds its third-party packages and not its code.
+  `builder/build-engine-env.sh` makes a venv from Ubuntu's own
+  `/usr/bin/python3` (CPython 3.12) and installs into it, with
+  `uv pip install --require-hashes --only-binary :all:`, every package of
+  `guest/image-builder/builder/engine-requirements.lock`: exact versions with
+  the SHA-256 of their files, transitive packages included, wheels only, so no
+  build script of a third-party package runs as root in the builder VM. The
+  lock is the one place the engine's dependency versions are fixed (a test
+  checks that every dependency `invisible_engine_dots/pyproject.toml` declares
+  is in it), and it is part of the inputs digest, so a changed package is a new
+  image. The build also prefetches tiktoken's `cl100k_base` table into
+  `share/tiktoken` (the engine never fetches it), keeps a copy of the lock at
+  `/opt/invisible-dots-engine/requirements.lock`, and leaves the whole venv
+  owned by root and writable by nobody else.
+- The engine's own code is on the runtime disk, at `/opt/invisible-dots/engine`
+  (its `nanobot` package, the lock, `LICENSE` and `UPSTREAM.md`), and a `.pth`
+  file in the venv's site-packages puts that directory on the venv's path. Our
+  code is ours to change often, so a change to it is a new ISO and not an hour
+  of golden build (the engine's source is not an input of the golden digest).
+  The two halves are tied together at every start: the engine refuses to run
+  when the lock on the runtime disk differs from the venv's copy ("the golden
+  image's Python environment was built from another requirements lock: build a
+  new golden image"), so a runtime disk that needs another dependency never
+  runs on an older golden image.
 - Every input of the golden image is pinned by content: the cloud image, Node
   and `uv` by SHA-256 (`virtualization/images/base.json`,
   `guest/image-builder/pins.json`), and the whole Python environment of
@@ -239,8 +277,8 @@ QEMU on the same disk would corrupt it.
   package is a new image. apt packages are not pinned by version; apt checks
   their signatures.
 - The **runtime disk** (`runtime-<version>.iso`, attached read-only to every VM
-  and mounted at `/opt/invisible-dots`) carries our code: the bundled
-  `invisible-dots-agent`, the `dot-agentd` binary and the systemd units. A new
+  and mounted at `/opt/invisible-dots`) carries our code: the engine's source,
+  the `dot-agentd` binary and the systemd units. A new
   version of our code is a new ISO and a VM restart, not a new golden image and
   not a rebuilt overlay.
 
@@ -383,19 +421,36 @@ document says so.
 |---|---|
 | `dot-desktop.service` | `Xvfb :0 -nolisten tcp` plus a minimal XFCE session on it |
 | `dot-agentd.service` | the computer daemon; TCP port 1024 (reached only through the host's port forward) and a local unix socket |
-| `invisible-dots-agent.service` | the Dot itself |
+| `invisible-dots-agent.service` | the Dot itself: the engine (`/opt/invisible-dots-engine/bin/python -I -B -m nanobot`), as the user `dotengine` |
+
+The engine has a user of its own, `dotengine` (created by the image builder's
+seed, in group `dot` so it can read and seed the Dot's workspace; its unit runs
+it with `UMask=0002`). It holds the OpenRouter key in memory and owns its state
+(`/home/dotengine/state`, 0700) and nothing of the model's runs under it:
+every command, background process and file operation of the model goes through
+dot-agentd as `dot` (section 5.2, `nanobot/dots/computer.py`), so the model can
+read or change neither the engine's state nor its memory. The engine needs no
+privilege: there is no sudo rule for `dotengine` and no root-owned
+configuration file (the Dot's config is stored in the engine's own database,
+section 8.8), and its unit sets `NoNewPrivileges=yes`, so nothing it starts can
+gain one. What the split does not close: `dot` can read the Dot token
+(`/etc/invisible-dots/config.json`) and can stop dot-agentd, which runs as `dot`
+too, and listen on port 1024 in its place; a process that does so receives what
+the host sends there, the key included. Closing that needs dot-agentd under a
+user of its own.
 
 There is no long-running browser service. The agent starts one
 `invisible-playwright-mcp` process per launched browser identity (section 6),
 with an allowlist of its own environment (`allowlistedEnvironment()`, the same
-filter as QEMU's on the host) plus the variables of section 6.
+filter as QEMU's on the host) plus the variables of section 6. The engine of
+section 8.8 does not start browsers yet.
 
 `dot` may run exactly one command as root, `/usr/bin/systemctl poweroff`
 without a password, which is what dot-agentd starts when the host stops the
 VM (section 5.2). The Dot's seed writes that rule; the golden image's builder
 seed gives `dot` none and the provisioner removes any rule the image had,
 because a Dot's seed only adds its rule to that file. Everything the model
-runs (`computer_exec`, `POST /v1/exec`) therefore runs as `dot`. `dot` is in
+runs (the engine's `exec`, `POST /v1/exec`) therefore runs as `dot`. `dot` is in
 the `systemd-journal` group, so it can read its computer's system journal;
 the group is given where the user is created, by the image builder's seed,
 because cloud-init adds no group to a user that exists already.
@@ -404,26 +459,38 @@ because cloud-init adds no group to a user that exists already.
 
 ```text
 /etc/invisible-dots/config.json     written by cloud-init: dotId, token (0600, owner dot)
-/opt/invisible-dots/                the runtime ISO, read-only: the agent bundle, its THIRD_PARTY_NOTICES.txt, dot-agentd, the units
+/opt/invisible-dots/                the runtime ISO, read-only: the engine's source (engine/), dot-agentd and the units
+/opt/invisible-dots-engine/         the engine's Python environment, built into the golden image (section 3.3)
+/home/dotengine/state/              the engine's state (0700): engine.sqlite, which holds the Dot's tables and the
+                                    transcripts (section 8.8), and cron/jobs.json, the automations
 /home/dot/
-  workspace/  downloads/  documents/
-  memory/                           long-term memory notes the Dot writes itself
-  state/dot.db                      SQLite: conversation, tasks, memories, outbox, identities, tool intents, context summaries
+  workspace/                        the engine's agent workspace too: group dot, setgid, 2775
+  downloads/  documents/
+  memory/                           long-term memory notes the Dot writes itself (files; section 8.6)
   browsers/<identity_id>/
     profile/                        the browser profile
     mcp/                            INVISIBLE_MCP_HOME for that identity's server
     metadata.json                   id, name, createdAt, lastUsedAt, status, proxy (optional)
-/run/invisible-dots/
-  agentd.sock                       dot-agentd, local API for the agent (mode 0600, owner dot)
-  agent.sock                        the agent's API, reached by dot-agentd's proxy
+/run/invisible-dots/                dot:dotengine 2750
+  agentd.sock                       dot-agentd's local API for the engine (dot:dotengine 0660)
+/run/invisible-dots-agent/          dotengine:dot 2750
+  agent.sock                        the engine's API, reached by dot-agentd's proxy (dotengine:dot 0660)
 ```
 
-One agent process owns `dot.db`: it opens it in SQLite's exclusive locking
-mode and takes the write lock at once, so a second process on the same file
-fails at open ("another agent owns ..."), and the kernel releases the lock
-the moment the owner dies, so a restart opens it again without waiting.
-Nothing else opens the file; the host reads the guest only through the
-agent's API.
+Each socket sits in a directory its server owns and only the other side may
+enter, setgid so the socket takes that side's group (`install.sh` writes both
+to tmpfiles). `dot` cannot write `/run/invisible-dots-agent/`, so nothing of
+the model's can put another socket where the host pushes the key.
+
+One engine process owns `engine.sqlite`: it opens it in SQLite's exclusive
+locking mode and takes the write lock at once, so a second process on the same
+file fails at open ("another engine owns ...") and refuses to start, and the
+kernel releases the lock the moment the owner dies, so a restart opens it
+again without waiting. Nothing else opens the file; the host reads the guest
+only through the engine's API. The file carries its layout's version in SQLite's
+`user_version`, set when the engine creates it; an engine opens only a file of its
+own version and refuses to start on any other ("the engine database was made by
+another engine version"), because it does not migrate one.
 
 dot-agentd reads the Dot's home from `DOT_HOME` (default `/home/dot`; the
 units do not set it). `INVISIBLE_DOTS_HOME` is the host's data directory
@@ -433,9 +500,9 @@ units do not set it). `INVISIBLE_DOTS_HOME` is the host's data directory
 
 The OpenRouter key is never written into the golden image, the runtime ISO or
 the seed. After the guest reports healthy, the control plane pushes it over
-the guest channel (`POST /v1/agent/secrets`) and the agent keeps it in memory only. A VM
+the guest channel (`POST /v1/agent/secrets`) and the engine keeps it in memory only. A VM
 that restarts asks for nothing: the control plane pushes it again on every
-READY transition, and an agent process that restarts inside a running VM
+READY transition, and an engine process that restarts inside a running VM
 (systemd restarts it after a crash) announces itself with an `agent.started`
 outbound event, on which the control plane pushes the key and the config
 again. The Dot's own token is the one secret in the seed; it only
@@ -446,9 +513,39 @@ it from the commands the model runs, which run as the same user `dot`. What
 does: `dot` cannot become root (section 4.1), so it cannot read another
 process's memory through root; Ubuntu's Yama `ptrace_scope=1` lets a process
 trace only its own descendants, and the model's commands descend from
-dot-agentd, not from the agent; and the agent runs with `--disable-sigusr1`,
-so no process of the same user can open Node's inspector in it. A change to
-any of the three reopens the question.
+dot-agentd, not from the engine; and the engine is a process of another user,
+so ptrace of it is refused in any case. CPython opens no debugger or inspector
+on a signal, so nothing can be asked of the process from outside; the unit's
+`LimitCORE=0` keeps the key out of core files and `NoNewPrivileges=yes` keeps
+anything the engine starts from gaining a privilege. A change to any of these
+reopens the question.
+
+In the engine the key lives in one object, `KeyHolder`
+(`nanobot/dots/secrets.py`): `POST /secrets` sets it, and the one place that
+builds the model provider (`nanobot/dots/provider.py`) reads it. It is never
+logged, written or put in an environment, and the server logs a request's
+method, path and status and never a body. Nor does it leave in an error:
+the holder refuses a key that cannot travel in a header (anything but printable
+ASCII without spaces: a newline inside a key makes h11 raise `Illegal header
+value b'Bearer <key>'`, and the openai client chains that under its own
+exception). That rule has one owner, `packages/shared` (`OPENROUTER_KEY_PATTERN`
+and `OPENROUTER_KEY_RULE`): the host applies it where the key enters, so
+`PUT /api/secrets/openrouter` answers `400 invalid_request` for a key that breaks
+it, and the holder applies the engine's copy of the same two constants again on
+`POST /secrets` (a repository test keeps the copy equal). The one place the
+provider turns a failure into text (`LLMProvider.failure_text`) removes the
+key from it, as a server may echo the Authorization header in its error body; it
+replaces the key in the whole text before the body is cut. The same key again changes nothing:
+no new provider is built and no running turn is disturbed, so the host's
+pushes at every READY and `agent.started` cost nothing. A new key builds the
+provider of the next turn; a running turn keeps the one it began with. The
+engine reads no credential from its environment: no provider spec names an
+environment variable. It refuses to start when it finds a credential on disk
+anyway (`nanobot/dots/credentials.py`): a dotenv file with an assignment
+(`<state>/.env`, `$HOME/.env`, `$HOME/.nanobot/.env`), a nanobot config file
+(`$HOME/.nanobot/config.json`) holding an `apiKey`, or a variable of its own
+environment whose name ends in KEY, TOKEN, SECRET or PASSWORD and has a value;
+the refusal names where, never what.
 
 A secret also never travels in an error: a failed push of the key is reported
 by route, status and code only (`the guest did not take the OpenRouter key
@@ -490,11 +587,27 @@ sees the token, the key or the config; the call fails with
 | `GET /v1/files/list` | `?path=` | `{ entries: [{ name, type: "file"\|"dir"\|"other", size, mtime }] }` |
 | `GET /v1/screenshot` | | `image/png` of display `:0` |
 | `POST /v1/system/poweroff` | | `202 { status: "powering_off" }` after starting `sudo -n systemctl poweroff` detached (the seed lets `dot` run exactly that without a password, section 4.1); `500 poweroff_failed` when it cannot be started. How the control plane stops a VM (section 3.4) |
-| `* /v1/agent/<rest>` | | reverse proxy to `unix:/run/invisible-dots/agent.sock` at `/<rest>` |
+| `* /v1/agent/<rest>` | | reverse proxy to `unix:/run/invisible-dots-agent/agent.sock` at `/<rest>` |
 
 The same routes, without `/v1/agent`, `/v1/proof` and `/v1/system/poweroff`,
-are served on `agentd.sock` for the agent (no token: the socket is owned by
-`dot`, mode 0600). Sleep, stop and reboot are the control plane's decisions,
+are served on `agentd.sock` for the engine (no token: section 4.2 says who can
+reach the socket), plus one route of that socket only:
+
+| method and path | body | answer |
+|---|---|---|
+| `POST /v1/proc` | `{ argv, cwd?, env?, tty?: { cols, rows } }`, with `Connection: Upgrade`, `Upgrade: dots-proc/1` | `101 Switching Protocols`, then frames both ways (one type byte, a big-endian uint32 length, the payload): from the caller `i` input, `e` end of input (^D on a terminal), `r` size (uint16 cols, uint16 rows), `s` a signal number for the process group; from dot-agentd `o` output, `E` error output (none on a terminal), and last `x`, the JSON `{ exit_code, signal? }`. `426` without the upgrade, `400` for an empty program or a bad cwd |
+
+It runs the program as `dot`, without a shell, in its own process group, on a
+pseudo-terminal when asked (a new session whose controlling terminal it is).
+The process lives exactly as long as the connection: a caller that goes away
+takes the whole group with it. Its client is `dot-agentd relay [--socket P]
+[--cwd DIR] [--tty] [--env NAME=VALUE]... -- PROGRAM [ARGS...]`, which copies
+its own standard input and output through and exits with the program's code
+(128 plus the signal number when a signal ended it); with `--tty` and a
+terminal on its input it puts that terminal in raw mode and forwards its size
+changes. The engine runs the model's every command through it, and reads and
+writes the model's files through the `/v1/files` routes of the same socket
+(section 8.8). Sleep, stop and reboot are the control plane's decisions,
 and the agent's socket offers no poweroff. That is not a guarantee that a Dot
 cannot power its own computer off: the model runs commands as `dot`, which
 may run the same `systemctl poweroff`, and can read the token in
@@ -506,29 +619,41 @@ Paths in file routes are resolved against `/home/dot` when relative.
 A command of `POST /v1/exec` runs in its own process group, and dot-agentd
 kills the whole group when the command reaches its timeout and when the
 request that started it goes away: a cancelled call, a tool cut at the stop
-grace and an agent that died all take their command with them. Only what the
+grace and an agent that died all take their command with them. A command that
+runs through a relay (the engine's) is held the same way: the relay is a child
+of the engine that lives as long as the remote command, and ending it ends the
+remote process group. Only what the
 command detached into another session outlives it.
 
-### 5.3 invisible-dots-agent routes (reached as `/v1/agent/...`)
+### 5.3 Agent routes (the Dot's engine, reached as `/v1/agent/...`)
 
 | method and path | body | answer |
 |---|---|---|
 | `GET /health` | | `{ status: "ok"\|"starting", state: AgentState, openrouter_configured: bool, browser: { identities: n, open: n } }` |
 | `POST /secrets` | `{ openrouter_api_key }` | `204` |
-| `PUT /config` | `DotRuntimeConfig` (section 7) | `204`, persisted in `dot.db` |
+| `PUT /config` | `DotRuntimeConfig` (section 7) | `204`, validated, persisted in the engine's database (`dots_kv`) and projected onto the engine's settings in process (section 8.8); a config that does not validate is `400 invalid_config` |
 | `POST /events` | `InboundEvent` | `202 { accepted: true }` |
 | `GET /events/stream` | `?after=<seq>` | `text/event-stream`, one SSE message per outbound event, `id: <seq>` |
 | `GET /state` | | `{ state, current_task_id, pending_approval }` |
-| `GET /browser-identities` | | `{ identities: BrowserIdentity[] }` |
-| `POST /browser-identities` | `{ name, proxy? }` | `201 BrowserIdentity` |
-| `GET /browser-identities/:id` | | `BrowserIdentity` |
-| `DELETE /browser-identities/:id` | | `204` |
+| `GET /browser-identities` | | `{ identities: BrowserIdentity[] }` (the engine: always empty, it has no browser yet) |
+| `POST /browser-identities` | `{ name, proxy? }` | `201 BrowserIdentity` (the engine: `501 not_implemented`) |
+| `GET /browser-identities/:id` | | `BrowserIdentity` (the engine: `404`) |
+| `DELETE /browser-identities/:id` | | `204` (the engine: `501 not_implemented`) |
 | `POST /prepare-sleep` | | `204` after the state is flushed and browser sessions are closed; the agent then starts no new work. A model request in flight is abandoned; a tool in flight gets up to 20 seconds to finish and record its result, then is aborted (section 8.7). A `POST /secrets` (the READY procedure of a VM whose stop failed, so no shutdown followed) lifts that, and so does a new inbound event |
 
-Outbound events are written to an outbox table in `dot.db` before they are
-streamed, with a monotonically increasing `seq`. The host stores the last `seq`
-it saved per Dot and reconnects with `?after=`. Nothing is lost when the control
-plane restarts or the VM sleeps.
+Outbound events are written to an outbox table in the Dot's database before
+they are streamed, with a monotonically increasing `seq`. The host stores the
+last `seq` it saved per Dot and reconnects with `?after=`. Nothing is lost when
+the control plane restarts or the VM sleeps.
+
+The engine serves these routes from `nanobot/dots/server.py` (aiohttp), on the
+unix socket `INVISIBLE_DOTS_AGENT_SOCKET` names (mode 0660; a socket file left
+by a crash is removed first), and binds no TCP listener. Its outbox is the
+`dots_outbox` table of `engine.sqlite` (section 8.8). Every outbox row is
+written by this one process through `DotStore.write`, which wakes the open
+streams after the transaction commits, so the stream replays from the table
+after `?after=` (or `Last-Event-ID`) and then sends each row once as it
+commits, with a keep-alive comment every 15 seconds; there is no poll.
 
 ### 5.4 Event shapes
 
@@ -559,14 +684,15 @@ in_reply_to?}`, `task.started {task_id}`, `task.progress {task_id, text}`,
 reason}`, `tool.called {task_id?, tool, permission, decision, ok,
 duration_ms, interrupted?}`, `browser.identity.created|deleted|launched|closed
 {identity_id, name}`, `memory.written {key}`. `interrupted: true` marks a call
-the agent stopped during: its outcome is unknown and it was not run again, so
+the engine stopped during: its outcome is unknown and it was not run again, so
 `ok` is false and `duration_ms` is 0.
 
 The `arguments` of `approval.requested` are what the person decides on, and
 they leave the guest: a tool argument that carries a secret is redacted there
 by the tool's own rule (`redactToolArguments()`, `packages/shared/src/tools.ts`;
-today the password in a `browser_identity_create` proxy URL). The pending call
-in `dot.db` keeps the full arguments, so an approval runs the call as asked.
+today the password in a `browser_identity_create` proxy URL; the engine's tools
+carry no such argument yet and it redacts nothing). The pending call in the
+Dot's database keeps the full arguments, so the approved call is made as asked.
 
 An outbound event is handed to the event stream only after the transaction
 that wrote it to the outbox committed: one written inside a transaction that
@@ -580,7 +706,7 @@ The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
 ## 6. Browser identities
 
 - An identity is a directory under `/home/dot/browsers/<identity_id>/`. Its id
-  is a slug of its name plus a short random suffix. The guest's `dot.db` is the
+  is a slug of its name plus a short random suffix. The guest's database is the
   only record of which identities exist; the host never mirrors the list, it
   asks the guest.
 - The fingerprint seed of an identity is stored by the browser layer in the
@@ -644,76 +770,94 @@ limits:
 ```
 
 Defaults for permissions not listed: everything under `computer.*`,
-`files.*`, `browser.*` and `memory.*` is `allow`, except
-`browser.identity.delete` which is `ask`. Any permission name the registry does
-not know is `deny`.
+`files.*`, `browser.*`, `memory.*` and `web.*` is `allow`, except
+`browser.identity.delete`, which is `ask`; `message.send`, `automations` and
+`subagents` are `ask`. Any permission name the registry does not know is
+`deny`.
 
 `DotRuntimeConfig` (what `PUT /config` sends to the guest) is the same object
-minus `computer`.
+minus `computer`, with `permissions` resolved by the host: one decision for
+every permission the registry knows, defaults applied. The guest applies the
+map as it is and denies a permission missing from it, so the defaults live in
+one place (`resolvePermission` in `packages/shared`).
 
 ## 8. Agent runtime
 
+Sections 8.1 to 8.7 are the contract of a Dot's runtime. Section 8.8 is the
+engine that keeps it (`invisible_engine_dots/`), how it keeps it, and what it
+does not do yet.
+
 ### 8.1 States
 
-`IDLE -> THINKING -> PLANNING -> EXECUTING -> (THINKING | WAITING_APPROVAL) -> DONE -> IDLE`
+`IDLE -> THINKING -> EXECUTING -> (THINKING | WAITING_APPROVAL) -> DONE -> IDLE`
 
-`DONE` follows a failed unit as well as a completed one. `THINKING` is a model request in flight; `PLANNING` is the model's answer being
-turned into tool calls; `EXECUTING` is a tool running. Every transition is an
-`agent.state` event.
+`DONE` follows a failed unit as well as a completed one. `THINKING` is a model
+request in flight; `EXECUTING` is a tool running. Every transition is an
+`agent.state` event. The protocol also names `PLANNING` (the model's answer
+being turned into tool calls); the engine has no such step and never reports it.
 
 ### 8.2 Work
 
-The runtime is event driven. There is no polling loop. Work arrives as
-`user.message` (a chat turn in the Dot's single persistent conversation) or
-`task.created` (queued locally, run one at a time in priority order, then
-creation order). A task ends when the model answers without tool calls
-(`task.completed`, the answer is the summary), or when an approval is
-rejected and the model gives up. It fails (`task.failed`, with a reason the
-owner can read) when it exceeds `max_steps_per_task`; when its spend reaches
-`max_cost_per_task_usd` (checked before every model request, the usage of
-summary and flush calls included, and persisted with every response, so the
-cap holds across a restart; a model that reports no cost is logged once and
-the step limit still holds); when the same tool calls return the same
-results three rounds in a row a second time (the first time, the model gets
-a notice; the streak and the notices are read from the unit's own messages);
-when its context budget is too small for the current step (section 8.6); or
-after three failed attempts at one step (section 8.7). A chat turn has the
-same limits, its cost counted per turn; a failed chat turn answers "I could
-not answer: ...".
+The runtime is event driven. Work arrives as `user.message` (a chat turn in
+the Dot's single persistent conversation), as `task.created` (queued locally,
+run one at a time in priority order, then creation order) or as the firing of
+one of the Dot's own automations (section 8.8, answered in the chat). A task
+ends when the model answers without tool calls (`task.completed`, the answer is
+the summary), or when an approval is rejected and the model gives up. It fails
+(`task.failed`, with a reason the owner can read) when it exceeds
+`max_steps_per_task`; when a model request fails for good after the retries of
+section 8.5, or the run ends without an answer; or after being interrupted
+three times (section 8.7). A chat turn has the same limits; a failed chat turn
+answers "I could not answer: ...". `limits.max_cost_per_task_usd` is accepted
+and not enforced yet (section 8.8).
 
 ### 8.3 Tools
 
 Function names use `_` because OpenAI-style function names cannot contain
-dots. Each tool declares the permission it needs, and whether it is
-replay-safe: running it twice with the same arguments has the effect of
-running it once. Only a replay-safe call may run again when a crash leaves its
-outcome unknown. `browser_navigate` is not: a GET can consume a one-time link
-or confirm an action, and the profile keeps its cookies across a restart.
+dots. Each tool declares the permission it needs, in one table
+(`nanobot/dots/permissions.py`) that offers the model its tools, decides every
+call and reports the permission of each `tool.called`. A tool that is not in
+the table is neither offered nor allowed.
 
-| tool | permission | replay | arguments |
-|---|---|---|---|
-| `computer_exec` | `computer.exec` | no | `command, cwd?, timeout_seconds?` |
-| `computer_screenshot` | `computer.screenshot` | yes | none (the image is sent to the model) |
-| `files_read` | `files.read` | yes | `path` |
-| `files_write` | `files.write` | yes | `path, content` |
-| `files_list` | `files.read` | yes | `path` |
-| `memory_remember` | `memory.write` | yes | `key, content` |
-| `memory_search` | `memory.read` | yes | `query` |
-| `browser_identity_list` | `browser.identity.list` | yes | none |
-| `browser_identity_create` | `browser.identity.create` | no | `name, proxy?` |
-| `browser_identity_delete` | `browser.identity.delete` | no | `identity_id` |
-| `browser_identity_launch` | `browser.identity.launch` | yes | `identity_id` |
-| `browser_identity_close` | `browser.identity.close` | yes | `identity_id` |
-| `browser_navigate` | `browser.navigate` | no | `identity_id, url` |
-| `browser_snapshot` | `browser.read` | yes | `identity_id` |
-| `browser_read_text` | `browser.read` | yes | `identity_id, selector?` |
-| `browser_click` | `browser.act` | no | `identity_id, selector` |
-| `browser_click_at` | `browser.act` | no | `identity_id, x, y` |
-| `browser_type` | `browser.act` | no | `identity_id, selector, text` |
-| `browser_press_key` | `browser.act` | no | `identity_id, key` |
-| `browser_scroll` | `browser.act` | no | `identity_id, direction: "up"\|"down"` (PageUp / PageDown) |
-| `browser_back` / `browser_forward` / `browser_reload` | `browser.act` | no | `identity_id` (Alt+Left, Alt+Right, F5) |
-| `browser_screenshot` | `browser.read` | yes | `identity_id` (the image is sent to the model) |
+| tool | permission | what it does |
+|---|---|---|
+| `exec` | `computer.exec` | runs a command through `bash -lc` in a working directory with a timeout (60 s by default, 600 s at most); with `yield_time_ms` it returns while the command still runs, which makes it a background job |
+| `exec_session` | `computer.exec` | sends input to, waits for, reads or terminates a background job |
+| `list_exec_sessions` | `computer.exec` | lists the background jobs |
+| `read_file` | `files.read` | reads a text file, by line window; reports a binary file as binary |
+| `list_dir` | `files.read` | lists a directory, optionally recursively |
+| `find_files` | `files.read` | finds files by path terms, glob or type |
+| `grep` | `files.read` | searches file contents by regular expression |
+| `write_file` | `files.write` | writes a whole file |
+| `edit_file` | `files.write` | replaces text in a file |
+| `apply_patch` | `files.write` | applies a list of structured edits (replace or add) to files, with a dry run |
+| `memory_search` | `memory.read` | keyword search over the memory notes (offered only when `memory.enabled`) |
+| `memory_get` | `memory.read` | reads one memory note (offered only when `memory.enabled`) |
+| `cron` | `automations` | adds, lists and removes the Dot's own scheduled automations |
+
+Planned for the browser phase, which the engine does not carry yet (section
+8.8): the screenshot of the Dot's desktop and the browser identity tools. They
+take the permissions below and an `identity_id`, and the model never sees the
+MCP server's own tool names.
+
+| tool | permission | arguments |
+|---|---|---|
+| `computer_screenshot` | `computer.screenshot` | none (the image is sent to the model) |
+| `browser_identity_list` | `browser.identity.list` | none |
+| `browser_identity_create` | `browser.identity.create` | `name, proxy?` |
+| `browser_identity_delete` | `browser.identity.delete` | `identity_id` |
+| `browser_identity_launch` | `browser.identity.launch` | `identity_id` |
+| `browser_identity_close` | `browser.identity.close` | `identity_id` |
+| `browser_navigate` | `browser.navigate` | `identity_id, url` |
+| `browser_snapshot` | `browser.read` | `identity_id` |
+| `browser_read_text` | `browser.read` | `identity_id, selector?` |
+| `browser_click` | `browser.act` | `identity_id, selector` |
+| `browser_click_at` | `browser.act` | `identity_id, x, y` |
+| `browser_type` | `browser.act` | `identity_id, selector, text` |
+| `browser_press_key` | `browser.act` | `identity_id, key` |
+| `browser_scroll` | `browser.act` | `identity_id, direction: "up"\|"down"` (PageUp / PageDown) |
+| `browser_back` / `browser_forward` / `browser_reload` | `browser.act` | `identity_id` (Alt+Left, Alt+Right, F5) |
+| `browser_screenshot` | `browser.read` | `identity_id` (the image is sent to the model) |
 
 Browser actions on an identity that is not open launch it first. When
 `managed_by_dot` is false, the `browser_identity_create` and
@@ -721,130 +865,296 @@ Browser actions on an identity that is not open launch it first. When
 
 The tool calls of one response run one at a time, in the order the model
 gave them. Only the response's `tool_calls` count: a call written in the
-assistant's text runs nothing. The registry validates a call's arguments and
-cuts its text at 12000 characters, once.
+assistant's text runs nothing. The registry validates a call's arguments
+before the policy sees it: an unknown tool or invalid arguments never reach
+the gate and never run, and the model gets the error. A result longer than
+12000 characters is cut, once.
 
 ### 8.4 Policy
 
-Every tool call goes through the policy gate before it runs: a pure function
-of the current config, and the only place that denies a tool the config does
-not offer. `allow` runs it, `deny` returns an error result to the model, `ask`
+Every tool call goes through the policy gate before it runs: a function of the
+current config, and the only place that denies a tool the config does not
+offer. `allow` runs it, `deny` returns an error result to the model, `ask`
 emits `approval.requested`, moves to `WAITING_APPROVAL` and persists the
-pending call in `dot.db`, keyed by its position (the assistant message and the
-call's index in it). A call that needs approval stops the round: later calls
-of the same response wait for the decision. `approval.received` with `approve`
-runs the call, with the arguments of the pending row, and resumes the loop;
-with a note, the note follows the call's result. `reject` returns `Rejected by
-the user: <note>` (or `Rejected by the user.`) to the model. A decision is
+pending call, with its full arguments, in the Dot's database, keyed by the
+call's id. A call that needs approval stops the round: later calls of the same
+response are not run either, and the turn ends. `approval.received` is
+recorded when it is accepted. With `approve` the model is told, in a turn of
+its own, that the call was approved and has not run; it makes the same call
+again and the gate lets that one call through, once. With `reject` the model
+is told the call did not run, with the note if there is one. A decision is
 recorded once: a second one for the same approval is ignored. An approved call
-runs at most once, or at most twice when its tool is replay-safe and the agent
-crashed during it (section 8.7). The memory flush before a summary (section
-8.6) goes through this policy: its `memory_remember` calls run only when
-`memory.write` is `allow`.
+runs at most once. Section 8.8 says how the gate does this.
 
 ### 8.5 OpenRouter
 
 `POST https://openrouter.ai/api/v1/chat/completions` with
-`HTTP-Referer: https://github.com/feder-cr/dots` and `X-Title: invisible_dots`.
-Tool calling in the OpenAI format, `tool_choice: "auto"`, no streaming. A
-response cut by the output limit (`finish_reason: "length"`) has none of its
-tool calls executed: it is stored without them, followed by a notice asking
-the model to reply again more briefly, and it counts as a step.
-Retries with exponential backoff on 429 and 5xx (at most 4 attempts, honouring
-`Retry-After`). Images (screenshots) are sent as `image_url` parts with a
-`data:image/png;base64,` URL. Tool results longer than 12000 characters are cut
-with a marker. Usage (`prompt_tokens`, `completion_tokens`, `cost` when
-OpenRouter reports it) is accumulated per task, the usage of the summary and
-memory-flush calls of section 8.6 included (they count toward cost, not
-steps).
+`HTTP-Referer: https://github.com/feder-cr/dots` and `X-Title: invisible_dots`
+(sent only when the base URL's host is `openrouter.ai`, so a stand-in used by
+tests never receives them), the key from memory (section 4.3). Tool calling in
+the OpenAI format, `tool_choice: "auto"`, no streaming. A response cut by the
+output limit (`finish_reason: "length"`) has none of its tool calls executed:
+what it said is stored without them and the model is asked to go on, a bounded
+number of times. Retries with exponential backoff on 429 and 5xx (at most 4
+attempts, honouring `Retry-After`). Tool results longer than 12000 characters
+are cut with a marker.
 
 ### 8.6 Memory
 
-- Working memory: the thread is append-only in `dot.db`; what is sent is
-  bounded by `limits.context_tokens`. A request is the system prompt, the
-  unit's start message (the task's seed, or the chat turn's user message,
-  always kept whole), the newest summary of the thread (`context_summaries`),
-  and the thread after that summary; the thread is never read whole. The
-  estimate covers the system prompt, the tool definitions, the messages and
-  each image (1600 tokens); characters count as tokens at the larger of 1/3
-  and the ratio the provider last reported for the model. Building stops as
-  soon as the estimate is at or under 0.75 of the budget: first, tool results
-  the model has already processed become `[Tool result of <tool>: <n>
-  characters, already processed]`, the largest first (the oldest first among
-  equals), never one under 1000 tokens (`MIN_PLACEHOLDER_TOKENS`: a short
-  result costs little and is often the very value a later step needs, such as
-  a code looked up at the start of a task) and never in the newest round,
-  and only the newest three images are sent; then a summary of the older part
-  of the thread, cut where no call is separated from its results and so the
-  part kept verbatim fits in 0.35 of the budget, made by the unit's model in
-  requests of at most 0.5 of the budget and stored capped at 0.15 of it (a
-  failed or cut summary falls back to a mechanical digest, capped the same
-  way); before the summary, when memory is on and the policy allows
-  `memory.write`, a memory-flush turn lets the model save what it still needs
-  with `memory_remember`, if that request itself fits; then the largest
-  results of the newest round are shrunk, head and tail. A summary is also
-  made once 200 messages follow the newest one. A request still above 0.9 of
-  the budget is never sent: the unit fails with "the context budget
-  (limits.context_tokens = N) is too small for the current step".
-- Long-term memory: `memories(key, content, updated_at)` in `dot.db` with an
-  FTS5 index; `memory_search` queries it. The system prompt lists the 20 most
-  recently updated keys.
+- Working memory: the thread is append-only in the Dot's database; what is
+  sent is bounded by `limits.context_tokens`. Before every model request the
+  runner measures the request (the system prompt, the tool definitions and the
+  messages) against that budget less the room for the answer, and compacts it
+  when it does not fit: tool results the model has already processed become
+  placeholders, and the older part of the thread is replaced by a summary the
+  Dot's model writes (a mechanical digest when that fails). The summary is
+  stored with the session, at the boundary it covers, when the turn ends, and
+  the next request is the system prompt, the summary and the thread after it.
+- Long-term memory: notes, one file each, in `/home/dot/memory` on the Dot's
+  computer. The Dot writes them with its file tools (`files.write`);
+  `memory_search` finds a keyword or phrase in their text (a plain search,
+  there is no index and no embedding) and `memory_get` reads one. The system
+  prompt names the 20 most recently changed notes. With `memory.enabled` false,
+  or `memory.read` denied, the memory tools are not offered and the prompt says
+  nothing of the notes.
 - Workspace memory: `/home/dot/workspace` and `/home/dot/memory`, reached
   through the file tools.
 
 ### 8.7 Crash recovery
 
-The agent can die at any point (a crash, a kill, a power cut) and systemd
+The engine can die at any point (a crash, a kill, a power cut) and systemd
 starts it again. What it guarantees:
 
-- One process owns `dot.db` (section 4.2).
+- One process owns the Dot's database (section 4.2).
 - Every commit point is one transaction that includes the outbox rows
-  describing it: the assistant's message with the step and its usage; a
-  call's intent, before the call starts; a call's result with its
-  `tool.called`, once the call returned; the end of a unit.
-- An intent left without a result is a call the agent stopped during. When a
-  unit is entered (a start, a resume after `POST /secrets` or after an
-  approval), such a call is run again only if its tool is replay-safe
-  (section 8.3) and it was started once; otherwise it gets the result "This
-  call was interrupted before its result was recorded. It may have taken
-  effect, and it may still be running. Check the current state before calling
-  it again." (plus, for an approved call, that the approval was used), and
-  `tool.called` with `interrupted: true` and the permission and decision of
-  its time. A `computer_exec` command dies with the agent that started it
-  (section 5.2), so "may still be running" covers what the command detached;
-  "may have taken effect" covers everything it did before it was killed.
-- So a call that is not replay-safe runs at most once, and the model is told
-  whenever its outcome is unknown; a replay-safe call runs at least once and
-  at most twice. `tool.called` is written exactly once per call. `agent.state`
-  and the events a tool emits itself (`memory.written`, `browser.identity.*`)
-  are at-least-once: a call run again emits them again.
+  describing it; section 8.8 lists them.
+- An intent left without a result is a call the engine stopped during. When a
+  unit is entered (a start, and the beginning of every turn), such a call is
+  never run again: it gets the result "This call was interrupted before its
+  result was recorded. It may have taken effect, and it may still be running.
+  Check the current state before calling it again." (plus, for an approved
+  call, that the approval was used), and `tool.called` with `interrupted: true`
+  and the permission and decision of its time. A command dies with the engine
+  that started it (section 5.2), so "may still be running" covers what the
+  command detached; "may have taken effect" covers everything it did before it
+  was killed.
+- So a call runs at most once, and the model is told whenever its outcome is
+  unknown. `tool.called` is written exactly once per call that ran or was
+  refused (a call waiting for approval, or one that never started, reports
+  nothing). `agent.state` is at-least-once.
 - A unit can end between a response and the results of its calls (a failed
-  write, a failure, a cancel). The transaction that ends it answers every call
-  of the newest assistant message that has no result: `Not executed: the unit
-  ended before this call ran.`, or the interrupted result for a call that had
-  started; and it deletes the thread's intents. A thread never keeps a call
-  without its result, which the provider would refuse on every later turn;
-  the request builder only asserts it, and fails the unit if it is broken.
+  write, a failure, a cancel, a stop). The transaction that ends it answers
+  every call of the newest assistant message that has no result, by what the
+  database holds for the call (section 8.8). A thread never keeps a call
+  without its result, which the provider would refuse on every later turn.
 - Stopping: `POST /prepare-sleep` and SIGTERM abandon a model request in
   flight and give a tool in flight up to 20 seconds to finish and commit its
-  result, which leaves 10 of systemd's `TimeoutStopSec=30` to close the
-  browsers and checkpoint the database. A tool cut at the grace keeps its
-  intent, and the next entry of its unit, in this process or the next,
-  reports it as interrupted (or runs it again, if it is replay-safe).
-- The first start on this engine (marked by a config row, not by the
-  migration, so a crash between the two cannot skip it) applies the inbound
-  events the previous version accepted but never applied, gives old approvals
-  the position of their call, answers the calls the previous version left
-  open (removing from their message, as never run, those that sit in the
-  middle of a thread where no result can follow them), and gives the active
-  unit's first open call an intent unless its approval shows it never ran.
-- Each attempt of a step (its memory flush and summary, if any, and its model
-  request) is counted, in its own transaction, before it starts; the
-  assistant's commit and a summary's commit reset the count. A step whose
-  fourth attempt would start fails its unit with "stopped: the model request
-  failed to complete 3 times", so a response whose commit kills the process is
-  paid for at most three times. An attempt the agent abandons on purpose (a
-  sleep, a cancel) does not count.
+  result, which leaves 10 of systemd's `TimeoutStopSec=30` to checkpoint the
+  database. A tool cut at the grace keeps its intent, and the next entry of its
+  unit reports it as interrupted. Measured in the engine smoke, with a task's
+  `sleep 70` still running at SIGTERM and the event stream connected: the
+  process exited 20.4 s after the signal, 9.6 s inside the limit (the 20 s
+  grace, then the checkpoint, the exec sessions, the MCP client and aiohttp's
+  cleanup in 0.4 s).
+- A task that was running when the engine stopped is started again with a note
+  that the previous attempt was interrupted, and fails once it has been started
+  three times (`stopped: the task was interrupted 3 times`). A start the engine
+  abandoned on purpose (a sleep, a stop) is given back and does not count.
+- An answer the chat owes is given: a `user.message` whose text the transcript
+  holds and that no answer has covered is answered by a turn of its own at the
+  next start.
+
+### 8.8 The runtime on the nanobot fork
+
+The engine (`invisible_engine_dots/`) carries the contract of sections 5.3 and
+5.4 and the runtime of this section on nanobot's tool-calling runner, in
+`nanobot/dots/`. `python -I -B -m nanobot` serves the Dot; `--version`
+answers and any other argument is refused. The process reads its environment
+once, in `main.py`: `INVISIBLE_DOTS_AGENT_SOCKET`,
+`INVISIBLE_DOTS_AGENTD_SOCKET`, `INVISIBLE_DOTS_AGENTD_BIN`,
+`INVISIBLE_DOTS_WORKSPACE`, `INVISIBLE_DOTS_ENGINE_STATE`, and for tests and
+the smoke `INVISIBLE_DOTS_OPENROUTER_URL`. Before it opens anything it checks
+that the runtime disk's `requirements.lock` equals the venv's (section 3.3),
+that no credential is on disk (section 4.3) and that no other engine owns the
+state.
+
+- Work. One class, `TurnRunner` (`turns.py`), starts every model turn and
+  drives nanobot's `AgentRunner` (`nanobot/agent/runner.py`); the `Engine`
+  (`engine.py`) decides which turn runs and what its end means. The chat is the
+  session `chat`; a task is the session `task:<task_id>`. Accepted
+  `user.message` and automation rows wait in `dots_inbound`; when no chat turn
+  runs, a chat turn starts with all of them, in the order accepted, as its
+  opening messages; while it runs, rows accepted since are injected into it
+  through the runner's injection callback and committed as user messages. The
+  answer a chat owes (section 8.7) is one rule: when no chat turn runs, no
+  accepted row waits, a row is in the transcript and no open approval holds
+  the chat, a chat turn runs with no opening message. A `task.created` is
+  queued in `dots_tasks` and run one at a time, priority first then arrival;
+  a chat turn and a task turn may overlap. `system.event task.cancelled` ends
+  the task, cancels its turn and closes its open calls; no task event follows
+  `cancelled`. No work starts before the host pushed both the config and the
+  key, nor while a prepare-sleep holds it (a `POST /secrets` or a new inbound
+  event lifts it). One asyncio loop runs everything.
+- Where the state lives. One SQLite file, `<state>/engine.sqlite`
+  (`/home/dotengine/state`, 0700), opened in WAL mode with
+  `synchronous=FULL` and the exclusive locking mode. It holds the Dot's tables
+  (`dots_outbox`, `dots_inbound`, `dots_tasks`, `dots_tool_intents`,
+  `dots_tool_decisions`, `dots_approvals`, `dots_kv`) and the transcripts
+  (`sessions`, `messages`): SQLite makes a transaction atomic per file only,
+  and this is what lets an event commit with the transcript row it describes.
+  `DotStore` (`store.py`) is the one place a write transaction begins and
+  ends.
+- Commit points, each one transaction with the outbox rows describing it: an
+  inbound event with its effect (a queued task, a recorded decision, a
+  cancel); a task's start with `task.started`; the opening of a turn (the
+  calls the previous unit left open are closed, then the opening messages are
+  appended); every message the runner adds, one at a time and before it goes
+  on (`AgentRunner._commit` hands it to the commit callback of `TurnRunner`):
+  the assistant message with its tool calls, each tool result as soon as its
+  call returns, the final answer, an injected user message; a gate decision
+  (a park, or a denial); a call's intent with `agent.state EXECUTING` (from
+  the turn hook, just before the tool runs); the end of a failed turn; the
+  agent state transitions. `DotStore.append_messages` calls
+  `record_transcript_append` (`transcript_outbox.py`) in the transaction that
+  stores a message: a user message that carries an inbound id marks that input
+  as in the transcript; the final assistant message of the chat emits
+  `message.assistant` and applies every input the transcript holds (the
+  `in_reply_to` is the newest `user.message`); the final assistant message of
+  a running task completes it with `task.completed`, the text as the summary;
+  a tool result emits `tool.called`, its duration measured from the call's
+  intent, which it removes. A turn that fails fails its task in its own
+  transaction; a chat turn that fails answers "I could not answer: ...".
+- Closing open calls (`close_open_calls`, `gate.py`), at every start, at the
+  beginning of every turn and at the end of a cancelled or failed one. For
+  each call of the newest assistant message that has no result, one result,
+  by what the database holds: an intent (the call started) gives the
+  interrupted text of section 8.7 and `tool.called` with `interrupted: true,
+  ok: false, duration_ms: 0`, and the decision `ask` when it was the approved
+  call; a park decision gives the approval message again and no event; a deny
+  decision gives "The Dot's policy denied this call." and `tool.called` with
+  `deny`; a skip decision gives the skipped message and no event; nothing
+  gives "Not executed: the unit ended before this call ran." and no event.
+- The model's computer. `AgentdComputer` (`computer.py`) is the one door to
+  the Dot's computer, and it speaks only to dot-agentd. Every command the model
+  runs goes through `ExecTool._spawn`, the one spawn of `exec` and of the
+  background jobs: a local child of the engine in its own session that runs
+  `dot-agentd relay -- /bin/bash -lc <command>` with `PATH` as its only
+  variable (the command's environment is its login shell's, as `dot`); the
+  relay lives exactly as long as the remote command, and killing it (a
+  timeout, a cancel, `terminate`, the engine's death) makes dot-agentd kill
+  the remote process group. A background job is an `exec` that outlived its
+  `yield_time_ms`; `exec_session` and `list_exec_sessions` act on it. The file
+  tools read and write through the `GET /v1/files`, `PUT /v1/files` and
+  `GET /v1/files/list` routes of `agentd.sock` (relative paths resolve against
+  `/home/dot/workspace`), keeping nanobot's line windows, read-before-write
+  checks, fuzzy edit matching and diff summaries. `find_files` and `grep` run
+  `find`, `stat` and `grep` on the computer, as `dot`, by argv with no shell,
+  to find the files that can match, and read only those. Nothing of the model's
+  runs as `dotengine`, and what `dot` may touch is decided by the operating
+  system: the engine adds no path policy of its own.
+- The config. `PUT /config` is validated (`DotRuntimeConfig`, the same checks as
+  the zod schema), stored in `dots_kv` and projected in process
+  (`projection.py`): the OpenRouter model id, the tools offered (those of the
+  table whose permission is `allow` or `ask`, minus the memory tools when
+  memory is off), `max_steps_per_task` as the step limit, `context_tokens` as
+  the context budget, the 12000-character result cap, and the Dot's section of
+  the system prompt (its name, goal and instructions, then nanobot's tool
+  contract, a short note on its computer, the memory notes and the time).
+  There is no config file, no installer and no sudo rule. The same config
+  again changes nothing, and the same key again builds no provider
+  (`provider.py`: a new provider only when the key, the model or the base URL
+  changes, and a running turn keeps the provider it began with), so the host's
+  pushes at every READY and `agent.started` disturb no running turn.
+- `agent.state` follows the turn hook: a run starting is `THINKING`, a tool
+  running `EXECUTING`, the last run ending `DONE` then `IDLE` (or
+  `WAITING_APPROVAL` while an approval waits); every start of the process
+  records `IDLE` again.
+- After a crash (`Engine.start`). The first event is `agent.started`. Every
+  call left with an intent and no result is closed as interrupted, once. An
+  approval still `running` is over (its call is one of those interrupted, with
+  `decision: "ask"`); a turn that was telling a session a decision (`granted`,
+  `told`) is told again; the approved call still runs at most once. A task left
+  running is resumed with its description and the note "[The previous attempt
+  at this task was interrupted by a restart. ...]", unless an approval of its
+  session is open (then the decision moves it), and fails once it has been
+  started three times; a run a prepare-sleep abandoned does not count. A chat
+  turn whose answer is owed runs by the rule above.
+- Policy (`gate.py`). Every tool call is decided at one boundary,
+  `_admit_tool_call` in `nanobot/agent/tools/execution.py`, after the call was
+  validated and its arguments cast and before anything runs; the gate is a
+  required argument of the runner (`AgentRunSpec.gate`), the contract it
+  answers is in `nanobot/agent/tools/gate_types.py`, and a batch of calls that
+  run together is decided in full before any of them starts, so a park stops
+  the calls after it; `ToolRegistry` has no way to run a tool, so no call
+  reaches one another way. The decision
+  is made from the map the host pushed (section 7), read at the moment of the
+  call, so a push between two calls of one turn applies to the second: a tool
+  with no permission, or a permission missing from the map, is denied, and
+  with no config or no database every call is (the gate fails closed). `deny`
+  returns the reason to the model as the call's result, with no hint to try
+  another way; `tool.called` reports the call with `decision: "deny"` and
+  `ok: false` (the decision of a call inside a turn is kept in
+  `dots_tool_decisions` until its result is written). A provider's tool call id
+  names a call only inside its own response (models behind OpenRouter number
+  their calls from zero in every response), so the intent, the decision and the
+  approval of a call are keyed by the session and the id, and an approval is made
+  per ask: the same call asked again while its approval is pending (same session,
+  id, tool and arguments) is the one approval, a later call that only shares the
+  id is a new one.
+- Tools offered. One table (`nanobot/dots/permissions.py`, section 8.3) lists
+  the tools a Dot may use, the permission each exercises and how to build it;
+  the registry holds exactly those, and each turn works on a view of it that
+  holds the offered ones, so a denied tool is not even seen, and the gate
+  decides every call by the same table. nanobot's MCP client is wired in with
+  no server configured; the tools of a server would register on the registry
+  and still be neither offered nor allowed until the table names them.
+- Approvals. `ask` inside a turn stores the call with its full arguments in
+  `dots_approvals` (`pending`), emits `approval.requested` and records the
+  decision `park`, in one transaction; the model gets a result saying the call
+  waits for the user and has not run, the later calls of its response are
+  recorded as `skipped` (they run nothing, report nothing and say so), and the
+  runner ends the turn (`stop_reason` `parked`: no further model request).
+  Nothing waits in memory. A retried turn reuses the approval of the same
+  tool call id and asks nothing new. A task whose run parked a call is neither
+  failed nor resumed while an approval of its session is open, and
+  `agent.state` ends on `WAITING_APPROVAL`; `GET /state` names the oldest
+  pending approval. `approval.received` is applied in the transaction that
+  accepts it (`approved` or `rejected`, with the note); a decision for an
+  unknown or already decided approval is logged and ignored. The engine then
+  tells the session that made the call, in a turn of its own (the chat's
+  included): an approved call is to be made again with exactly its arguments
+  (written as JSON with no spaces), a rejected one did not run, with the note.
+  The approval is `granted` (or `told`) before that turn starts and `done`
+  when it ends. The one call an `ask` lets through is the approved one made
+  again in a turn of the same session: same tool, the same arguments (compared
+  with keys sorted), once; it moves the approval to `running`, runs like any
+  call of the turn, and its `tool.called` says `ask` and ends the approval.
+  Different arguments are asked about anew.
+- Automations. nanobot's `CronService` runs inside the engine, its jobs in
+  `<state>/cron/jobs.json`, and the `cron` tool (permission `automations`,
+  `ask` by default) adds and removes them. A firing is recorded as a durable
+  inbound row, `automation.fired`, once per firing, and the chat answers it as
+  an input: the opening message reads `[Automation "<name>" fired] <message>`
+  and the answer is a `message.assistant` without `in_reply_to`.
+- Prepare-sleep and SIGTERM. The engine stops taking new work; a turn with no
+  tool running is cancelled at once; a turn with a tool running gets up to 20
+  seconds, in which the tool's result commits and the next iteration abandons
+  the turn, and is cancelled at the deadline (its intent stays, and the next
+  start reports it interrupted); the attempt of a cut task is given back; the
+  WAL is checkpointed. The API (`server.py`) answers the host's `prepare-sleep`
+  to its end even when the host hangs up.
+- Removed from nanobot (everything since the import is in
+  `invisible_engine_dots/UPSTREAM.md`): the app shells, the channels, the bus
+  and the commands, the agent loop and its hooks, the other approval and guard
+  mechanisms (the workspace path policy, the command guard, the sandbox, the
+  SSRF guard), subagents, skills, the web tools, image and document reading,
+  the usage telemetry, the configuration files and every provider but
+  OpenRouter.
+- Not yet: the browser identities (`GET` lists none, `POST` and `DELETE` answer
+  `501`), the screenshot tool, `task.progress`, `memory.written`,
+  `limits.max_cost_per_task_usd` (accepted, not enforced), the extra `models`
+  roles, and a pseudo-terminal tool (`exec` and `exec_session` cover jobs and
+  their input; `dot-agentd relay --tty` is there for it).
 
 ## 9. Control plane
 
@@ -1174,22 +1484,23 @@ installer, Linux gets the distribution's package.
 
 ### 11.3 Licensing
 
-The root LICENSE (MIT) covers this repository, except the files under
-`guest-runtime/engine/` that carry the Open Multi-Agent header, which are under
-`guest-runtime/engine/LICENSE` (MIT as well); `THIRD_PARTY_NOTICES.md` at the
-root carries that notice, and `guest-runtime/engine/UPSTREAM.md` records the
-version and commit they come from. The guest agent is one bundled file; its
-build writes `THIRD_PARTY_NOTICES.txt` next to it from esbuild's metafile,
-with the license and notice files of every npm package an input comes from,
-this repository's license and Open Multi-Agent's, and the runtime disk
-carries it next to the agent (`/opt/invisible-dots/THIRD_PARTY_NOTICES.txt`),
-so the notices travel with every copy of the bundle. No list is written by
-hand, so it cannot drift from the lockfile. QEMU (GPL-2.0) is installed
+The root LICENSE (MIT) covers this repository, except everything under
+`invisible_engine_dots/`, which is under `invisible_engine_dots/LICENSE` (MIT) and the
+nested notices next to the code they cover; `THIRD_PARTY_NOTICES.md` at the
+root carries that license, the notices of the earlier TypeScript engine whose
+text the history still holds (Open Multi-Agent, MIT), and names every nested
+notice, and `invisible_engine_dots/UPSTREAM.md` records the version and commit
+the fork comes from. The engine's source goes
+onto the runtime disk with the fork's `LICENSE` and `UPSTREAM.md`
+(`/opt/invisible-dots/engine/`). No list is written by hand, so it cannot
+drift from the lockfile. QEMU (GPL-2.0) is installed
 from the official Windows installer or the distribution's package and is only
 ever run as a separate program; it is never linked into, bundled with or
 shipped by this project. The guest operating system (the Ubuntu cloud image),
-Node, `uv`, the browser engine and `invisible-playwright-mcp` with its Python
-packages are downloaded from their publishers when a host builds its golden
-image, each under its own license. This project publishes no image (section
+Node, `uv`, the browser engine, `invisible-playwright-mcp` with its Python
+packages, and the Python packages the engine's lock
+(`guest/image-builder/builder/engine-requirements.lock`) names are
+downloaded from their publishers when a host builds its golden image, each
+under its own license, as the wheels the publishers released. This project publishes no image (section
 3.3); whoever copies a golden image to another machine takes on the license
 terms of the components inside it.
