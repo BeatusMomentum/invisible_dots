@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shutil
 import stat
 import tempfile
@@ -439,6 +440,130 @@ class TestTheStream:
         assert len(api.h.store._listeners) == before
 
 
+class TestBrowserIdentities:
+    async def test_makes_lists_gets_and_deletes_an_identity_the_way_the_host_reads_it(
+        self, make_api: Callable[..., Any]
+    ) -> None:
+        api: Api = await make_api()
+
+        created = await api.call("POST", "/browser-identities", {"name": "Shopping Account"})
+
+        assert created.status == 201
+        identity = created.json
+        assert identity["id"].startswith("shopping-account-") and len(identity["id"]) == len("shopping-account-") + 6
+        assert identity["name"] == "Shopping Account"
+        assert identity["status"] == "available"
+        assert identity["lastUsedAt"] is None
+        assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z", identity["createdAt"])
+        assert identity["profilePath"].endswith(f"/{identity['id']}/profile")
+        assert "proxy" not in identity
+        assert (await api.call("GET", "/browser-identities")).json == {"identities": [identity]}
+        assert (await api.call("GET", f"/browser-identities/{identity['id']}")).json == identity
+        assert (await api.call("DELETE", f"/browser-identities/{identity['id']}")).status == 204
+        assert (await api.call("GET", f"/browser-identities/{identity['id']}")).status == 404
+        assert api.h.types()[-2:] == ["browser.identity.created", "browser.identity.deleted"]
+
+    async def test_a_second_delete_is_not_found_and_leaves_no_event(self, make_api: Callable[..., Any]) -> None:
+        api: Api = await make_api()
+        identity = (await api.call("POST", "/browser-identities", {"name": "once"})).json
+        await api.call("DELETE", f"/browser-identities/{identity['id']}")
+
+        again = await api.call("DELETE", f"/browser-identities/{identity['id']}")
+
+        assert (again.status, again.json["error"]) == (404, "not_found")
+        assert api.h.types().count("browser.identity.deleted") == 1
+
+    async def test_refuses_what_the_rules_refuse_with_the_status_the_host_expects(
+        self, make_api: Callable[..., Any]
+    ) -> None:
+        api: Api = await make_api()
+        api.h.configure(runtime_config_body(browser={"identities": {"managed_by_dot": True, "max_identities": 1, "max_open": 1}}))
+        await api.h.engine.apply_browser_limits()
+
+        for body, message in (
+            ({"name": 5}, "name must be a string"),
+            ({}, "name must be a string"),
+            (["name"], "name must be a string"),
+            ({"name": "x", "proxy": 5}, "proxy must be a string"),
+        ):
+            answer = await api.call("POST", "/browser-identities", body)
+            assert (answer.status, answer.json) == (400, {"error": "invalid", "message": message}), body
+        blank = await api.call("POST", "/browser-identities", {"name": "   "})
+        assert (blank.status, blank.json["error"]) == (400, "invalid")
+        bad_proxy = await api.call("POST", "/browser-identities", {"name": "a", "proxy": "ftp://host"})
+        assert (bad_proxy.status, bad_proxy.json["error"]) == (400, "invalid")
+        assert (await api.call("POST", "/browser-identities", "{not json")).json["error"] == "invalid_json"
+        assert (await api.call("POST", "/browser-identities", {"name": "one"})).status == 201
+        over = await api.call("POST", "/browser-identities", {"name": "two"})
+        assert (over.status, over.json["error"]) == (409, "limit")
+        assert "max_identities 1" in over.json["message"]
+        assert api.h.types().count("browser.identity.created") == 1
+
+    async def test_the_proxy_password_is_in_no_answer_event_or_log(self, make_api: Callable[..., Any]) -> None:
+        api: Api = await make_api()
+        lines: list[str] = []
+        sink = logger.add(lines.append, format="{message}", level="DEBUG")
+        try:
+            created = await api.call("POST", "/browser-identities", {"name": "p", "proxy": "http://user:hunter2@proxy.test:8080"})
+            listed = await api.call("GET", "/browser-identities")
+            fetched = await api.call("GET", f"/browser-identities/{created.json['id']}")
+        finally:
+            logger.remove(sink)
+
+        assert created.json["proxy"] == "http://user:***@proxy.test:8080"
+        assert listed.json["identities"][0]["proxy"] == fetched.json["proxy"] == created.json["proxy"]
+        everything = created.text + listed.text + fetched.text + json.dumps(api.h.events()) + "\n".join(lines)
+        assert "hunter2" not in everything
+
+    async def test_the_health_counts_the_identities_and_the_open_ones(self, make_api: Callable[..., Any]) -> None:
+        api: Api = await make_api()
+        first = (await api.call("POST", "/browser-identities", {"name": "first"})).json
+        await api.call("POST", "/browser-identities", {"name": "second"})
+        assert (await api.call("GET", "/health")).json["browser"] == {"identities": 2, "open": 0}
+
+        await api.h.browser.launch(first["id"])
+
+        assert (await api.call("GET", "/health")).json["browser"] == {"identities": 2, "open": 1}
+        assert (await api.call("GET", f"/browser-identities/{first['id']}")).json["status"] == "open"
+        await api.h.browser.close_all()
+        assert (await api.call("GET", "/health")).json["browser"] == {"identities": 2, "open": 0}
+
+    async def test_a_config_with_a_lower_max_open_closes_the_excess_open_browsers(
+        self, make_api: Callable[..., Any]
+    ) -> None:
+        api: Api = await make_api()
+        one = (await api.call("POST", "/browser-identities", {"name": "one"})).json
+        two = (await api.call("POST", "/browser-identities", {"name": "two"})).json
+        await api.h.browser.launch(one["id"])
+        await api.h.browser.launch(two["id"])
+        assert api.h.browser.open_count == 2
+
+        put = await api.call(
+            "PUT",
+            "/config",
+            runtime_config_body(browser={"identities": {"managed_by_dot": True, "max_identities": 20, "max_open": 1}}),
+        )
+
+        assert put.status == 204
+        assert api.h.browser.limits == (1, 20)
+        # The least recently used is the one closed; the other stays open.
+        assert [i["status"] for i in (await api.call("GET", "/browser-identities")).json["identities"]] == ["available", "open"]
+        assert api.h.types().count("browser.identity.closed") == 1
+
+    async def test_preparing_to_sleep_closes_the_open_browsers(self, make_api: Callable[..., Any]) -> None:
+        api: Api = await make_api()
+        identity = (await api.call("POST", "/browser-identities", {"name": "open one"})).json
+        await api.h.browser.launch(identity["id"])
+        assert api.h.browser.open_count == 1
+
+        assert (await api.call("POST", "/prepare-sleep")).status == 204
+
+        assert api.h.browser.open_count == 0
+        assert api.h.types().count("browser.identity.closed") == 1
+        # The profile is kept: the identity is still there, closed.
+        assert (await api.call("GET", f"/browser-identities/{identity['id']}")).json["status"] == "available"
+
+
 class TestStateAndTheRest:
     async def test_answers_the_state(self, make_api: Callable[..., Any]) -> None:
         api: Api = await make_api()
@@ -449,12 +574,12 @@ class TestStateAndTheRest:
             "pending_approval": None,
         }
 
-    async def test_lists_no_browser_identity_and_makes_none_yet(self, make_api: Callable[..., Any]) -> None:
+    async def test_the_identity_routes_name_what_they_cannot_find_and_the_methods_they_refuse(
+        self, make_api: Callable[..., Any]
+    ) -> None:
         api: Api = await make_api()
 
         assert (await api.call("GET", "/browser-identities")).json == {"identities": []}
-        created = await api.call("POST", "/browser-identities", {"name": "x"})
-        assert (created.status, created.json["error"]) == (501, "not_implemented")
         missing = await api.call("GET", "/browser-identities/with%20space")
         assert (missing.status, missing.json) == (
             404,
@@ -463,7 +588,8 @@ class TestStateAndTheRest:
         # Decoded once: the percent sign of "a%2541" is the id's own.
         twice = await api.call("GET", "/browser-identities/a%2541")
         assert twice.json["message"] == 'no browser identity "a%41"'
-        assert (await api.call("DELETE", "/browser-identities/x")).status == 501
+        assert (await api.call("DELETE", "/browser-identities/x")).status == 404
+        assert (await api.call("GET", "/browser-identities/a%2Fb")).status == 404
         put = await api.call("PUT", "/browser-identities")
         assert (put.status, put.json["message"]) == (405, "PUT is not allowed here; use GET or POST")
         post = await api.call("POST", "/browser-identities/x")

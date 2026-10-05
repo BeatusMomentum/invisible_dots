@@ -46,7 +46,7 @@ from nanobot.agent.tools.gate_types import (
 )
 from nanobot.agent.transcript_metadata import METADATA_KEY
 from nanobot.dots import store as dots_store
-from nanobot.dots.permissions import tool_permission
+from nanobot.dots.permissions import tool_arguments, tool_permission
 from nanobot.dots.protocol import DotRuntimeConfig
 from nanobot.dots.transcript_outbox import (
     CLOSED,
@@ -143,7 +143,7 @@ def decide_tool_call(
                     **({"task_id": task_id} if task_id else {}),
                     "tool": call.tool_name,
                     "permission": permission,
-                    "arguments": arguments,
+                    "arguments": tool_arguments(call.tool_name, arguments),
                     "reason": f"The Dot's policy asks before {permission}.",
                 },
             )

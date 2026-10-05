@@ -100,6 +100,10 @@ class Computer(Protocol):
         """Run a program with argv directly (no shell)."""
         ...
 
+    async def screenshot(self) -> bytes:
+        """The Dot's whole desktop as a PNG."""
+        ...
+
     def relay_argv(
         self,
         argv: list[str],
@@ -272,6 +276,12 @@ class AgentdComputer:
             if e.name == base:
                 return e
         return None
+
+    async def screenshot(self) -> bytes:
+        resp = await self._get_client().get("/v1/screenshot")
+        if 200 <= resp.status_code < 300:
+            return resp.content
+        raise ComputerError("GET /v1/screenshot", resp.status_code)
 
     async def run(
         self,

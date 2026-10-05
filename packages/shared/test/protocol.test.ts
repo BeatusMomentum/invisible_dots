@@ -23,7 +23,6 @@ describe("protocol constants", () => {
       root: "/home/dot/browsers/shop-ab12cd",
       profile: "/home/dot/browsers/shop-ab12cd/profile",
       mcp: "/home/dot/browsers/shop-ab12cd/mcp",
-      metadata: "/home/dot/browsers/shop-ab12cd/metadata.json",
     });
     expect(identityPaths("x", "/tmp/b/").profile).toBe("/tmp/b/x/profile");
   });

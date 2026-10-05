@@ -103,7 +103,6 @@ export function identityPaths(identityId: string, browsersDir: string = GUEST_PA
     root,
     profile: join(root, "profile"),
     mcp: join(root, "mcp"),
-    metadata: join(root, "metadata.json"),
   };
 }
 
@@ -283,7 +282,7 @@ export interface AgentStateAnswer {
 export const BROWSER_IDENTITY_STATUSES = ["available", "open", "archived"] as const;
 export type BrowserIdentityStatus = (typeof BROWSER_IDENTITY_STATUSES)[number];
 
-/** One browser identity, as stored in `metadata.json` and returned by the identity routes. */
+/** One browser identity, as the engine's identity routes return it (the row of `dots_browser_identities`). */
 export interface BrowserIdentity {
   id: string;
   name: string;

@@ -374,6 +374,11 @@ def _iso_ms(moment: datetime) -> str:
     return moment.astimezone(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+def iso_from_ms(milliseconds: int) -> str:
+    """A time the store keeps in milliseconds since the epoch, as the API shows it: ISO 8601 in UTC."""
+    return _iso_ms(datetime.fromtimestamp(milliseconds / 1000, tz=timezone.utc))
+
+
 def append_outbox(
     conn: sqlite3.Connection,
     event_type: str,

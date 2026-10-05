@@ -1389,6 +1389,46 @@ class TestStopping:
             await h.idle()
 
 
+class TestStoppingWithBrowsersOpen:
+    async def test_stopping_closes_the_open_browsers_and_keeps_their_profiles(self, make_engine: MakeEngine) -> None:
+        h = started(make_engine([]))
+        identity = await h.browser.create("open one")
+        await h.browser.launch(identity.id)
+
+        await h.engine.stop()
+
+        assert h.browser.open_count == 0
+        assert h.events_of("browser.identity.closed") == [{"identity_id": identity.id, "name": "open one"}]
+        assert h.browser.get(identity.id) is not None
+
+    async def test_a_browser_that_does_not_close_does_not_hold_the_stop(
+        self, make_engine: MakeEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(engine_module, "_CLOSE_BROWSERS_S", 0.1)
+        h = started(make_engine([]))
+        hung = asyncio.Event()
+
+        async def never_closes() -> None:
+            hung.set()
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr(h.browser, "close_all", never_closes)
+
+        async with asyncio.timeout(3):
+            await h.engine.stop()
+
+        assert hung.is_set()
+
+    async def test_a_config_applies_the_browser_limits_to_the_manager(self, make_engine: MakeEngine) -> None:
+        h = started(make_engine([]))
+        assert h.browser.limits == (3, 20)
+
+        h.configure(cfg(browser={"identities": {"managed_by_dot": True, "max_identities": 5, "max_open": 2}}))
+        await h.engine.apply_browser_limits()
+
+        assert h.browser.limits == (2, 5)
+
+
 class TestAChatTurnThatFailsBeforeItsOpeningIsStored:
     @staticmethod
     def full_disk(monkeypatch: pytest.MonkeyPatch) -> None:

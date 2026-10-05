@@ -195,3 +195,17 @@ and the credentials check, the OpenRouter provider holder, the computer
 (nanobot/dots/computer.py, above), the memory tools, the guest checks and the
 entry point (`python -I -B -m nanobot`, which answers `--version` and refuses
 every other command). It is described in docs/architecture.md, section 8.8.
+
+## What the browser phase changed: images and the Dot's one MCP server
+
+- agent/tools/mcp.py: `MCPServerConfig.images` and the wrapper's `images` flag return a
+  tool result that has an image as a list of content blocks (text and `image_url` data
+  URLs), where every other caller still gets text and the bytes of an image dropped;
+  `MCPProvider.connect()` returns the servers that did not connect, so a caller can fail
+  a launch instead of reading the log; the per-server `tool_timeout` is pinned by a test.
+  The one server is `invisible-playwright-mcp`, started by the `BrowserManager`
+  (nanobot/dots/browser.py) through `dot-agentd relay`; `main.py` no longer builds an
+  `MCPProvider` of its own.
+- agent/runner.py: `AgentRunSpec.request_attachments` takes the messages of one model
+  request and returns the ones to send. The Dot uses it to show the newest screenshots of
+  a turn (nanobot/dots/images.py) without them entering the transcript.

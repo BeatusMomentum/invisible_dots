@@ -7,6 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from fakes.browser_manager import make_browser_manager
 from fakes.local_computer import LocalComputer
 from fakes.scripted_provider import ScriptedProvider, ScriptEntry
 from fakes.turn_harness import KEY, FixedProviders
@@ -70,21 +71,26 @@ class EngineHarness:
         self.computer = LocalComputer(tmp_path, workspace)
         self.stop_grace_s = stop_grace_s
         self.engines: list[Engine] = []
+        self.browser = make_browser_manager(tmp_path, store, self.computer)
         self.engine = self.new_engine()
 
     def new_engine(self) -> Engine:
         """An engine on the same store, as a restarted process has: nothing in memory."""
+        # A restarted process has no browser open: the manager is new, the rows are the store's.
+        self.browser = make_browser_manager(self.tmp_path, self.store, self.computer)
         registry = build_registry(
             ToolDeps(
                 computer=self.computer,
                 exec_session_manager=ExecSessionManager(),
                 cron_service=CronService(self.tmp_path / "cron" / "jobs.json"),
+                browser=self.browser,
             )
         )
         engine = Engine(
             store=self.store,
             computer=self.computer,
             base_registry=registry,
+            browser=self.browser,
             providers=self.providers,
             key_holder=self.keys,
             workspace=self.computer.workspace,

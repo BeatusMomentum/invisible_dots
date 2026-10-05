@@ -712,7 +712,10 @@ async def test_a_launch_that_is_cancelled_leaves_nothing_open_and_the_next_one_w
     write_control(env.mcp_home(identity.id), download_answers=1000)
 
     launching = asyncio.create_task(manager.launch(identity.id))
-    await asyncio.sleep(0.3)
+    # Cancel once the server answered `browser_open` with progress, however long its process took to start.
+    async with asyncio.timeout(30):
+        while not env.calls(identity.id):
+            await asyncio.sleep(0.02)
     launching.cancel()
     with pytest.raises(asyncio.CancelledError):
         await launching

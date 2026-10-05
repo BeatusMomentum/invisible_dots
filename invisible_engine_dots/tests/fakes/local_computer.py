@@ -13,6 +13,7 @@ real local path, so a test can use pytest's tmp_path directly.
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import stat as stat_module
 import sys
@@ -32,6 +33,11 @@ from nanobot.dots.computer import (
 
 FAKE_RELAY = Path(__file__).with_name("fake_relay.py")
 VIRTUAL_HOME = "/home/dot"
+
+# What the double's desktop looks like: a 1x1 PNG, unless a test sets `desktop_png`.
+DESKTOP_PNG = base64.b64decode(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+)
 
 # One scratch directory for every fake relay of the test process, removed when it
 # exits: a computer the test no longer holds must not take its relay with it.
@@ -82,6 +88,9 @@ class LocalComputer:
         self.root = Path(root)
         self.workspace = Path(workspace).as_posix() if workspace is not None else self.root.as_posix()
         self.relay_log = relay_log
+        self.desktop_png = DESKTOP_PNG
+        # An HTTP status dot-agentd answers instead of a screenshot, when a test sets one.
+        self.screenshot_status: int | None = None
         self._agentd = AgentdComputer(
             agentd_bin=str(install_fake_relay(Path(_RELAY_DIR.name), relay_log)),
             agentd_socket=DEFAULT_AGENTD_SOCKET,
@@ -131,6 +140,11 @@ class LocalComputer:
     async def stat(self, path: str) -> Entry | None:
         local = self._local(path)
         return _entry(local) if local.exists() else None
+
+    async def screenshot(self) -> bytes:
+        if self.screenshot_status is not None:
+            raise ComputerError("GET /v1/screenshot", self.screenshot_status)
+        return self.desktop_png
 
     def relay_argv(
         self,
