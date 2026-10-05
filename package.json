@@ -11,9 +11,7 @@
   "workspaces": [
     "apps/*",
     "packages/*",
-    "guest/invisible-dots-agent",
-    "guest/image-builder",
-    "guest-runtime/*"
+    "guest/image-builder"
   ],
   "scripts": {
     "typecheck": "tsc -p tsconfig.json && tsc -p apps/web/tsconfig.json",

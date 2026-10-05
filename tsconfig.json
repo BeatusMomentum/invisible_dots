@@ -7,14 +7,9 @@
     "packages/*/src/**/*.ts",
     "packages/*/test/**/*.ts",
     "packages/*/scripts/**/*.ts",
-    "guest/invisible-dots-agent/src/**/*.ts",
-    "guest/invisible-dots-agent/test/**/*.ts",
     "guest/image-builder/src/**/*.ts",
     "guest/image-builder/test/**/*.ts",
-    "guest-runtime/*/src/**/*.ts",
-    "guest-runtime/*/test/**/*.ts",
-    "tests/repo/**/*.ts",
-    "tests/e2e/**/*.ts"
+    "tests/repo/**/*.ts"
   ],
-  "exclude": ["node_modules", "apps/web"]
+  "exclude": ["node_modules", "apps/web", "invisible_engine_dots"]
 }

@@ -17,8 +17,14 @@ import { describe, expect, it } from "vitest";
 
 const repo = resolve(fileURLToPath(new URL(".", import.meta.url)), "../..");
 
-/** Product source roots: everything that ships, never the tests. */
-const SOURCE_ROOTS = ["apps", "packages", "guest", "guest-runtime"];
+/**
+ * Product source roots: everything that ships, never the tests.
+ * invisible_engine_dots/ is not one of them: the nanobot fork there is Python, tested by
+ * its own pytest run, and keeps upstream's platform branches (Windows, macOS) until
+ * its second cut; it is exempt from section 1.1 by the owner's decision;
+ * architecture section 2 says so.
+ */
+const SOURCE_ROOTS = ["apps", "packages", "guest"];
 /** Built output and tests; `bin` holds dot-agentd's built binary, not sources. */
 const SKIP_DIRS = new Set(["node_modules", "dist", ".next", "test", "tests", "bin"]);
 const SOURCE_EXTENSIONS = [".ts", ".tsx", ".mts", ".cts", ".js", ".mjs", ".cjs", ".sh", ".go"];
@@ -93,6 +99,9 @@ const ALLOWED: Record<string, { owner: string; lines: string[] }> = {
     lines: ["//go:build !unix", 'return 0, 0, errors.New("disk usage is not implemented on " + runtime.GOOS)'],
   },
   "guest/dot-agentd/internal/agentd/platform_unix.go": { owner: "diskUsage on the guest", lines: ["//go:build unix"] },
+  // Pseudo-terminals are Linux ioctls, so the process route builds on linux only.
+  "guest/dot-agentd/internal/agentd/proc_linux.go": { owner: "the process route and its relay on the guest", lines: ["//go:build linux"] },
+  "guest/dot-agentd/internal/agentd/proc_other.go": { owner: "test-host compile stub of the process route", lines: ["//go:build !linux"] },
 };
 
 function isSource(name: string): boolean {
@@ -145,6 +154,7 @@ describe("platform branches (architecture section 1.1)", () => {
   it("reads the product sources it claims to, so an empty result cannot pass", () => {
     const all = SOURCE_ROOTS.flatMap((root) => sourceFiles(join(repo, root)).map((f) => relative(repo, f).split(sep).join("/")));
     expect(all.length).toBeGreaterThan(100);
+    expect(all.filter((file) => file.startsWith("invisible_engine_dots/"))).toEqual([]);
     for (const expected of [
       "apps/vm-manager/src/host.ts",
       "apps/cli/scripts/build.mjs",

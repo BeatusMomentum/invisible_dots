@@ -28,7 +28,3 @@ guest/image-builder/** text eol=lf
 *.qcow2 binary
 *.woff binary
 *.woff2 binary
-
-# The engine's license text is upstream's file byte for byte (its blob id is
-# checked by tests/repo/vendored-engine.test.ts): no conversion of any kind.
-guest-runtime/engine/LICENSE -text
