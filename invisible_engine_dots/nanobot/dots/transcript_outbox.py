@@ -21,7 +21,11 @@ this process's memory.
 - a tool result in the chat or in a task: `tool.called`, with the duration
   measured from the call's intent row and the decision the gate recorded for
   it (gate.py); a call that did not run (parked, skipped, closed as not run)
-  gets none.
+  gets none;
+- the notes a tool call wrote, when it ran ok: one `memory.written` per note
+  (`key` is the path relative to the memory directory), right after its
+  `tool.called`, in the same transaction. The intent holds the keys, set before
+  the call ran; a call that failed, was denied or was interrupted reports none.
 
 Metadata of a message travels inside the message dict under one key, `_dots`.
 The runner keeps it out of the transcript the model reads (`AgentRunner._commit`), and
@@ -171,3 +175,6 @@ def _record_tool_result(
     if interrupted:
         event["interrupted"] = True
     store.append_outbox(conn, "tool.called", event)
+    if event["ok"] and intent is not None:
+        for key in intent.memory_keys:
+            store.append_outbox(conn, "memory.written", {"key": key})

@@ -326,6 +326,17 @@ check "the call of the tool that was not offered never ran" "sleep 2; [ ! -e /ho
 echo '{"computer.exec":"allow"}' > /tmp/perms.json; echo true > /tmp/memory.json
 check "the host pushes the allow-everything config again (204 204)" "[ \"\$(push)\" = '204 204' ]"
 
+# --- memory.written: a note is a file of /home/dot/memory, and the file tools report the ones they write ---
+echo '{"computer.exec":"allow","files.write":"allow","memory.read":"allow"}' > /tmp/perms.json
+check "the host pushes a config where the Dot may write files and read its memory (204 204)" "[ \"\$(push)\" = '204 204' ]"
+check "a chat asks the Dot to write a note two directories deep" "[ \"\$(ev msg-note-1 user.message '{\"text\":\"WRITE-NOTE trips/smoke-note.md :: smoke-needle in a note\"}')\" = 202 ] && wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-note-1\"'"
+check "the note is a file of the memory directory, owned by dot" "[ \"\$(cat /home/dot/memory/trips/smoke-note.md 2>/dev/null)\" = 'smoke-needle in a note' ] && [ \"\$(stat -c %U /home/dot/memory/trips/smoke-note.md)\" = dot ]"
+check "write_file reported memory.written with the path relative to the memory directory, right after its tool.called" "grep '^data: ' $STREAM | sed 's/^data: //' | jq -s -e '[.[] | select((.type==\"tool.called\" and .data.tool==\"write_file\") or .type==\"memory.written\") | [.type, (.data.key // .data.tool), (.data.ok // null)]] == [[\"tool.called\",\"write_file\",true],[\"memory.written\",\"trips/smoke-note.md\",null]]' >/dev/null"
+check "memory_search finds the note the Dot wrote" "[ \"\$(ev msg-note-2 user.message '{\"text\":\"FIND-NOTE smoke-needle\"}')\" = 202 ] && wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-note-2\" and (.data.text|test(\"trips/smoke-note.md\"))'"
+check "a file written outside the memory directory (through ../) is no note" "[ \"\$(ev msg-note-3 user.message '{\"text\":\"WRITE-NOTE ../workspace/not-a-note.md :: x\"}')\" = 202 ] && wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-note-3\"' && [ -e /home/dot/workspace/not-a-note.md ] && [ \"\$(grep '^data: ' $STREAM | sed 's/^data: //' | jq -c 'select(.type==\"memory.written\")' | wc -l)\" = 1 ]"
+echo '{"computer.exec":"allow"}' > /tmp/perms.json
+check "the host pushes the allow-everything config once more (204 204)" "[ \"\$(push)\" = '204 204' ]"
+
 # --- what the model is sent, read whole ---
 # Here, after the last model turn of the run, so the checks judge EVERY request:
 # the allow-mode chat and tasks, the resumes after each restart, the ask-mode

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from nanobot.agent.tools.base import Tool, ToolResult
@@ -9,6 +10,36 @@ from nanobot.dots.computer import Computer
 
 # The Dot's long-term notes: one file per note, kept on its own computer.
 MEMORY_DIR = "/home/dot/memory"
+
+
+def memory_keys_written(tool: str, arguments: Mapping[str, Any], resolve: Callable[[str], str]) -> tuple[str, ...]:
+    """The notes a call of a file tool writes: each path under MEMORY_DIR, relative to it, once, in order.
+
+    `resolve` is the computer's own, so a path is read the way the tool reads it (`../` and a path
+    relative to the workspace included). Only `write_file`, `edit_file` and `apply_patch` (not its
+    dry run) write files; a note written through `exec` is not seen. The directory itself is no note.
+    """
+    if tool in ("write_file", "edit_file"):
+        paths = [arguments.get("path")]
+    elif tool == "apply_patch" and not arguments.get("dry_run"):
+        edits = arguments.get("edits")
+        # apply_patch strips the path it is given; write_file and edit_file take it as it is.
+        paths = [
+            edit["path"].strip() if isinstance(edit.get("path"), str) else None
+            for edit in (edits if isinstance(edits, list) else [])
+            if isinstance(edit, Mapping)
+        ]
+    else:
+        return ()
+    prefix = MEMORY_DIR + "/"
+    keys: dict[str, None] = {}
+    for path in paths:
+        if not isinstance(path, str) or not path:
+            continue
+        resolved = resolve(path)
+        if resolved.startswith(prefix):
+            keys[resolved[len(prefix):]] = None
+    return tuple(keys)
 
 
 class MemorySearchTool(Tool):

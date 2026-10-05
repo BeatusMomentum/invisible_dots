@@ -6,6 +6,8 @@ last user text, substring matches):
 - the last message a tool result: a final answer quoting it;
 - a user message with RUN-EXEC <cmd>: a call of the exec tool with <cmd>;
 - a user message with SAY-RUN-EXEC <text> :: <cmd>: the same call with <text> written beside it;
+- a user message with WRITE-NOTE <path> :: <text>: a call of write_file on /home/dot/memory/<path>;
+- a user message with FIND-NOTE <word>: a call of memory_search for <word>;
 - a user message with "interrupted by a restart": a final answer;
 - an approval's continuation: the approved call again, or "rejection noted";
 - anything else: "hello from the stand-in".
@@ -79,6 +81,13 @@ def decide(messages: list[dict]) -> dict:
     if session:
         # exec as a background session: it answers after 200 ms with a session id while the command runs on.
         return {"tool": {"name": "exec", "args": {"command": session.group(1).strip(), "yield_time_ms": 200}}}
+    note = re.search(r"WRITE-NOTE (\S+) :: (.+)$", said, re.M)
+    if note:
+        # A note is a file of /home/dot/memory: the name is a path relative to it (and may leave it with ../).
+        return {"tool": {"name": "write_file", "args": {"path": f"/home/dot/memory/{note.group(1)}", "content": note.group(2).strip() + "\n"}}}
+    found_note = re.search(r"FIND-NOTE (\S+)", said)
+    if found_note:
+        return {"tool": {"name": "memory_search", "args": {"query": found_note.group(1)}}}
     narrated = re.search(r"SAY-RUN-EXEC (.+?) :: (.+)$", said, re.M)
     if narrated:
         return {"text": narrated.group(1).strip(), "tool": {"name": "exec", "args": {"command": narrated.group(2).strip()}}}

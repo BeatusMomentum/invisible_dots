@@ -7,6 +7,7 @@ import json
 import os
 from collections.abc import Callable
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -520,6 +521,139 @@ class TestThePolicy:
         approvals = h.store.read(lambda conn: s.list_approvals(conn, "pending"))
         assert [a.arguments["content"] for a in approvals] == ["DIFFERENT"]
         assert h.store.read(lambda conn: s.get_approval(conn, first.approval_id)).status == "granted"
+
+
+class TestMemoryNotes:
+    """A note is a file under /home/dot/memory: the file tools that write one report it (architecture 5.4)."""
+
+    @staticmethod
+    def memory(h: Harness) -> Path:
+        return h.tmp_path / "home" / "dot" / "memory"
+
+    @staticmethod
+    def sequence(h: Harness) -> list[str]:
+        names = {"tool.called": "tool", "memory.written": "key"}
+        return [data[names[kind]] if kind in names else kind for kind, data in h.events()]
+
+    async def test_every_file_tool_that_wrote_a_note_reports_it_right_after_its_own_tool_called(
+        self, make_harness: MakeHarness
+    ) -> None:
+        h = make_harness(
+            [
+                calls(call("c1", "write_file", path="/home/dot/memory/a.md", content="alpha\n")),
+                calls(call("c2", "read_file", path="/home/dot/memory/a.md")),
+                calls(call("c3", "edit_file", path="/home/dot/memory/a.md", old_text="alpha", new_text="beta")),
+                calls(
+                    call(
+                        "c4",
+                        "apply_patch",
+                        edits=[
+                            {"path": "/home/dot/memory/trips/rome.md", "action": "add", "new_text": "colosseum"},
+                            {"path": "/home/dot/workspace/todo.md", "action": "add", "new_text": "x"},
+                            {"path": "/home/dot/memory/x/../a.md", "action": "add", "new_text": "gamma"},
+                        ],
+                    )
+                ),
+                says("done"),
+            ]
+        )
+        h.accept("in1")
+
+        outcome = await h.run(chat_unit())
+
+        assert outcome.kind == "completed"
+        assert self.sequence(h) == [
+            "write_file", "a.md",
+            "read_file",
+            "edit_file", "a.md",
+            "apply_patch", "trips/rome.md", "a.md",
+            "message.assistant",
+        ]
+        assert [data["ok"] for data in h.events_of("tool.called")] == [True, True, True, True]
+        assert self.memory(h).joinpath("a.md").read_text(encoding="utf-8").startswith("beta")
+        assert self.memory(h).joinpath("trips", "rome.md").is_file()
+        assert h.store.read(lambda conn: conn.execute("SELECT COUNT(*) FROM dots_tool_intents").fetchone()[0]) == 0
+
+    async def test_a_task_turn_reports_the_note_too(self, make_harness: MakeHarness) -> None:
+        h = make_harness([calls(call("c1", "write_file", path="/home/dot/memory/t.md", content="x")), says("done")])
+        session = h.start_task()
+
+        await h.run(TurnUnit(session, "t1", (OpeningMessage("do it"),)))
+
+        assert [kind for kind, _ in h.events()] == ["tool.called", "memory.written", "task.completed"]
+        assert h.events_of("memory.written") == [{"key": "t.md"}]
+
+    @pytest.mark.parametrize(
+        "path",
+        ["/home/dot/workspace/a.md", "a.md", "/home/dot/memory", "/home/dot/memory/../a.md", "/tmp/memory/a.md"],
+    )
+    async def test_a_write_outside_the_memory_directory_reports_no_note(self, make_harness: MakeHarness, path: str) -> None:
+        h = make_harness([calls(call("c1", "write_file", path=path, content="x")), says("done")])
+        h.accept("in1")
+
+        await h.run(chat_unit())
+
+        assert h.events_of("memory.written") == []
+
+    async def test_a_dry_run_and_a_failed_call_report_no_note(self, make_harness: MakeHarness) -> None:
+        h = make_harness(
+            [
+                calls(
+                    call(
+                        "c1",
+                        "apply_patch",
+                        dry_run=True,
+                        edits=[{"path": "/home/dot/memory/a.md", "action": "add", "new_text": "x"}],
+                    )
+                ),
+                calls(call("c2", "edit_file", path="/home/dot/memory/missing.md", old_text="a", new_text="b")),
+                calls(call("c3", "write_file", path="/home/dot/memory", content="x")),
+                says("done"),
+            ]
+        )
+        h.accept("in1")
+        self.memory(h).mkdir(parents=True)
+
+        await h.run(chat_unit())
+
+        assert h.events_of("memory.written") == []
+        assert [(c["tool"], c["ok"]) for c in h.events_of("tool.called")] == [
+            ("apply_patch", True),
+            ("edit_file", False),
+            ("write_file", False),
+        ]
+        assert not self.memory(h).joinpath("a.md").exists()
+
+    async def test_an_approved_write_reports_its_note_with_the_call_that_ran_it(self, make_harness: MakeHarness) -> None:
+        arguments = {"path": "/home/dot/memory/a.md", "content": "x"}
+        h = make_harness([calls(call("c1", "write_file", **arguments))], {"files.write": "ask"})
+        h.accept("in1")
+        assert (await h.run(chat_unit())).kind == "parked"
+        assert h.events_of("memory.written") == [] and h.events_of("tool.called") == []
+        approval = approval_of(h)
+        h.store.write(lambda conn: s.advance_approval(conn, approval.approval_id, "pending", "approved"))
+        h.store.write(lambda conn: s.advance_approval(conn, approval.approval_id, "approved", "granted"))
+        h.provider.script += [calls(call("c2", "write_file", **arguments)), says("written")]
+
+        await h.run(TurnUnit(CHAT, None, (OpeningMessage("approved"),), approval.approval_id))
+
+        reported = [(kind, data) for kind, data in h.events() if kind in ("tool.called", "memory.written")]
+        assert [(kind, data.get("decision") or data["key"]) for kind, data in reported] == [
+            ("tool.called", "ask"),
+            ("memory.written", "a.md"),
+        ]
+
+    async def test_a_denied_write_to_memory_reports_no_note(self, make_harness: MakeHarness) -> None:
+        h = make_harness(
+            [calls(call("c1", "write_file", path="/home/dot/memory/a.md", content="x")), says("ok")],
+            {"files.write": "deny"},
+        )
+        h.accept("in1")
+
+        await h.run(chat_unit())
+
+        assert h.events_of("memory.written") == []
+        assert not self.memory(h).joinpath("a.md").exists()
 
 
 class TestOffering:

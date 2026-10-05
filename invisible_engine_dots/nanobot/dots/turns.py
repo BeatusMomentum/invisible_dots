@@ -38,7 +38,7 @@ from nanobot.agent.transcript_metadata import METADATA_KEY
 from nanobot.dots import store as dots_store
 from nanobot.dots.computer import Computer, ComputerError, Entry
 from nanobot.dots.gate import close_open_calls
-from nanobot.dots.memory_tools import MEMORY_DIR
+from nanobot.dots.memory_tools import MEMORY_DIR, memory_keys_written
 from nanobot.dots.projection import EngineSettings
 from nanobot.dots.provider import OpenRouterProviders
 from nanobot.dots.secrets import KeyHolder
@@ -134,10 +134,12 @@ class TurnHost(Protocol):
 class DotsTurnHook(AgentHook):
     """The runner's lifecycle seen by the Dot: agent state, intents, suspension."""
 
-    def __init__(self, unit: TurnUnit, host: TurnHost) -> None:
+    def __init__(self, unit: TurnUnit, host: TurnHost, resolve: Callable[[str], str]) -> None:
         super().__init__()
         self._unit = unit
         self._host = host
+        # The computer's own path resolution: which notes a call of a file tool writes depends on it.
+        self._resolve = resolve
 
     async def before_run(self, context: AgentRunHookContext) -> None:
         self._host.run_started(self._unit)
@@ -160,6 +162,7 @@ class DotsTurnHook(AgentHook):
                 session_key=self._unit.session_key,
                 task_id=self._unit.task_id,
                 started_at=dots_store.clock_ms(),
+                memory_keys=memory_keys_written(tool_call.name, params, self._resolve),
             )
         )
 
@@ -298,7 +301,7 @@ class TurnRunner:
                 ),
             ),
             transcript_builder=builder.build_transcript,
-            hook=DotsTurnHook(unit, self._host),
+            hook=DotsTurnHook(unit, self._host, self._computer.resolve),
             concurrent_tools=False,
             # No spill files: a long result is cut to the limit, the Dot's computer is not the engine's disk.
             workspace=None,

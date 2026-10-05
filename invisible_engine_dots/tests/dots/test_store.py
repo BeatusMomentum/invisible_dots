@@ -518,6 +518,26 @@ class TestToolIntents:
         assert [(i.tool_call_id, i.session_key) for i in listed] == [("early", "t"), ("late", "s")]
         assert dot_store.read(s.list_tool_intents) == listed
 
+    def test_an_intent_carries_the_notes_its_call_writes_in_order_and_none_by_default(self, dot_store: DotStore) -> None:
+        with_notes = s.ToolIntent("c1", "apply_patch", "s", "t1", 100, ("b.md", "trips/a.md"))
+        dot_store.write(lambda c: s.record_tool_intent(c, with_notes))
+        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c2", "exec", "s", None, 200)))
+        assert s.ToolIntent("c2", "exec", "s", None, 200).memory_keys == ()
+        assert dot_store.read(lambda c: s.peek_tool_intent(c, "s", "c1")) == with_notes
+        assert dot_store.read(lambda c: s.peek_tool_intent(c, "s", "c2")).memory_keys == ()  # type: ignore[union-attr]
+        assert dot_store.write(lambda c: s.take_tool_intent(c, "s", "c1")) == with_notes
+        assert [i.memory_keys for i in dot_store.read(s.list_tool_intents)] == [()]
+
+    def test_the_first_start_of_a_call_keeps_its_notes_too(self, dot_store: DotStore) -> None:
+        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c1", "write_file", "s", None, 1, ("a.md",))))
+        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c1", "write_file", "s", None, 2, ("z.md",))))
+        assert dot_store.read(lambda c: s.peek_tool_intent(c, "s", "c1")).memory_keys == ("a.md",)  # type: ignore[union-attr]
+
+    def test_a_note_name_with_json_special_characters_comes_back_as_it_went(self, dot_store: DotStore) -> None:
+        keys = ('quo"te.md', "tab\tand\\slash.md", "ünï/čode.md", "[brackets].md")
+        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c1", "apply_patch", "s", None, 1, keys)))
+        assert dot_store.read(lambda c: s.peek_tool_intent(c, "s", "c1")).memory_keys == keys  # type: ignore[union-attr]
+
 
 class TestCanonicalArguments:
     def test_ignores_key_order_at_every_level(self) -> None:

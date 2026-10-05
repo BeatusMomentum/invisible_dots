@@ -697,6 +697,18 @@ its calls sends nothing, and neither does the chat: the answer of a chat turn
 is its `message.assistant`, and the final answer of a task is its
 `task.completed`.
 
+`memory.written {key}` reports a note the Dot wrote: `key` is the note's path
+relative to `/home/dot/memory` (`trips/rome.md` for
+`/home/dot/memory/trips/rome.md`). It comes from the file tools `write_file`,
+`edit_file` and `apply_patch` (a dry run writes nothing), read from the call's
+own arguments with the computer's path resolution, so a relative path or a
+`../` counts as the tool counts it, and the directory itself is no note. The
+engine records the keys with the call's intent before the call runs and sends
+one event per note, right after the call's `tool.called`, in the transaction
+that stores the call's result, only when the call ran ok: a call that failed,
+was denied or was interrupted sends none, and a note an `apply_patch` wrote
+twice is one event. A note written through `exec` is not seen.
+
 The `arguments` of `approval.requested` are what the person decides on, and
 they leave the guest: a tool argument that carries a secret is redacted there
 by the engine, at the point where the event is built (the engine's tools carry
@@ -932,8 +944,9 @@ are cut with a marker.
   stored with the session, at the boundary it covers, when the turn ends, and
   the next request is the system prompt, the summary and the thread after it.
 - Long-term memory: notes, one file each, in `/home/dot/memory` on the Dot's
-  computer. The Dot writes them with its file tools (`files.write`);
-  `memory_search` finds a keyword or phrase in their text (a plain search,
+  computer. The Dot writes them with its file tools (`files.write`), and each
+  note a file tool writes is reported to the host as `memory.written` (section
+  5.4); `memory_search` finds a keyword or phrase in their text (a plain search,
   there is no index and no embedding) and `memory_get` reads one. The system
   prompt names the 20 most recently changed notes. With `memory.enabled` false,
   or `memory.read` denied, the memory tools are not offered and the prompt says
@@ -1174,7 +1187,7 @@ state.
   the usage telemetry, the configuration files and every provider but
   OpenRouter.
 - Not yet: the browser identities (`GET` lists none, `POST` and `DELETE` answer
-  `501`), the screenshot tool, `memory.written`,
+  `501`), the screenshot tool,
   `limits.max_cost_per_task_usd` (accepted, not enforced), the extra `models`
   roles, and a pseudo-terminal tool (`exec` and `exec_session` cover jobs and
   their input; `dot-agentd relay --tty` is there for it).
