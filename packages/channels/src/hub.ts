@@ -50,8 +50,6 @@ export interface ChannelLimits {
   perMinute: number;
   /** The longest message taken from a person, in characters. Default 8000. */
   maxChars: number;
-  /** How long the record of handled messages is kept, in days: a channel redelivers recent messages only. Default 7. */
-  inboundRetentionDays: number;
 }
 
 export interface ChannelHubOptions {
@@ -69,8 +67,7 @@ export interface ChannelHubOptions {
 
 export const DEFAULT_CHANNEL_SETTINGS: ChannelSettings = { approvals: true, notify_tasks: true };
 
-const DEFAULT_LIMITS: ChannelLimits = { burst: 10, perMinute: 20, maxChars: 8_000, inboundRetentionDays: 7 };
-const PRUNE_EVERY_MS = 6 * 3_600_000;
+const DEFAULT_LIMITS: ChannelLimits = { burst: 10, perMinute: 20, maxChars: 8_000 };
 const STATUS_DETAIL_MAX = 300;
 const LABEL_MAX = 64;
 
@@ -120,7 +117,6 @@ export class ChannelHub {
   readonly #links = new LinkSessions();
   /** Peers told they are slowed down, until their bucket has a token again: one notice, not one per message. */
   readonly #slowed = new Set<string>();
-  #pruneTimer: NodeJS.Timeout | null = null;
   #state: "new" | "started" | "closed" = "new";
 
   constructor(options: ChannelHubOptions) {
@@ -149,9 +145,6 @@ export class ChannelHub {
   async start(): Promise<void> {
     if (this.#state !== "new") return;
     this.#state = "started";
-    await this.#prune();
-    this.#pruneTimer = setInterval(() => void this.#prune(), PRUNE_EVERY_MS);
-    this.#pruneTimer.unref();
     for (const binding of await this.#o.db.channels.listBindings()) {
       if (binding.enabled && binding.status !== "needs_relink") this.#run(binding);
     }
@@ -161,7 +154,6 @@ export class ChannelHub {
   async close(): Promise<void> {
     if (this.#state === "closed") return;
     this.#state = "closed";
-    if (this.#pruneTimer) clearInterval(this.#pruneTimer);
     await Promise.all([...this.#runners.values()].map((runner) => runner.stop()));
     this.#runners.clear();
   }
@@ -446,11 +438,6 @@ export class ChannelHub {
     await runner?.stop();
   }
 
-  async #prune(): Promise<void> {
-    const before = new Date(this.#clock.now().getTime() - this.#limits.inboundRetentionDays * 86_400_000);
-    await this.#o.db.channels.pruneInbound(before).catch((error) => this.#log.warn("could not prune the handled messages", { error: errorMessage(error) }));
-  }
-
   // What an adapter reports
 
   #sink(runner: BindingRunner): ChannelSink {
@@ -511,15 +498,14 @@ export class ChannelHub {
       return;
     }
     await runner.serial(async () => {
-      if (await this.#o.db.channels.inboundMessageId(runner.bindingId, message.externalId)) return;
       try {
-        const answer = await this.#o.host.sendMessage(runner.dotId, message.text, {
+        // The Dot gets a channel message once however often the channel offers it: the control plane stores it by its id in the same transaction as the message.
+        await this.#o.host.sendMessage(runner.dotId, message.text, {
           channel: runner.kind,
           binding_id: runner.bindingId,
           chat_id: message.chatId,
           external_id: message.externalId,
         });
-        await this.#o.db.channels.recordInbound(runner.bindingId, message.externalId, answer.message_id);
         runner.activeChat = message.chatId;
       } catch (error) {
         // The Dot is gone or the message is refused for good: offering it again cannot change that.

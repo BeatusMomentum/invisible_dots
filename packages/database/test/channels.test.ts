@@ -102,25 +102,13 @@ describe.each(testAdapters())("channel repository on %s", { timeout: SETUP_TIMEO
     expect(rows.map((r) => r.code_hash)).toEqual(["hash-b"]);
   });
 
-  it("an inbound message is recorded once by its channel id, and old records are pruned", async () => {
-    const { record } = await binding("chan-five");
-    expect(await db.channels.inboundMessageId(record.id, "u1")).toBeNull();
-    await db.channels.recordInbound(record.id, "u1", "msg_1");
-    await db.channels.recordInbound(record.id, "u1", "msg_2");
-    expect(await db.channels.inboundMessageId(record.id, "u1")).toBe("msg_1");
-    expect(await db.channels.pruneInbound(new Date(Date.now() - 3_600_000))).toBe(0);
-    expect(await db.channels.pruneInbound(new Date(Date.now() + 3_600_000))).toBeGreaterThanOrEqual(1);
-    expect(await db.channels.inboundMessageId(record.id, "u1")).toBeNull();
-  });
-
-  it("deleting a binding deletes its peers, codes and inbound record; deleting the Dot deletes the binding", async () => {
+  it("deleting a binding deletes its peers and codes; deleting the Dot deletes the binding", async () => {
     const { dot, record } = await binding("chan-six");
     await db.channels.upsertPeer({ bindingId: record.id, peerId: "1", chatId: "1", role: "owner", label: "A" });
     await db.channels.createPairing(record.id, "h", new Date(Date.now() + 60_000), new Date());
-    await db.channels.recordInbound(record.id, "u", "msg_x");
     expect(await db.channels.deleteBinding(record.id)).toBe(true);
     expect(await db.channels.deleteBinding(record.id)).toBe(false);
-    for (const table of ["channel_peers", "channel_pairings", "channel_inbound"]) {
+    for (const table of ["channel_peers", "channel_pairings"]) {
       const { rows } = await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table} WHERE binding_id = $1`, [record.id]);
       expect(rows[0]!.n).toBe(0);
     }

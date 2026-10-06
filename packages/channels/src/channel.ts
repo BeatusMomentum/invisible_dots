@@ -4,7 +4,7 @@
  * who may talk, pairing, rate limits, idempotency, where a reply goes, retries and backoff.
  */
 import type { ChannelKind, ChannelStatus } from "@invisible-dots/shared";
-import type { ChannelBindingRecord, SecretsRepository } from "@invisible-dots/database";
+import type { ChannelBindingRecord } from "@invisible-dots/database";
 
 /** One message from a person, as the adapter saw it. */
 export interface InboundChat {
@@ -152,8 +152,24 @@ export class ChannelCredentialsError extends Error {
   }
 }
 
-/** The secrets of a binding, as an adapter reaches them: the hub's `SecretsRepository`; the scope of a binding's secrets is its Dot's id. */
-export type ChannelSecrets = Pick<SecretsRepository, "get" | "put" | "delete">;
+/** Thrown by `ChannelSecrets.putAll` when the binding is gone: what the adapter held for it is not kept. */
+export class ChannelGoneError extends Error {
+  constructor() {
+    super("the channel was removed");
+    this.name = "ChannelGoneError";
+  }
+}
+
+/** The secrets of a binding, as an adapter reaches them; the scope of a binding's secrets is its Dot's id. */
+export interface ChannelSecrets {
+  get(scope: string, name: string): Promise<string | null>;
+  /**
+   * Write several secrets of the binding together: all or none. Only while the binding exists, so state an
+   * adapter still holds when its Dot or channel is deleted cannot be written back after the delete
+   * (`ChannelGoneError`).
+   */
+  putAll(scope: string, entries: Readonly<Record<string, string>>): Promise<void>;
+}
 
 /** One kind of channel: how to make its adapter for a binding, and what a binding of it owns besides its rows. */
 export interface ChannelType {

@@ -296,6 +296,22 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     expect(received.map((e) => e.data)).toEqual([{ text: "from my phone" }, { text: "from the web" }]);
   });
 
+  it("hands a channel message to the Dot once however often it is offered, and answers a repeat with the first", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "repeated");
+    const origin = { channel: "telegram", binding_id: "chb_1", chat_id: "4242", external_id: "77" } as const;
+    const first = await scheduler.sendMessage(dot.id, "from my phone", origin);
+    const again = await scheduler.sendMessage(dot.id, "from my phone", origin);
+    expect(again).toEqual({ message_id: first.message_id, event_id: first.event_id, delivery: "delivered" });
+    // The same id on another binding is another message.
+    const other = await scheduler.sendMessage(dot.id, "from my phone", { ...origin, binding_id: "chb_2" });
+    expect(other.message_id).not.toBe(first.message_id);
+    await scheduler.settle();
+    expect((await db.events.list({ dotId: dot.id, types: ["user.message"] })).map((e) => e.data.message_id)).toEqual([first.message_id, other.message_id]);
+    expect(driver.guestOf(dot.id).inbound.filter((e) => e.type === "user.message").map((e) => e.id)).toEqual([first.message_id, other.message_id]);
+    expect((await db.inbound.get(first.message_id))?.delivered_at).toBeTruthy();
+  });
+
   it("refuses a message whose origin is not a channel chat, and logs nothing for it", async () => {
     const { scheduler } = make();
     const dot = await readyDot(scheduler, "strict");

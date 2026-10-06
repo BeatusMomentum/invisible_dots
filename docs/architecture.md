@@ -1359,14 +1359,14 @@ taken while holding a row lock another event writer waits for.
 
 Tables: `dots`, `computers`, `tasks`, `task_runs`, `events`, `approvals`,
 `inbound_events`, `secrets`, `channel_bindings`, `channel_peers`,
-`channel_pairings`, `channel_inbound`, `channel_prompts`, `schema_migrations`. Migrations are plain
+`channel_pairings`, `channel_prompts`, `schema_migrations`. Migrations are plain
 SQL files applied in order at start.
 
 - `dots(id text pk, name text unique, config jsonb, status text, created_at, updated_at)`
 - `computers(dot_id pk fk, vm_name, guest_port int null, pid int null, state text, golden_image text, runtime_image text, token_enc bytea, event_cursor bigint default 0, last_active_at, last_error, updated_at)`: `guest_port` and `pid` are null while no QEMU runs, and `guest_port` is not unique (a crashed VM's row may name a port since reused); both are copies of `qemu.json` (section 3.2), which wins on reconciliation
 - `tasks(id text pk, dot_id fk, description, priority int, status, created_at, scheduled_at, started_at, finished_at, summary, error, spent_usd double precision default 0)`: `spent_usd` is the highest `spent_usd` the guest reported on the task's events (section 5.4), recorded by the host in the transaction that stores each event, so a late or repeated event never lowers it and a cancelled task the guest keeps working on still counts; a task whose guest never reported spend stays 0
 - `task_runs(id pk, task_id fk, started_at, delivered_at, finished_at, outcome)`: `delivered_at` is set when the guest accepted the run's `task.created`
-- `events(id bigserial pk, dot_id, type, data jsonb, source 'host'|'guest', guest_seq bigint, created_at)`, unique `(dot_id, guest_seq)`
+- `events(id bigserial pk, dot_id, type, data jsonb, source 'host'|'guest', guest_seq bigint, created_at)`, unique `(dot_id, guest_seq)`, and unique `(dot_id, data->origin->>binding_id, data->origin->>external_id)` for a `user.message` with an origin: a channel message is stored once, by the channel's own id, in the transaction that stores it, so a redelivery after any failure finds the first one and the Dot gets it once (section 9.8)
 - `approvals(id text pk, dot_id, task_id, tool, permission, arguments jsonb, reason, status 'pending'|'approved'|'rejected'|'expired', note, created_at, resolved_at)`: an approval whose task reached a terminal state before anyone decided is `expired`, in the same statement that ends the task, and an `approval.requested` for a task that is already terminal is stored as `expired`, never `pending`
 - `inbound_events(seq bigserial pk, id text unique, dot_id fk, type, data jsonb, ts, task_id, run_id, created_at, sent_at, delivered_at, dropped_at, drop_reason, failures int, last_error, retry_at)`: the outbox of host to guest events (section 9.2)
 - `secrets(scope text, name text, value_enc bytea, updated_at, pk(scope, name))`: `scope` is `global` or a dot id; no foreign key can cover that, so deleting a Dot deletes the secrets scoped to it in the same statement (`DotsRepository.delete`)
@@ -1374,7 +1374,7 @@ SQL files applied in order at start.
 - `channel_bindings(id text pk, dot_id fk cascade, kind 'telegram'|'whatsapp', enabled bool, settings jsonb, status, status_detail, account, event_cursor bigint, created_at)`, unique `(dot_id, kind)`: one Dot's link to one channel kind (section 9.8); `settings` is `{approvals, notify_tasks}` and never a credential; `account` is the channel's public name for the account (a bot's username); `event_cursor` is the id of the last event of the Dot the hub dealt with
 - `channel_peers(binding_id fk cascade, peer_id, chat_id, role 'owner'|'user', label, created_at, pk(binding_id, peer_id))`: the people allowed to talk through the binding, by the channel's stable id, with the chat they paired from
 - `channel_pairings(binding_id fk cascade, code_hash, expires_at, consumed_at, pk(binding_id, code_hash))`: one-time pairing codes, stored hashed
-- `channel_inbound(binding_id fk cascade, external_id, message_id, created_at, pk(binding_id, external_id))`: the channel messages already handed to the Dot, by the channel's own id, so a redelivery is dropped; only idempotency lives here, where a message came from is in its `user.message` event (section 5.4). An index on `events` by `(dot_id, data->>'message_id')` for `user.message` lets an answer find the message it answers
+- Where a channel message came from is in its `user.message` event (section 5.4), the one owner of that fact; there is no table of handled messages. An index on `events` by `(dot_id, data->>'message_id')` for `user.message` lets an answer find the message it answers
 - `channel_prompts(binding_id fk cascade, approval_id fk approvals cascade, chat_id, ref, created_at, pk(binding_id, approval_id, chat_id))`: the approval prompts a channel sent, one message per chat; `ref` is the channel's handle for the message (a Telegram message id), what an edit needs. A row is deleted once its prompt was edited to the outcome
 
 Secrets are encrypted with AES-256-GCM under `master.key`. The OpenRouter key
@@ -1596,11 +1596,13 @@ and never given credentials; the others with `add`. The hub owns every policy:
   minute, told once) and to 8000 characters per message.
 - **Inbound.** A message becomes `Scheduler.sendMessage(dot, text, {channel,
   binding_id, chat_id, external_id})`; the guest receives `{text}` only. The
-  channel's own message id is recorded in `channel_inbound` once the Dot has the
-  message, and `sink.inbound` resolves only then, so an adapter commits its offset
-  after the hub is done with the message. A redelivered message is recognised and
-  dropped, also across a restart. A crash between handing the message over and
-  recording it hands it over once more: delivery is at least once.
+  channel's own message id is part of the `user.message` event, which a unique
+  index allows once per Dot, binding and channel id, so the message and the proof
+  that it was handed over commit together. `sink.inbound` resolves only after the
+  control plane has answered, so an adapter commits its offset after the hub is
+  done with the message. A redelivered message, after a failure at any point or
+  across a restart, finds the first one: the Dot gets it once, and the repeat is
+  answered with the first message.
 - **Outbound.** One `events.stream({dotId}, {after: event_cursor})` per binding.
   `message.assistant` goes to the chat of the `user.message` its `in_reply_to`
   names, when that message came through this binding and its person is still
@@ -1766,13 +1768,15 @@ hub.
   the encrypted `secrets` of the Dot, one secret for the credentials and one per
   group of keys (eleven; a `Record` over the library's own list of groups makes a
   group added by an upgrade a compile error), under the same AES-256-GCM and the
-  same row-bound associated data as the OpenRouter key. A change is written (only
-  the groups that changed, one write at a time, in order) before it is
-  acknowledged to Baileys; a failed write is kept and tried again with the next. A
-  closed store refuses every write, so a delete by the hub is final. They are
-  never sent to the guest, and deleted with the channel and with the Dot.
-  Credentials and groups are separate rows: a crash between two writes can leave
-  them a step apart, and WhatsApp then asks for a new link, as for a lost file.
+  same row-bound associated data as the OpenRouter key. A change is written (the
+  credentials and the groups that changed, in one transaction, in order) before it
+  is acknowledged to Baileys, so a crash leaves the state as it was or as it is
+  now, never a step apart; a failed write is kept and tried again with the next.
+  A closed store refuses every write, so a delete by the hub is final, and the
+  write itself holds the binding row, so a session still open when the channel or
+  its Dot is deleted cannot write its keys back afterwards (the write is refused
+  as `ChannelGoneError`). They are never sent to the guest, and deleted with the
+  channel and with the Dot.
 - **Who is who.** WhatsApp addresses a person by phone (`<number>@s.whatsapp.net`)
   or by LID (`<id>@lid`), and may switch. The peer is the phone number when it is
   known from the address, from its twin address in the same message, or from what

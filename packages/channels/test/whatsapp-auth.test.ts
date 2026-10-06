@@ -3,9 +3,10 @@
  * `BufferJSON`, the protobuf of the app-state keys) and a real test database: what is written, what is
  * encrypted, what a restart reads back, and what happens when a write fails or the session closes.
  */
-import type { Database, SecretsRepository } from "@invisible-dots/database";
+import type { Database } from "@invisible-dots/database";
 import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-dots/database/testing";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import type { ChannelSecrets } from "../src/channel.js";
 import { AuthStore, WHATSAPP_AUTH_SECRETS, WHATSAPP_CREDS_SECRET, type BaileysAuthLib } from "../src/whatsapp-baileys/auth-state.js";
 
 describe.each(testAdapters())("the WhatsApp auth state over encrypted secrets (%s)", { timeout: 60_000 }, (kind) => {
@@ -30,22 +31,25 @@ describe.each(testAdapters())("the WhatsApp auth state over encrypted secrets (%
 
   const names = async () => (await db.query<{ name: string }>("SELECT name FROM secrets WHERE scope = $1 ORDER BY name", [DOT])).rows.map((r) => r.name);
 
-  /** The repository, counting what is written and able to fail or slow a write. */
+  /** The secrets over the database, in a transaction as the hub's are, counting what is written and able to fail or slow a write. A failed write writes none of its entries. */
   function watched(options: { failOn?: string; delayMs?: (name: string) => number } = {}) {
     const writes: string[] = [];
+    const batches: string[][] = [];
     let failOn = options.failOn;
-    const secrets = {
-      get: (scope: string, name: string) => db.secrets.get(scope, name),
-      delete: (scope: string, name: string) => db.secrets.delete(scope, name),
-      put: async (scope: string, name: string, value: string) => {
-        const wait = options.delayMs?.(name) ?? 0;
+    const secrets: ChannelSecrets = {
+      get: (scope, name) => db.secrets.get(scope, name),
+      putAll: async (scope, entries) => {
+        const wait = Math.max(0, ...Object.keys(entries).map((name) => options.delayMs?.(name) ?? 0));
         if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
-        if (name === failOn) throw new Error("the database refused the write");
-        writes.push(name);
-        await db.secrets.put(scope, name, value);
+        if (failOn !== undefined && failOn in entries) throw new Error("the database refused the write");
+        await db.transaction(async (tx) => {
+          for (const [name, value] of Object.entries(entries)) await tx.secrets.put(scope, name, value);
+        });
+        writes.push(...Object.keys(entries));
+        batches.push(Object.keys(entries));
       },
-    } as Pick<SecretsRepository, "get" | "put" | "delete">;
-    return { secrets, writes, healed: () => (failOn = undefined) };
+    };
+    return { secrets, writes, batches, healed: () => (failOn = undefined) };
   }
 
   it("starts as a device that is not linked, with fresh credentials, when nothing is stored", async () => {
@@ -105,6 +109,24 @@ describe.each(testAdapters())("the WhatsApp auth state over encrypted secrets (%
     const sync = (await second.state.keys.get("app-state-sync-key", ["AAAA"]))["AAAA"]!;
     expect(sync).toBeInstanceOf(lib.proto.Message.AppStateSyncKeyData);
     expect(Buffer.from(sync.keyData!).toString()).toBe("sync-key-bytes");
+  });
+
+  it("writes the credentials and the groups that changed together, so a crash cannot leave them a step apart", async () => {
+    const w = watched();
+    const store = await AuthStore.open(DOT, w.secrets, lib);
+    store.state.creds.me = { id: "15550001111:3@s.whatsapp.net" };
+    // Baileys saves the credentials and its keys in the same breath: they are one write.
+    await Promise.all([store.saveCreds(), store.state.keys.set({ session: { a: Buffer.from("ratchet") }, "pre-key": { "2": { public: Buffer.from("p"), private: Buffer.from("q") } } })]);
+    expect(w.batches).toEqual([["whatsapp_creds", "whatsapp_keys_session", "whatsapp_keys_pre_key"]]);
+
+    // A write that fails writes none of them: the credentials stay as they were, with the keys that go with them.
+    const failing = watched({ failOn: "whatsapp_keys_session" });
+    const second = await AuthStore.open(DOT, failing.secrets, lib);
+    second.state.creds.me = { id: "15550001111:4@s.whatsapp.net" };
+    await expect(Promise.all([second.saveCreds(), second.state.keys.set({ session: { a: Buffer.from("next ratchet") } })])).rejects.toThrow(/refused the write/);
+    const stored = await AuthStore.open(DOT, watched().secrets, lib);
+    expect(stored.state.creds.me?.id).toBe("15550001111:3@s.whatsapp.net");
+    expect(Buffer.from((await stored.state.keys.get("session", ["a"]))["a"]!).toString()).toBe("ratchet");
   });
 
   it("forgets a key that Baileys deletes, and writes only the groups that changed", async () => {

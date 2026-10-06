@@ -8,7 +8,8 @@ import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-
 import { waitFor } from "@invisible-dots/scheduler/testing";
 import type { ChannelLinkFrame } from "@invisible-dots/shared";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { WhatsAppChannelType, type ChannelHub } from "../src/index.js";
+import { BindingSecrets, WhatsAppChannelType, type ChannelHub } from "../src/index.js";
+import { AuthStore, type BaileysAuthLib } from "../src/whatsapp-baileys/auth-state.js";
 import { FakeChannelType, FakeWhatsAppConnector, type FakeWhatsAppConnection } from "../src/testing.js";
 import { makeWorlds, quiet, type World } from "./world.js";
 
@@ -248,12 +249,23 @@ describe.each(testAdapters())("the hub with the WhatsApp channel, with the real 
 
   it("goes with the Dot: its binding, people and keys are gone, and the connection is stopped", async () => {
     const w = await world();
-    const { dot, connection } = await linked(w);
-    await db.secrets.put(dot.id, "whatsapp_creds", "identity");
+    const { dot, connection, type } = await linked(w);
+    // The session the real adapter would hold open: its keys are written as they change, until the connection is closed.
+    const binding = (await db.channels.listBindings(dot.id))[0]!;
+    const auth = await AuthStore.open(dot.id, new BindingSecrets(db, binding.id), (await import("baileys")) as unknown as BaileysAuthLib);
+    await auth.state.keys.set({ session: { a: Buffer.from("ratchet") } });
+    await auth.saveCreds();
+    for (const name of ["whatsapp_creds", "whatsapp_keys_session"]) expect(await db.secrets.get(dot.id, name)).not.toBeNull();
     const before = connection();
     await w.scheduler.deleteDot(dot.id);
     await waitFor(() => before.closed, "the connection to be closed");
     await waitFor(async () => (await db.channels.listBindings(dot.id)).length === 0, "the binding to go");
+    // The session is still open here, as it is between the delete and the stop: whatever it writes now must not come back.
+    await expect(auth.state.keys.set({ session: { b: Buffer.from("next ratchet") }, "pre-key": { "1": { public: Buffer.from("p"), private: Buffer.from("q") } } })).rejects.toThrow(/removed/);
+    await expect(auth.saveCreds()).rejects.toThrow(/removed/);
+    await auth.close();
+    for (const name of type.secretNames) expect(await db.secrets.get(dot.id, name)).toBeNull();
+    expect((await db.query("SELECT 1 FROM secrets WHERE scope = $1", [dot.id])).rows).toEqual([]);
   });
 
   // Pairing and talking
@@ -329,8 +341,6 @@ describe.each(testAdapters())("the hub with the WhatsApp channel, with the real 
     expect(connection().typings).toEqual([]);
     // Nothing reached the Dot: no message of the person's, nothing it answered.
     expect(await db.events.list({ dotId: dot.id, types: ["user.message", "message.assistant", "approval.resolved"] })).toEqual([]);
-    const bindingId = (await db.channels.listBindings(dot.id))[0]!.id;
-    expect((await db.query("SELECT 1 FROM channel_inbound WHERE binding_id = $1", [bindingId])).rows).toEqual([]);
     expect((await hub.list(dot.id))[0]!.peers.map((p) => p.peer_id)).toEqual(["393331112222"]);
     expect(dot.guest.inbound.filter((e) => e.type === "user.message")).toEqual([]);
   });

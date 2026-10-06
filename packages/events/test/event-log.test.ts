@@ -23,6 +23,17 @@ class MemoryStore implements EventStore {
     return row;
   }
 
+  async insertUserMessage(dotId: string, data: Record<string, unknown>): Promise<StoredEvent | null> {
+    const origin = data.origin as { binding_id: string; external_id: string } | undefined;
+    if (origin && (await this.userMessageOfOrigin(dotId, origin.binding_id, origin.external_id))) return null;
+    return this.insertHost(dotId, "user.message", data);
+  }
+
+  async userMessageOfOrigin(dotId: string, bindingId: string, externalId: string): Promise<StoredEvent | null> {
+    const origin = (r: StoredEvent) => r.data.origin as { binding_id: string; external_id: string } | undefined;
+    return this.rows.find((r) => r.dot_id === dotId && (r.type as string) === "user.message" && origin(r)?.binding_id === bindingId && origin(r)?.external_id === externalId) ?? null;
+  }
+
   async list(q: EventQuery = {}): Promise<StoredEvent[]> {
     return this.rows
       .filter((r) => (q.dotId === undefined || r.dot_id === q.dotId) && r.id > (q.after ?? 0))
@@ -109,9 +120,9 @@ describe("EventLog fan-out", () => {
     const origin = { channel: "telegram", binding_id: "chb_1", chat_id: "4242", external_id: "77" } as const;
     const fromChannel = await log.appendUserMessage("dot_a", { message_id: "msg_1", text: "hi", origin });
     const fromWeb = await log.appendUserMessage("dot_a", { message_id: "msg_2", text: "hello" });
-    expect(fromChannel.data).toEqual({ message_id: "msg_1", text: "hi", origin });
-    expect(fromWeb.data).toEqual({ message_id: "msg_2", text: "hello" });
-    expect("origin" in fromWeb.data).toBe(false);
+    expect(fromChannel!.data).toEqual({ message_id: "msg_1", text: "hi", origin });
+    expect(fromWeb!.data).toEqual({ message_id: "msg_2", text: "hello" });
+    expect("origin" in fromWeb!.data).toBe(false);
   });
 
   it("skips live copies of events the replay already returned", async () => {
@@ -169,13 +180,35 @@ describe.each(testAdapters())("EventLog on %s", { timeout: 60_000 }, (kind) => {
     }
   });
 
+  it("stores a channel message once by its binding and the channel's own id, and says so when it was already stored", async () => {
+    const t = await createTestDatabase(kind);
+    try {
+      const log = new EventLog(t.db.events);
+      const origin = { channel: "telegram", binding_id: "chb_1", chat_id: "4242", external_id: "77" } as const;
+      const first = await log.appendUserMessage("dot_x", { message_id: "msg_1", text: "hi", origin });
+      expect(first).not.toBeNull();
+      expect(await log.appendUserMessage("dot_x", { message_id: "msg_2", text: "hi again", origin })).toBeNull();
+      // Another message of the same chat, the same id on another binding, and a message with no origin are all new.
+      expect(await log.appendUserMessage("dot_x", { message_id: "msg_3", text: "next", origin: { ...origin, external_id: "78" } })).not.toBeNull();
+      expect(await log.appendUserMessage("dot_x", { message_id: "msg_4", text: "other bot", origin: { ...origin, binding_id: "chb_2" } })).not.toBeNull();
+      expect(await log.appendUserMessage("dot_y", { message_id: "msg_7", text: "same ids, another Dot", origin })).not.toBeNull();
+      expect(await log.appendUserMessage("dot_x", { message_id: "msg_5", text: "web" })).not.toBeNull();
+      expect(await log.appendUserMessage("dot_x", { message_id: "msg_6", text: "web" })).not.toBeNull();
+      expect((await log.userMessageOfOrigin("dot_x", "chb_1", "77"))?.id).toBe(first!.id);
+      expect(await log.userMessageOfOrigin("dot_x", "chb_1", "unknown")).toBeNull();
+      expect((await log.query({ dotId: "dot_x", types: ["user.message" as never] })).map((e) => e.data.message_id)).toEqual(["msg_1", "msg_3", "msg_4", "msg_5", "msg_6"]);
+    } finally {
+      await t.drop();
+    }
+  });
+
   it("finds the logged user message of a message id, in its own Dot only", async () => {
     const t = await createTestDatabase(kind);
     try {
       const log = new EventLog(t.db.events);
       const sent = await log.appendUserMessage("dot_x", { message_id: "msg_a", text: "hi" });
       await log.appendUserMessage("dot_y", { message_id: "msg_b", text: "other" });
-      expect((await log.userMessage("dot_x", "msg_a"))?.id).toBe(sent.id);
+      expect((await log.userMessage("dot_x", "msg_a"))?.id).toBe(sent!.id);
       expect(await log.userMessage("dot_x", "msg_b")).toBeNull();
       expect(await log.userMessage("dot_x", "msg_unknown")).toBeNull();
     } finally {

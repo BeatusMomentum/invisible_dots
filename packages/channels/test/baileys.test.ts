@@ -128,8 +128,7 @@ describe("the connector on a socket that cannot connect", () => {
     const stored = new Map<string, string>();
     const secrets = {
       get: async (_scope: string, name: string) => stored.get(name) ?? null,
-      put: async (_scope: string, name: string, value: string) => void stored.set(name, value),
-      delete: async (_scope: string, name: string) => stored.delete(name),
+      putAll: async (_scope: string, entries: Readonly<Record<string, string>>) => void Object.entries(entries).forEach(([name, value]) => stored.set(name, value)),
     };
     const ends: WhatsAppEnd[] = [];
     const codes: string[] = [];

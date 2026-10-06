@@ -5,10 +5,10 @@
  * credentials and one per group of keys (`SignalDataTypeMap` names the groups), under the Dot's id like
  * every secret, so it is deleted with the channel and the Dot and never reaches the guest.
  *
- * The whole state lives in memory while the connection is open; a change is written (only the groups that
- * changed, one write at a time) before `set` resolves, because a Signal ratchet that moved and was not saved
- * cannot be taken back. The credentials and the groups are separate rows, so a crash between two writes can
- * leave them a step apart; WhatsApp then asks for a new link, which is the same failure a lost file gives.
+ * The whole state lives in memory while the connection is open; a change is written before `set` resolves,
+ * because a Signal ratchet that moved and was not saved cannot be taken back. The credentials and every group
+ * that changed go in one transaction (`ChannelSecrets.putAll`), so a crash leaves the state as it was or as it
+ * is now, never a step apart; and once the channel or its Dot is deleted nothing is written back.
  */
 import type { AuthenticationCreds, AuthenticationState, SignalDataSet, SignalDataTypeMap } from "baileys";
 import type { ChannelSecrets } from "../channel.js";
@@ -124,30 +124,31 @@ export class AuthStore {
     if (this.#closed) throw new Error("the WhatsApp session is closed");
   }
 
-  /** Write what changed, after the writes that were asked for earlier. Concurrent callers share the work: the one that comes second may find nothing left to write. */
+  /** Write what changed in one transaction, after the writes that were asked for earlier. Concurrent callers share the work: the one that comes second may find nothing left to write. */
   #flush(): Promise<void> {
     const run = this.#tail.then(async () => {
-      if (this.#credsDirty) {
-        this.#credsDirty = false;
-        await this.#put(WHATSAPP_CREDS_SECRET, this.state.creds, () => {
-          this.#credsDirty = true;
-        });
-      }
-      for (const group of [...this.#dirty]) {
-        this.#dirty.delete(group);
-        await this.#put(GROUP_SECRETS[group], this.#groups.get(group) ?? {}, () => this.#dirty.add(group));
+      const entries: Record<string, string> = {};
+      const creds = this.#credsDirty;
+      const groups = [...this.#dirty];
+      if (creds) entries[WHATSAPP_CREDS_SECRET] = this.#encode(this.state.creds);
+      for (const group of groups) entries[GROUP_SECRETS[group]] = this.#encode(this.#groups.get(group) ?? {});
+      if (Object.keys(entries).length === 0) return;
+      this.#credsDirty = false;
+      this.#dirty.clear();
+      try {
+        await this.secrets.putAll(this.dotId, entries);
+      } catch (error) {
+        // Nothing was written: all of it is still to write.
+        if (creds) this.#credsDirty = true;
+        for (const group of groups) this.#dirty.add(group);
+        throw error;
       }
     });
     this.#tail = run.catch(() => {});
     return run;
   }
 
-  async #put(name: string, value: unknown, markDirty: () => void): Promise<void> {
-    try {
-      await this.secrets.put(this.dotId, name, JSON.stringify(value, this.lib.BufferJSON.replacer));
-    } catch (error) {
-      markDirty();
-      throw error;
-    }
+  #encode(value: unknown): string {
+    return JSON.stringify(value, this.lib.BufferJSON.replacer);
   }
 }

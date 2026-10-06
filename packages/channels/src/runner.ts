@@ -11,6 +11,7 @@ import { StreamOverflowError, type EventLog } from "@invisible-dots/events";
 import { parseMessageOrigin, type ChannelKind, type StoredEvent } from "@invisible-dots/shared";
 import { errorMessage, sleep, type Logger } from "@invisible-dots/scheduler";
 import { Backoff, type BackoffOptions } from "./backoff.js";
+import { BindingSecrets } from "./binding-secrets.js";
 import { approvalOutcomeText, approvalPromptText } from "./approval-text.js";
 import { ChannelNeedsRelinkError, ChannelSendError, type Channel, type ChannelSink, type ChannelStatusReport, type ChannelType } from "./channel.js";
 import { splitText } from "./text.js";
@@ -21,7 +22,7 @@ export type RunnerEvents = Pick<EventLog, "stream" | "userMessage">;
 export interface RunnerOptions {
   binding: ChannelBindingRecord;
   type: ChannelType;
-  db: Pick<Database, "channels" | "secrets" | "approvals">;
+  db: Pick<Database, "channels" | "secrets" | "approvals" | "transaction">;
   events: RunnerEvents;
   logger: Logger;
   backoff: BackoffOptions;
@@ -145,7 +146,7 @@ export class BindingRunner {
       try {
         const binding = await this.#o.db.channels.bindingById(this.bindingId);
         if (!binding) return;
-        this.channel = await this.#o.type.create(binding, this.#o.db.secrets);
+        this.channel = await this.#o.type.create(binding, new BindingSecrets(this.#o.db, this.bindingId));
         await this.channel.run(
           {
             ...sink,

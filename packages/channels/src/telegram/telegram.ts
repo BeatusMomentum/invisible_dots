@@ -6,8 +6,8 @@
  * - Long polling: the control plane listens on a local address behind NAT, and polling needs only outbound
  *   HTTPS. Telegram keeps an unconfirmed update for at most 24 hours, so a PC that is off longer loses messages.
  * - An update is confirmed to Telegram (the `offset` of the next poll) only after the hub has dealt with it. When
- *   the hub could not record it, `run` fails, the hub restarts the adapter, and Telegram offers it again; the
- *   hub recognises one it already handed to the Dot by its id, so nothing runs twice.
+ *   the hub could not hand it over, `run` fails, the hub restarts the adapter, and Telegram offers it again; the
+ *   control plane stores a message once by its id, in the transaction that stores it, so nothing runs twice.
  * - One consumer per bot token: a second poller makes Telegram answer 409, reported as such.
  * - The token is in every request URL, so no message made here carries a URL, and errors say what happened
  *   in words only.

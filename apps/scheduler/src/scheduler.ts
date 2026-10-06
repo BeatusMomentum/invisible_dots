@@ -312,14 +312,25 @@ export class Scheduler {
       data: { text },
     };
     const stored = await this.db.transaction(async (tx) => {
-      // The event first: its insert takes the event-order lock (database events.ts).
+      // The event first: its insert takes the event-order lock (database events.ts). A channel message
+      // already logged is not stored again, so what a redelivery finds is exactly what the first delivery
+      // committed: the message and its queue row together, or neither.
       const logged = await this.events.appendUserMessageIn(tx, dot.id, { message_id: messageId, text, ...(origin && { origin }) });
-      await tx.inbound.enqueue(dot.id, event);
+      if (logged) await tx.inbound.enqueue(dot.id, event);
       return logged;
     });
+    if (!stored) return this.#answerRedelivery(dot.id, origin!);
     this.events.publish(stored);
     const delivery = await this.#deliver(dot.id, event.id);
     return { message_id: messageId, event_id: stored.id, delivery };
+  }
+
+  /** The answer for a channel message that was already handed to the Dot: the same message, delivered if it is not yet. */
+  async #answerRedelivery(dotId: string, origin: MessageOrigin): Promise<MessageAnswer> {
+    const logged = await this.events.userMessageOfOrigin(dotId, origin.binding_id, origin.external_id);
+    const messageId = logged?.data.message_id;
+    if (!logged || typeof messageId !== "string") throw new Error(`a channel message is stored twice but cannot be found: ${origin.binding_id}`);
+    return { message_id: messageId, event_id: logged.id, delivery: await this.#deliver(dotId, messageId) };
   }
 
   async conversation(idOrName: string, limit = 500): Promise<ConversationMessage[]> {

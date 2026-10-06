@@ -1,6 +1,6 @@
 import type { Database } from "@invisible-dots/database";
 import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-dots/database/testing";
-import { ManualClock, waitFor } from "@invisible-dots/scheduler/testing";
+import { waitFor } from "@invisible-dots/scheduler/testing";
 import type { ChannelKind, StoredEvent } from "@invisible-dots/shared";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { ChannelNeedsRelinkError, ChannelSendError } from "../src/index.js";
@@ -143,7 +143,6 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
     const { dot, channel } = await linkedFake(w, ["10"]);
     const before = {
       events: (await db.events.list({ dotId: dot.id })).length,
-      inbound: (await db.query<{ n: number }>("SELECT count(*)::int AS n FROM channel_inbound")).rows[0]!.n,
       delivered: dot.guest.inbound.length,
     };
     for (let i = 0; i < 100; i++) await channel.receive({ text: `spam ${i}`, peerId: "666", chatId: "666" });
@@ -151,7 +150,6 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
     expect(await channel.pair("WRONG123", "666", "666")).toBe(false);
     await quiet();
     expect((await db.events.list({ dotId: dot.id })).length).toBe(before.events);
-    expect((await db.query<{ n: number }>("SELECT count(*)::int AS n FROM channel_inbound")).rows[0]!.n).toBe(before.inbound);
     expect(dot.guest.inbound.length).toBe(before.delivered);
     expect(channel.sent).toEqual([]);
   });
@@ -451,7 +449,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
     await w.scheduler.deleteDot(dot.id);
     await waitFor(() => running.sink === null, "the channel to stop");
-    for (const table of ["channel_bindings", "channel_peers", "channel_pairings", "channel_inbound"]) {
+    for (const table of ["channel_bindings", "channel_peers", "channel_pairings"]) {
       const column = table === "channel_bindings" ? "dot_id" : "binding_id";
       const { rows } = await db.query<{ n: number }>(`SELECT count(*)::int AS n FROM ${table} WHERE ${column} IN (SELECT id FROM channel_bindings WHERE dot_id = $1) OR ${column} = $1`, [dot.id]);
       expect(rows[0]!.n).toBe(0);
@@ -472,17 +470,5 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
     expect((await again.hub.list(dot.id))[0]).toMatchObject({ kind: "whatsapp", status: "connecting" });
     await quiet();
     expect(again.type.channels).toHaveLength(1);
-  });
-
-  it("forgets handled messages older than the retention at start", async () => {
-    const w = await world();
-    const { dot, channel, hub } = await linkedFake(w);
-    await channel.receive({ externalId: "old-1", text: "old", peerId: "10", chatId: "10" });
-    const binding = (await db.channels.binding(dot.id, "telegram"))!;
-    expect(await db.channels.inboundMessageId(binding.id, "old-1")).not.toBeNull();
-    await hub.close();
-    const future = new ManualClock(new Date(Date.now() + 8 * 86_400_000));
-    await w.hub(new FakeChannelType(), { clock: future });
-    expect(await db.channels.inboundMessageId(binding.id, "old-1")).toBeNull();
   });
 });

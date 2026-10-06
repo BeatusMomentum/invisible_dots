@@ -1,4 +1,5 @@
 export * from "./backoff.js";
+export * from "./binding-secrets.js";
 export * from "./channel.js";
 export * from "./hub.js";
 export * from "./pairing.js";

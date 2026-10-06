@@ -67,6 +67,22 @@ export class EventsRepository {
   }
 
   /**
+   * Store a `user.message`. One that came through a channel is identified by its Dot, its binding and
+   * the channel's own message id (`events_user_message_origin_key`): a redelivery of the same message is
+   * not stored again and null comes back, in the same statement and so in the same transaction as the
+   * row it would have been, which is what makes a redelivery after any failure harmless.
+   */
+  async insertUserMessage(dotId: string, data: Record<string, unknown>): Promise<StoredEvent | null> {
+    const { rows } = await this.q.query<EventRow>(
+      `INSERT INTO events (dot_id, type, data, source) SELECT $1::text, 'user.message', $2::jsonb, 'host' ${LOCKED}
+       ON CONFLICT (dot_id, (data->'origin'->>'binding_id'), (data->'origin'->>'external_id'))
+         WHERE type = 'user.message' AND data->'origin' IS NOT NULL DO NOTHING RETURNING *`,
+      [dotId, JSON.stringify(data)],
+    );
+    return rows[0] ? toStored(rows[0]) : null;
+  }
+
+  /**
    * Store a guest event. The guest replays from the cursor after every
    * reconnect, so the same `seq` can arrive twice: the second copy is
    * dropped and null comes back.
@@ -101,6 +117,16 @@ export class EventsRepository {
     const { rows } = await this.q.query<EventRow>(
       "SELECT * FROM events WHERE dot_id = $1 AND type = 'user.message' AND data->>'message_id' = $2 LIMIT 1",
       [dotId, messageId],
+    );
+    return rows[0] ? toStored(rows[0]) : null;
+  }
+
+  /** The `user.message` of the Dot that came through this binding as the channel's own message `externalId`, or null. */
+  async userMessageOfOrigin(dotId: string, bindingId: string, externalId: string): Promise<StoredEvent | null> {
+    const { rows } = await this.q.query<EventRow>(
+      `SELECT * FROM events WHERE dot_id = $1 AND type = 'user.message' AND data->'origin' IS NOT NULL
+         AND data->'origin'->>'binding_id' = $2 AND data->'origin'->>'external_id' = $3`,
+      [dotId, bindingId, externalId],
     );
     return rows[0] ? toStored(rows[0]) : null;
   }

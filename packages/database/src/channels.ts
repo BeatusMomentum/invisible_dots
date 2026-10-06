@@ -1,6 +1,6 @@
 /**
  * Messaging channels (migrations 0004 and 0005): a Dot's bindings to a channel kind, the people paired to them,
- * one-time pairing codes, the record of inbound messages already handled and the approval prompts sent. The rules (who may talk,
+ * one-time pairing codes and the approval prompts sent. The rules (who may talk,
  * what a reply is routed to) belong to the channel hub; this file only stores and reads.
  */
 import type { ChannelKind, ChannelSettings, ChannelStatus } from "@invisible-dots/shared";
@@ -132,7 +132,16 @@ export class ChannelsRepository {
     return rows.map(toBinding);
   }
 
-  /** Delete the binding with its peers, pairing codes and inbound record. */
+  /**
+   * Whether the binding exists, holding it so that it cannot be deleted before this transaction ends (a key share: updates of its
+   * cursor and status go on). A transaction that writes the binding's secrets starts here, so none outlives the binding.
+   */
+  async holdBinding(id: string): Promise<boolean> {
+    const { rows } = await this.q.query("SELECT 1 FROM channel_bindings WHERE id = $1 FOR KEY SHARE", [id]);
+    return rows.length > 0;
+  }
+
+  /** Delete the binding with its peers and pairing codes. */
   async deleteBinding(id: string): Promise<boolean> {
     const { rowCount } = await this.q.query("DELETE FROM channel_bindings WHERE id = $1", [id]);
     return (rowCount ?? 0) > 0;
@@ -218,30 +227,6 @@ export class ChannelsRepository {
       [bindingId, codeHash, now],
     );
     return (rowCount ?? 0) > 0;
-  }
-
-  // Inbound messages already handled
-
-  /** The id of the message the Dot got for this channel message, or null when it was not handled. */
-  async inboundMessageId(bindingId: string, externalId: string): Promise<string | null> {
-    const { rows } = await this.q.query<{ message_id: string }>("SELECT message_id FROM channel_inbound WHERE binding_id = $1 AND external_id = $2", [
-      bindingId,
-      externalId,
-    ]);
-    return rows[0]?.message_id ?? null;
-  }
-
-  async recordInbound(bindingId: string, externalId: string, messageId: string): Promise<void> {
-    await this.q.query(
-      "INSERT INTO channel_inbound (binding_id, external_id, message_id) VALUES ($1, $2, $3) ON CONFLICT (binding_id, external_id) DO NOTHING",
-      [bindingId, externalId, messageId],
-    );
-  }
-
-  /** Forget what was handled before `before`: a channel redelivers recent messages only. Returns how many rows went. */
-  async pruneInbound(before: Date): Promise<number> {
-    const { rowCount } = await this.q.query("DELETE FROM channel_inbound WHERE created_at < $1", [before]);
-    return rowCount ?? 0;
   }
 
   // Approval prompts

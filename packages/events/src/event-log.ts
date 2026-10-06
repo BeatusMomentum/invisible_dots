@@ -53,7 +53,7 @@ function matches(filter: EventFilter, event: StoredEvent): boolean {
 }
 
 /** The part of the events repository the log needs; tests can hand in an in-memory one. */
-export type EventStore = Pick<EventsRepository, "insertHost" | "list" | "tail" | "userMessage">;
+export type EventStore = Pick<EventsRepository, "insertHost" | "insertUserMessage" | "list" | "tail" | "userMessage" | "userMessageOfOrigin">;
 
 export class EventLog {
   readonly #subscribers = new Set<Subscriber>();
@@ -70,10 +70,10 @@ export class EventLog {
     return event;
   }
 
-  /** Write a user message (see USER_MESSAGE_EVENT) and publish it. */
-  async appendUserMessage(dotId: string, data: UserMessageData): Promise<StoredEvent> {
+  /** Write a user message (see USER_MESSAGE_EVENT) and publish it; null when it is a channel message already logged. */
+  async appendUserMessage(dotId: string, data: UserMessageData): Promise<StoredEvent | null> {
     const event = await this.appendUserMessageIn({ events: this.repo }, dotId, data);
-    this.publish(event);
+    if (event) this.publish(event);
     return event;
   }
 
@@ -91,13 +91,16 @@ export class EventLog {
     return tx.events.insertHost(dotId, type, data as Record<string, unknown>);
   }
 
-  /** `appendUserMessage` through the caller's transaction, published by the caller after COMMIT. */
+  /**
+   * `appendUserMessage` through the caller's transaction, published by the caller after COMMIT. A message
+   * that came through a channel is stored once per Dot, binding and channel message id: null means this one was already logged.
+   */
   async appendUserMessageIn(
-    tx: { events: Pick<EventsRepository, "insertHost"> },
+    tx: { events: Pick<EventsRepository, "insertUserMessage"> },
     dotId: string,
     data: UserMessageData,
-  ): Promise<StoredEvent> {
-    return tx.events.insertHost(dotId, USER_MESSAGE_EVENT, { ...data });
+  ): Promise<StoredEvent | null> {
+    return tx.events.insertUserMessage(dotId, { ...data });
   }
 
   /**
@@ -120,6 +123,11 @@ export class EventLog {
 
   tail(dotId: string, count: number): Promise<StoredEvent[]> {
     return this.repo.tail(dotId, count);
+  }
+
+  /** The logged `user.message` of the Dot that came through this binding as the channel's own message `externalId`, or null. */
+  userMessageOfOrigin(dotId: string, bindingId: string, externalId: string): Promise<StoredEvent | null> {
+    return this.repo.userMessageOfOrigin(dotId, bindingId, externalId);
   }
 
   /** The logged `user.message` of this message id (the `in_reply_to` of an answer), or null. */

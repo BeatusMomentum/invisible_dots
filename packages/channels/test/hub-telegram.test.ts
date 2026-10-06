@@ -124,7 +124,6 @@ describe.each(testAdapters())("the hub with the real Telegram adapter (%s)", { t
     const { dot } = await linked(w);
     const counts = async () => ({
       events: (await db.events.list({ dotId: dot.id })).length,
-      inbound: (await db.query<{ n: number }>("SELECT count(*)::int AS n FROM channel_inbound")).rows[0]!.n,
       delivered: dot.guest.inbound.length,
     });
     const before = await counts();
@@ -184,32 +183,38 @@ describe.each(testAdapters())("the hub with the real Telegram adapter (%s)", { t
     expect(bots.sent(TOKEN, 10)).toHaveLength(3);
   });
 
-  it("keeps the update when the database fails, and takes it when it works again", async () => {
+  it("hands a message to the Dot once when the failure comes after it was stored, and confirms the redelivery", async () => {
     const w = await world();
     const { hub, dot } = await linked(w);
     await hub.close();
-    // A hub whose store refuses the write: the message must stay with Telegram.
-    const broken = {
-      ...db,
-      channels: new Proxy(db.channels, {
-        get(target, property, receiver) {
-          if (property === "recordInbound") return async () => Promise.reject(new Error("the database is down"));
-          const value = Reflect.get(target, property, receiver) as unknown;
-          return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
-        },
-      }),
-    } as unknown as Database;
+    // A host that stores the message and then fails, as a lost connection or a crash after COMMIT does: the update stays with Telegram and is offered again.
+    let failed = 0;
+    const host = new Proxy(w.scheduler, {
+      get(target, property, receiver) {
+        const value = Reflect.get(target, property, receiver) as unknown;
+        if (property === "sendMessage") {
+          return async (...args: Parameters<typeof target.sendMessage>) => {
+            const answer = await target.sendMessage(...args);
+            if (failed++ === 0) throw new Error("the connection dropped after the commit");
+            return answer;
+          };
+        }
+        return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+      },
+    });
     const { ChannelHub } = await import("../src/index.js");
-    const failing = new ChannelHub({ db: broken, host: w.scheduler, types: [telegram()], backoff: { initialMs: 1, maxMs: 5, jitter: 0 } });
+    const failing = new ChannelHub({ db, host, types: [telegram()], backoff: { initialMs: 1, maxMs: 5, jitter: 0 } });
     await failing.start();
     const id = bots.say(TOKEN, "do not lose me", ANN);
-    await waitFor(() => bots.polls(TOKEN) >= 3, "the adapter to try again");
-    expect(bots.unconfirmed(TOKEN)).toContain(id);
-    await failing.close();
-
-    await w.hub(telegram());
-    await waitFor(() => bots.sent(TOKEN, 10).some((m) => m.text === "echo: do not lose me"), "the answer after the fix");
+    await waitFor(() => failed >= 2, "the redelivery to reach the host");
+    await waitFor(() => bots.sent(TOKEN, 10).some((m) => m.text === "echo: do not lose me"), "the answer");
+    await waitFor(() => !bots.unconfirmed(TOKEN).includes(id), "the update to be confirmed");
+    // Let anything still in flight land before counting: a duplicate would show here.
+    await quiet(300);
     expect((await userMessages(dot.id)).filter((e) => e.data.text === "do not lose me")).toHaveLength(1);
+    expect(bots.sent(TOKEN, 10).filter((m) => m.text === "echo: do not lose me")).toHaveLength(1);
+    expect(dot.guest.inbound.filter((e) => e.type === "user.message")).toHaveLength(1);
+    await failing.close();
   });
 
   it("reports a second poller as an error that explains itself, and recovers when it goes away", async () => {
