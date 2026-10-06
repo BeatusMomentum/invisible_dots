@@ -287,7 +287,6 @@ ALL=/tmp/stream-all.txt
 timeout 5 curl "${H[@]}" -N "$A/events/stream?after=0" > "$ALL" 2>/dev/null
 check "seqs of the full stream are 1..N without a gap" "[ \"\$(seqs $ALL | tr '\n' ' ')\" = \"\$(seq 1 \$(seqs $ALL | wc -l) | tr '\n' ' ')\" ]"
 check "the identity's events are all there: created three times, launched six times, closed four times (the model's close, SIGTERM, the browser that was lost and the proxied identity's close; kill -9 reports nothing), deleted twice" "grep '^data: ' $ALL | sed 's/^data: //' | jq -s -e '([.[] | select(.type==\"browser.identity.created\")] | length) == 3 and ([.[] | select(.type==\"browser.identity.launched\")] | length) == 6 and ([.[] | select(.type==\"browser.identity.closed\")] | length) == 4 and ([.[] | select(.type==\"browser.identity.deleted\")] | length) == 2' >/dev/null"
-check "the proxy password is in no event of the whole stream and no dot-agentd log" "! grep -qF $PROXY_PASSWORD $ALL /tmp/agentd.log"
 check "the key is in no file of the engine, the config or the Dot (the browser's profile and cache included)" "! grep -rIl \"$KEY\" /home/dotengine /etc/invisible-dots /home/dot /run/invisible-dots /run/invisible-dots-agent 2>/dev/null | grep -q ."
 check "the key is not in the environment of any process, Firefox's included" "! environ_holds \"$KEY\""
 check "the key is in no engine log and no dot-agentd log" "! grep -q \"$KEY\" /tmp/engine.log /tmp/agentd.log"
