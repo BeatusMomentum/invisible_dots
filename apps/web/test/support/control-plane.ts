@@ -176,7 +176,9 @@ export class FakeControlPlane {
     }
     const dot = /^\/api\/dots\/([^/]+)(?:\/(.*))?$/.exec(pathname);
     if (dot) {
-      const record = this.dots.find((d) => d.id === decodeURIComponent(dot[1]!));
+      // The real routes take a Dot's id or its name (requireDot).
+      const address = decodeURIComponent(dot[1]!);
+      const record = this.dots.find((d) => d.id === address) ?? this.dots.find((d) => d.name === address);
       if (!record) return json({ error: "not_found", message: "no such Dot" }, 404);
       const rest = dot[2] ?? "";
       if (rest === "") return json(record);

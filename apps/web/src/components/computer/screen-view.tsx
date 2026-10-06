@@ -33,7 +33,7 @@ export function ScreenView({ src, alt, live = false, staleAfterSeconds, lastFram
   return (
     <figure className={cn("relative overflow-hidden rounded-lg border bg-muted", className)}>
       <div className="absolute top-2 left-2 z-10 flex gap-1.5">
-        {live && !stale ? <span className="rounded bg-ok px-1.5 py-0.5 text-[0.6875rem] font-semibold tracking-wide text-white">LIVE</span> : null}
+        {live && !stale ? <span className="rounded bg-ok-soft px-1.5 py-0.5 text-[0.6875rem] font-semibold tracking-wide text-ok">LIVE</span> : null}
         {stale ? (
           <span role="status" className="rounded bg-warn-soft px-1.5 py-0.5 text-xs font-medium text-warn">
             This frame is {age}s old

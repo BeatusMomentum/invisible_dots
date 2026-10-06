@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { composerState, suggestions } from "../src/lib/chat-view";
+import { composerState, messageNote, QUEUED_NOTE, suggestions } from "../src/lib/chat-view";
 
 describe("what the composer says", () => {
   it("lets the person write to a Dot whose computer is up, and says nothing", () => {
@@ -41,5 +41,14 @@ describe("the first messages offered", () => {
   it("do not pretend to have a goal when there is none", () => {
     expect(suggestions(undefined)[2]).toBe("What do you need from me to get started?");
     expect(suggestions("   ")[2]).toBe("What do you need from me to get started?");
+  });
+});
+
+describe("the note under a message", () => {
+  it("says it is sending only until the control plane answered, and queued for the ones that wait for the computer", () => {
+    expect(messageNote(null, new Set())).toBe("Sending...");
+    expect(messageNote(7, new Set())).toBeUndefined();
+    expect(messageNote(7, new Set([7]))).toBe(QUEUED_NOTE);
+    expect(messageNote(8, new Set([7]))).toBeUndefined();
   });
 });

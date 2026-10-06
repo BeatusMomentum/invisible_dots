@@ -2,6 +2,7 @@
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CONVERSATION_LIST_LIMIT } from "@invisible-dots/shared/browser";
+import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatView } from "../src/components/chat/ChatView";
 import { DotShell } from "../src/components/DotShell";
@@ -11,12 +12,26 @@ import { stubMatchMedia, stubObjectUrls, stubResizeObserver } from "./support/br
 import { dotRecord, FakeControlPlane } from "./support/control-plane";
 
 let pathname = "/dots/d1/chat";
-vi.mock("next/navigation", () => ({ usePathname: () => pathname, useRouter: () => ({ push() {}, replace() {} }) }));
+/** Where `router.replace` was asked to go, in order; the page that renders the chat at an address follows it. */
+const replaced: string[] = [];
+let navigate: (path: string) => void = () => {};
+vi.mock("next/navigation", () => ({
+  usePathname: () => pathname,
+  useRouter: () => ({
+    push() {},
+    replace: (to: string) => {
+      replaced.push(to);
+      navigate(to);
+    },
+  }),
+}));
 
 let plane: FakeControlPlane;
 
 beforeEach(() => {
   pathname = "/dots/d1/chat";
+  replaced.length = 0;
+  navigate = () => {};
   window.localStorage.clear();
   plane = new FakeControlPlane();
   plane.dots = [dotRecord("d1", { name: "fares", config: { goal: "Watch the fares to Lisbon" } as never })];
@@ -49,6 +64,31 @@ async function renderChat() {
       </AttentionProvider>
     </EventStreamProvider>,
   );
+  await screen.findByRole("heading", { level: 1, name: "fares" });
+  await waitFor(() => expect(plane.streamOpen).toBe(true));
+  return view;
+}
+
+/** The chat as the app routes it: the address names the Dot, `router.replace` changes the address, and the Dot's page starts over at the new one. */
+async function renderChatAt(address: string) {
+  function Page() {
+    const [path, setPath] = useState(`/dots/${address}/chat`);
+    pathname = path;
+    navigate = setPath;
+    const id = decodeURIComponent(/^\/dots\/([^/]+)/.exec(path)![1]!);
+    return (
+      <EventStreamProvider>
+        <AttentionProvider>
+          <DotEventScope key={id} dotId={id}>
+            <DotShell dotId={id}>
+              <ChatView />
+            </DotShell>
+          </DotEventScope>
+        </AttentionProvider>
+      </EventStreamProvider>
+    );
+  }
+  const view = render(<Page />);
   await screen.findByRole("heading", { level: 1, name: "fares" });
   await waitFor(() => expect(plane.streamOpen).toBe(true));
   return view;
@@ -118,6 +158,31 @@ describe("the conversation", () => {
     await renderChat();
     await screen.findByText("hi");
     expect(screen.queryByText(/The first 500 messages/)).toBeNull();
+  });
+});
+
+describe("a Dot opened by its name", () => {
+  it("moves to the address that holds its id, so its live events reach the chat", async () => {
+    await renderChatAt("fares");
+    await waitFor(() => expect(replaced).toEqual(["/dots/d1/chat"]));
+    await waitFor(() => expect(requested(/^GET \/api\/dots\/d1\/messages/)).not.toEqual([]));
+    act(() => plane.push("d1", "message.assistant", { text: "the fare fell to EUR 38" }));
+    expect(await screen.findByText("the fare fell to EUR 38")).toBeTruthy();
+  });
+
+  it("keeps the tab, the query and the fragment when it moves", async () => {
+    window.history.replaceState(null, "", "/dots/fares/chat?panel=1#end");
+    try {
+      await renderChatAt("fares");
+      await waitFor(() => expect(replaced).toEqual(["/dots/d1/chat?panel=1#end"]));
+    } finally {
+      window.history.replaceState(null, "", "/");
+    }
+  });
+
+  it("does not move a Dot opened by its id", async () => {
+    await renderChat();
+    expect(replaced).toEqual([]);
   });
 });
 
@@ -312,6 +377,20 @@ describe("the composer", () => {
     expect(await screen.findByText(/Queued: the computer is waking up/)).toBeTruthy();
     act(() => plane.push("d1", "agent.state", { state: "THINKING" }));
     await waitFor(() => expect(screen.queryByText(/Queued: the computer is waking up/)).toBeNull());
+  });
+
+  it("stops saying it is sending once the control plane answered, though the cut list does not show the message", async () => {
+    for (let i = 0; i < CONVERSATION_LIST_LIMIT; i++) plane.store("d1", "message.assistant", { text: `m${i}` });
+    plane.messageLimit = CONVERSATION_LIST_LIMIT;
+    plane.delivery = "queued";
+    await renderChat();
+    await screen.findByText(/The first 500 messages of this conversation are listed/);
+    await userEvent.type(box(), "after the limit{Enter}");
+    await waitFor(() => expect(plane.sentMessages).toEqual(["after the limit"]));
+    const bubble = await screen.findByText("after the limit");
+    // Accepted and queued: the conversation list never holds it, so the note must not stay at "Sending...".
+    await waitFor(() => expect(bubble.closest("article")?.textContent).toContain("Queued: the computer is waking up"));
+    expect(screen.queryByText("Sending...")).toBeNull();
   });
 
   it("keeps a draft per Dot across a reload, and forgets it once sent", async () => {

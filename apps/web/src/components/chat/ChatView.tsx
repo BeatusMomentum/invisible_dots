@@ -5,7 +5,7 @@ import { CONVERSATION_LIST_LIMIT } from "@invisible-dots/shared/browser";
 import { useEffect, useRef, useState } from "react";
 import { isWorking } from "../../lib/agent";
 import { lastStepSinceUser } from "../../lib/chat-thread";
-import { composerState, suggestions } from "../../lib/chat-view";
+import { composerState, messageNote, suggestions } from "../../lib/chat-view";
 import { readDraft, writeDraft } from "../../lib/draft";
 import { useMinWidth } from "../../lib/use-min-width";
 import { ComputerPanel } from "../computer/ComputerPanel";
@@ -107,7 +107,7 @@ function ChatInner({ dotId }: { dotId: string }) {
           {chat.thread.map((item) => {
             switch (item.kind) {
               case "user":
-                return <UserMessage key={`m${item.id}`} text={item.message.text} at={item.message.created_at} note={chat.queued.has(item.id) ? "Queued: the computer is waking up, and the Dot answers once it is." : undefined} />;
+                return <UserMessage key={`m${item.id}`} text={item.message.text} at={item.message.created_at} note={messageNote(item.id, chat.queued)} />;
               case "assistant":
                 return <AssistantMessage key={`m${item.id}`} message={item.message} dot={who} ring={ring} firstOfGroup={item.firstOfGroup} />;
               case "activity":
@@ -119,7 +119,7 @@ function ChatInner({ dotId }: { dotId: string }) {
             }
           })}
           {chat.pending.map((p) => (
-            <UserMessage key={p.key} text={p.text} note="Sending..." />
+            <UserMessage key={p.key} text={p.text} note={messageNote(p.eventId, chat.queued)} />
           ))}
           {isWorking(live.agent) ? <WorkingRow dot={who} ring={ring} state={live.agent} last={last} /> : null}
         </ConversationContent>

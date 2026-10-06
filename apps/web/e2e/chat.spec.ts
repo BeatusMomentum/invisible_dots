@@ -232,3 +232,17 @@ test("the user's bubble and the Dot's words are readable in light and in dark", 
     await expect(page.locator(".legacy")).toHaveCount(0);
   }
 });
+
+test("a Dot opened by its name moves to its id, and the chat hears the Dot live", async ({ signedIn: page, harness }) => {
+  const dot = await harness.createDot("chat-by-name");
+  const guest = harness.driver.guestOf(dot.id);
+  await page.goto(`${harness.webUrl}/dots/chat-by-name/chat`);
+  await expect(page).toHaveURL(new RegExp(`/dots/${dot.id}/chat$`));
+  await expect(page.getByRole("heading", { level: 1, name: "chat-by-name" })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Dot sections" }).getByRole("link", { name: "Chat" })).toHaveAttribute("aria-current", "page");
+
+  guest.emit("agent.state", { state: "THINKING" });
+  await expect(page.getByRole("log").getByRole("status").filter({ hasText: "Thinking..." })).toBeVisible();
+  guest.emit("message.assistant", { text: "Heard on the id." });
+  await expect(page.getByRole("log").getByRole("article", { name: "chat-by-name" }).getByText("Heard on the id.")).toBeVisible();
+});

@@ -43,7 +43,7 @@ export function TaskDrawer({ taskId }: { taskId: string }) {
   const task = useResource(() => api.getTask(taskId), `task:${taskId}`);
   useLiveRefresh(task.reload, TASK_EVENTS);
   const { dot } = useDot();
-  // Shown only once the Dot's own id is known (the address may be its name), and only if the task is that Dot's.
+  // Shown only once the Dot's own id is known, and only if the task is that Dot's.
   const foreign = task.data !== undefined && dot.data !== undefined && task.data.dot_id !== dot.data.id;
   const record = dot.data !== undefined && !foreign ? task.data : undefined;
   const now = useNow(1000, record !== undefined && !isFinished(record.status));

@@ -38,3 +38,16 @@ export function suggestions(goal: string | undefined): string[] {
   const excerpt = text.length > GOAL_EXCERPT ? `${text.slice(0, GOAL_EXCERPT - 3).trimEnd()}...` : text;
   return ["Tell me what you will do first.", "What can you do on your computer?", excerpt ? `Start on your goal: ${excerpt}` : "What do you need from me to get started?"];
 }
+
+/** The note under a message the computer had to wake up for: the Dot answers once it is up. */
+export const QUEUED_NOTE = "Queued: the computer is waking up, and the Dot answers once it is.";
+
+/**
+ * The note under a message by the event it was stored as (null while the control plane has not answered), given the
+ * ones still queued. "Sending..." is only true until the answer: after it the message was accepted, whether or not
+ * the conversation list shows it yet (the host's list can be cut before it).
+ */
+export function messageNote(eventId: number | null, queued: ReadonlySet<number>): string | undefined {
+  if (eventId === null) return "Sending...";
+  return queued.has(eventId) ? QUEUED_NOTE : undefined;
+}
