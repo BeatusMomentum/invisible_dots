@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { isReady, notReadyCount } from "../../lib/preflight";
 import { useShell } from "../shell/attention";
 import { CheckAgainButton, CheckList } from "./CheckList";
@@ -21,9 +21,9 @@ export function SetupChecklist() {
   const items = checks.items;
   const ready = items !== null && isReady(items);
 
-  useEffect(() => {
-    if (items !== null && !isReady(items) && needed === null) setNeeded({ key: health.data?.openrouter_configured === false });
-  }, [items, needed, health.data]);
+  // Latched during the render that first sees something missing, not in an effect after it: the checklist and its key
+  // field then reach the page in the same commit, and nothing can find the one without the other.
+  if (items !== null && !ready && needed === null) setNeeded({ key: health.data?.openrouter_configured === false });
 
   if (items === null) {
     return (
