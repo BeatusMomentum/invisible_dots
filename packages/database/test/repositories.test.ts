@@ -6,6 +6,14 @@ import { createTestDatabase, testAdapters, type TestDatabase } from "../src/test
 
 const SETUP_TIMEOUT = 60_000;
 
+/** The rows of `table` with these ids, created one second apart in this order: two inserts in a row can get the same clock reading, and the order is then the ids', which are random. */
+async function createdInOrder(db: Database, table: "tasks" | "approvals", ids: readonly string[]) {
+  await db.query(
+    `UPDATE ${table} t SET created_at = TIMESTAMPTZ '2026-01-01T00:00:00Z' + o.n * INTERVAL '1 second' FROM unnest($1::text[]) WITH ORDINALITY AS o(id, n) WHERE t.id = o.id`,
+    [[...ids]],
+  );
+}
+
 const yaml = (name: string) => `name: ${name}\ngoal: test goal\nmodel:\n  provider: openrouter\n  id: test/model\n`;
 
 async function seedDot(r: Repositories, name: string) {
@@ -285,6 +293,7 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     for (let i = 0; i < TASK_LIST_LIMIT + 1; i++) {
       ids.push((await db.tasks.insert({ id: newId("task"), dotId: dot.id, description: `task ${i}`, scheduledAt: tomorrow })).id);
     }
+    await createdInOrder(db, "tasks", ids);
     const listed = await db.tasks.listByDot(dot.id);
     expect(listed).toHaveLength(TASK_LIST_LIMIT);
     expect(listed.map((t) => t.id)).not.toContain(ids[0]);
@@ -475,6 +484,7 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
       ids.push(approval_id);
       await db.approvals.insertRequested(dot.id, { approval_id, tool: "exec", permission: "computer.exec" as const, arguments: {}, reason: `ask ${i}` });
     }
+    await createdInOrder(db, "approvals", ids);
     const listed = await db.approvals.list({ dotId: dot.id });
     expect(listed).toHaveLength(APPROVAL_LIST_LIMIT);
     expect(listed.map((a) => a.id)).not.toContain(ids[APPROVAL_LIST_LIMIT]);
