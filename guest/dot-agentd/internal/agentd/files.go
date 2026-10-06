@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -89,18 +90,38 @@ func (osFS) MkdirAll(name string, perm fs.FileMode) error { return os.MkdirAll(n
 func (osFS) Rename(oldName, newName string) error         { return os.Rename(oldName, newName) }
 func (osFS) Remove(name string) error                     { return os.Remove(name) }
 
+// maxLinkHops bounds the dangling links resolveLinks follows by hand (the
+// kernel's own limit for a path is 40).
+const maxLinkHops = 40
+
 // resolveLinks is p with every symbolic link followed. The part of p that does
 // not exist yet has no link to follow and is kept as written, so a file about
-// to be created resolves like one that is there.
+// to be created resolves like one that is there. A link whose target does not
+// exist is followed all the same, to where the target would be: left alone,
+// a link out of home would look like a missing file inside it.
 func resolveLinks(p string) (string, error) {
 	var rest []string
+	hops := 0
 	for cur := p; ; {
 		real, err := filepath.EvalSymlinks(cur)
 		if err == nil {
 			return filepath.Join(append([]string{real}, rest...)...), nil
 		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", err
+		}
+		if target, err := os.Readlink(cur); err == nil {
+			if hops++; hops > maxLinkHops {
+				return "", &fs.PathError{Op: "resolve", Path: p, Err: syscall.ELOOP}
+			}
+			if !filepath.IsAbs(target) {
+				target = filepath.Join(filepath.Dir(cur), target)
+			}
+			cur = target
+			continue
+		}
 		parent := filepath.Dir(cur)
-		if !errors.Is(err, fs.ErrNotExist) || parent == cur {
+		if parent == cur {
 			return "", err
 		}
 		rest = append([]string{filepath.Base(cur)}, rest...)

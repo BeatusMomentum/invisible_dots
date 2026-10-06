@@ -494,8 +494,9 @@ describe.each(testAdapters())("the hub with the WhatsApp channel, with the real 
     const { hub, dot, connector, connection } = await linked(w);
     connection().end({ reason: "lost", detail: "Connection Closed (428)" });
     await waitFor(() => connector.connections.length === 2, "a new connection after the loss");
-    const afterLoss = (await hub.list(dot.id))[0]!;
-    expect(["error", "connecting"]).toContain(afterLoss.status);
+    // The new connection is made before the loss is written as a status (reports are applied in order, after the
+    // database write of the one before), so the status is read once it has left "connected", not when the connection is up.
+    await waitFor(async () => ["error", "connecting"].includes((await hub.list(dot.id))[0]!.status), "the loss shown as a status");
     connection().open(NUMBER);
     await waitFor(async () => (await hub.list(dot.id))[0]?.status === "connected", "connected again");
 
