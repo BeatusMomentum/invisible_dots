@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { InvisibleDotsClient } from "@invisible-dots/sdk";
 import { hostPaths } from "@invisible-dots/shared/paths";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { DELETE, GET, PATCH, POST, PUT } from "../src/app/api/[...path]/route";
 import { DELETE as signOut, POST as signIn } from "../src/app/session/route";
 import {
@@ -15,11 +15,8 @@ import {
   checkRequestOrigin,
   forwardRequestHeaders,
   forwardResponseHeaders,
-  SESSION_TTL_S,
-  endSession,
-  hasSession,
   loadApiToken,
-  startSession,
+  sessionValue,
   upstreamUrl,
 } from "../src/lib/proxy";
 
@@ -139,76 +136,6 @@ describe("header forwarding", () => {
   });
 });
 
-describe("the web session", () => {
-  const cookieOf = (id: string) => `${SESSION_COOKIE}=${id}`;
-
-  it("is a random id of its own for each sign-in, which holds nothing of the token", () => {
-    const first = startSession(TOKEN);
-    const second = startSession(TOKEN);
-    expect(first).not.toBe(second);
-    expect(first).toMatch(/^[A-Za-z0-9_-]{43}$/);
-    expect(first).not.toContain(TOKEN);
-    expect(hasSession(cookieOf(first), TOKEN)).toBe(true);
-    expect(hasSession(cookieOf(second), TOKEN)).toBe(true);
-  });
-
-  it("is not a session for an id nobody was given, an empty one, or a request with no cookie", () => {
-    expect(hasSession(cookieOf("a".repeat(43)), TOKEN)).toBe(false);
-    expect(hasSession(`${SESSION_COOKIE}=`, TOKEN)).toBe(false);
-    expect(hasSession(null, TOKEN)).toBe(false);
-    expect(hasSession("other=1", TOKEN)).toBe(false);
-  });
-
-  it("ends after its time, and the cookie says how long it lasts", async () => {
-    vi.stubEnv("INVISIBLE_DOTS_TOKEN", TOKEN);
-    const begun = Date.now();
-    const id = startSession(TOKEN, begun);
-    expect(hasSession(cookieOf(id), TOKEN, begun + SESSION_TTL_S * 1000 - 1)).toBe(true);
-    expect(hasSession(cookieOf(id), TOKEN, begun + SESSION_TTL_S * 1000)).toBe(false);
-    // Once ended it is forgotten, not only refused: it is not a session again if the clock were wrong the other way.
-    expect(hasSession(cookieOf(id), TOKEN, begun)).toBe(false);
-
-    const signedIn = await signIn(
-      new Request("http://127.0.0.1:3000/session", {
-        method: "POST",
-        headers: { host: "127.0.0.1:3000", origin: "http://127.0.0.1:3000", "content-type": "application/json" },
-        body: JSON.stringify({ token: TOKEN }),
-      }),
-    );
-    expect(signedIn.headers.get("set-cookie")).toContain(`Max-Age=${SESSION_TTL_S}`);
-    vi.unstubAllEnvs();
-  });
-
-  it("ends when the person signs out, in the server and not only in the browser: a copy of the cookie is worth nothing then", async () => {
-    const id = startSession(TOKEN);
-    const other = startSession(TOKEN);
-    expect(hasSession(cookieOf(id), TOKEN)).toBe(true);
-    const out = await signOut(new Request("http://127.0.0.1:3000/session", { method: "DELETE", headers: { host: "127.0.0.1:3000", cookie: cookieOf(id) } }));
-    expect(out.status).toBe(204);
-    expect(hasSession(cookieOf(id), TOKEN)).toBe(false);
-    // Another sign-in is another session, and signing out of one leaves it.
-    expect(hasSession(cookieOf(other), TOKEN)).toBe(true);
-    endSession(cookieOf(other));
-    expect(hasSession(cookieOf(other), TOKEN)).toBe(false);
-    // Signing out with no session, or with an unknown one, is not an error.
-    endSession(null);
-    endSession(cookieOf("unknown"));
-  });
-
-  it("ends when the API token changes", () => {
-    const id = startSession(TOKEN);
-    expect(hasSession(cookieOf(id), TOKEN)).toBe(true);
-    expect(hasSession(cookieOf(id), "a-rotated-token-0123456789")).toBe(false);
-  });
-
-  it("forgets the sessions that ended when another begins, so the server does not hold them for good", () => {
-    const old = startSession(TOKEN, Date.now() - (SESSION_TTL_S + 10) * 1000);
-    startSession(TOKEN);
-    // Asked again with a clock at which it would still be valid: it is not there any more.
-    expect(hasSession(cookieOf(old), TOKEN, Date.now() - (SESSION_TTL_S + 10) * 1000 + 1000)).toBe(false);
-  });
-});
-
 describe("proxy route against a fake API server", () => {
   let server: Server;
   let base: string;
@@ -260,7 +187,7 @@ describe("proxy route against a fake API server", () => {
   });
 
   const context = (...path: string[]) => ({ params: Promise.resolve({ path }) });
-  const signedIn = { cookie: `${SESSION_COOKIE}=${startSession(TOKEN)}` };
+  const signedIn = { cookie: `${SESSION_COOKIE}=${sessionValue(TOKEN)}` };
   const local = (path: string, init?: RequestInit) =>
     new Request(`http://127.0.0.1:3000/api/${path}`, {
       ...init,
@@ -285,7 +212,7 @@ describe("proxy route against a fake API server", () => {
       expect(((await response.json()) as { error: string }).error).toBe("login_required");
     }
     const forged = new Request("http://127.0.0.1:3000/api/approvals", {
-      headers: { host: "localhost", cookie: `${SESSION_COOKIE}=${startSession("another-token-0123456789")}` },
+      headers: { host: "localhost", cookie: `${SESSION_COOKIE}=${sessionValue("another-token-0123456789")}` },
     });
     expect((await GET(forged, context("approvals"))).status).toBe(401);
     expect(seen).toEqual([]);

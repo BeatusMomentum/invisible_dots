@@ -3,7 +3,7 @@
  * with the control plane's own paths, so the browser uses the SDK unchanged,
  * and it adds the bearer token, so the browser never sees it.
  */
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { ApiTokenError, readApiToken } from "@invisible-dots/shared/api-token";
 import { DEFAULT_LISTEN, ENV } from "@invisible-dots/shared/browser";
 import { hostPaths } from "@invisible-dots/shared/paths";
@@ -61,58 +61,18 @@ export async function loadApiToken(env: Env = process.env): Promise<string> {
  * The web server's own credential (architecture section 9.7). It holds the
  * API token and listens on the host's loopback, which every guest reaches as
  * 10.0.2.2 (section 3.6), so Host and Origin, which any client writes
- * itself, cannot be what lets a request through. The person signs in at
- * /login with the API token; each sign-in is a session of its own: a random
- * id, which is all the cookie holds (never the token, and nothing derived from
- * it that two sign-ins share), kept by this server with the time it ends. A
- * session ends after SESSION_TTL_S, when the person signs out (DELETE
- * /session drops it here, not only in the browser: a copy of the cookie, which a
- * server on another port of the same host can read, is worth nothing then), when
- * the API token changes, and when this server restarts.
+ * itself, cannot be what lets a request through. The person signs in once
+ * at /login with the API token; the cookie then holds a value derived from
+ * it, never the token itself, and changes when the token does.
  */
 export const SESSION_COOKIE = "idots_session";
-
-/** How long a sign-in lasts: a week. */
-export const SESSION_TTL_S = 7 * 24 * 60 * 60;
 
 /** Answered with 401 to a request without a valid session, so the page knows to show /login. */
 export const LOGIN_REQUIRED = "login_required";
 export const LOGIN_HEADER = "x-invisible-dots-login";
 
-/** What ties a session to the token it was made with: it is not the token, and it is another value for another token. */
-function tokenFingerprint(token: string): string {
+export function sessionValue(token: string): string {
   return createHmac("sha256", token).update("invisible-dots web session v1").digest("hex");
-}
-
-interface Session {
-  fingerprint: string;
-  /** Milliseconds since the epoch. */
-  endsAt: number;
-}
-
-/**
- * The sessions, in the process's global: the sign-in route and the proxy are separate bundles of the Next build, each
- * with its own copy of this module, and they must see the same ones.
- */
-const STORE = Symbol.for("invisible-dots.web.sessions");
-function sessions(): Map<string, Session> {
-  const holder = globalThis as unknown as { [STORE]?: Map<string, Session> };
-  return (holder[STORE] ??= new Map());
-}
-
-/** Begin a session for a person who gave `token`; the value to put in the cookie. Sessions that have ended are forgotten here. */
-export function startSession(token: string, now = Date.now()): string {
-  const all = sessions();
-  for (const [id, session] of all) if (session.endsAt <= now) all.delete(id);
-  const id = randomBytes(32).toString("base64url");
-  all.set(id, { fingerprint: tokenFingerprint(token), endsAt: now + SESSION_TTL_S * 1000 });
-  return id;
-}
-
-/** End the session the request's cookie names, if it names one. */
-export function endSession(cookieHeader: string | null): void {
-  const id = cookieValue(cookieHeader, SESSION_COOKIE);
-  if (id !== undefined) sessions().delete(id);
 }
 
 function cookieValue(cookieHeader: string | null, name: string): string | undefined {
@@ -124,31 +84,23 @@ function cookieValue(cookieHeader: string | null, name: string): string | undefi
   return undefined;
 }
 
-/** Whether the request's cookie names a session that has not ended and was made with the current `token`. */
-export function hasSession(cookieHeader: string | null, token: string, now = Date.now()): boolean {
-  const id = cookieValue(cookieHeader, SESSION_COOKIE);
-  if (id === undefined || id === "") return false;
-  const session = sessions().get(id);
-  if (session === undefined) return false;
-  if (session.endsAt <= now) {
-    sessions().delete(id);
-    return false;
-  }
-  const given = Buffer.from(session.fingerprint, "utf8");
-  const expected = Buffer.from(tokenFingerprint(token), "utf8");
+/** Whether the request's cookie holds the session of `token` (constant-time). */
+export function hasSession(cookieHeader: string | null, token: string): boolean {
+  const given = Buffer.from(cookieValue(cookieHeader, SESSION_COOKIE) ?? "", "utf8");
+  const expected = Buffer.from(sessionValue(token), "utf8");
   return given.length === expected.length && timingSafeEqual(given, expected);
 }
 
 /** Whether a token typed at /login is the API token (constant-time). */
 export function tokenMatches(given: string, token: string): boolean {
-  const a = Buffer.from(tokenFingerprint(given), "utf8");
-  const b = Buffer.from(tokenFingerprint(token), "utf8");
+  const a = Buffer.from(sessionValue(given), "utf8");
+  const b = Buffer.from(sessionValue(token), "utf8");
   return timingSafeEqual(a, b);
 }
 
-/** HttpOnly: no script reads it. SameSite=Strict: no other site's page makes the browser send it. It ends with the session. */
-export function sessionCookie(sessionId: string): string {
-  return `${SESSION_COOKIE}=${sessionId}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${SESSION_TTL_S}`;
+/** HttpOnly: no script reads it. SameSite=Strict: no other site's page makes the browser send it. */
+export function sessionCookie(token: string): string {
+  return `${SESSION_COOKIE}=${sessionValue(token)}; Path=/; HttpOnly; SameSite=Strict`;
 }
 
 export function clearedSessionCookie(): string {
