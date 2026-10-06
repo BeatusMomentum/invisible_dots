@@ -3,8 +3,6 @@ import { act, cleanup, render, screen, waitFor, within } from "@testing-library/
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AppLayout from "../src/app/(app)/layout";
-import LoginLayout from "../src/app/login/layout";
-import LoginPage from "../src/app/login/page";
 import { stubMatchMedia } from "./support/browser";
 import { approvalRecord, channelRecord, dotRecord, FakeControlPlane, taskRecord } from "./support/control-plane";
 
@@ -36,23 +34,6 @@ function renderShell() {
 }
 
 const rail = () => screen.getByRole("complementary", { name: "Navigation" });
-
-describe("the login page", () => {
-  it("has no rail and asks the API nothing, because there is no session to ask with", async () => {
-    render(
-      <LoginLayout>
-        <LoginPage />
-      </LoginLayout>,
-    );
-    expect(screen.getByRole("heading", { name: "Sign in" })).toBeTruthy();
-    expect(screen.queryByRole("navigation")).toBeNull();
-    expect(screen.queryByRole("status")).toBeNull();
-    expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
-    // Let any request an effect would start go out before looking.
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(plane.requests).toEqual([]);
-  });
-});
 
 describe("the rail", () => {
   it("lists every Dot with the ring that says what it is doing, and the approvals that wait", async () => {
@@ -193,19 +174,6 @@ describe("the rail", () => {
     expect(screen.getByRole("link", { name: "New Dot" }).getAttribute("href")).toBe("/new");
   });
 
-  it("says so, and stays signed in, when the server cannot end the session", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
-        String(input) === "/session" ? new Response(null, { status: 500 }) : plane.fetch(input, init),
-      ),
-    );
-    renderShell();
-    await userEvent.click(screen.getByRole("button", { name: "Sign out" }));
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toBe("sign-out failed (500)");
-    expect(screen.getByRole("button", { name: "Sign out" }).hasAttribute("disabled")).toBe(false);
-  });
 });
 
 describe("what the live stream changes in the rail", () => {

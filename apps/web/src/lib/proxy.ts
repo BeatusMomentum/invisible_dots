@@ -3,7 +3,6 @@
  * with the control plane's own paths, so the browser uses the SDK unchanged,
  * and it adds the bearer token, so the browser never sees it.
  */
-import { createHmac, timingSafeEqual } from "node:crypto";
 import { ApiTokenError, readApiToken } from "@invisible-dots/shared/api-token";
 import { DEFAULT_LISTEN, ENV } from "@invisible-dots/shared/browser";
 import { hostPaths } from "@invisible-dots/shared/paths";
@@ -58,63 +57,6 @@ export async function loadApiToken(env: Env = process.env): Promise<string> {
 }
 
 /**
- * The web server's own credential (architecture section 9.7). It holds the
- * API token and listens on the host's loopback, which every guest reaches as
- * 10.0.2.2 (section 3.6), so Host and Origin, which any client writes
- * itself, cannot be what lets a request through. The person signs in once
- * at /login with the API token; the cookie then holds a value derived from
- * it, never the token itself, and changes when the token does.
- */
-export const SESSION_COOKIE = "idots_session";
-
-/** Answered with 401 to a request without a valid session, so the page knows to show /login. */
-export const LOGIN_REQUIRED = "login_required";
-export const LOGIN_HEADER = "x-invisible-dots-login";
-
-export function sessionValue(token: string): string {
-  return createHmac("sha256", token).update("invisible-dots web session v1").digest("hex");
-}
-
-function cookieValue(cookieHeader: string | null, name: string): string | undefined {
-  for (const part of (cookieHeader ?? "").split(";")) {
-    const at = part.indexOf("=");
-    if (at < 0) continue;
-    if (part.slice(0, at).trim() === name) return part.slice(at + 1).trim();
-  }
-  return undefined;
-}
-
-/** Whether the request's cookie holds the session of `token` (constant-time). */
-export function hasSession(cookieHeader: string | null, token: string): boolean {
-  const given = Buffer.from(cookieValue(cookieHeader, SESSION_COOKIE) ?? "", "utf8");
-  const expected = Buffer.from(sessionValue(token), "utf8");
-  return given.length === expected.length && timingSafeEqual(given, expected);
-}
-
-/** Whether a token typed at /login is the API token (constant-time). */
-export function tokenMatches(given: string, token: string): boolean {
-  const a = Buffer.from(sessionValue(given), "utf8");
-  const b = Buffer.from(sessionValue(token), "utf8");
-  return timingSafeEqual(a, b);
-}
-
-/** HttpOnly: no script reads it. SameSite=Strict: no other site's page makes the browser send it. */
-export function sessionCookie(token: string): string {
-  return `${SESSION_COOKIE}=${sessionValue(token)}; Path=/; HttpOnly; SameSite=Strict`;
-}
-
-export function clearedSessionCookie(): string {
-  return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0`;
-}
-
-export function loginRequired(): Response {
-  return Response.json(
-    { error: LOGIN_REQUIRED, message: "sign in at /login with the API token first" },
-    { status: 401, headers: { "cache-control": "no-store", [LOGIN_HEADER]: "required" } },
-  );
-}
-
-/**
  * Map the catch-all segments of `/api/<segments>` to the upstream
  * `/api/<segments>` URL. Segments arrive decoded, so each one is re-encoded;
  * dot segments are refused because URL parsing would resolve them and let a
@@ -133,7 +75,8 @@ export function upstreamUrl(base: string, segments: readonly string[], search: s
   return `${base}/api/${path}${search}`;
 }
 
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+/** Loopback names: any 127.x.y.z (the web client listens on 127.0.0.2, section 9.7), localhost and ::1. */
+const isLoopback = (hostname: string) => hostname === "localhost" || hostname === "[::1]" || hostname === "::1" || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
 
 function hostnameOf(hostHeader: string): string {
   const value = hostHeader.trim().toLowerCase();
@@ -153,8 +96,7 @@ export interface OriginCheckInput {
 }
 
 /**
- * A defence against DNS rebinding and cross-site pages, in front of the
- * session check (which is what authenticates a request); requests from
+ * A defence against DNS rebinding and cross-site pages; requests from
  * other sites are refused:
  * - the Host header must be loopback or listed in INVISIBLE_DOTS_WEB_ALLOWED_HOSTS
  *   (a DNS rebinding page reaches 127.0.0.1 under its own host name),
@@ -169,7 +111,7 @@ export function checkRequestOrigin(input: OriginCheckInput, env: Env = process.e
     .split(",")
     .map((h) => h.trim().toLowerCase())
     .filter(Boolean);
-  if (!LOOPBACK_HOSTS.has(hostname) && !extra.includes(hostname)) {
+  if (!isLoopback(hostname) && !extra.includes(hostname)) {
     return `host "${hostname}" is not allowed; add it to ${WEB_ENV.allowedHosts}`;
   }
   if (input.secFetchSite === "cross-site") return "cross-site request refused";

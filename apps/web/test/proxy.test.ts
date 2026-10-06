@@ -7,16 +7,13 @@ import { InvisibleDotsClient } from "@invisible-dots/sdk";
 import { hostPaths } from "@invisible-dots/shared/paths";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { DELETE, GET, PATCH, POST, PUT } from "../src/app/api/[...path]/route";
-import { DELETE as signOut, POST as signIn } from "../src/app/session/route";
 import {
   ProxyError,
-  SESSION_COOKIE,
   apiBaseUrl,
   checkRequestOrigin,
   forwardRequestHeaders,
   forwardResponseHeaders,
   loadApiToken,
-  sessionValue,
   upstreamUrl,
 } from "../src/lib/proxy";
 
@@ -187,60 +184,11 @@ describe("proxy route against a fake API server", () => {
   });
 
   const context = (...path: string[]) => ({ params: Promise.resolve({ path }) });
-  const signedIn = { cookie: `${SESSION_COOKIE}=${sessionValue(TOKEN)}` };
   const local = (path: string, init?: RequestInit) =>
     new Request(`http://127.0.0.1:3000/api/${path}`, {
       ...init,
-      headers: { host: "127.0.0.1:3000", ...signedIn, ...(init?.headers as Record<string, string> | undefined) },
+      headers: { host: "127.0.0.1:3000", ...(init?.headers as Record<string, string> | undefined) },
     });
-
-  it("refuses every request without a session before contacting the API, whatever Host it names", async () => {
-    // What a guest can send to 10.0.2.2:3000 with curl: no Origin, no Sec-Fetch-Site, Host written by hand.
-    const bare = (method: string, path: string) =>
-      new Request(`http://10.0.2.2:3000/api/${path}`, { method, headers: { host: "localhost" }, ...(method === "GET" ? {} : { body: "{}" }) });
-    const attempts: [typeof GET, string, string[]][] = [
-      [GET, "GET", ["approvals"]],
-      [POST, "POST", ["approvals", "apr_x", "approve"]],
-      [PATCH, "PATCH", ["dots", "d2"]],
-      [PUT, "PUT", ["secrets", "openrouter"]],
-      [DELETE, "DELETE", ["dots", "d2"]],
-    ];
-    for (const [handler, method, path] of attempts) {
-      const response = await handler(bare(method, path.join("/")), context(...path));
-      expect(response.status, `${method} /api/${path.join("/")}`).toBe(401);
-      expect(response.headers.get("x-invisible-dots-login")).toBe("required");
-      expect(((await response.json()) as { error: string }).error).toBe("login_required");
-    }
-    const forged = new Request("http://127.0.0.1:3000/api/approvals", {
-      headers: { host: "localhost", cookie: `${SESSION_COOKIE}=${sessionValue("another-token-0123456789")}` },
-    });
-    expect((await GET(forged, context("approvals"))).status).toBe(401);
-    expect(seen).toEqual([]);
-  });
-
-  it("signs in with the API token only, as an HttpOnly SameSite=Strict cookie that never holds the token", async () => {
-    const login = (token: string) =>
-      new Request("http://127.0.0.1:3000/session", {
-        method: "POST",
-        headers: { host: "127.0.0.1:3000", origin: "http://127.0.0.1:3000", "content-type": "application/json" },
-        body: JSON.stringify({ token }),
-      });
-    expect((await signIn(login("not-the-token-at-all"))).status).toBe(401);
-    const ok = await signIn(login(TOKEN));
-    expect(ok.status).toBe(204);
-    const cookie = ok.headers.get("set-cookie") ?? "";
-    expect(cookie).toMatch(/HttpOnly/);
-    expect(cookie).toMatch(/SameSite=Strict/);
-    expect(cookie).not.toContain(TOKEN);
-    const value = /idots_session=([^;]+)/.exec(cookie)![1]!;
-    const response = await GET(
-      new Request("http://127.0.0.1:3000/api/health", { headers: { host: "127.0.0.1:3000", cookie: `${SESSION_COOKIE}=${value}` } }),
-      context("health"),
-    );
-    expect(response.status).toBe(200);
-    const out = await signOut(new Request("http://127.0.0.1:3000/session", { method: "DELETE", headers: { host: "127.0.0.1:3000" } }));
-    expect(out.headers.get("set-cookie")).toMatch(/Max-Age=0/);
-  });
 
   it("forwards a POST with the token and the JSON body", async () => {
     const response = await POST(
@@ -289,7 +237,6 @@ describe("proxy route against a fake API server", () => {
         const segments = url.pathname.replace(/^\/api\//, "").split("/").map(decodeURIComponent);
         const headers = new Headers(init?.headers);
         headers.set("host", "127.0.0.1:3000");
-        headers.set("cookie", signedIn.cookie);
         const request = new Request(url, { ...init, headers });
         const handler = handlers[request.method];
         if (!handler) throw new Error(`no handler for ${request.method}`);

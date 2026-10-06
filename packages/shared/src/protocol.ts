@@ -57,7 +57,11 @@ export const OPENROUTER_TITLE = "invisible_dots";
 
 export const DEFAULT_LISTEN = "127.0.0.1:8787";
 /** Where `invisible-dots server` serves the web client (section 9.7). */
-export const DEFAULT_WEB_LISTEN = "127.0.0.1:3000";
+/**
+ * 127.0.0.2, not 127.0.0.1: a Dot's VM reaches the host's 127.0.0.1 as 10.0.2.2 (QEMU's user network), and the web
+ * client has no login, so it listens on a loopback address no VM reaches (architecture section 9.7).
+ */
+export const DEFAULT_WEB_LISTEN = "127.0.0.2:3000";
 
 /** Environment variable names. */
 export const ENV = {

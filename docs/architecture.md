@@ -2003,7 +2003,7 @@ Errors are `{ error: <code>, message }` with a 4xx or 5xx status.
 starts it: the build `npm run build --workspace @invisible-dots/web` leaves
 (Next's standalone server and the browser files beside it, assembled by
 `apps/web/scripts/standalone.mjs`) is run with `node` as a child process of the
-server, on `INVISIBLE_DOTS_WEB_LISTEN` (default `127.0.0.1:3000`), with
+server, on `INVISIBLE_DOTS_WEB_LISTEN` (default `127.0.0.2:3000`), with
 `INVISIBLE_DOTS_URL` set to the control plane's address; the setting is read
 before anything starts, so a malformed value or port 0 (the person has to be
 told where to go) fails the command at once. The child gets an
@@ -2021,29 +2021,13 @@ the web client first, then the control plane, and a Ctrl+C while the web
 client is still starting ends that start. It answers `/api/...` with
 the control plane's own paths, so the browser uses the SDK unchanged, and
 adds the API token on the way, so the browser never sees it. It holds that
-token and listens on the host's loopback, which every guest reaches as
-`10.0.2.2` (section 3.6), so it has a credential of its own:
-
-- The person signs in once at `/login` with the API token. `POST /session`
-  compares it with the token `readApiToken()` reads (in constant time) and
-  answers with the cookie `idots_session`: an HMAC of the token, never the
-  token itself, so it changes when the token does. It is `HttpOnly` (no
-  script reads it) and `SameSite=Strict` (no other site's page makes the
-  browser send it). `DELETE /session` clears it; the rail's "Sign out"
-  button sends it and then loads `/login` afresh.
-- Every proxied request without that session answers
-  `401 { error: "login_required" }` with the header
-  `x-invisible-dots-login: required`, before the API is contacted; the page
-  then goes to `/login?next=<the page>`. `/login` is the one page that never
-  does: it is outside the route group that holds the rail (the API check
-  and the sign-out button), calls nothing, and a refusal seen from it
-  redirects nowhere, because loading it again could only meet the same
-  refusal. After signing in, `next` is followed only when it is a path of
-  this site other than `/login`.
-- The Host, Origin and `Sec-Fetch-Site` checks stay in front of it, as a
-  defence against DNS rebinding and cross-site pages only: they are written
-  by the client, so they never let a request through on their own. The Host
-  must be loopback or listed in `INVISIBLE_DOTS_WEB_ALLOWED_HOSTS`.
+token, and it has no login: it listens on `127.0.0.2:3000`
+(`INVISIBLE_DOTS_WEB_LISTEN`), a loopback address no guest reaches. QEMU's user
+network maps `10.0.2.2` to the host's `127.0.0.1` only (section 3.6), so a Dot's
+VM reaches the API on `127.0.0.1:8787`, which needs the token, and never the web
+client. The Host, Origin and `Sec-Fetch-Site` checks stay, as a defence against
+DNS rebinding and cross-site pages: the Host must be a loopback name (any
+`127.x.y.z`, `localhost`, `::1`) or listed in `INVISIBLE_DOTS_WEB_ALLOWED_HOSTS`.
 
 The pages are React with Tailwind CSS 4. `src/app/tokens.css` is the one place
 that holds a color, a radius or a typeface (a light and a dark set, each pair

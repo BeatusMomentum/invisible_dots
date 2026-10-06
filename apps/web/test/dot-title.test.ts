@@ -1,9 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SESSION_COOKIE, sessionValue } from "../src/lib/proxy";
 
 const TOKEN = "t".repeat(40);
-let cookie: string | null = null;
-vi.mock("next/headers", () => ({ headers: async () => new Headers(cookie === null ? {} : { cookie }) }));
 
 const { dotPageTitle } = await import("../src/lib/dot-title");
 
@@ -19,7 +16,6 @@ const answers = (status: number, body: unknown) =>
 
 beforeEach(() => {
   asked.length = 0;
-  cookie = `${SESSION_COOKIE}=${sessionValue(TOKEN)}`;
   vi.stubEnv("INVISIBLE_DOTS_TOKEN", TOKEN);
   vi.stubEnv("INVISIBLE_DOTS_URL", "http://api.test:7777");
 });
@@ -40,15 +36,6 @@ describe("the title of a Dot's page", () => {
     answers(200, { name: "a b" });
     await dotPageTitle("a b/../x", "Tasks");
     expect(asked[0]!.url).toBe("http://api.test:7777/api/dots/a%20b%2F..%2Fx");
-  });
-
-  it("does not ask, and does not name the Dot, for a request that is not signed in", async () => {
-    answers(200, { name: "fares" });
-    for (const value of [null, `${SESSION_COOKIE}=${sessionValue("another token")}`, "idots_session=garbage"]) {
-      cookie = value;
-      expect(await dotPageTitle("dot_1", "Chat")).toEqual({ title: "Chat" });
-    }
-    expect(asked).toEqual([]);
   });
 
   it("settles for the tab when the Dot is not found, the control plane answers badly or does not answer", async () => {

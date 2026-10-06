@@ -7,7 +7,6 @@ import { useThemePreference } from "../../lib/use-theme";
 import { cn } from "../../lib/utils";
 import { ErrorAlert } from "../ErrorAlert";
 import { useShell } from "../shell/attention";
-import { SignOutButton } from "../shell/SignOutButton";
 import { CheckAgainButton, CheckList, CheckListSkeleton } from "../setup/CheckList";
 import { KeyForm } from "../setup/KeyForm";
 import { Section } from "../setup/Section";
@@ -31,9 +30,6 @@ export function HostSettings() {
         <KeyForm />
       </Section>
       <Appearance />
-      <Section id="session" title="Session" description="This browser is signed in to the web server with the API token. Signing out ends only this browser's session.">
-        <SignOutButton variant="outline" />
-      </Section>
       <About />
     </div>
   );

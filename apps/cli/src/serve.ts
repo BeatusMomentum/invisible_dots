@@ -66,7 +66,7 @@ export async function serve(options: ServeOptions, deps: ServeDeps): Promise<voi
           signal: starting.signal,
           onUnexpectedExit: (message) => logger.warn(`${message}; the control plane keeps running`),
         });
-        logger.info(`web client at ${started.url}; sign in with the API token`);
+        logger.info(`web client at ${started.url}`);
         return started;
       } catch (error) {
         if (!starting.signal.aborted) logger.warn(`web client not started: ${(error as Error).message}; the control plane keeps running`);

@@ -16,7 +16,6 @@ import { Skeleton } from "../ui/skeleton";
 import { ApiStatus } from "./ApiStatus";
 import { useShell } from "./attention";
 import { DotAvatar } from "./DotAvatar";
-import { SignOutButton } from "./SignOutButton";
 import { ThemeToggle } from "./ThemeToggle";
 
 /** Where a Dot is created. */
@@ -49,7 +48,7 @@ function CountBadge({ count, label }: { count: number; label: string }) {
 
 /**
  * The rail (S1): the brand, a way to make a Dot, the pages, every Dot with its avatar ring, and at the foot the
- * state of the API and the live stream, the theme and sign out. `onNavigate` lets a sheet close itself on a click.
+ * state of the API and the live stream and the theme. `onNavigate` lets a sheet close itself on a click.
  */
 export function Rail({ onNavigate }: { onNavigate?: () => void }) {
   const path = usePathname() ?? "/";
@@ -145,7 +144,6 @@ export function Rail({ onNavigate }: { onNavigate?: () => void }) {
         </div>
         <div className="flex items-center gap-1">
           <ThemeToggle />
-          <SignOutButton />
         </div>
       </div>
     </div>

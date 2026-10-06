@@ -169,21 +169,12 @@ node apps/cli/dist/invisible-dots.mjs server
 ```
 
 It runs in the foreground until Ctrl+C, and serves the web client too. Open
-http://127.0.0.1:3000 and sign in with the first line of the API token file,
-which these print (the server creates the file the first time it starts):
-
-```bash
-head -1 ~/.invisible-dots/config/api.token
-```
-
-```powershell
-Get-Content $HOME\.invisible-dots\config\api.token -TotalCount 1
-```
+http://127.0.0.2:3000: there is no login. The web client listens on 127.0.0.2,
+a loopback address of your PC that no Dot's VM reaches (a VM reaches only
+127.0.0.1, as 10.0.2.2), and adds the API token to each API call itself.
 
 On a computer that is ready except for the key, Home shows a field for your
-OpenRouter key; then Create a Dot makes the first Dot. After sign-in the
-browser holds only an HttpOnly session cookie derived from the token, and the
-web server adds the token to each API call itself. The web client is a
+OpenRouter key; then Create a Dot makes the first Dot. The web client is a
 companion: if it was not built or its port is taken, the server says why and
 the API and the command line carry on (`server --no-web` leaves it out).
 
@@ -239,7 +230,7 @@ administrator rights and the other takes long). The checklist checks again when
 you return to the window and stays on the page, turned green, once the last
 thing is done; a computer that is ready shows none of it. The Settings page
 (in the left rail) shows the same checks, takes a new key (and pushes it to the
-Dots that are running), and has the theme and Sign out.
+Dots that are running), and has the theme.
 
 **Create a Dot.** The Create a Dot page is a form in three steps (Identity,
 Brain, Computer and safety) or the same configuration as YAML, and it refuses
@@ -421,7 +412,9 @@ What protects you:
   and they come from the Ubuntu archive.
 - The channel between host and guest goes one way: the host calls the guest
   on a loopback port, with the Dot's token, and only after the guest proves it
-  holds that token. The API needs a bearer token; the web UI a session.
+  holds that token. The API needs a bearer token (the command line reads it
+  from `config/api.token` itself); the web UI needs none and listens on
+  127.0.0.2, which no Dot's VM reaches.
 - Files the host shows from a Dot come only from `/home/dot`, at most 16 MiB,
   never served as a type a browser would run.
 - The proxy of an identity, when it has one, is not shown by the host: an
@@ -579,7 +572,7 @@ desktop; Telegram and WhatsApp reach the scheduler through the channel hub.
 ```mermaid
 flowchart LR
   subgraph PC["Your PC: one invisible-dots server process"]
-    WEB["Web UI<br/>127.0.0.1:3000"]
+    WEB["Web UI<br/>127.0.0.2:3000"]
     CLI["CLI"]
     API["HTTP API and SSE<br/>127.0.0.1:8787"]
     SCH["Scheduler<br/>queue, outbox, approvals, sleep and wake"]
@@ -661,7 +654,7 @@ so it is kept private to your user.
 | `INVISIBLE_DOTS_LISTEN` | `127.0.0.1:8787` | where the server's API listens |
 | `INVISIBLE_DOTS_URL` | `http://127.0.0.1:8787` | where the CLI finds the server |
 | `INVISIBLE_DOTS_TOKEN` | first line of `config/api.token` | the API token, instead of the file |
-| `INVISIBLE_DOTS_WEB_LISTEN` | `127.0.0.1:3000` | where the web client listens |
+| `INVISIBLE_DOTS_WEB_LISTEN` | `127.0.0.2:3000` | where the web client listens; keep it off 127.0.0.1, which every Dot's VM reaches |
 | `INVISIBLE_DOTS_WEB_ALLOWED_HOSTS` | loopback only | other host names the web client answers to |
 | `INVISIBLE_DOTS_QEMU_DIR` | official installer's folder, then `PATH` | the one folder QEMU is looked for in |
 | `INVISIBLE_DOTS_WHATSAPP` | off | `1` offers the WhatsApp channel (after `npm run whatsapp:install`) |
@@ -683,9 +676,8 @@ so it is kept private to your user.
 - What a Dot did and why it stopped: `invisible-dots logs <dot>` and
   `invisible-dots tasks <dot>`, or the Dot's Activity tab in the web UI.
 - The web UI does not open: `invisible-dots server` says why it did not start
-  it (not built, port taken) in its output; build it as in step 1.
-  A sign-in that is refused wants the first line of `config/api.token`, nothing
-  else.
+  it (not built, port taken) in its output; build it as in step 1. Its
+  address is http://127.0.0.2:3000, not 127.0.0.1.
 
 ## Updating and uninstalling
 
