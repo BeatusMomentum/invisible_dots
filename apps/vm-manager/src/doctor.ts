@@ -13,7 +13,7 @@
 import { ENV, type DoctorAnswer, type DoctorCheck, type DoctorCheckId, type DoctorStatus } from "@invisible-dots/shared";
 import { SETUP_COMMAND, STORE_OPENROUTER_KEY } from "./errors.js";
 import { isSupportedQemuVersion, MIN_QEMU_VERSION_TEXT, parseQemuVersion, type Accelerator, type QemuVersion } from "./host.js";
-import { qemuPathProblem } from "./qemu-args.js";
+import { CPU_MODEL, qemuPathProblem } from "./qemu-args.js";
 import { firstLine, type RunOptions, type RunResult } from "./runner.js";
 
 /** `npm run build --workspace @invisible-dots/web`: what leaves the web client where `invisible-dots server` serves it from. */
@@ -101,7 +101,7 @@ export function acceleratorProbeArgs(accelerator: Accelerator): string[] {
     "-accel",
     accelerator,
     "-cpu",
-    "host",
+    CPU_MODEL,
     "-display",
     "none",
     "-no-reboot",
@@ -187,7 +187,7 @@ async function probeAccelerator(deps: DoctorDeps, qemu: DoctorCheck, access: Doc
     return result("accelerator-probe", label, qemu.status, `not run: QEMU is not ready`, qemu.fix);
   }
   const accelerator = deps.accelerator();
-  const command = `qemu-system-x86_64 -accel ${accelerator} -cpu host -machine q35`;
+  const command = `qemu-system-x86_64 -accel ${accelerator} -cpu ${CPU_MODEL} -machine q35`;
   const answer = await deps.run(system, acceleratorProbeArgs(accelerator), { timeoutMs: PROBE_TIMEOUT_MS });
   if (answer.code === 0 && !answer.timedOut) return result("accelerator-probe", label, "ok", `${command} ran the firmware and exited`);
   const why = answer.timedOut

@@ -57,7 +57,7 @@
  *
  * Errors name their fix: QemuNotFoundError and AcceleratorUnavailableError
  * point at "invisible-dots setup" and "invisible-dots doctor"; CpuModelError
- * is QEMU refusing -cpu host; VmStartError carries QEMU's own output (and the
+ * is QEMU refusing the Dots' CPU model (CPU_MODEL); VmStartError carries QEMU's own output (and the
  * serial console when the guest never came up); VmStateError is an operation
  * the VM's current state does not allow.
  *

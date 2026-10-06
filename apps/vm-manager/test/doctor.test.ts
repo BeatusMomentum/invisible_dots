@@ -33,11 +33,11 @@ describe("doctor checks", () => {
     const probe = calls.find((c) => c.args.includes("-accel"))!;
     expect(probe.command).toBe(QEMU);
     expect(probe.args).toEqual([
-      "-nodefaults", "-no-user-config", "-machine", "q35", "-accel", "whpx", "-cpu", "host",
+      "-nodefaults", "-no-user-config", "-machine", "q35", "-accel", "whpx", "-cpu", "host,-vmx,-svm",
       "-display", "none", "-no-reboot", "-boot", "reboot-timeout=0",
     ]); // prettier-ignore
     expect(probe.options).toEqual({ timeoutMs: PROBE_TIMEOUT_MS });
-    expect(find(results, "accelerator-probe").detail).toBe("qemu-system-x86_64 -accel whpx -cpu host -machine q35 ran the firmware and exited");
+    expect(find(results, "accelerator-probe").detail).toBe("qemu-system-x86_64 -accel whpx -cpu host,-vmx,-svm -machine q35 ran the firmware and exited");
     expect(acceleratorProbeArgs("kvm")).toContain("kvm");
   });
 
@@ -98,7 +98,7 @@ describe("doctor checks", () => {
       id: "accelerator-probe",
       label: "accelerator probe",
       status: "failed",
-      detail: "qemu-system-x86_64 -accel kvm -cpu host -machine q35 failed: qemu-system-x86_64: -accel kvm: Could not access KVM kernel module: Permission denied",
+      detail: "qemu-system-x86_64 -accel kvm -cpu host,-vmx,-svm -machine q35 failed: qemu-system-x86_64: -accel kvm: Could not access KVM kernel module: Permission denied",
       fix: "sudo usermod -aG kvm $USER",
     });
     expect(calls).toHaveLength(2);
@@ -126,7 +126,7 @@ describe("doctor checks", () => {
       args.includes("-accel") ? answer({ code: null, signal: "SIGKILL", timedOut: true }) : versions(command, args, options);
     expect(find(await runDoctor(hanging.deps), "accelerator-probe")).toMatchObject({
       status: "failed",
-      detail: "qemu-system-x86_64 -accel kvm -cpu host -machine q35 failed: did not exit within 30 s, so the virtual CPU does not run",
+      detail: "qemu-system-x86_64 -accel kvm -cpu host,-vmx,-svm -machine q35 failed: did not exit within 30 s, so the virtual CPU does not run",
       fix: "enable hardware virtualization (Intel VT-x or AMD-V) in the firmware settings; after enabling the accelerator, restart the computer",
     });
 
@@ -135,7 +135,7 @@ describe("doctor checks", () => {
     paused.deps.run = async (command, args, options) =>
       args.includes("-accel") ? answer({ code: null, signal: "SIGKILL", timedOut: true, stderr: "WHPX: Unexpected VP exit code 4\n" }) : versions(command, args, options);
     expect(find(await runDoctor(paused.deps), "accelerator-probe").detail).toBe(
-      "qemu-system-x86_64 -accel kvm -cpu host -machine q35 failed: did not exit within 30 s, so the virtual CPU does not run (QEMU said: WHPX: Unexpected VP exit code 4)",
+      "qemu-system-x86_64 -accel kvm -cpu host,-vmx,-svm -machine q35 failed: did not exit within 30 s, so the virtual CPU does not run (QEMU said: WHPX: Unexpected VP exit code 4)",
     );
   });
 

@@ -115,15 +115,16 @@ export class AcceleratorUnavailableError extends Error {
 }
 
 /**
- * The accelerator does not run `-cpu host`. Section 3.4 forbids replacing it
- * with a guessed CPU model, so this is an error to report, not to work around.
+ * The accelerator does not run the Dots' CPU model (`CPU_MODEL`, section
+ * 3.4). Section 3.4 forbids replacing it with a guessed one, so this is an
+ * error to report, not to work around.
  */
 export class CpuModelError extends Error {
   readonly accelerator: string;
   readonly qemuOutput: string;
-  constructor(accelerator: string, qemuOutput: string) {
+  constructor(accelerator: string, cpuModel: string, qemuOutput: string) {
     super(
-      `QEMU rejected "-cpu host" with the ${accelerator} accelerator. invisible_dots does not substitute another CPU model ` +
+      `QEMU rejected "-cpu ${cpuModel}" with the ${accelerator} accelerator. invisible_dots does not substitute another CPU model ` +
         `(architecture section 3.4); run "${DOCTOR_COMMAND}". QEMU said: ${qemuOutput.trim() || "nothing"}`,
     );
     this.name = "CpuModelError";

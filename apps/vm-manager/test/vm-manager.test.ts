@@ -200,10 +200,12 @@ describe("start", () => {
     expect(existsSync(paths.processFilePath(DOT))).toBe(false);
   });
 
-  it("reports -cpu host refused even when QEMU set up its forward first, without trying another model", async () => {
+  it("reports the CPU model refused even when QEMU set up its forward first, without trying another model", async () => {
     host.behaviour = () => ({ kind: "exitAfterForward", code: 1, output: "qemu-system-x86_64: CPU model 'host' requires KVM or HVF\n" });
     const settling = makeManager({ startSettleMs: 100, sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)) });
-    await expect(settling.start(spec)).rejects.toBeInstanceOf(CpuModelError);
+    const error = await settling.start(spec).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(CpuModelError);
+    expect((error as Error).message).toContain('"-cpu host,-vmx,-svm"');
     expect(host.spawned).toHaveLength(1);
     expect((await settling.state(DOT)).state).toBe("STOPPED");
   });

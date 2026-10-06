@@ -42,7 +42,7 @@ import { GuestClient, waitForGuestHealth, type GuestClientOptions, type WaitForG
 import { accelerator as hostAccelerator, findQemu, type Accelerator, type QemuInstallation } from "./host.js";
 import { stderrLogger, type Logger } from "./logger.js";
 import { pickFreePort, portListens } from "./ports.js";
-import { qemuArgs, qemuPathArg } from "./qemu-args.js";
+import { CPU_MODEL, qemuArgs, qemuPathArg } from "./qemu-args.js";
 import {
   fileSize,
   NodeCommandRunner,
@@ -157,7 +157,7 @@ export interface VmManagerOptions {
   startTimeoutMs?: number;
   /**
    * Once the forward is up, QEMU must still be running this much later: it
-   * builds the machine (and checks -cpu host) after it sets up networking,
+   * builds the machine (and checks the CPU model) after it sets up networking,
    * so a refused CPU model ends the process just after the port listens.
    * Default 1 s.
    */
@@ -687,7 +687,7 @@ export class VmManager {
   }
 
   private startFailure(dotId: string, accel: Accelerator, output: string, exit: ProcessExit): Error {
-    if (CPU_MODEL_FAILURES.some((pattern) => pattern.test(output))) return new CpuModelError(accel, output);
+    if (CPU_MODEL_FAILURES.some((pattern) => pattern.test(output))) return new CpuModelError(accel, CPU_MODEL, output);
     if (ACCELERATOR_FAILURES.some((pattern) => pattern.test(output))) return new AcceleratorUnavailableError(accel, output);
     const how = exit.signal ? `was killed by ${exit.signal}` : exit.code === null ? "exited" : `exited with code ${exit.code}`;
     return new VmStartError(dotId, `QEMU ${how} during start`, output);
