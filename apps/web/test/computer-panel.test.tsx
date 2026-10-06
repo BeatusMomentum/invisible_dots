@@ -7,7 +7,7 @@ import { ComputerPanel } from "../src/components/computer/ComputerPanel";
 import { frameAgeSeconds, ScreenView } from "../src/components/computer/screen-view";
 import { DotEventScope, EventStreamProvider } from "../src/components/events";
 import { ApiError } from "../src/lib/api";
-import { computerIsUp, frameProblem } from "../src/lib/computer";
+import { frameProblem } from "../src/lib/computer";
 import { stubObjectUrls } from "./support/browser";
 import { dotRecord, FakeControlPlane } from "./support/control-plane";
 
@@ -44,14 +44,6 @@ async function renderPanel(computerState: string | null = "RUNNING") {
   await waitFor(() => expect(plane.streamOpen).toBe(true));
   return view;
 }
-
-describe("which computer states have a picture", () => {
-  it("are the two in which the guest answers", () => {
-    expect(computerIsUp("RUNNING")).toBe(true);
-    expect(computerIsUp("IDLE")).toBe(true);
-    for (const state of ["STOPPED", "STARTING", "PROVISIONING", "STOPPING", "ERROR", "DELETING", null]) expect(computerIsUp(state), String(state)).toBe(false);
-  });
-});
 
 describe("what a failed picture means", () => {
   it("is a closed browser, a busy one, a stopped computer, or the message itself", () => {
@@ -94,6 +86,12 @@ describe("the computer panel", () => {
   it("says the computer is stopped and asks nothing of it", async () => {
     await renderPanel("STOPPED");
     expect(screen.getByText(/The computer is stopped/)).toBeTruthy();
+    expect(requested(/screenshot|browser-identities/)).toEqual([]);
+  });
+
+  it("asks nothing of an IDLE computer either: the host answers its guest routes only while the computer is RUNNING", async () => {
+    await renderPanel("IDLE");
+    expect(screen.getByText(/The computer is idle/)).toBeTruthy();
     expect(requested(/screenshot|browser-identities/)).toEqual([]);
   });
 

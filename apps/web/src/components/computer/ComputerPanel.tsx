@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { computerIsUp, IDENTITY_EVENT_TYPES } from "@invisible-dots/shared/browser";
 import { api } from "../../lib/api";
-import { computerIsUp, IDENTITY_EVENTS } from "../../lib/computer";
 import { useLiveRefresh } from "../events";
 import { ErrorBox, useResource } from "../ui";
 import { Button } from "../ui/button";
@@ -16,7 +16,7 @@ import { FrameView, type Source } from "./frame-view";
 export function ComputerPanel({ dotId, computerState }: { dotId: string; computerState: string | null }) {
   const up = computerIsUp(computerState);
   const identities = useResource(() => (up ? api.listIdentities(dotId) : Promise.resolve([])), `panel-identities:${dotId}:${up}`);
-  useLiveRefresh(identities.reload, IDENTITY_EVENTS);
+  useLiveRefresh(identities.reload, IDENTITY_EVENT_TYPES);
   const [source, setSource] = useState<Source>({ kind: "screen" });
 
   const open = (identities.data ?? []).filter((identity) => identity.status === "open");

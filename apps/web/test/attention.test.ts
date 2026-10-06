@@ -69,7 +69,8 @@ describe("the avatar ring", () => {
     expect(ring({ computerState: null })).toBe("stopped");
     expect(ring({ status: "DISABLED", computerState: "STOPPED" })).toBe("stopped");
     expect(ring({})).toBe("ready");
-    expect(ring({ computerState: "IDLE", agentState: "IDLE" })).toBe("ready");
+    // The host's guest routes answer only a RUNNING computer, so an IDLE one is not up.
+    expect(ring({ computerState: "IDLE", agentState: "IDLE" })).toBe("stopped");
   });
 
   it("breathes while the agent thinks, plans or runs a tool, and while the computer changes state", () => {

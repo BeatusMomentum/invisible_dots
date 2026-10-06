@@ -84,13 +84,15 @@ interface Call {
 interface Answer {
   status: number;
   body: Buffer;
+  /** The media type of the answer, without parameters, lower case; "" when it sent none. */
+  contentType: string;
 }
 
 function filesQuery(path: string): string {
   return `?path=${encodeURIComponent(path)}`;
 }
 
-function parseError(route: string, answer: Answer): GuestRequestError {
+function parseError(route: string, answer: Pick<Answer, "status" | "body">): GuestRequestError {
   const text = answer.body.toString("utf8");
   try {
     const parsed = JSON.parse(text) as { error?: unknown; message?: unknown };
@@ -220,7 +222,7 @@ export class GuestClient {
           chunks.push(chunk);
         });
         res.on("error", (error) => finish(new GuestRequestError(route, 0, `answer interrupted: ${error.message}`)));
-        res.on("end", () => finish(undefined, { status: res.statusCode ?? 0, body: Buffer.concat(chunks) }));
+        res.on("end", () => finish(undefined, { status: res.statusCode ?? 0, body: Buffer.concat(chunks), contentType: String(res.headers["content-type"] ?? "").split(";")[0]!.trim().toLowerCase() }));
       });
       req.on("error", (error: NodeJS.ErrnoException) => {
         const hint = error.code === "ECONNREFUSED" ? " (nothing listens on the guest port: is the VM running?)" : "";
@@ -334,9 +336,18 @@ export class GuestClient {
     return this.noContent({ method: "DELETE", path: this.agentPath(AGENT_ROUTES.browserIdentity(id)) });
   }
 
-  /** JPEG bytes of the open identity's window. */
+  /**
+   * JPEG bytes of the open identity's window. The route's contract is a JPEG (architecture section 5.3) and the host
+   * labels the bytes `image/jpeg` all the way to the browser, so any other media type is refused here, as a failed
+   * frame, and not served mislabelled.
+   */
   async getBrowserIdentityFrame(id: string): Promise<Buffer> {
-    return (await this.send({ path: this.agentPath(AGENT_ROUTES.browserIdentityFrame(id)) })).body;
+    const route = `GET ${this.agentPath(AGENT_ROUTES.browserIdentityFrame(id))}`;
+    const answer = await this.send({ path: this.agentPath(AGENT_ROUTES.browserIdentityFrame(id)) });
+    if (answer.contentType !== "image/jpeg") {
+      throw new GuestRequestError(route, 502, `the frame of browser identity "${id}" is ${answer.contentType || "of no media type"}, not image/jpeg`, "frame_failed");
+    }
+    return answer.body;
   }
 
   closeBrowserIdentity(id: string): Promise<void> {

@@ -24,17 +24,24 @@ import { Conversation, ConversationContent, ConversationEmptyState, Conversation
 import { AssistantMessage, UserMessage } from "./message";
 import { WorkingRow } from "./working-row";
 
-/** The message the person has typed and not sent, kept per Dot. */
-function useDraft(dotId: string): [string, (text: string) => void] {
+/**
+ * The message the person has typed and not sent, kept per Dot. `restore` puts a message that was refused back in
+ * front of whatever has been typed since, so that nothing of either is lost.
+ */
+function useDraft(dotId: string): [string, (text: string) => void, (text: string) => void] {
   const [text, setText] = useState("");
-  useEffect(() => setText(readDraft(dotId)), [dotId]);
-  return [
-    text,
-    (next) => {
-      setText(next);
-      writeDraft(dotId, next);
-    },
-  ];
+  const latest = useRef("");
+  const set = (next: string) => {
+    latest.current = next;
+    setText(next);
+    writeDraft(dotId, next);
+  };
+  useEffect(() => {
+    const stored = readDraft(dotId);
+    latest.current = stored;
+    setText(stored);
+  }, [dotId]);
+  return [text, set, (refused) => set(latest.current === "" ? refused : `${refused}\n${latest.current}`)];
 }
 
 function ChatInner({ dotId }: { dotId: string }) {
@@ -45,7 +52,7 @@ function ChatInner({ dotId }: { dotId: string }) {
   const ring = useDotRing(dotId, record);
   const panel = usePanel();
   const wide = useMinWidth(PANEL_WIDE_PX);
-  const [draft, setDraft] = useDraft(dotId);
+  const [draft, setDraft, restoreDraft] = useDraft(dotId);
   const input = useRef<HTMLTextAreaElement>(null);
   const [sendError, setSendError] = useState<unknown>(null);
 
@@ -60,7 +67,7 @@ function ChatInner({ dotId }: { dotId: string }) {
     const failure = await chat.send(text);
     if (failure !== null) {
       // Nothing was lost: the text goes back into the box to be sent again.
-      setDraft(text);
+      restoreDraft(text);
       setSendError(failure);
     }
   }

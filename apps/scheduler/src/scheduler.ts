@@ -21,6 +21,8 @@ import type {
 import {
   checkHomePath,
   checkOpenRouterKey,
+  COMPUTER_STOPPED,
+  computerIsUp,
   computerResources,
   CONVERSATION_LIST_LIMIT,
   DotConfigError,
@@ -538,8 +540,8 @@ export class Scheduler {
 
   async rebootComputer(idOrName: string): Promise<AcceptedAnswer> {
     const dot = await this.requireDot(idOrName);
-    if (dot.computer_state !== "RUNNING") {
-      throw new ControlPlaneError(409, "computer_stopped", `the computer is ${dot.computer_state ?? "missing"}`);
+    if (!computerIsUp(dot.computer_state)) {
+      throw new ControlPlaneError(409, COMPUTER_STOPPED, `the computer is ${dot.computer_state ?? "missing"}`);
     }
     this.#runInBackground("reboot", dot.id, () => this.lifecycle.reboot(dot.id));
     return { accepted: true };
@@ -548,10 +550,10 @@ export class Scheduler {
   /** A guest for a Dot whose computer is running; 409 computer_stopped otherwise (section 9.6). */
   async #runningGuest(idOrName: string): Promise<{ dotId: string; guest: GuestApi }> {
     const dot = await this.requireDot(idOrName);
-    if (dot.computer_state !== "RUNNING") {
+    if (!computerIsUp(dot.computer_state)) {
       throw new ControlPlaneError(
         409,
-        "computer_stopped",
+        COMPUTER_STOPPED,
         `the computer of Dot ${dot.name} is ${dot.computer_state ?? "missing"}; start it first`,
       );
     }

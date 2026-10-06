@@ -14,6 +14,8 @@
 import type { Database } from "@invisible-dots/database";
 import type { EventLog } from "@invisible-dots/events";
 import {
+  COMPUTER_STOPPED,
+  computerIsUp,
   computerResources,
   toRuntimeConfig,
   type DotState,
@@ -135,7 +137,7 @@ export class Lifecycle {
     const computer = await this.#db.computers.get(dotId);
     if (!computer) throw new ControlPlaneError(404, "not_found", `Dot ${dotId} has no computer`);
     if (computer.guest_port === null) {
-      throw new ControlPlaneError(409, "computer_stopped", `the computer of Dot ${dotId} is ${computer.state}, it has no guest port`);
+      throw new ControlPlaneError(409, COMPUTER_STOPPED, `the computer of Dot ${dotId} is ${computer.state}, it has no guest port`);
     }
     return this.#driver.guest({ dotId, port: computer.guest_port }, await this.#db.computers.token(dotId));
   }
@@ -431,8 +433,8 @@ export class Lifecycle {
     return this.#mutex.run(dotId, async () => {
       const computer = await this.#db.computers.get(dotId);
       if (!computer) throw new ControlPlaneError(404, "not_found", `Dot ${dotId} has no computer`);
-      if (computer.state !== "RUNNING") {
-        throw new ControlPlaneError(409, "computer_stopped", `Dot ${dotId} cannot be rebooted while ${computer.state}`);
+      if (!computerIsUp(computer.state)) {
+        throw new ControlPlaneError(409, COMPUTER_STOPPED, `Dot ${dotId} cannot be rebooted while ${computer.state}`);
       }
       const spec = await this.#spec(dotId);
       if (!spec.goldenImage) {

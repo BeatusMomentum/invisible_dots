@@ -22,6 +22,19 @@ export const VM_STATES = [
 ] as const;
 export type VmState = (typeof VM_STATES)[number];
 
+/**
+ * Whether the guest of a computer in this state answers: only a RUNNING computer does. The host's routes that reach
+ * into the guest (screenshot, files, browser identities, tools, reboot) refuse every other state with 409
+ * `computer_stopped`, and the UI draws pictures and lists only when this says so. The host stores no IDLE VM state
+ * today; if it ever does, this is the one place to say whether an IDLE computer answers.
+ * `COMPUTER_STOPPED` is the code of that refusal.
+ */
+export const COMPUTER_STOPPED = "computer_stopped";
+
+export function computerIsUp(state: string | null | undefined): state is "RUNNING" {
+  return state === "RUNNING";
+}
+
 /** Dot states, stored in `dots.status` (section 9.3). */
 export const DOT_STATES = [
   "CREATING",

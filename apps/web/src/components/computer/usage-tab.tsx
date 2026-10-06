@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertCircleIcon, PlayIcon, RefreshCwIcon, RotateCwIcon, SquareIcon } from "lucide-react";
+import { computerIsUp } from "@invisible-dots/shared/browser";
 import type { ReactNode } from "react";
 import { api } from "../../lib/api";
 import { allowedActions, computerView, taskRunning, type Usage } from "../../lib/computer";
@@ -95,7 +96,7 @@ export function UsageTab() {
 
   const view = computerView(computer.data ?? null, dot.data?.config ?? null);
   const allowed = allowedActions(view.state);
-  const up = view.state === "RUNNING" || view.state === "IDLE";
+  const up = computerIsUp(view.state);
   const idle = view.allocated.idleTimeout;
 
   return (

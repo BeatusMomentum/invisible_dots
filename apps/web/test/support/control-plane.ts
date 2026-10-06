@@ -3,7 +3,7 @@
  * sends, answered from memory, and `/api/stream` as a live SSE body the test pushes events into. `install()` puts
  * it behind the global `fetch`, which is where the web client's SDK looks.
  */
-import { MAX_EVENT_PAGE, type ApprovalRecord, type BrowserIdentity, type ComputerAnswer, type DoctorCheck, type DotConfig, type DotSummary, type StoredEvent, type SystemAnswer, type ToolInfo } from "@invisible-dots/shared/browser";
+import { COMPUTER_STOPPED, computerIsUp, MAX_EVENT_PAGE, type ApprovalRecord, type BrowserIdentity, type ComputerAnswer, type DoctorCheck, type DotConfig, type DotSummary, type StoredEvent, type SystemAnswer, type ToolInfo } from "@invisible-dots/shared/browser";
 import type { TaskRecord } from "@invisible-dots/sdk";
 import { vi } from "vitest";
 
@@ -363,14 +363,14 @@ export class FakeControlPlane {
           state,
           last_error: this.computerLastError,
           ready: this.ready,
-          system: state === "RUNNING" || state === "IDLE" ? this.system : null,
+          system: computerIsUp(state) ? this.system : null,
           last_active_at: "2026-03-10T12:00:00Z",
           ...this.computerImages,
         };
         return json(answer);
       }
       if (rest === "files/list" || rest === "files") {
-        if (record.computer_state !== "RUNNING" && record.computer_state !== "IDLE") return json({ error: "computer_stopped", message: `the computer is ${record.computer_state}` }, 409);
+        if (!computerIsUp(record.computer_state)) return json({ error: COMPUTER_STOPPED, message: `the computer is ${record.computer_state}` }, 409);
         if (this.failFiles) return json({ error: this.failFiles.error, message: this.failFiles.message }, this.failFiles.status);
         const asked = searchParams.get("path") ?? "";
         const path = asked === "" || asked === "~" ? "/home/dot" : asked.startsWith("/") ? asked.replace(/\/+$/, "") : `/home/dot/${asked.replace(/\/+$/, "")}`;

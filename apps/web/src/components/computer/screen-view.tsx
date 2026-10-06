@@ -1,4 +1,4 @@
-// Derived from open-cowork packages/ui/src/components/ScreenView.tsx at fbbc671, MIT; changed: Tailwind classes of this app's tokens in place of the oc-* classes, the frame is an image URL (an object URL of the bytes the API returned) and not base64, the stale warning says how old the frame is, and a caption names what is shown. No asset of open-cowork is used.
+// Derived from open-cowork packages/ui/src/components/ScreenView.tsx at fbbc671, MIT; changed: Tailwind classes of this app's tokens in place of the oc-* classes, the frame is an image URL (an object URL of the bytes the API returned) and not base64, the stale warning says how old the frame is, and the image's alt text names what is shown. No asset of open-cowork is used.
 
 import { cn } from "../../lib/utils";
 

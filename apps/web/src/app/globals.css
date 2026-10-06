@@ -108,6 +108,13 @@
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   animation: shimmer 2.2s linear infinite;
+
+  /* Forced colors (Windows High Contrast) drop the gradient but keep a transparent fill: the label would vanish. It is drawn in the system text color, still. */
+  @media (forced-colors: active) {
+    background-image: none;
+    -webkit-text-fill-color: currentColor;
+    animation: none;
+  }
 }
 
 @keyframes shimmer {

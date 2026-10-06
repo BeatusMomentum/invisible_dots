@@ -24,6 +24,14 @@ export type InboundEventType = (typeof INBOUND_EVENT_TYPES)[number];
  */
 export const TASK_CANCELLED_SYSTEM_EVENT = "task.cancelled";
 
+/** The events after which a Dot's list of browser identities, or one of them, has changed. */
+export const IDENTITY_EVENT_TYPES = [
+  "browser.identity.created",
+  "browser.identity.deleted",
+  "browser.identity.launched",
+  "browser.identity.closed",
+] as const;
+
 export const OUTBOUND_EVENT_TYPES = [
   "agent.started",
   "agent.state",
@@ -34,10 +42,7 @@ export const OUTBOUND_EVENT_TYPES = [
   "task.failed",
   "approval.requested",
   "tool.called",
-  "browser.identity.created",
-  "browser.identity.deleted",
-  "browser.identity.launched",
-  "browser.identity.closed",
+  ...IDENTITY_EVENT_TYPES,
   "memory.written",
 ] as const;
 export type OutboundEventType = (typeof OUTBOUND_EVENT_TYPES)[number];

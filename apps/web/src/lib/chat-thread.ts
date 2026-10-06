@@ -7,6 +7,7 @@
  * story (the Tasks page), not to the conversation.
  */
 import { toolLabel, type ToolFamily } from "./events/tool-labels";
+import type { ApprovalOutcome } from "./task-events";
 import { mergeEvents } from "./timeline";
 import type { ChatMessage, StoredEvent } from "./types";
 
@@ -15,8 +16,6 @@ import type { ChatMessage, StoredEvent } from "./types";
  * yet (the chat's working row says the Dot is busy); a call that waits for the person is the approval's step.
  */
 export type ToolState = "ok" | "error" | "denied" | "interrupted";
-
-export type ApprovalOutcome = "waiting" | "approved" | "rejected";
 
 export interface ToolStep {
   kind: "tool";
@@ -196,12 +195,15 @@ export function mergeChatEvents(current: readonly StoredEvent[], incoming: reado
   return mergeEvents(current, incoming.filter(isChatActivityEvent));
 }
 
-/** The newest tool call or approval after the person's last message, for the working row; null when there is none. */
+/**
+ * The newest tool call or approval of the turn the Dot is in now, for the working row; null when there is none. A turn
+ * starts at the person's message and ends at the Dot's answer: a step before either belongs to a turn that is over
+ * (the Dot may be working again for a task, a schedule or an approval that resumed).
+ */
 export function lastStepSinceUser(thread: readonly ThreadItem[]): ToolStep | ApprovalStep | null {
   for (let i = thread.length - 1; i >= 0; i--) {
     const item = thread[i]!;
-    if (item.kind === "user") return null;
-    if (item.kind !== "activity") continue;
+    if (item.kind !== "activity") return null;
     for (let j = item.items.length - 1; j >= 0; j--) {
       const step = item.items[j]!;
       if (step.kind !== "memory") return step;

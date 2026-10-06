@@ -329,6 +329,13 @@ export interface AgentStateAnswer {
   pending_approval: PendingApproval | null;
 }
 
+/**
+ * The engine's error codes of a failed read of an identity's frame that the UI tells apart: the browser is closed
+ * (409) or a call of the Dot holds it (503). The others (`frame_failed`, `crashed`) are shown with the answer's own
+ * message; a computer that is off answers the host's `COMPUTER_STOPPED`.
+ */
+export const FRAME_ERROR_CODES = { notOpen: "not_open", busy: "busy" } as const;
+
 export const BROWSER_IDENTITY_STATUSES = ["available", "open", "archived"] as const;
 export type BrowserIdentityStatus = (typeof BROWSER_IDENTITY_STATUSES)[number];
 

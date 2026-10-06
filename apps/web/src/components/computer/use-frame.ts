@@ -17,8 +17,10 @@ export interface Frame {
 /**
  * The newest image of a source that is read again every `intervalMs` while `enabled` and the page is visible. One
  * source is one mounted component: a new source is a new mount (a `key` on it), so nothing of the old one is shown
- * and an answer to it that arrives late is dropped with it. Object URLs are revoked as they are replaced and when
- * the component goes away.
+ * and an answer to it that arrives late is dropped with it. One read is in flight at a time: a refresh asked for
+ * meanwhile (the person's button during a poll) waits for that read and starts none, so an older answer can never
+ * replace a newer one and the Dot's own browser calls are not contended for twice. Object URLs are revoked as they
+ * are replaced and when the component goes away.
  */
 export function useFrame(load: () => Promise<Uint8Array<ArrayBuffer>>, mime: string, intervalMs: number, enabled: boolean): Frame {
   const [url, setUrl] = useState<string | null>(null);
@@ -27,6 +29,7 @@ export function useFrame(load: () => Promise<Uint8Array<ArrayBuffer>>, mime: str
   const [pending, setPending] = useState(false);
   const current = useRef<string | null>(null);
   const alive = useRef(true);
+  const inFlight = useRef<Promise<void> | null>(null);
   const loader = useRef(load);
   useEffect(() => {
     loader.current = load;
@@ -45,7 +48,7 @@ export function useFrame(load: () => Promise<Uint8Array<ArrayBuffer>>, mime: str
     };
   }, [drop]);
 
-  const refresh = useCallback(async () => {
+  const read = useCallback(async () => {
     setPending(true);
     try {
       const bytes = await loader.current();
@@ -62,6 +65,15 @@ export function useFrame(load: () => Promise<Uint8Array<ArrayBuffer>>, mime: str
       if (alive.current) setPending(false);
     }
   }, [mime]);
+
+  const refresh = useCallback(() => {
+    if (inFlight.current === null) {
+      inFlight.current = read().finally(() => {
+        inFlight.current = null;
+      });
+    }
+    return inFlight.current;
+  }, [read]);
 
   useVisibleInterval(refresh, intervalMs, enabled);
   return { url, takenAt, error, pending, refresh };

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { computerIsUp } from "../../lib/computer";
+import { computerIsUp } from "@invisible-dots/shared/browser";
 import { COMPUTER_VIEW_LABELS, COMPUTER_VIEWS, computerHref, type ComputerQuery } from "../../lib/computer-view";
 import { cn } from "../../lib/utils";
 import { useDot } from "../DotShell";

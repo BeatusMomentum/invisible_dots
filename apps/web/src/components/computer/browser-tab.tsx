@@ -1,8 +1,9 @@
 "use client";
 
+import { IDENTITY_EVENT_TYPES } from "@invisible-dots/shared/browser";
 import { useState } from "react";
 import { api } from "../../lib/api";
-import { IDENTITY_EVENTS, isComputerStopped } from "../../lib/computer";
+import { isComputerStopped } from "../../lib/computer";
 import { identityLimits, identityOrder } from "../../lib/identity";
 import { useNow } from "../../lib/use-now";
 import { useDot } from "../DotShell";
@@ -24,7 +25,7 @@ import { useBrowserActivity } from "./use-browser-activity";
 export function BrowserTab() {
   const { dotId, dot } = useDot();
   const identities = useResource(() => api.listIdentities(dotId), `identities:${dotId}`);
-  useLiveRefresh(identities.reload, IDENTITY_EVENTS);
+  useLiveRefresh(identities.reload, IDENTITY_EVENT_TYPES);
   const limits = identityLimits(dot.data?.config);
   const list = identityOrder(identities.data ?? []);
   const open = list.filter((identity) => identity.status === "open");

@@ -82,6 +82,14 @@ describe("the design tokens", () => {
     expect(mapped.map(([utility]) => utility).sort()).toEqual(Object.keys(themes.light).sort());
   });
 
+  it("keeps the shimmering label visible under forced colors, where the gradient behind the transparent text fill is dropped", () => {
+    const shimmer = /@utility shimmer \{([\s\S]*?)\n\}/.exec(globalsCss)?.[1] ?? "";
+    expect(shimmer).toContain("-webkit-text-fill-color: transparent");
+    const forced = /@media \(forced-colors: active\) \{([^}]*)\}/.exec(shimmer)?.[1] ?? "";
+    expect(forced).toContain("-webkit-text-fill-color: currentColor");
+    expect(forced).toContain("background-image: none");
+  });
+
   it("keeps the favicon's two colors equal to the tokens they copy", () => {
     expect(FAVICON_PRIMARY).toBe(themes.light.primary);
     expect(FAVICON_ATTENTION).toBe(themes.light.attention);

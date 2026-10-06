@@ -408,6 +408,19 @@ describe("the composer", () => {
     await waitFor(() => expect(screen.queryByText(/The message was not sent/)).toBeNull());
   });
 
+  it("puts a refused message back in front of what the person typed while it was on its way", async () => {
+    let release!: () => void;
+    plane.holdSend = new Promise<void>((resolve) => (release = resolve));
+    plane.failSend = { status: 409, error: "dot_deleting", message: "Dot d1 is being deleted" };
+    await renderChat();
+    await userEvent.type(box(), "first{Enter}");
+    await waitFor(() => expect(plane.sentMessages).toEqual(["first"]));
+    await userEvent.type(box(), "second");
+    release();
+    await screen.findByText(/The message was not sent/);
+    expect(box().value).toBe("first\nsecond");
+  });
+
   it("says that a message waits when the computer had to wake up, until the Dot picks it up", async () => {
     plane.delivery = "queued";
     await renderChat();

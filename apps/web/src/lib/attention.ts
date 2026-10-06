@@ -5,7 +5,7 @@
  * One part of the design's attention model has no data to read yet and is left out on purpose, not stubbed: a
  * channel that needs relinking (step W12, with the channels API).
  */
-import type { AgentState, DotState, VmState } from "@invisible-dots/shared/browser";
+import { computerIsUp, type AgentState, type DotState, type VmState } from "@invisible-dots/shared/browser";
 
 export interface DotAttention {
   /** Approvals of this Dot that wait for an answer. */
@@ -96,7 +96,7 @@ export function ringState(input: RingInput): RingState {
   if (input.pendingApprovals > 0 || input.status === "WAITING_APPROVAL" || input.agentState === "WAITING_APPROVAL") return "waiting";
   if (input.status === "CREATING" || (input.agentState !== null && WORKING_AGENT.includes(input.agentState))) return "working";
   if (input.computerState !== null && CHANGING_COMPUTER.includes(input.computerState)) return "working";
-  if (input.computerState === "RUNNING" || input.computerState === "IDLE") return "ready";
+  if (computerIsUp(input.computerState)) return "ready";
   return "stopped";
 }
 

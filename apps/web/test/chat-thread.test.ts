@@ -122,6 +122,18 @@ describe("the thread", () => {
     const later = message("user", "again", 10);
     expect(lastStepSinceUser(buildThread([u, later], [e1]))).toBeNull();
   });
+
+  it("does not name a step of a turn the Dot already answered", () => {
+    const u = message("user", "go", 1);
+    const step = call("grep");
+    step.id = 2;
+    const answer = message("assistant", "done", 3);
+    // The Dot works again after its answer (a task, a schedule, a resumed approval): the step before the answer is over.
+    expect(lastStepSinceUser(buildThread([u, answer], [step]))).toBeNull();
+    const next = call("list_dir");
+    next.id = 4;
+    expect(lastStepSinceUser(buildThread([u, answer], [step, next]))).toMatchObject({ tool: "list_dir" });
+  });
 });
 
 describe("long runs of tool calls", () => {

@@ -159,6 +159,13 @@ describe("GuestClient", () => {
     expect(seen.every((s) => s.auth === `Bearer ${TOKEN}`)).toBe(true);
   });
 
+  it("refuses a frame that is not a JPEG, which the control plane would otherwise serve labelled as one", async () => {
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    const { port } = await serve((_req, res) => res.writeHead(200, { "content-type": "image/png" }).end(png));
+    const client = new GuestClient(port, TOKEN);
+    await expect(client.getBrowserIdentityFrame("shop-abc123")).rejects.toMatchObject({ status: 502, code: "frame_failed", message: expect.stringContaining("image/png") });
+  });
+
   it("calls the automation and tool routes with the id as one encoded path segment", async () => {
     const row = { id: "job 1", name: "n", enabled: false };
     const { port, seen } = await serve((req, res) => {
