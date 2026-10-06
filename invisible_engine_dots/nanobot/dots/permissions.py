@@ -212,7 +212,7 @@ TOOL_PERMISSIONS: Mapping[str, ToolEntry] = MappingProxyType(
         "browser_identity_delete": ToolEntry("browser.identity.delete", _build_browser_identity_delete, targets.identity_target, needs_managed_identities=True),
         "browser_identity_launch": ToolEntry("browser.identity.launch", _build_browser_identity_launch, targets.identity_target),
         "browser_identity_close": ToolEntry("browser.identity.close", _build_browser_identity_close, targets.identity_target),
-        "browser_navigate": ToolEntry("browser.navigate", _build_page_tool("browser_navigate"), targets.browser_navigate_target),
+        "browser_navigate": ToolEntry("browser.navigate", _build_page_tool("browser_navigate"), targets.browser_navigate_target, arguments=targets.navigate_arguments),
         "browser_snapshot": ToolEntry("browser.read", _build_page_tool("browser_snapshot"), targets.browser_identity_only_target),
         "browser_read_text": ToolEntry("browser.read", _build_page_tool("browser_read_text"), targets.browser_selector_target),
         "browser_screenshot": ToolEntry("browser.read", _build_page_tool("browser_screenshot"), targets.browser_identity_only_target),

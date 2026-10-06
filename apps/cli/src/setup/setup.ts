@@ -35,7 +35,9 @@ export function nextSteps(results: readonly DoctorCheck[]): string[] {
   const checks = byId(results);
   const steps: string[] = [];
   if (checks.get("golden-image")?.status !== "ok" || checks.get("runtime-image")?.status !== "ok") steps.push("invisible-dots image build");
-  if (checks.get("web")?.status !== "ok") steps.push(WEB_BUILD_COMMAND);
+  // The row is optional (`DoctorDeps.webBuild`): a report without it has no client to build.
+  const web = checks.get("web");
+  if (web && web.status !== "ok") steps.push(WEB_BUILD_COMMAND);
   if (checks.get("openrouter")?.status !== "ok") {
     steps.push("invisible-dots server   (keep it running, then in another terminal:)");
     steps.push(STORE_OPENROUTER_KEY);

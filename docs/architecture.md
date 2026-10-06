@@ -797,12 +797,14 @@ twice is one event. A note written through `exec` is not seen.
 
 The `arguments` of `approval.requested` are what the person decides on, and
 they leave the guest: a tool argument that carries a secret is redacted there
-by the engine, at the point where the event is built (the engine's tools carry
-no such argument yet and it redacts nothing; the browser phase adds the proxy
-URL of `browser_identity_create`, whose password is replaced by the rule of
-`redactProxy()` in `packages/shared/src/identity-rules.ts`). The pending call in
-the Dot's database keeps the full arguments, so the approved call is made as
-asked.
+by the engine, at the point where the event is built, and nowhere after it: the
+host, the web UI and a chat prompt (section 9.8) show the arguments as the event
+has them. The engine redacts the proxy URL of `browser_identity_create`, whose
+password is replaced by the rule of `redactProxy()` in
+`packages/shared/src/identity-rules.ts`, and the URL of `browser_navigate`, which
+is shown as the `target` of `tool.called` shows it (no user or password, the
+values of its query masked). The pending call in the Dot's database keeps the
+full arguments, so the approved call is made as asked.
 
 An outbound event is handed to the event stream only after the transaction
 that wrote it to the outbox committed: one written inside a transaction that
@@ -899,11 +901,15 @@ ignores anything else.
   replays the placeholder; the model takes another screenshot when it wants one.
 - Secrets in the arguments. The proxy password has no place in anything shown:
   `approval.requested` carries `browser_identity_create`'s proxy with the
-  password replaced (the parked call keeps the real one, so the approved call
-  runs as asked), and no `target` of `tool.called` holds typed text. The
-  `text` of `browser_type` stays in the arguments of an approval when
-  `browser.act` is set to `ask`: whether a field is a password cannot be known
-  from the arguments, so a person approving typing sees what is typed.
+  password replaced and `browser_navigate`'s URL as the `target` of `tool.called`
+  shows it (the parked call keeps the real ones, so the approved call runs as
+  asked), and no `target` of `tool.called` holds typed text. The `text` of
+  `browser_type` and the `value` of `browser_select_option` stay in the arguments
+  of an approval when `browser.act` is set to `ask`: whether a field is a
+  password cannot be known from the arguments, so a person approving typing sees
+  what is typed. That includes a chat that carries approvals (section 9.8, not
+  end-to-end encrypted): a person who does not want typed text there turns
+  `show_arguments` off for the channel.
 
 ## 7. Dot configuration
 
@@ -1489,14 +1495,16 @@ permission names that were deleted from `PERMISSIONS` (`web.fetch`, `web.search`
 `subagents`, `message.send`, `memory.write`, section 7): `dots.config` is jsonb that
 is not parsed again on its way to the guest, so a stored name the schema no longer
 knows would reach the engine, which refuses the whole config, and would make every
-update of the Dot fail until the person removed it by hand.
+update of the Dot fail until the person removed it by hand. The migration rewrites
+`config` in one statement per Dot and moves its `config_version` once, as a save does,
+so a form opened before it is refused by the version precondition and not by the parser.
 
 Tables: `dots`, `computers`, `tasks`, `task_runs`, `events`, `approvals`,
 `inbound_events`, `secrets`, `channel_bindings`, `channel_peers`,
 `channel_pairings`, `channel_prompts`, `schema_migrations`. Migrations are plain
 SQL files applied in order at start.
 
-- `dots(id text pk, name text unique, config jsonb, status text, error text null, config_version int default 1, created_at, updated_at)`: `config_version` grows with every save of `config` (`updateConfig`, `setPermission`) and with nothing else, while `updated_at` also moves with every status change; the PATCH precondition is on the version
+- `dots(id text pk, name text unique, config jsonb, status text, error text null, config_version int default 1, created_at, updated_at)`: `config_version` grows with every save of `config` (`updateConfig`, `setPermission`, and `0009_removed_config_names` once for each Dot it rewrites) and with nothing else, while `updated_at` also moves with every status change; the PATCH precondition is on the version
 - `computers(dot_id pk fk, vm_name, guest_port int null, pid int null, state text, golden_image text, runtime_image text, token_enc bytea, event_cursor bigint default 0, last_active_at, last_error, updated_at)`: `guest_port` and `pid` are null while no QEMU runs, and `guest_port` is not unique (a crashed VM's row may name a port since reused); both are copies of `qemu.json` (section 3.2), which wins on reconciliation
 - `tasks(id text pk, dot_id fk, description, priority int, status, created_at, scheduled_at, started_at, finished_at, summary, error, spent_usd double precision default 0)`: `spent_usd` is the highest `spent_usd` the guest reported on the task's events (section 5.4), recorded by the host in the transaction that stores each event, so a late or repeated event never lowers it and a cancelled task the guest keeps working on still counts; a task whose guest never reported spend stays 0
 - `task_runs(id pk, task_id fk, started_at, delivered_at, finished_at, outcome)`: `delivered_at` is set when the guest accepted the run's `task.created`

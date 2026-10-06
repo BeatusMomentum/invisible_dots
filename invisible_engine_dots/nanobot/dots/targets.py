@@ -36,8 +36,10 @@ click. The text of `browser_type` is never in one, and neither is a character se
 more); `exec` cuts earlier, at `EXEC_TARGET_MAX`.
 
 The table also says, per tool, which function states what of the arguments leaves the guest in an
-`approval.requested`, which a person decides on: the arguments as they are, except that the proxy of
-`browser_identity_create` has its password replaced.
+`approval.requested`, which a person decides on (on the web and, when the Dot's channel is on, in a chat
+that a third party carries): the arguments as they are, except that the proxy of `browser_identity_create`
+has its password replaced and the URL of `browser_navigate` is shown as its target shows it. The text of
+`browser_type` and the value of `browser_select_option` stay, because a person who approves typing sees what is typed.
 """
 
 from __future__ import annotations
@@ -360,6 +362,15 @@ def browser_identity_only_target(params: Mapping[str, Any]) -> str | None:
 def all_arguments(params: Mapping[str, Any]) -> dict[str, Any]:
     """The arguments of a call that carries nothing to hide: as they are."""
     return dict(params)
+
+
+def navigate_arguments(params: Mapping[str, Any]) -> dict[str, Any]:
+    """The arguments of `browser_navigate` with the URL as its target shows it: no user or password, the values of its query masked."""
+    shown = dict(params)
+    url = shown.get("url")
+    if isinstance(url, str) and url.strip():
+        shown["url"] = _shown_word(url.strip())
+    return shown
 
 
 def identity_create_arguments(params: Mapping[str, Any]) -> dict[str, Any]:

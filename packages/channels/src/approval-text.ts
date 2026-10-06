@@ -3,7 +3,9 @@
  * wording, so every channel shows the same thing. Plain text: a channel adds its own means of answering.
  *
  * The prompt goes through a third party that can read it (a chat is not end-to-end encrypted), so the arguments of the
- * tool, which can hold private data, are cut to `ARGUMENTS_MAX` characters.
+ * tool, which can hold private data, are cut to `ARGUMENTS_MAX` characters. A secret that has no place in an approval
+ * (a proxy password, the user and the query values of a URL) is replaced by the engine in the event itself (architecture
+ * section 6): this module shows the arguments as the event has them and redacts nothing.
  */
 import type { ApprovalRecord } from "@invisible-dots/shared";
 

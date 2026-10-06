@@ -155,4 +155,13 @@ describe("setup", () => {
     ];
     expect(nextSteps(notBuilt)).toEqual(["npm run build --workspace @invisible-dots/web", "invisible-dots server"]);
   });
+
+  it("names no web build when the report has no web row: the host is not asked to check a client", () => {
+    const noWebRow: DoctorCheck[] = [
+      { id: "golden-image", label: "golden image", status: "ok", detail: "" },
+      { id: "runtime-image", label: "runtime ISO", status: "ok", detail: "" },
+      { id: "openrouter", label: "OpenRouter key", status: "ok", detail: "" },
+    ];
+    expect(nextSteps(noWebRow)).toEqual(["invisible-dots server"]);
+  });
 });

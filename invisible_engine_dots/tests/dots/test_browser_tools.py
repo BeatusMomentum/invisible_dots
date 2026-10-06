@@ -580,18 +580,35 @@ async def test_a_policy_that_asks_before_navigating_shows_the_person_the_url_and
     permissions = {**ALLOW_ALL, **BROWSER_ALLOWED, "browser.navigate": "ask"}
     h = make_harness([], permissions)
     identity_id = await open_one(h)
-    h.provider.script[:] = [calls(call("c1", "browser_navigate", identity_id=identity_id, url="https://example.com/?q=1"))]
+    h.provider.script[:] = [calls(call("c1", "browser_navigate", identity_id=identity_id, url="https://example.com/a"))]
 
     outcome = await h.run(chat("open it"))
 
     assert outcome.kind == "parked"
     [asked] = h.events_of("approval.requested")
     assert (asked["tool"], asked["permission"]) == ("browser_navigate", "browser.navigate")
-    assert asked["arguments"] == {"identity_id": identity_id, "url": "https://example.com/?q=1"}
+    assert asked["arguments"] == {"identity_id": identity_id, "url": "https://example.com/a"}
     assert h.browser.is_open(identity_id)
     # Nothing was sent to the page.
     record = read_record(mcp_home(h.tmp_path, identity_id))
     assert [entry["name"] for entry in record if entry["kind"] == "call"] == ["browser_open"]
+
+
+async def test_an_approval_to_navigate_shows_the_url_as_the_tool_called_target_does(make_harness: MakeHarness) -> None:
+    permissions = {**ALLOW_ALL, **BROWSER_ALLOWED, "browser.navigate": "ask"}
+    h = make_harness([], permissions)
+    identity_id = await open_one(h)
+    url = "https://user:pw@example.com/a?token=s3cret&q=1"
+    h.provider.script[:] = [calls(call("c1", "browser_navigate", identity_id=identity_id, url=url))]
+
+    await h.run(chat("open it"))
+
+    [asked] = h.events_of("approval.requested")
+    assert asked["arguments"] == {"identity_id": identity_id, "url": "https://example.com/a?token=***&q=***"}
+    assert "pw" not in json.dumps(asked) and "s3cret" not in json.dumps(asked)
+    # The call waits with its full arguments, so the approved call goes to the address as asked.
+    [pending] = h.store.read(lambda conn: s.list_approvals(conn, "pending"))
+    assert pending.arguments["url"] == url
 
 
 async def test_the_proxy_password_never_reaches_the_host_through_an_approval(make_harness: MakeHarness) -> None:

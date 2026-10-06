@@ -60,6 +60,11 @@ async function insertDot(db: Db, id: string, name: string, stored: unknown): Pro
   ]);
 }
 
+async function storedVersion(db: Db, id: string): Promise<number> {
+  const { rows } = await db.query<{ config_version: number }>("SELECT config_version FROM dots WHERE id = $1", [id]);
+  return rows[0]!.config_version;
+}
+
 async function storedConfig(db: Db, id: string): Promise<Record<string, any>> {
   const { rows } = await db.query<{ config: Record<string, any> }>("SELECT config FROM dots WHERE id = $1", [id]);
   return rows[0]!.config;
@@ -118,6 +123,14 @@ describe.each(testAdapters())("migrations that clean up old data on %s", { timeo
       name: "clean-dot",
     });
     expect(await storedConfig(db, "dot_bare")).toEqual({ ...config({}), name: "bare-dot" });
+  });
+
+  it("moves config_version once for a config it rewrote, as every save does, and leaves the others' alone", async () => {
+    // dot_old needed both lists cleaned and is still one rewrite; the version is what a form opened before compares.
+    expect(await storedVersion(db, "dot_old")).toBe(2);
+    expect(await storedVersion(db, "dot_roles_only")).toBe(2);
+    expect(await storedVersion(db, "dot_clean")).toBe(1);
+    expect(await storedVersion(db, "dot_bare")).toBe(1);
   });
 
   it("makes a config stored before the change one the schema and the engine's config accept", async () => {

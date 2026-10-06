@@ -425,6 +425,30 @@ def test_the_proxy_password_of_an_identity_is_redacted_in_the_arguments_an_appro
     assert tool_arguments("not_a_tool", {"proxy": "http://u:p@h"}) == {"proxy": "http://u:p@h"}
 
 
+def test_the_url_of_a_navigation_is_masked_in_the_arguments_an_approval_shows_as_in_its_target() -> None:
+    from nanobot.dots.permissions import tool_arguments
+
+    ident = "shop-abc123"
+    for url in (
+        "https://example.com/a?token=s3cret&q=1",
+        "https://u:pw@example.com/",
+        "https://example.com/p#access_token=abc",
+        "http://example.com",
+    ):
+        params = {"identity_id": ident, "url": url}
+        shown = tool_arguments("browser_navigate", params)
+        # One rule: the URL of the arguments is the URL the target shows.
+        assert tool_target("browser_navigate", params) == f"{ident}: {shown['url']}"
+        assert shown["identity_id"] == ident
+    assert tool_arguments("browser_navigate", {"identity_id": ident, "url": "https://u:pw@example.com/a?k=v"})["url"] == "https://example.com/a?k=***"
+    # A call without a URL, or with one that is not text, is as it was.
+    assert tool_arguments("browser_navigate", {"identity_id": ident}) == {"identity_id": ident}
+    assert tool_arguments("browser_navigate", {"identity_id": ident, "url": 5}) == {"identity_id": ident, "url": 5}
+    # The text of a typed field stays (a person approving typing sees what is typed, architecture section 6).
+    typed = {"identity_id": ident, "selector": "#a", "text": "hunter2"}
+    assert tool_arguments("browser_type", typed) == typed
+
+
 # --- the table as GET /tools shows it ----------------------------------------------------------------
 
 
