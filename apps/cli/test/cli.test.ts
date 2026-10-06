@@ -342,7 +342,10 @@ describe("commands", () => {
       expect(requests.at(-1)?.path).toBe(`/api/dots/fare-watch/computer/${action}`);
     }
     expect((await cli(["computer", "fare-watch", "pause"])).code).toBe(EXIT.usage);
-    expect((await cli(["browser", "fare-watch", "identities"])).stdout).toContain("shop-abc123");
+    const listed = (await cli(["browser", "fare-watch", "identities"])).stdout;
+    expect(listed).toContain("shop-abc123");
+    // The identity has no proxy of its own, the normal case: the column says none instead of asking for one.
+    expect(listed).toMatch(/shop-abc123\s+Shop\s+available\s+never\s+-\s*$/m);
     stopped = true;
     const conflict = await cli(["browser", "fare-watch", "identities"]);
     expect(conflict.code).toBe(EXIT.failed);

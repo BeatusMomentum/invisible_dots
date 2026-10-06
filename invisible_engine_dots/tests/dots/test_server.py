@@ -521,6 +521,16 @@ class TestBrowserIdentities:
         assert (await api.call("GET", f"/browser-identities/{identity['id']}")).status == 404
         assert api.h.types()[-2:] == ["browser.identity.created", "browser.identity.deleted"]
 
+    async def test_a_proxy_is_an_option_an_identity_does_not_need_whether_it_is_left_out_null_or_blank(
+        self, make_api: Callable[..., Any]
+    ) -> None:
+        api: Api = await make_api()
+
+        for body in ({"name": "Left out"}, {"name": "Null proxy", "proxy": None}, {"name": "Blank proxy", "proxy": "  "}):
+            created = await api.call("POST", "/browser-identities", body)
+            assert created.status == 201, body
+            assert "proxy" not in created.json, body
+
     async def test_a_second_delete_is_not_found_and_leaves_no_event(self, make_api: Callable[..., Any]) -> None:
         api: Api = await make_api()
         identity = (await api.call("POST", "/browser-identities", {"name": "once"})).json

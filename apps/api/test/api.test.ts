@@ -520,6 +520,30 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     await waitFor(async () => (await api.computer(dot.id)).ready, "started again");
   });
 
+  it("an identity needs no proxy: a name alone, a null or a blank proxy make one with none, and a proxy is an explicit option", async () => {
+    const dot = await readyDot("no-proxy-needed");
+    const create = async (body: Record<string, unknown>) => {
+      const response = await fetch(`${base}/api/dots/${dot.id}/browser-identities`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      return { status: response.status, identity: (await response.json()) as Record<string, unknown> };
+    };
+    for (const body of [{ name: "Plain" }, { name: "Null", proxy: null }, { name: "Blank", proxy: "  " }]) {
+      const { status, identity } = await create(body);
+      expect(status, JSON.stringify(body)).toBe(201);
+      expect(identity, JSON.stringify(body)).not.toHaveProperty("proxy");
+    }
+    const sdk = await api.createIdentity(dot.id, { name: "Through the SDK" });
+    expect(sdk).not.toHaveProperty("proxy");
+    expect((await api.listIdentities(dot.id)).some((i) => "proxy" in i)).toBe(false);
+
+    const own = await api.createIdentity(dot.id, { name: "Own exit", proxy: "socks5://proxy.test:1080" });
+    expect(own.proxy).toBe("socks5://proxy.test:1080");
+    expect((await create({ name: "Number", proxy: 8080 })).status).toBe(400);
+  });
+
   it("an identity's frame is a JPEG of an open one, and close ends it, through the API and the SDK", async () => {
     const dot = await readyDot("viewing");
     const identity = await api.createIdentity(dot.id, { name: "Main account" });

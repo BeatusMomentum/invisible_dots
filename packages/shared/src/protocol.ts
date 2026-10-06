@@ -84,6 +84,7 @@ export const ENV = {
   MCP_SESSION_ID: "INVISIBLE_MCP_SESSION_ID",
   PROFILE_DIR: "STEALTHFOX_PROFILE_DIR",
   HEADLESS: "STEALTHFOX_HEADLESS",
+  /** Set only for an identity that was given a proxy of its own; otherwise the browser inherits the egress of the VM (section 6). */
   PROXY: "STEALTHFOX_PROXY",
   DISPLAY: "DISPLAY",
   /** The GeoIP database file the browser layer uses as it is, with no lookup of a newer release (GUEST_PATHS.geoipDatabase). */
@@ -402,12 +403,17 @@ export interface BrowserIdentity {
   lastUsedAt: string | null;
   status: BrowserIdentityStatus;
   profilePath: string;
+  /** The identity's own proxy, password replaced. Absent for the normal case: no proxy, and the browser inherits the VM's egress. */
   proxy?: string;
 }
 
 /** `POST /browser-identities` body. */
 export interface CreateBrowserIdentityRequest {
   name: string;
+  /**
+   * An explicit option, off by default: leave it out and the identity's browser uses the egress of the Dot's VM. When set
+   * it is `scheme://[user:password@]host:port` of an http, https, socks4 or socks5 proxy.
+   */
   proxy?: string;
 }
 

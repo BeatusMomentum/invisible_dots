@@ -58,8 +58,6 @@ _USERINFO_SAFE = "".join(c for c in map(chr, range(0x21, 0x7F)) if c not in "\"#
 
 _COMBINING_MARKS = "[" + chr(0x300) + "-" + chr(0x36F) + "]"
 
-_MISSING = object()
-
 
 class IdentityRequestError(Exception):
     """A request the rules refuse: `invalid` (bad name or proxy) or `limit` (max_identities reached)."""
@@ -206,7 +204,8 @@ def check_identity_request(
 
     A non-empty name of at most IDENTITY_NAME_MAX characters, an optional proxy URL with an http,
     https, socks4 or socks5 scheme, a host and a port, and fewer than `max_identities` existing identities,
-    in that order. A proxy that is absent or blank means none. Returns the trimmed values.
+    in that order. A proxy is an explicit option of one identity, never a requirement: absent, null or blank
+    means none, the normal case, and the browser then uses the egress of the Dot's VM. Returns the trimmed values.
     """
     raw_name = body.get("name")
     name = raw_name.strip(_JS_WHITESPACE) if isinstance(raw_name, str) else ""
@@ -214,8 +213,8 @@ def check_identity_request(
         raise IdentityRequestError("invalid", "an identity needs a non-empty name")
     if _js_length(name) > IDENTITY_NAME_MAX:
         raise IdentityRequestError("invalid", f"an identity name is at most {IDENTITY_NAME_MAX} characters")
-    raw_proxy = body.get("proxy", _MISSING)
-    if raw_proxy is not _MISSING and not isinstance(raw_proxy, str):
+    raw_proxy = body.get("proxy")
+    if raw_proxy is not None and not isinstance(raw_proxy, str):
         raise IdentityRequestError("invalid", "proxy must be a string")
     proxy = raw_proxy.strip(_JS_WHITESPACE) if isinstance(raw_proxy, str) else ""
     if proxy:

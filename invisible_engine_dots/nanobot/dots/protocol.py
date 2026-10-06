@@ -117,6 +117,7 @@ BROWSER_ENV = {
     "MCP_SESSION_ID": "INVISIBLE_MCP_SESSION_ID",
     "PROFILE_DIR": "STEALTHFOX_PROFILE_DIR",
     "HEADLESS": "STEALTHFOX_HEADLESS",
+    # Set only for an identity that was given a proxy of its own; otherwise the browser inherits the VM's egress.
     "PROXY": "STEALTHFOX_PROXY",
     "DISPLAY": "DISPLAY",
     "GEOIP_MMDB": "STEALTHFOX_GEOIP_MMDB",

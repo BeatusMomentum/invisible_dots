@@ -264,14 +264,13 @@
       }
     },
     {
-      "case": "a proxy that is null",
+      "case": "a proxy that is null means none, as an absent one does",
       "input": {
         "name": "Work",
         "proxy": null
       },
-      "error": {
-        "code": "invalid",
-        "message": "proxy must be a string"
+      "ok": {
+        "name": "Work"
       }
     },
     {

@@ -601,7 +601,7 @@ export class Scheduler {
     if (typeof body.name !== "string" || body.name.trim() === "") {
       throw new ControlPlaneError(400, "invalid_request", "name must be a non-empty string");
     }
-    if (body.proxy !== undefined && typeof body.proxy !== "string") {
+    if (body.proxy != null && typeof body.proxy !== "string") {
       throw new ControlPlaneError(400, "invalid_request", "proxy must be a string");
     }
     const { dotId, guest } = await this.#runningGuest(idOrName);

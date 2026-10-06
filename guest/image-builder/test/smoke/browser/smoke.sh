@@ -160,10 +160,11 @@ mcp_env_ok() {
     && grep -qx 'STEALTHFOX_HEADLESS=0' <<< "$env" && grep -qx 'DISPLAY=:0' <<< "$env" && grep -qx 'HOME=/home/dot' <<< "$env" \
     && grep -qx "STEALTHFOX_GEOIP_MMDB=$GEOIP" <<< "$env" \
     && grep -qx 'INVISIBLE_CORE_AUTOFIX=off' <<< "$env" \
+    && ! grep -q '^STEALTHFOX_PROXY=' <<< "$env" \
     && ! grep -q '^INVISIBLE_DOTS_\|^TIKTOKEN_CACHE_DIR=\|^OPENROUTER_API_KEY=' <<< "$env" \
     && ! grep -qF "$KEY" <<< "$env"
 }
-check "the server's process is dot's, with the profile, its home, a real window on :0 and none of the engine's variables nor the key" "[ -n '$MCP_PID' ] && mcp_env_ok"
+check "the server's process is dot's, with the profile, its home, a real window on :0, no proxy of its own (an identity with none, the default, inherits the VM's egress) and none of the engine's variables nor the key" "[ -n '$MCP_PID' ] && mcp_env_ok"
 check "the profile has its seed file after the first open" "[ -s $BROWSERS/$ID/profile/.stealth-identity.json ]"
 check "the launch used the image's GeoIP file as it is (the library's STEALTHFOX_GEOIP_MMDB): the file is unchanged, root's and read-only, and no geoip directory of the library's own was made in dot's cache" "geoip_untouched"
 SEED1=$(seed_of "$ID" 2>/dev/null)

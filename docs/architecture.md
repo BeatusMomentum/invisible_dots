@@ -282,7 +282,7 @@ QEMU on the same disk would corrupt it.
   the browser layer is told to use as it is and which an image built before it
   was part of the contract lacks. A runtime disk (the one that carries the lock)
   refuses to start on such an image with "build a new golden image", instead of
-  a launch that fails behind a proxy or takes the VM's own timezone.
+  a launch that fails or takes the VM's own timezone.
 - Every input of the golden image is pinned by content: the cloud image, Node
   and `uv` by SHA-256 (`virtualization/images/base.json`,
   `guest/image-builder/pins.json`), the GeoIP database as one release of
@@ -559,7 +559,8 @@ STOPPED and started again when it has work (section 9.5).
 ```
 
 The home of an identity's MCP server is not under `/home/dot` because the
-server saves who its browser is, the proxy with its password included, in
+server saves who its browser is, and for an identity that has a proxy of its
+own that proxy with its password included, in
 `<home>/sessions/<identity_id>.json` on every `browser_open`: a file under
 `/home/dot` would be served by the host's file routes (section 9.6), which read
 `/home/dot` and nothing else, and dot-agentd's TCP listener refuses a path
@@ -741,8 +742,8 @@ command detached into another session outlives it.
 | `POST /events` | `InboundEvent` | `202 { accepted: true }` |
 | `GET /events/stream` | `?after=<seq>` | `text/event-stream`, one SSE message per outbound event, `id: <seq>` |
 | `GET /state` | | `{ state, current_task_id, pending_approval }`; `pending_approval` is the id of the oldest approval the engine waits on, or `null` |
-| `GET /browser-identities` | | `{ identities: BrowserIdentity[] }`, oldest first, the proxy with its password replaced |
-| `POST /browser-identities` | `{ name, proxy? }` | `201 BrowserIdentity`; `400 invalid` (name, or a proxy that is not an `http`, `https`, `socks4` or `socks5` URL with a host and a written port: the browser's server refuses one without a port at a launch, with a message that prints the URL and its password), `409 limit` (`max_identities`) |
+| `GET /browser-identities` | | `{ identities: BrowserIdentity[] }`, oldest first; `proxy` is present only for an identity that has one, with its password replaced |
+| `POST /browser-identities` | `{ name, proxy? }`; `proxy` is an explicit option: absent, `null` or blank means none, the normal case | `201 BrowserIdentity`; `400 invalid` (name, or a proxy that is not an `http`, `https`, `socks4` or `socks5` URL with a host and a written port: the browser's server refuses one without a port at a launch, with a message that prints the URL and its password), `409 limit` (`max_identities`) |
 | `GET /browser-identities/:id` | | `BrowserIdentity`; `404 not_found` |
 | `DELETE /browser-identities/:id` | | `204` after the identity's browser is closed and its directory removed; `404 not_found` |
 | `GET /browser-identities/:id/frame` | | `200 image/jpeg` (`Cache-Control: no-store`), one frame of the identity's window, taken with the server's `browser_watch`; `404 not_found`; `409 not_open` when the identity is closed; `503 busy` when a call of the Dot held the identity for longer than 5 seconds; `502 frame_failed` (the server has no page to show) or `crashed` |
@@ -933,6 +934,21 @@ ignores anything else.
 
 ## 6. Browser identities
 
+- Where a browser exits to the internet. An identity has no proxy of its own
+  unless the person gave it one: that is the default everywhere (the API, the
+  SDK, the CLI and the engine accept a create with a name only, and nothing
+  asks for or fills in a proxy). The browser then inherits the egress of the
+  Dot's VM: through the VM proxy when the Dot has one, directly otherwise (the
+  VM proxy is a per-Dot setting that is designed and not built yet, so today
+  the VM's egress is the host's own address). Its time zone, locale and
+  geography follow the exit the browser actually uses, which the browser layer
+  learns from the address-echo services at each launch. A per-identity proxy
+  stays an explicit option for one identity, with all the protections below
+  (the password replaced in everything shown, the port rule, the scrub of what
+  the server says); when both a VM proxy and an identity proxy are set, the
+  identity's proxy is reached through the VM's tunnel, so the exit is the
+  identity proxy's. An identity proxy is not the way to give a browser a
+  location: a Dot that should appear somewhere gets that from its VM's egress.
 - An identity is a row of the engine's `dots_browser_identities` table (id,
   name, proxy, created, last used, archived) and a directory under
   `/home/dot/browsers/<identity_id>/`. Its id is a slug of its name plus a short
@@ -940,7 +956,7 @@ ignores anything else.
   exist; the host never mirrors the list, it asks the guest. Whether an
   identity is open is never stored: it is derived from the live browser
   sessions of the running engine, so a file never claims an open browser for a
-  process that is gone. The proxy is stored as given, password included, in
+  process that is gone. An identity's proxy, when it has one, is stored as given, password included, in
   the engine's database (`dotengine`'s state directory, 0700, which the model
   cannot read); everything shown to a model, a person, an event or a log has
   the password replaced. The browser's own process is the one exception, by
@@ -969,7 +985,8 @@ ignores anything else.
   server's documented settings: its home (`INVISIBLE_MCP_HOME=/var/lib/invisible-dots/mcp/<identity_id>`)
   and session id (`INVISIBLE_MCP_SESSION_ID=<identity_id>`), the identity's
   profile directory (`<identity>/profile`), headed mode, `DISPLAY=:0`, and the
-  identity's proxy when it has one, and two settings of the libraries it
+  identity's proxy only when it has one (otherwise no proxy variable is set at
+  all), and two settings of the libraries it
   uses: `STEALTHFOX_GEOIP_MMDB`, the image's pinned GeoIP file (section 3.3),
   and `INVISIBLE_CORE_AUTOFIX=off`, which stops `invisible_core` from
   reinstalling itself from the package index at a launch when its version
@@ -981,8 +998,8 @@ ignores anything else.
   on the Dot's desktop and shows up in its screenshots.
 - A launch also connects out, which no setting here turns off: to the
   address-echo services of the library (`api.ipify.org`, `icanhazip.com`,
-  `checkip.amazonaws.com`, through the identity's proxy when it has one) to learn
-  the exit address for the timezone and locale; to the library's launch counter
+  `checkip.amazonaws.com`, from the VM's egress, or through the identity's proxy
+  when it has one) to learn the exit address for the timezone and locale; to the library's launch counter
   (a download of a file of `feder-cr/firefox_antidetect_patch`'s releases,
   switched off only by a preference the MCP server gives no way to pass); and
   it probes the exit's capabilities and caches the answer in
@@ -1194,8 +1211,8 @@ does not know.
 | `memory_get` | `memory.read` | reads one memory note (offered only when `memory.enabled`) |
 | `cron` | `automations` | adds, lists and removes the Dot's own scheduled automations |
 | `computer_screenshot` | `computer.screenshot` | takes a screenshot of the Dot's whole desktop and shows it to the model (no arguments) |
-| `browser_identity_list` | `browser.identity.list` | lists the browser identities with their status (open or available), their proxy with its password replaced, and the two limits |
-| `browser_identity_create` | `browser.identity.create` | makes an identity, closed: `name`, `proxy?` (offered only when `managed_by_dot`) |
+| `browser_identity_list` | `browser.identity.list` | lists the browser identities with their status (open or available), the proxy (password replaced) of the ones that have one, and the two limits |
+| `browser_identity_create` | `browser.identity.create` | makes an identity, closed: `name`, `proxy?` (an explicit option that the model leaves out unless the person gave one; offered only when `managed_by_dot`) |
 | `browser_identity_delete` | `browser.identity.delete` | closes an identity and deletes it with its profile: `identity_id` (offered only when `managed_by_dot`) |
 | `browser_identity_launch` | `browser.identity.launch` | opens the browser of an identity, closing the least recently used one at `max_open`: `identity_id` |
 | `browser_identity_close` | `browser.identity.close` | closes the browser of an identity, keeping its profile: `identity_id` |

@@ -268,6 +268,30 @@ async def test_creating_with_a_proxy_works_and_the_launch_gives_it_to_the_browse
     assert starts[0]["env"]["STEALTHFOX_PROXY"] == "http://user:hunter2@proxy.test:8080"
 
 
+async def test_creating_with_a_name_alone_is_the_normal_case_and_the_browser_gets_no_proxy_at_all(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STEALTHFOX_PROXY", "http://leak:1")
+    alone = created_id(await env.run("browser_identity_create", name="alone"))
+    null = created_id(await env.run("browser_identity_create", name="null", proxy=None))
+    blank = created_id(await env.run("browser_identity_create", name="blank", proxy="  "))
+
+    for identity_id in (alone, null, blank):
+        await env.run("browser_identity_launch", identity_id=identity_id)
+        [start] = [entry for entry in read_record(mcp_home(env.tmp_path, identity_id)) if entry["kind"] == "start"]
+        assert "STEALTHFOX_PROXY" not in start["env"], identity_id
+    listing = json.loads(await env.run("browser_identity_list"))
+    assert [identity["proxy"] for identity in listing["identities"]] == [None, None, None]
+
+
+def test_the_create_tool_offers_the_proxy_as_an_explicit_option_and_never_requires_it(env: Env) -> None:
+    tool = env.registry.get("browser_identity_create")
+
+    assert tool.parameters["required"] == ["name"]
+    assert tool.parameters["properties"]["proxy"]["description"].startswith("Leave this out.")
+    assert "network exit" in tool.description
+
+
 async def test_a_refused_request_is_an_error_result_that_says_why(env: Env) -> None:
     empty = await env.run("browser_identity_create", name="   ")
     ftp = await env.run("browser_identity_create", name="a", proxy="ftp://host:21")

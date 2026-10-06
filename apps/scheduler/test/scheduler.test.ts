@@ -817,6 +817,27 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     await expect(scheduler.screenshot(dot.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
   });
 
+  it("an identity is created with no proxy unless one is given: absent, null and blank are the same, a number is refused", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "no-proxy");
+    const guest = driver.guestOf(dot.id);
+    const requests: unknown[] = [];
+    const create = guest.createBrowserIdentity.bind(guest);
+    guest.createBrowserIdentity = async (body) => {
+      requests.push(body);
+      return create(body);
+    };
+
+    for (const body of [{ name: "A" }, { name: "B", proxy: null }, { name: "C", proxy: "" }] as { name: string; proxy?: string }[]) {
+      expect(await scheduler.createIdentity(dot.id, body)).not.toHaveProperty("proxy");
+    }
+    expect(requests).toEqual([{ name: "A" }, { name: "B" }, { name: "C" }]);
+
+    const own = await scheduler.createIdentity(dot.id, { name: "D", proxy: "http://proxy.test:8080" });
+    expect(own.proxy).toBe("http://proxy.test:8080");
+    await expect(scheduler.createIdentity(dot.id, { name: "E", proxy: 8080 as never })).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+  });
+
   it("an identity's frame and close go to the running guest: not_open, busy and not_found pass through", async () => {
     const { scheduler, driver } = make();
     const dot = await readyDot(scheduler, "watcher");

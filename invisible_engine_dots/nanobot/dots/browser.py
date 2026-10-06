@@ -280,11 +280,12 @@ class BrowserManager:
     # ------------------------------------------------------------------
 
     async def create(self, name: str, proxy: str | None = None) -> BrowserIdentity:
-        """Make an identity: its directories on the computer, its row and `browser.identity.created`."""
+        """Make an identity: its directories on the computer, its row and `browser.identity.created`.
+
+        `proxy` is an explicit option, off by default: with none the identity's browser inherits the VM's egress.
+        """
         async with self._create_lock:
-            body: dict[str, object] = {"name": name}
-            if proxy is not None:
-                body["proxy"] = proxy
+            body: dict[str, object] = {"name": name, "proxy": proxy}
             count = self._store.read(dots_store.count_identities)
             try:
                 request = check_identity_request(body, count, self._max_identities)
@@ -527,9 +528,9 @@ class BrowserManager:
     def _paths(self, identity_id: str) -> tuple[str, str, str]:
         """The identity's directory, its profile, and the home of its MCP server.
 
-        The home is not under the identity's directory, nor anywhere under /home/dot: the server saves the
-        proxy of its browser, password included, in a session file under its home, and the host's file routes
-        read /home/dot and nothing else.
+        The home is not under the identity's directory, nor anywhere under /home/dot: for an identity that has a
+        proxy of its own the server saves it, password included, in a session file under its home, and the host's
+        file routes read /home/dot and nothing else.
         """
         root = posixpath.join(self._browsers_dir, identity_id)
         return root, posixpath.join(root, "profile"), posixpath.join(self._mcp_homes_dir, identity_id)
@@ -567,8 +568,10 @@ class BrowserManager:
             # from a hashed lock, and a drift has to fail loudly instead of bringing in files nobody checked.
             BROWSER_ENV["CORE_AUTOFIX"]: "off",
         }
-        # The proxy carries a password: it goes to the relay by its environment, never by its command line,
-        # which every user of the VM can read in /proc.
+        # An identity has no proxy unless the person gave it one: then no proxy variable is set at all and the
+        # browser inherits the egress of the VM, whatever the engine's own environment holds. A proxy carries a
+        # password: it goes to the relay by its environment, never by its command line, which every user of the
+        # VM can read in /proc.
         secrets = {BROWSER_ENV["PROXY"]: proxy} if proxy else {}
         argv = self._computer.relay_argv([self._mcp_command], cwd=root, env=environment, secrets=secrets)
         return MCPServerConfig(

@@ -49,6 +49,10 @@ function namesAPort(proxy: string): boolean {
  * browser's server refuses one without, with a message that prints the
  * password), and fewer
  * than `maxIdentities` existing identities. Returns the trimmed values.
+ *
+ * A proxy is an explicit option of one identity, never a requirement: a request
+ * with no proxy, a null one or a blank one is the normal case, and the browser
+ * then uses the egress of the Dot's computer.
  */
 export function checkIdentityRequest(
   input: { name: unknown; proxy?: unknown },
@@ -58,8 +62,8 @@ export function checkIdentityRequest(
   const name = typeof input.name === "string" ? input.name.trim() : "";
   if (!name) throw new IdentityRequestError("invalid", "an identity needs a non-empty name");
   if (name.length > IDENTITY_NAME_MAX) throw new IdentityRequestError("invalid", `an identity name is at most ${IDENTITY_NAME_MAX} characters`);
-  if (input.proxy !== undefined && typeof input.proxy !== "string") throw new IdentityRequestError("invalid", "proxy must be a string");
-  const proxy = (input.proxy as string | undefined)?.trim() || undefined;
+  if (input.proxy != null && typeof input.proxy !== "string") throw new IdentityRequestError("invalid", "proxy must be a string");
+  const proxy = (input.proxy as string | null | undefined)?.trim() || undefined;
   if (proxy) {
     let url: URL;
     try {
