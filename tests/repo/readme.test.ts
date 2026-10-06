@@ -12,6 +12,7 @@ import { DEFAULT_LIFECYCLE_OPTIONS } from "../../apps/scheduler/src/lifecycle.js
 import { USAGE } from "../../apps/cli/src/cli.js";
 import { ARGUMENTS_MAX } from "../../packages/channels/src/approval-text.js";
 import { ENV, MAX_HOST_FILE_BYTES, parseDotConfig } from "../../packages/shared/src/index.js";
+import { PRESET_IDS, PRESETS } from "../../apps/web/src/lib/permission-presets.js";
 
 const repo = resolve(fileURLToPath(new URL(".", import.meta.url)), "../..");
 const read = (path: string): string => readFileSync(join(repo, path), "utf8").replace(/\r\n/g, "\n");
@@ -100,6 +101,15 @@ describe("the README's environment variables", () => {
       expect(known.has(name), `${name} is not a variable of ENV`).toBe(true);
     }
     expect(read("apps/api/src/start.ts")).toContain("INVISIBLE_DOTS_DEBUG");
+  });
+});
+
+describe("the README's account of the web UI", () => {
+  it("gives each permission preset of the Create a Dot page with the words the page uses", () => {
+    for (const id of PRESET_IDS) {
+      const { label, description } = PRESETS[id];
+      expect(readme, id).toContain(`| ${label} | ${description} |`);
+    }
   });
 });
 

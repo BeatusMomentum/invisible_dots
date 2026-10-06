@@ -10,6 +10,7 @@
 
 <p align="center">
 <a href="#quick-start">Quick start</a>&nbsp;&nbsp;&nbsp;
+<a href="#using-the-web-ui">Web UI</a>&nbsp;&nbsp;&nbsp;
 <a href="#using-a-dot-day-to-day">Day to day</a>&nbsp;&nbsp;&nbsp;
 <a href="#what-a-dot-can-do">What a Dot can do</a>&nbsp;&nbsp;&nbsp;
 <a href="#approvals">Approvals</a>&nbsp;&nbsp;&nbsp;
@@ -169,13 +170,14 @@ node apps/cli/dist/invisible-dots.mjs message my-first-dot "List the files in yo
 node apps/cli/dist/invisible-dots.mjs logs my-first-dot
 ```
 
-`secret openrouter` asks for the key (it is never a command-line argument).
-`init` writes `dot.yaml`, the Dot's name, goal, model, resources and
+`secret openrouter` asks for the key (it is never a command-line argument; the
+web UI takes it too, see below). `init` writes `dot.yaml`, the Dot's name, goal, model, resources and
 permissions, to edit before `create`. The first Dot takes a while to boot; the
 message waits in the queue until it is ready. `logs` prints the Dot's events
 and keeps following new ones until Ctrl+C (`--no-follow` prints and exits). It
 worked when `logs` shows a `message.assistant` event with the answer and what
-it cost (`spent_usd`).
+it cost (`spent_usd`). The web UI can do the same steps: its Create a Dot page
+takes the place of `init` and `create`, and its Settings page takes the key.
 
 ### A shorter command
 
@@ -192,7 +194,7 @@ command. To type it that way:
 
 - in **PowerShell**, type `npx invisible-dots` from the repository folder.
 
-### The web UI
+### Open the web UI
 
 `invisible-dots server` also serves the web client. Open
 http://127.0.0.1:3000 and sign in with the first line of the API token file,
@@ -207,14 +209,101 @@ Get-Content $HOME\.invisible-dots\config\api.token -TotalCount 1
 ```
 
 After that the browser holds only an HttpOnly session cookie derived from the
-token, and the web server adds the token to each API call itself.
+token, and the web server adds the token to each API call itself. The web
+client is a companion: if it was not built or its port is taken, the server
+says why and the API and the command line carry on (`server --no-web` leaves
+it out).
 
-From there you create a Dot by pasting its YAML, and follow each Dot in its
-tabs: the chat, the tasks (queue new ones, cancel), the timeline of its events,
-the computer (the resources it was given, live memory and disk use, and a
-screenshot of the desktop on demand), its browser identities, its pending
-approvals, and its settings, where you edit the YAML or delete the Dot. An
-Approvals page lists what waits for you across every Dot.
+## Using the web UI
+
+The web UI is the same control plane as the command line, with a page for what
+you would otherwise read as text. It uses the system's own fonts, has a light
+and a dark theme that follows your system unless you choose, and fits a phone
+screen.
+
+**First run.** On a computer that is not ready for a Dot yet, Home shows a
+setup checklist: each check of `doctor` that fails, with the command that fixes
+it and a button that copies it, and a field for the OpenRouter key while none is
+stored. `setup` and `image build` stay commands you run in a terminal (one needs
+administrator rights and the other takes long). The checklist checks again when
+you return to the window and stays on the page, turned green, once the last
+thing is done; a computer that is ready shows none of it. The Settings page
+(in the left rail) shows the same checks, takes a new key (and pushes it to the
+Dots that are running), and has the theme and Sign out.
+
+**Create a Dot.** The Create a Dot page is a form in three steps (Identity,
+Brain, Computer and safety) or the same configuration as YAML, and it refuses
+what the configuration schema refuses before anything is sent. The permissions
+start from one of three presets:
+
+| preset | what it does |
+|---|---|
+| Careful | Asks you before it runs a command or changes a file. |
+| Balanced | The defaults: works freely on its own computer, and asks before it deletes a browser identity or adds an automation. |
+| Autonomous | Never asks, except before it deletes a browser identity. |
+
+A panel beside the form shows what the new Dot depends on (the control plane,
+the database, the key, QEMU, the accelerator, the disk, the images), with the
+command that fixes each failing row.
+
+**The Inbox** (in the rail) is everything that needs you, from every Dot: the
+approvals that wait (the one that has waited longest first), a Dot in an error
+state, a task that failed in the last 24 hours, and a channel that has to be
+linked again. The same count is on the rail's Inbox badge, in the tab title and
+on the favicon. An approval says what the Dot wants to do, under which
+permission and why, shows a command, a diff of a file change, an address or a
+schedule in the form that reads best (the raw arguments are under Details, a
+proxy's password never), and answers with Allow once, Always allow (it asks
+first, naming what the permission covers) or Deny with a note. With the
+keyboard, `j` and `k` move between the cards, `a` allows the selected one once
+and `d` denies it; a command or a deletion is not allowed by a key press alone.
+History lists the answered ones.
+
+**A Dot's page** has seven tabs:
+
+- **Chat**: the one persistent conversation, with a quiet line for each tool the
+  Dot used to answer, approvals you can answer in place, and a "via Telegram"
+  mark on a message that came through a channel. "Watch the computer" opens a
+  panel beside it with the desktop and each open browser.
+- **Tasks**: what is running (with its latest progress line and its cost), what
+  is scheduled and queued, and the history. Create a task, cancel one after a
+  question, and open one for its result and its story.
+- **Computer**: Screen, Browser, Files and Usage. Browser lists the Dot's
+  browser identities and shows the window of an open one. Files is a read-only
+  walk through `/home/dot`. Usage shows what the computer was given and what it
+  uses, the model spend today and in total, and Start, Reboot and Stop.
+- **Memory**: the notes the Dot wrote (read only) and its automations, each with
+  its schedule in words, its next and last run, a switch that pauses it and a
+  delete. You cannot create one there: an automation is the Dot's own act.
+- **Channels**: Telegram and WhatsApp, below.
+- **Activity**: the whole event log as readable lines, filtered by kind,
+  searchable, and exportable as JSON Lines.
+- **Settings**: the Dot's configuration, as a form or as YAML. Nothing is saved
+  until you have seen the list of what changes, and a configuration changed
+  somewhere else in the meantime is never overwritten. The permission editor
+  shows each permission's risk and which tools it covers. Deleting the Dot asks
+  you to type its name.
+
+**Watching the computer.** The desktop and each open browser are shown as
+pictures that the control plane reads from the guest every few seconds while the
+page is in view, with a LIVE badge, a warning when a picture is more than 15
+seconds old, and a mark on the browser the Dot is using right now. It is a view
+and not a remote desktop: it says "The Dot has control", because nothing you do
+in it reaches the computer.
+
+**Stopping.** Stop asks first, and says that the computer's automations do not
+run while you have stopped it. The Usage view and the Automations view show it
+(paused because you stopped the computer) or, otherwise, when the next
+automation is due.
+
+**Channels.** The Channels tab connects a Dot to Telegram (paste the bot's
+token) and, when the server was started with `INVISIBLE_DOTS_WHATSAPP=1`, to
+WhatsApp (scan a QR code the page draws). It pairs a chat with a link, a QR code
+and the words to type, lists the people paired with a Revoke for each, has the
+three switches of a channel's settings, and can pause or disconnect it. A
+channel that was refused (a revoked token, a device removed on the phone) says
+so, and so do the rail and the Inbox. More under
+[Talk to it from your phone](#talk-to-it-from-your-phone).
 
 ## Using a Dot day to day
 
@@ -345,6 +434,12 @@ Each browser identity is a separate Firefox profile under
 fingerprint, the same fingerprint at every launch, and an optional proxy. It
 runs on the Dot's desktop, so it appears in screenshots of the desktop.
 
+In the web UI (Computer, Browser) you can create an identity with an optional
+proxy, close one, delete one (asked first), and watch the window of each open
+one, as a picture refreshed every 2 seconds while the page is in view. The
+proxy field does not show what you type, and a proxy's password is shown nowhere
+afterwards.
+
 Launching is explicit: a page action on an identity that is not open fails, so
 denying `browser.identity.launch` cannot be undone by navigating. At most
 `max_open` identities are open at once (default 3, roughly 0.8 GB each), the
@@ -376,8 +471,8 @@ end-to-end encrypted. Text only.
 A channel has three settings, all on by default: `approvals` (ask approvals in
 the chat), `show_arguments` (show the tool's arguments in them) and
 `notify_tasks` (what the Dot says on its own: finished and failed tasks, and
-the answers to its automations). There is no command or web control for them
-yet; the API sets them:
+the answers to its automations). The Channels tab of the web UI has a switch
+for each; there is no command for them, and the API sets them too:
 
 ```bash
 curl -X PATCH http://127.0.0.1:8787/api/dots/my-first-dot/channels/telegram \
@@ -530,7 +625,11 @@ so it is kept private to your user.
   `~/.invisible-dots/vms/<dot_id>/serial.log` (rewritten at each start).
   `invisible-dots list` shows each Dot's id.
 - What a Dot did and why it stopped: `invisible-dots logs <dot>` and
-  `invisible-dots tasks <dot>`.
+  `invisible-dots tasks <dot>`, or the Dot's Activity tab in the web UI.
+- The web UI does not open: `invisible-dots server` says why it did not start
+  it (not built, port taken) in its output; build it as in step 1.
+  A sign-in that is refused wants the first line of `config/api.token`, nothing
+  else.
 
 ## Updating and uninstalling
 
@@ -577,6 +676,9 @@ it, and to whom:
   the public address the identity exits from, through its proxy when it has
   one, to set the time zone and locale. The GeoIP lookup itself is local: the
   database is part of the golden image.
+- **The web UI** loads nothing from other sites: its pages, scripts and styles
+  come from the server on your PC and its fonts are your system's. A link you
+  press (to @BotFather, to an OpenRouter page) opens that site.
 - **Next.js** may send its anonymous build telemetry when the web client is
   built, unless `NEXT_TELEMETRY_DISABLED=1` is set as in the quick start.
 
@@ -608,6 +710,10 @@ tmp/gates-venv/bin/python -m pip install -r .github/gates-requirements.txt
 - The engine: `pip install -e ".[dev]"` and `pytest` in
   `invisible_engine_dots/` (Linux only: it uses unix sockets).
 - dot-agentd: `go test ./...` in `guest/dot-agentd/`.
+- The web client's browser tests: build it (`npm run build --workspace
+  @invisible-dots/web`), install the browser they drive (`npx playwright install
+  chromium`) and run `npm run test:e2e --workspace @invisible-dots/web`. Each run
+  starts the real control plane over a fake VM layer and the built web client.
 - The engine smoke and the browser smoke run the guest's two daemons, and the
   real invisible-playwright-mcp with its Firefox, in Linux containers:
   `bash guest/image-builder/test/smoke/run.sh` (add `--suite browser`); only
@@ -623,9 +729,9 @@ tmp/gates-venv/bin/python -m pip install -r .github/gates-requirements.txt
 CI runs on pushes to main and on pull requests: typecheck and vitest on Linux
 and Windows, the database layer against a real PostgreSQL, dot-agentd's Go
 tests and static build, the engine's pytest, the ISO images read by the Linux
-kernel, both smokes, the web build, and two prose gates (English only, and a
-README that promises nothing it cannot support). The vitest, Go and pytest
-runs are counted against the floors in `.github/test-floors.json`, and the
+kernel, both smokes, the web build with its Playwright tests, and two prose gates (English only, and a
+README that promises nothing it cannot support). The vitest, Go, pytest and
+Playwright runs are counted against the floors in `.github/test-floors.json`, and the
 smokes fail on a skipped check, so a test that stops running fails the build.
 
 | folder | what |
@@ -659,9 +765,10 @@ Alpha. Nothing is released or published yet.
 - **Channels carry text only**, one Telegram bot per Dot; the official
   WhatsApp Cloud API is a later adapter on the same hub.
 - **Not in this version**: snapshots and rollback, backups, quotas, network
-  policies, MCP integrations beyond the browser, a remote desktop or an
-  interactive terminal for you, artifacts, several hosts, organisations and
-  roles, macOS hosts
+  policies, MCP integrations beyond the browser, controlling the desktop or an
+  interactive terminal for you (the web UI shows the desktop and the browsers
+  as pictures, and nothing you do there reaches the computer), artifacts,
+  several hosts, organisations and roles, macOS hosts
   ([architecture: out of scope](docs/architecture.md#10-out-of-scope-for-this-version)).
 
 ## License
