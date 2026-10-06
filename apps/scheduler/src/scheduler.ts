@@ -38,7 +38,6 @@ import {
   TERMINAL_TASK_STATES,
   vmName,
   type ApprovalStatus,
-  type Automation,
   type BrowserIdentity,
   type CreateBrowserIdentityRequest,
   type DotConfig,
@@ -648,24 +647,7 @@ export class Scheduler {
     await this.#guestCall(dotId, "close a browser identity", () => guest.closeBrowserIdentity(identityId));
   }
 
-  // Automations and tools: what the Dot's engine keeps (its cron jobs, its tool table), through the computer
-
-  async listAutomations(idOrName: string): Promise<Automation[]> {
-    const { dotId, guest } = await this.#runningGuest(idOrName);
-    return (await this.#guestCall(dotId, "list automations", () => guest.listAutomations())).automations;
-  }
-
-  /** Pause (`enabled: false`) or resume an automation; the answer is the automation as it is now. */
-  async setAutomationEnabled(idOrName: string, automationId: string, enabled: unknown): Promise<Automation> {
-    if (typeof enabled !== "boolean") throw new ControlPlaneError(400, "invalid_request", "enabled must be true or false");
-    const { dotId, guest } = await this.#runningGuest(idOrName);
-    return this.#guestCall(dotId, "set an automation", () => guest.setAutomationEnabled(automationId, enabled));
-  }
-
-  async deleteAutomation(idOrName: string, automationId: string): Promise<void> {
-    const { dotId, guest } = await this.#runningGuest(idOrName);
-    await this.#guestCall(dotId, "delete an automation", () => guest.deleteAutomation(automationId));
-  }
+  // The tools: the Dot's engine keeps its table, read through the computer
 
   /** The Dot's tools, each with the permission it exercises and whether the model is offered it now. */
   async listTools(idOrName: string): Promise<ToolInfo[]> {

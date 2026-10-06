@@ -25,7 +25,6 @@ AGENT_ROUTES = {
     "events_stream": "/events/stream",
     "state": "/state",
     "browser_identities": "/browser-identities",
-    "automations": "/automations",
     "tools": "/tools",
     "prepare_sleep": "/prepare-sleep",
 }
@@ -74,7 +73,6 @@ OUTBOUND_EVENT_TYPES = (
     "browser.identity.deleted",
     "browser.identity.launched",
     "browser.identity.closed",
-    "memory.written",
     "automation.next_run",
 )
 
@@ -288,10 +286,6 @@ class BrowserConfig(_Open):
     identities: BrowserIdentitiesConfig
 
 
-class MemoryConfig(_Open):
-    enabled: StrictBool
-
-
 class LimitsConfig(_Open):
     max_steps_per_task: PositiveInt
     context_tokens: Annotated[int, Field(strict=True, ge=4000, le=1_000_000)]
@@ -312,7 +306,6 @@ class DotRuntimeConfig(_Open):
     models: dict[str, NonEmptyStr] | None = None
     browser: BrowserConfig
     permissions: dict[str, Literal["allow", "ask", "deny"]]
-    memory: MemoryConfig
     limits: LimitsConfig
 
     @field_validator("instructions")

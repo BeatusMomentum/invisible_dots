@@ -59,7 +59,7 @@ describe("InvisibleDotsClient", () => {
     ]);
   });
 
-  it("automation and tool methods use the routes the API serves, ids encoded, and unwrap the answers", async () => {
+  it("the tool method uses the route the API serves, the name encoded, and unwraps the answer", async () => {
     const seen: string[] = [];
     const client = new InvisibleDotsClient({
       baseUrl: "http://api.test",
@@ -67,23 +67,12 @@ describe("InvisibleDotsClient", () => {
       fetch: async (input, init) => {
         const request = new Request(input, init);
         seen.push(`${request.method} ${new URL(request.url).pathname} ${await request.text()}`.trim());
-        if (request.method === "DELETE") return new Response(null, { status: 204 });
-        if (request.method === "PATCH") return new Response(JSON.stringify({ id: "j 1", enabled: false }));
-        if (request.url.endsWith("/tools")) return new Response(JSON.stringify({ tools: [{ name: "exec", permission: "computer.exec", offered: true, description: "Run." }] }));
-        return new Response(JSON.stringify({ automations: [{ id: "j 1" }] }));
+        return new Response(JSON.stringify({ tools: [{ name: "exec", permission: "computer.exec", offered: true, description: "Run." }] }));
       },
     });
 
-    expect(await client.listAutomations("a b")).toEqual([{ id: "j 1" }]);
-    expect(await client.setAutomationEnabled("a b", "j 1", false)).toEqual({ id: "j 1", enabled: false });
-    await client.deleteAutomation("a b", "j 1");
     expect(await client.listTools("a b")).toEqual([{ name: "exec", permission: "computer.exec", offered: true, description: "Run." }]);
-    expect(seen).toEqual([
-      "GET /api/dots/a%20b/automations",
-      'PATCH /api/dots/a%20b/automations/j%201 {"enabled":false}',
-      "DELETE /api/dots/a%20b/automations/j%201",
-      "GET /api/dots/a%20b/tools",
-    ]);
+    expect(seen).toEqual(["GET /api/dots/a%20b/tools"]);
   });
 
   it("events and file methods send the query the API routes expect, with names and paths encoded", async () => {
@@ -100,7 +89,7 @@ describe("InvisibleDotsClient", () => {
       },
     });
     expect(await client.events("a b")).toHaveLength(1);
-    await client.events("a", { after: 4, limit: 10, types: ["tool.called", "memory.written"], taskId: "task_1" });
+    await client.events("a", { after: 4, limit: 10, types: ["tool.called", "automation.next_run"], taskId: "task_1" });
     await client.events("a", { types: [] });
     await client.events("a", { types: ["tool.called"] });
     await client.events("a", { order: "desc", before: 90, limit: 200 });
@@ -109,7 +98,7 @@ describe("InvisibleDotsClient", () => {
     expect([...(await client.readFile("a", "memory/é.md"))]).toEqual([1, 2, 3]);
     expect(seen).toEqual([
       "/api/dots/a%20b/events",
-      "/api/dots/a/events?after=4&limit=10&types=tool.called%2Cmemory.written&task_id=task_1",
+      "/api/dots/a/events?after=4&limit=10&types=tool.called%2Cautomation.next_run&task_id=task_1",
       "/api/dots/a/events",
       "/api/dots/a/events?types=tool.called",
       "/api/dots/a/events?before=90&limit=200&order=desc",

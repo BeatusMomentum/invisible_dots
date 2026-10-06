@@ -26,10 +26,9 @@ describe("protocol constants", () => {
     expect(PREPARE_SLEEP_TIMEOUT_MS).toBe(60_000);
   });
 
-  it("names the automation and tool routes, an automation id encoded as one path segment", () => {
-    expect(AGENT_ROUTES.automations).toBe("/automations");
-    expect(AGENT_ROUTES.automation("job 1/x")).toBe("/automations/job%201%2Fx");
+  it("names the tool route, and none for the automations: they are the Dot's, made and changed through its cron tool", () => {
     expect(AGENT_ROUTES.tools).toBe("/tools");
+    expect(Object.values(AGENT_ROUTES).some((route) => typeof route === "string" && route.includes("automation"))).toBe(false);
   });
 
   it("lays out an identity directory", () => {

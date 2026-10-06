@@ -2,7 +2,7 @@ import Link from "next/link";
 import { cn } from "../lib/utils";
 
 /**
- * The views of one page of a Dot (Computer: Screen, Browser, ...; Memory: Notes, Automations) as a segmented row of
+ * The views of one page of a Dot (Computer: Screen, Browser, Files, Usage) as a segmented row of
  * links. Each view has an address of its own, so it can be linked and the back button walks between them.
  */
 export function ViewTabs<View extends string>({

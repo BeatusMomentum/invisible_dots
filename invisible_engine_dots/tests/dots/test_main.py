@@ -13,7 +13,8 @@ import socket
 import subprocess
 import sys
 import tempfile
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
@@ -304,8 +305,9 @@ class Served:
             return response.status, await response.text()
 
 
-@pytest.fixture
-async def served() -> AsyncIterator[Served]:
+@asynccontextmanager
+async def serving(prepare: Callable[[Environment], None] = lambda environment: None) -> AsyncIterator[Served]:
+    """The engine served as `main` serves it; `prepare` sees the environment before it starts."""
     directory = short_dir()
     fake = FakeOpenRouter()
     await fake.start()
@@ -322,6 +324,7 @@ async def served() -> AsyncIterator[Served]:
         home=str(directory),
         model_user=None,
     )
+    prepare(environment)
     stop = asyncio.Event()
     task = asyncio.get_running_loop().create_task(serve(environment, stop))
     for _ in range(500):
@@ -336,6 +339,12 @@ async def served() -> AsyncIterator[Served]:
     await asyncio.wait_for(task, 30)
     await fake.stop()
     shutil.rmtree(directory, ignore_errors=True)
+
+
+@pytest.fixture
+async def served() -> AsyncIterator[Served]:
+    async with serving() as api:
+        yield api
 
 
 async def next_events(api: Served, after: int, count: int) -> list[dict[str, Any]]:
@@ -388,55 +397,25 @@ class TestTheEngineServed:
 
         assert jobs.exists()
 
-    async def test_the_automations_route_serves_the_jobs_of_that_same_service(self, served: Served) -> None:
-        jobs = Path(served.environment.state_dir) / "cron" / "jobs.json"
-        for _ in range(100):
-            if jobs.exists():
-                break
-            await asyncio.sleep(0.02)
-        job = {
-            "id": "j1",
-            "name": "daily",
-            "enabled": True,
-            "schedule": {"kind": "every", "everyMs": 3_600_000},
-            "payload": {"kind": "agent_turn", "message": "go"},
-            "state": {},
-        }
-        jobs.write_text(json.dumps({"version": 1, "jobs": [job]}), encoding="utf-8")
+    async def test_an_automation_on_the_disk_at_start_tells_the_host_when_it_is_next_due(self) -> None:
+        # The Dot made it before the computer slept: the host learns its next run as the engine comes up.
+        def a_job(environment: Environment) -> None:
+            jobs = Path(environment.state_dir) / "cron" / "jobs.json"
+            jobs.parent.mkdir(parents=True)
+            job = {
+                "id": "j1",
+                "name": "daily",
+                "enabled": True,
+                "schedule": {"kind": "every", "everyMs": 3_600_000},
+                "payload": {"kind": "agent_turn", "message": "go"},
+                "state": {},
+            }
+            jobs.write_text(json.dumps({"version": 1, "jobs": [job]}), encoding="utf-8")
 
-        status, text = await served.call("GET", "/automations")
-        assert status == 200 and [row["id"] for row in json.loads(text)["automations"]] == ["j1"]
-        assert (await served.call("PATCH", "/automations/j1", {"enabled": False}))[0] == 200
-        assert json.loads(jobs.read_text(encoding="utf-8"))["jobs"][0]["enabled"] is False
-        assert (await served.call("DELETE", "/automations/j1"))[0] == 204
-        assert json.loads((await served.call("GET", "/automations"))[1]) == {"automations": []}
-
-    async def test_resuming_an_automation_tells_the_host_when_it_is_next_due(self, served: Served) -> None:
-        jobs = Path(served.environment.state_dir) / "cron" / "jobs.json"
-        for _ in range(100):
-            if jobs.exists():
-                break
-            await asyncio.sleep(0.02)
-        job = {
-            "id": "j1",
-            "name": "daily",
-            "enabled": True,
-            "schedule": {"kind": "every", "everyMs": 3_600_000},
-            "payload": {"kind": "agent_turn", "message": "go"},
-            "state": {},
-        }
-        jobs.write_text(json.dumps({"version": 1, "jobs": [job]}), encoding="utf-8")
-
-        # Paused, nothing is due and nothing was reported before, so nothing is said; resumed, the time is.
-        assert (await served.call("PATCH", "/automations/j1", {"enabled": False}))[0] == 200
-        status, text = await served.call("PATCH", "/automations/j1", {"enabled": True})
-        assert status == 200
-        next_run = json.loads(text)["next_run_at_ms"]
-        assert isinstance(next_run, int)
-
-        events = await asyncio.wait_for(next_events(served, 0, 3), 30)
-        assert [e["type"] for e in events] == ["agent.started", "agent.state", "automation.next_run"]
-        assert events[2]["data"] == {"next_run_at_ms": next_run}
+        async with serving(a_job) as served:
+            events = await asyncio.wait_for(next_events(served, 0, 3), 30)
+        next_runs = [e["data"]["next_run_at_ms"] for e in events if e["type"] == "automation.next_run"]
+        assert len(next_runs) == 1 and isinstance(next_runs[0], int)
 
     async def test_the_cron_timer_stops_before_the_engine_does_so_no_firing_falls_into_the_stop(
         self, served: Served, monkeypatch: pytest.MonkeyPatch

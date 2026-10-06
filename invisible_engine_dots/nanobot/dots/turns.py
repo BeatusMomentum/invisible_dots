@@ -40,7 +40,6 @@ from nanobot.dots import store as dots_store
 from nanobot.dots.computer import Computer, ComputerError, Entry
 from nanobot.dots.gate import close_open_calls
 from nanobot.dots.images import TurnImages, bind_turn_images, reset_turn_images
-from nanobot.dots.memory_tools import MEMORY_DIR, memory_keys_written
 from nanobot.dots.permissions import tool_starts_terminal, tool_target
 from nanobot.dots.projection import EngineSettings
 from nanobot.dots.provider import OpenRouterProviders
@@ -52,6 +51,8 @@ from nanobot.session.manager import Session
 from nanobot.session.summary import session_summary_from_metadata
 from nanobot.utils.llm_runtime import LLMRuntime
 
+# The Dot's long-term notes: one file per note on its own computer, kept by the Dot with the file tools.
+MEMORY_DIR = "/home/dot/memory"
 # How many of the most recently changed memory notes the prompt names.
 MEMORY_NOTES_LISTED = 20
 
@@ -141,15 +142,11 @@ class TurnHost(Protocol):
 class DotsTurnHook(AgentHook):
     """The runner's lifecycle seen by the Dot: agent state, intents, suspension, the cost cap."""
 
-    def __init__(
-        self, unit: TurnUnit, host: TurnHost, resolve: Callable[[str], str], spend: TurnSpend
-    ) -> None:
+    def __init__(self, unit: TurnUnit, host: TurnHost, spend: TurnSpend) -> None:
         super().__init__()
         self._unit = unit
         self._host = host
         self._spend = spend
-        # The computer's own path resolution: which notes a call of a file tool writes depends on it.
-        self._resolve = resolve
 
     async def before_run(self, context: AgentRunHookContext) -> None:
         self._host.run_started(self._unit)
@@ -173,7 +170,6 @@ class DotsTurnHook(AgentHook):
                 session_key=self._unit.session_key,
                 task_id=self._unit.task_id,
                 started_at=dots_store.clock_ms(),
-                memory_keys=memory_keys_written(tool_call.name, params, self._resolve),
                 target=tool_target(tool_call.name, params),
                 tty=tool_starts_terminal(tool_call.name, params),
             )
@@ -302,7 +298,7 @@ class TurnRunner:
             settings.dot_prompt,
             workspace=settings.workspace,
             memory_dir=MEMORY_DIR,
-            memory_notes=await self._recent_notes() if settings.memory_read else None,
+            memory_notes=await self._recent_notes(),
             now=datetime.now().astimezone(),
         )
 
@@ -332,7 +328,7 @@ class TurnRunner:
                 ),
             ),
             transcript_builder=builder.build_transcript,
-            hook=DotsTurnHook(unit, self._host, self._computer.resolve, spend),
+            hook=DotsTurnHook(unit, self._host, spend),
             concurrent_tools=False,
             # No spill files: a long result is cut to the limit, the Dot's computer is not the engine's disk.
             workspace=None,

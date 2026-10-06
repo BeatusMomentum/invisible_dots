@@ -24,11 +24,7 @@ this process's memory.
   the call acted on, redacted; a call that never started, such as a denied
   one, has no intent and so no target), and `tty: true` when the intent says the call started a
   terminal session (permissions.tool_starts_terminal); a call that did not run (parked,
-  skipped, closed as not run) gets none;
-- the notes a tool call wrote, when it ran ok: one `memory.written` per note
-  (`key` is the path relative to the memory directory), right after its
-  `tool.called`, in the same transaction. The intent holds the keys, set before
-  the call ran; a call that failed, was denied or was interrupted reports none.
+  skipped, closed as not run) gets none.
 
 `message.assistant`, `task.progress` and `task.completed` carry `spent_usd`, what the session has spent so
 far (`store.append_outbox_spent`), read in the same transaction.
@@ -185,6 +181,3 @@ def _record_tool_result(
     if interrupted:
         event["interrupted"] = True
     store.append_outbox(conn, "tool.called", event)
-    if event["ok"] and intent is not None:
-        for key in intent.memory_keys:
-            store.append_outbox(conn, "memory.written", {"key": key})

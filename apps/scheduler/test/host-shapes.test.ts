@@ -41,8 +41,6 @@ browser:
 permissions:
   computer.exec: deny
   files.write: ask
-memory:
-  enabled: false
 limits:
   max_steps_per_task: 30
   context_tokens: 64000
@@ -128,7 +126,7 @@ describe("what the host sends the engine", () => {
     const priorities = written.inbound_events.filter((event) => event.type === "task.created").map((event) => event.data.priority);
     expect(priorities).toEqual([5, 0]);
     const [minimal, full] = written.runtime_configs.map((entry) => entry.config as Record<string, unknown>);
-    expect(Object.keys(full!).sort()).toEqual(["browser", "goal", "instructions", "limits", "memory", "model", "models", "name", "permissions"]);
+    expect(Object.keys(full!).sort()).toEqual(["browser", "goal", "instructions", "limits", "model", "models", "name", "permissions"]);
     expect(Object.keys(minimal!)).not.toContain("instructions");
     expect(minimal).not.toHaveProperty("computer");
   });

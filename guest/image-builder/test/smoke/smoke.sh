@@ -274,7 +274,7 @@ check "the engine started again after a kill -9 answers /health" "wait_health &&
 check "agent.started after that kill" "wait_event $STREAM '.type==\"agent.started\" and .seq > $AUTO_KILLED_AT'"
 sleep 5
 check "the job did not run again: its firing is answered once in all" "[ \"\$(auto_answers)\" = 1 ]"
-check "the host's route lists that job and removes it (204), so the Dot is left with none" "api $A/automations | jq -e '.automations | length == 1 and .[0].id == \"missed01\"' >/dev/null && [ \"\$(api -o /dev/null -w '%{http_code}' -X DELETE $A/automations/missed01)\" = 204 ]"
+check "the engine has no route for the host to list or change the jobs: they are the Dot's own (404)" "[ \"\$(api -o /dev/null -w '%{http_code}' $A/automations)\" = 404 ]"
 # --- cancel and terminate end the remote command, as dot ---
 # The engine ends a command by killing the relay it started, in the relay's own process group; nothing
 # else tells dot-agentd. On the closed socket dot-agentd must end the remote process group: the shell,
@@ -386,48 +386,45 @@ check "/state is IDLE with nothing pending" "st | jq -e '.state==\"IDLE\" and .p
 # lists the tools it was offered. The expected list is the permission table of
 # nanobot/dots/permissions.py, written out here: a tool the engine offers that the
 # table does not name (an MCP tool, a core tool left in) makes a list differ.
-offered_with() { # n, permissions json, memory.enabled, managed_by_dot: the tools the model is offered in a chat turn
-  echo "$2" > /tmp/perms.json; echo "$3" > /tmp/memory.json
-  echo "{\"managed_by_dot\":$4,\"max_identities\":20,\"max_open\":3}" > /tmp/browser.json
+offered_with() { # n, permissions json, managed_by_dot: the tools the model is offered in a chat turn
+  echo "$2" > /tmp/perms.json
+  echo "{\"managed_by_dot\":$3,\"max_identities\":20,\"max_open\":3}" > /tmp/browser.json
   [ "$(push)" = '204 204' ] || return 1
   [ "$(ev "msg-tools-$1" user.message '{"text":"which tools?"}')" = 202 ] || return 1
   wait_event $STREAM ".type==\"message.assistant\" and .data.in_reply_to==\"msg-tools-$1\"" || return 1
   tail -1 /tmp/fake-tools.jsonl | jq -c '.tools|sort'
 }
-check_offered() { # n, label, permissions json, memory.enabled, managed_by_dot, expected tools (sorted JSON)
-  local got; got=$(offered_with "$1" "$3" "$4" "$5")
+check_offered() { # n, label, permissions json, managed_by_dot, expected tools (sorted JSON)
+  local got; got=$(offered_with "$1" "$3" "$4")
   echo "offered ($2): $got"
-  check "offered tools: $2" "[ '$got' = '$6' ]"
+  check "offered tools: $2" "[ '$got' = '$5' ]"
 }
 BROWSER_GRANTED='"computer.screenshot":"allow","browser.identity.list":"allow","browser.identity.create":"allow","browser.identity.delete":"ask","browser.identity.launch":"allow","browser.identity.close":"allow","browser.navigate":"allow","browser.read":"allow","browser.act":"allow"'
-check_offered 1 "every permission granted (files.write and browser.identity.delete ask), memory on, the Dot manages its identities" \
-  '{"computer.exec":"allow","files.read":"allow","files.write":"ask","memory.read":"allow","automations":"allow",'"$BROWSER_GRANTED"'}' true true \
-  '["apply_patch","browser_back","browser_click","browser_click_at","browser_forward","browser_identity_close","browser_identity_create","browser_identity_delete","browser_identity_launch","browser_identity_list","browser_navigate","browser_press_key","browser_read_text","browser_reload","browser_screenshot","browser_scroll","browser_select_option","browser_snapshot","browser_type","computer_screenshot","cron","edit_file","exec","exec_session","find_files","grep","list_dir","list_exec_sessions","memory_get","memory_search","read_file","write_file"]'
+check_offered 1 "every permission granted (files.write and browser.identity.delete ask), the Dot manages its identities" \
+  '{"computer.exec":"allow","files.read":"allow","files.write":"ask","automations":"allow",'"$BROWSER_GRANTED"'}' true \
+  '["apply_patch","browser_back","browser_click","browser_click_at","browser_forward","browser_identity_close","browser_identity_create","browser_identity_delete","browser_identity_launch","browser_identity_list","browser_navigate","browser_press_key","browser_read_text","browser_reload","browser_screenshot","browser_scroll","browser_select_option","browser_snapshot","browser_type","computer_screenshot","cron","edit_file","exec","exec_session","find_files","grep","list_dir","list_exec_sessions","read_file","write_file"]'
 check_offered 2 "exec denied, files.read allowed, the rest missing from the map (deny)" \
-  '{"computer.exec":"deny","files.read":"allow","memory.read":"deny"}' true true \
+  '{"computer.exec":"deny","files.read":"allow"}' true \
   '["find_files","grep","list_dir","read_file"]'
-check_offered 3 "memory off: no memory tool even with memory.read allowed" \
-  '{"computer.exec":"allow","memory.read":"allow"}' false true \
+check_offered 3 "only exec allowed: the command tools and nothing else" \
+  '{"computer.exec":"allow"}' true \
   '["exec","exec_session","list_exec_sessions"]'
-check_offered 4 "an empty permission map offers nothing" '{}' true true '[]'
+check_offered 4 "an empty permission map offers nothing" '{}' true '[]'
 check_offered 5 "managed_by_dot false: every browser permission granted, yet no tool that creates or deletes an identity" \
-  '{'"$BROWSER_GRANTED"'}' true false \
+  '{'"$BROWSER_GRANTED"'}' false \
   '["browser_back","browser_click","browser_click_at","browser_forward","browser_identity_close","browser_identity_launch","browser_identity_list","browser_navigate","browser_press_key","browser_read_text","browser_reload","browser_screenshot","browser_scroll","browser_select_option","browser_snapshot","browser_type","computer_screenshot"]'
 check_offered 6 "managed_by_dot false: browser.identity.delete asks and browser.read is allowed; only the reading tools are offered" \
-  '{"browser.identity.delete":"ask","browser.read":"allow"}' true false \
+  '{"browser.identity.delete":"ask","browser.read":"allow"}' false \
   '["browser_read_text","browser_screenshot","browser_snapshot"]'
 check_offered 7 "managed_by_dot true: delete asks, create is denied, nothing else" \
-  '{"browser.identity.delete":"ask","browser.identity.create":"deny"}' true true \
+  '{"browser.identity.delete":"ask","browser.identity.create":"deny"}' true \
   '["browser_identity_delete"]'
 # GET /tools is the same table seen from the host: the whole table, and `offered` says what the model got.
-# The map of check 3 is pushed again (memory off): the model was offered exactly exec and its two sessions tools.
-offered_with 3b '{"computer.exec":"allow","memory.read":"allow"}' false true >/dev/null
-check "GET /tools through dot-agentd lists the 32 tools of the table, each with a description" "api $A/tools | jq -e '(.tools|length)==32 and all(.tools[]; (.description|length)>0 and (.permission|length)>0)' >/dev/null"
-check "GET /tools offers what the model was offered (memory off)" "[ \"\$(api $A/tools | jq -c '[.tools[]|select(.offered)|.name]|sort')\" = '[\"exec\",\"exec_session\",\"list_exec_sessions\"]' ]"
-check "GET /tools names the permission each tool exercises" "api $A/tools | jq -e '(.tools|map({(.name):.permission})|add) | .exec==\"computer.exec\" and .read_file==\"files.read\" and .write_file==\"files.write\" and .memory_get==\"memory.read\" and .cron==\"automations\"' >/dev/null"
-check "GET /automations through dot-agentd lists none for a Dot that made none" "[ \"\$(api $A/automations)\" = '{\"automations\":[]}' ]"
-check "pausing or removing an automation that is not there is a 404 not_found" "[ \"\$(api -o /dev/null -w '%{http_code}' -X PATCH -H 'content-type: application/json' -d '{\"enabled\":false}' $A/automations/none)\" = 404 ] && [ \"\$(api -o /dev/null -w '%{http_code}' -X DELETE $A/automations/none)\" = 404 ]"
-check "a PATCH of an automation whose body is not {enabled: bool} is a 400" "[ \"\$(api -o /dev/null -w '%{http_code}' -X PATCH -H 'content-type: application/json' -d '{\"enabled\":\"yes\"}' $A/automations/none)\" = 400 ]"
+# The map of check 3 is pushed again: the model was offered exactly exec and its two sessions tools.
+offered_with 3b '{"computer.exec":"allow"}' true >/dev/null
+check "GET /tools through dot-agentd lists the 30 tools of the table, each with a description" "api $A/tools | jq -e '(.tools|length)==30 and all(.tools[]; (.description|length)>0 and (.permission|length)>0)' >/dev/null"
+check "GET /tools offers what the model was offered" "[ \"\$(api $A/tools | jq -c '[.tools[]|select(.offered)|.name]|sort')\" = '[\"exec\",\"exec_session\",\"list_exec_sessions\"]' ]"
+check "GET /tools names the permission each tool exercises" "api $A/tools | jq -e '(.tools|map({(.name):.permission})|add) | .exec==\"computer.exec\" and .read_file==\"files.read\" and .write_file==\"files.write\" and .cron==\"automations\"' >/dev/null"
 # The host reads the Dot's files through the TCP port, which is limited to /home/dot with every symbolic link followed.
 # A link a page could make the Dot stage must not show the proxy password in /proc/<pid>/environ of the browser server
 # (it runs as dot), nor the Dot's token. The engine's socket takes any path dot can open.
@@ -456,18 +453,17 @@ ev msg-deny user.message '{"text":"RUN-EXEC touch /home/dot/workspace/denied.txt
 check "a call of the tool that was not offered is reported as tool.called, not ok" "wait_event $STREAM '.type==\"tool.called\" and .data.tool==\"exec\" and .data.ok==false and .data.permission==\"computer.exec\"'"
 check "the model is told the tool is not found, and the chat answers" "wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-deny\" and (.data.text|test(\"Tool .exec. not found\"))'"
 check "the call of the tool that was not offered never ran" "sleep 2; [ ! -e /home/dot/workspace/denied.txt ]"
-echo '{"computer.exec":"allow"}' > /tmp/perms.json; echo true > /tmp/memory.json
+echo '{"computer.exec":"allow"}' > /tmp/perms.json
 check "the host pushes the allow-everything config again (204 204)" "[ \"\$(push)\" = '204 204' ]"
 
-# --- memory.written: a note is a file of /home/dot/memory, and the file tools report the ones they write ---
-echo '{"computer.exec":"allow","files.write":"allow","memory.read":"allow"}' > /tmp/perms.json
-check "the host pushes a config where the Dot may write files and read its memory (204 204)" "[ \"\$(push)\" = '204 204' ]"
+# --- memory: a note is a file of /home/dot/memory, which the Dot writes and finds with its file tools ---
+echo '{"computer.exec":"allow","files.read":"allow","files.write":"allow"}' > /tmp/perms.json
+check "the host pushes a config where the Dot may read and write files (204 204)" "[ \"\$(push)\" = '204 204' ]"
 check "a chat asks the Dot to write a note two directories deep" "[ \"\$(ev msg-note-1 user.message '{\"text\":\"WRITE-NOTE trips/smoke-note.md :: smoke-needle in a note\"}')\" = 202 ] && wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-note-1\"'"
 check "the note is a file of the memory directory, owned by dot" "[ \"\$(cat /home/dot/memory/trips/smoke-note.md 2>/dev/null)\" = 'smoke-needle in a note' ] && [ \"\$(stat -c %U /home/dot/memory/trips/smoke-note.md)\" = dot ]"
-check "write_file reported memory.written with the path relative to the memory directory, right after its tool.called" "grep '^data: ' $STREAM | sed 's/^data: //' | jq -s -e '[.[] | select((.type==\"tool.called\" and .data.tool==\"write_file\") or .type==\"memory.written\") | [.type, (.data.key // .data.tool), (.data.ok // null)]] == [[\"tool.called\",\"write_file\",true],[\"memory.written\",\"trips/smoke-note.md\",null]]' >/dev/null"
 check "that tool.called names the path it wrote and none of what it wrote" "grep '^data: ' $STREAM | sed 's/^data: //' | jq -s -e '[.[] | select(.type==\"tool.called\" and .data.tool==\"write_file\") | .data.target] == [\"/home/dot/memory/trips/smoke-note.md\"]' >/dev/null"
-check "memory_search finds the note the Dot wrote" "[ \"\$(ev msg-note-2 user.message '{\"text\":\"FIND-NOTE smoke-needle\"}')\" = 202 ] && wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-note-2\" and (.data.text|test(\"trips/smoke-note.md\"))'"
-check "a file written outside the memory directory (through ../) is no note" "[ \"\$(ev msg-note-3 user.message '{\"text\":\"WRITE-NOTE ../workspace/not-a-note.md :: x\"}')\" = 202 ] && wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-note-3\"' && [ -e /home/dot/workspace/not-a-note.md ] && [ \"\$(grep '^data: ' $STREAM | sed 's/^data: //' | jq -c 'select(.type==\"memory.written\")' | wc -l)\" = 1 ]"
+check "grep finds the note the Dot wrote" "[ \"\$(ev msg-note-2 user.message '{\"text\":\"FIND-NOTE smoke-needle\"}')\" = 202 ] && wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-note-2\" and (.data.text|test(\"trips/smoke-note.md\"))'"
+check "the engine reports no note of its own: a note is the write_file that wrote it (no memory.written)" "[ \"\$(grep '^data: ' $STREAM | sed 's/^data: //' | jq -c 'select(.type==\"memory.written\")' | wc -l)\" = 0 ]"
 echo '{"computer.exec":"allow"}' > /tmp/perms.json
 check "the host pushes the allow-everything config once more (204 204)" "[ \"\$(push)\" = '204 204' ]"
 

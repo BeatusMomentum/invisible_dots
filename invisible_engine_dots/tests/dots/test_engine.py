@@ -859,8 +859,8 @@ class TestConfig:
             old: list[dict[str, Any]] = []
             for index in range(11):
                 old += [
-                    {"role": "user", "content": f"question {index} " + "x" * 700},
-                    {"role": "assistant", "content": f"answer {index} " + "y" * 700},
+                    {"role": "user", "content": f"question {index} " + "x" * 680},
+                    {"role": "assistant", "content": f"answer {index} " + "y" * 680},
                 ]
             h.store.write(lambda conn: s.append_messages(conn, CHAT, old, final_index=None))
 

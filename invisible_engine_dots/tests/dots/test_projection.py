@@ -80,15 +80,6 @@ def test_offers_the_model_only_the_tools_whose_permission_is_not_denied(make_con
     assert settings(make_config({})).offered_tools == ()
 
 
-def test_the_memory_tools_are_offered_only_while_memory_is_enabled(config_body: Callable[..., dict[str, Any]]) -> None:
-    permissions = {"memory.read": "allow", "files.read": "allow"}
-    enabled = settings(parse_runtime_config(config_body(permissions=permissions)))
-    assert {"memory_search", "memory_get"} <= set(enabled.offered_tools)
-    disabled = settings(parse_runtime_config(config_body(permissions=permissions, memory={"enabled": False})))
-    assert not {"memory_search", "memory_get"} & set(disabled.offered_tools)
-    assert "read_file" in disabled.offered_tools
-
-
 def test_the_tools_that_make_and_delete_identities_follow_managed_by_dot(
     config_body: Callable[..., dict[str, Any]],
 ) -> None:
@@ -151,16 +142,3 @@ def test_blank_instructions_add_nothing(config_body: Callable[..., dict[str, Any
 def test_the_settings_carry_the_prompt_section_of_the_config(make_config: Callable[..., DotRuntimeConfig]) -> None:
     config = make_config({})
     assert settings(config).dot_prompt == dot_prompt_section(config)
-
-
-def test_the_memory_notes_are_read_only_while_a_memory_tool_is_offered(
-    config_body: Callable[..., dict[str, Any]],
-) -> None:
-    allowed = settings(parse_runtime_config(config_body(permissions={"memory.read": "allow"})))
-    assert allowed.memory_read is True
-    denied = settings(parse_runtime_config(config_body(permissions={"memory.read": "deny", "files.read": "allow"})))
-    assert denied.memory_read is False
-    disabled = settings(
-        parse_runtime_config(config_body(permissions={"memory.read": "allow"}, memory={"enabled": False}))
-    )
-    assert disabled.memory_read is False

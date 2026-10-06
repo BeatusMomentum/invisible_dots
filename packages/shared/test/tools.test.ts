@@ -13,7 +13,6 @@ describe("the permission registry", () => {
       "computer.screenshot",
       "files.read",
       "files.write",
-      "memory.read",
       "browser.identity.list",
       "browser.identity.create",
       "browser.identity.delete",
@@ -29,7 +28,7 @@ describe("the permission registry", () => {
   it("does not know a name that no tool can ever exercise", () => {
     // Web reading and search and sub-agents are removed from the Dot's engine (architecture section 8.8),
     // a Dot has no tool that messages anyone, and its notes are files written with files.write (section 8.6).
-    for (const name of ["web.fetch", "web.search", "subagents", "message.send", "memory.write"]) {
+    for (const name of ["web.fetch", "web.search", "subagents", "message.send", "memory.read", "memory.write"]) {
       expect(isPermission(name), name).toBe(false);
     }
     expect(isPermission("computer.exec")).toBe(true);
@@ -60,6 +59,5 @@ describe("PERMISSION_INFO", () => {
     expect(PERMISSION_INFO["browser.identity.delete"].risk).toBe("high");
     expect(PERMISSION_INFO["browser.act"].risk).toBe("high");
     expect(PERMISSION_INFO["files.read"].risk).toBe("low");
-    expect(PERMISSION_INFO["memory.read"].risk).toBe("low");
   });
 });

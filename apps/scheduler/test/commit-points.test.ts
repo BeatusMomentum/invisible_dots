@@ -139,14 +139,14 @@ describe("the commit points of the host", () => {
     const before = (await typesOf(dot.id, "dot.updated")).length;
 
     killed.kill();
-    await expect(scheduler.updateDot(dot.id, `${yaml("killed-config")}memory:\n  enabled: false\n`)).rejects.toThrow(/killed at dots.updateConfig/);
+    await expect(scheduler.updateDot(dot.id, `${yaml("killed-config")}instructions: be brief\n`)).rejects.toThrow(/killed at dots.updateConfig/);
     expect(await typesOf(dot.id, "dot.updated")).toHaveLength(before);
-    expect((await db.dots.get(dot.id))?.config.memory.enabled).toBe(true);
+    expect((await db.dots.get(dot.id))?.config.instructions).toBeUndefined();
 
     killed.revive();
-    await scheduler.updateDot(dot.id, `${yaml("killed-config")}memory:\n  enabled: false\n`);
+    await scheduler.updateDot(dot.id, `${yaml("killed-config")}instructions: be brief\n`);
     expect(await typesOf(dot.id, "dot.updated")).toHaveLength(before + 1);
-    expect((await db.dots.get(dot.id))?.config.memory.enabled).toBe(false);
+    expect((await db.dots.get(dot.id))?.config.instructions).toBe("be brief");
   });
 
   it("the person's stop of a computer that is asleep is told, so that every view learns the automations will not wake it", async () => {

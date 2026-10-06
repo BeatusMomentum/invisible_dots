@@ -1,7 +1,7 @@
 // Derived from OpenDots (CopilotKit) src/client/ComputerToolCard.tsx at 88f2a08, MIT; changed: the map is over this engine's tool table (permissions.py) and not the demo's computer actions; each entry says in past tense what the call did, in the infinitive what it would do (for an approval card), and which family of tools it belongs to; a tool the table does not know is named as the model called it.
 
 /** What kind of thing a tool does: the chat draws one icon per family. */
-export type ToolFamily = "command" | "read" | "write" | "memory" | "automation" | "screen" | "browser-identity" | "browser" | "other";
+export type ToolFamily = "command" | "read" | "write" | "automation" | "screen" | "browser-identity" | "browser" | "other";
 
 export interface ToolLabel {
   /** What the call did, as a short phrase: "Ran a command". */
@@ -26,8 +26,6 @@ export const TOOL_LABELS: Readonly<Record<string, ToolLabel>> = {
   write_file: { label: "Wrote a file", ask: "write a file", family: "write" },
   edit_file: { label: "Edited a file", ask: "edit a file", family: "write" },
   apply_patch: { label: "Applied a patch", ask: "apply a patch", family: "write" },
-  memory_search: { label: "Searched its memory", ask: "search its memory", family: "memory" },
-  memory_get: { label: "Read a memory note", ask: "read a memory note", family: "memory" },
   cron: { label: "Managed an automation", ask: "manage an automation", family: "automation" },
   computer_screenshot: { label: "Looked at the desktop", ask: "look at the desktop", family: "screen" },
   browser_identity_list: { label: "Listed browser identities", ask: "list browser identities", family: "browser-identity" },

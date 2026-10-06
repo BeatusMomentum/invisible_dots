@@ -454,12 +454,12 @@ describe("the files", () => {
     expect((await screen.findByText("Could not list the folder")).closest("[role=alert]")?.textContent).toContain("the disk said no");
   });
 
-  it("reads the folder again when the Dot writes a note", async () => {
+  it("reads the folder again when the Dot ends a turn, which may have written files", async () => {
     await renderComputer({ view: "files" });
     await screen.findByRole("table");
     const before = requested(/GET \/api\/dots\/d1\/files\/list$/).length;
     plane.putFile("/home/dot/new.txt", "new");
-    await act(async () => plane.push("d1", "memory.written", { key: "new.txt" }));
+    await act(async () => plane.push("d1", "message.assistant", { text: "done" }));
     expect(await screen.findByRole("link", { name: "new.txt" })).toBeTruthy();
     expect(requested(/GET \/api\/dots\/d1\/files\/list$/).length).toBeGreaterThan(before);
   });

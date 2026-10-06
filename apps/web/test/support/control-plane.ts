@@ -3,7 +3,7 @@
  * sends, answered from memory, and `/api/stream` as a live SSE body the test pushes events into. `install()` puts
  * it behind the global `fetch`, which is where the web client's SDK looks.
  */
-import { COMPUTER_STOPPED, CONVERSATION_LIST_LIMIT, TASK_LIST_LIMIT, computerIsUp, MAX_EVENT_PAGE, type ApprovalRecord, type Automation, type BrowserIdentity, type ChannelKind, type ChannelLinkFrame, type ChannelRecord, type ChannelSettings, type ComputerAnswer, type DoctorCheck, type DotConfig, type DotSummary, type StoredEvent, type SystemAnswer, type ToolInfo } from "@invisible-dots/shared/browser";
+import { COMPUTER_STOPPED, CONVERSATION_LIST_LIMIT, TASK_LIST_LIMIT, computerIsUp, MAX_EVENT_PAGE, type ApprovalRecord, type BrowserIdentity, type ChannelKind, type ChannelLinkFrame, type ChannelRecord, type ChannelSettings, type ComputerAnswer, type DoctorCheck, type DotConfig, type DotSummary, type StoredEvent, type SystemAnswer, type ToolInfo } from "@invisible-dots/shared/browser";
 import type { TaskRecord } from "@invisible-dots/sdk";
 import { vi } from "vitest";
 
@@ -12,7 +12,7 @@ export function dotRecord(id: string, change: Partial<DotSummary> = {}): DotSumm
     id,
     name: id,
     // The API parses every config with the schema's defaults, so these two always exist on a real record.
-    config: { goal: `the goal of ${id}`, permissions: {}, memory: { enabled: true } } as unknown as DotConfig,
+    config: { goal: `the goal of ${id}`, permissions: {} } as unknown as DotConfig,
     status: "READY",
     error: null,
     created_at: "2026-01-01T00:00:00Z",
@@ -105,12 +105,6 @@ export class FakeControlPlane {
     { name: "exec_session", permission: "computer.exec", offered: true, description: "Use a command session." },
     { name: "read_file", permission: "files.read", offered: true, description: "Read a file." },
   ];
-  /** The automations `GET /api/dots/:id/automations` lists; null answers 409 computer_stopped, as a stopped computer does. */
-  automations: Automation[] | null = [];
-  /** Every pause, resume and delete of an automation, as "PATCH id {body}" or "DELETE id", in order. */
-  automationActions: string[] = [];
-  /** Answer an automation's pause, resume or delete with this error instead of doing it. */
-  failAutomation: { status: number; error: string; message: string } | null = null;
   /** The channels `GET /api/dots/:id/channels` lists, by Dot id. */
   channels: Record<string, ChannelRecord[]> = {};
   /** The kinds of channel the server can run, as `GET .../channels` says. */
@@ -495,24 +489,6 @@ export class FakeControlPlane {
       if (/^browser-identities\/[^/]+\/frame$/.test(rest)) {
         if (this.failPicture) return json({ error: this.failPicture.error, message: this.failPicture.message }, this.failPicture.status);
         return new Response(Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]), { headers: { "content-type": "image/jpeg" } });
-      }
-      if (rest === "automations" && method === "GET") {
-        return this.automations === null ? json({ error: "computer_stopped", message: "the computer is STOPPED" }, 409) : json({ automations: this.automations });
-      }
-      const automation = /^automations\/([^/]+)$/.exec(rest);
-      if (automation && (method === "PATCH" || method === "DELETE")) {
-        const id = decodeURIComponent(automation[1]!);
-        const body = method === "PATCH" ? (JSON.parse(String(init?.body)) as { enabled: boolean }) : null;
-        this.automationActions.push(body === null ? `DELETE ${id}` : `PATCH ${id} ${JSON.stringify(body)}`);
-        if (this.failAutomation) return json({ error: this.failAutomation.error, message: this.failAutomation.message }, this.failAutomation.status);
-        const found = (this.automations ?? []).find((a) => a.id === id);
-        if (!found) return json({ error: "not_found", message: `no automation "${id}"` }, 404);
-        if (body === null) {
-          this.automations = (this.automations ?? []).filter((a) => a.id !== id);
-          return new Response(null, { status: 204 });
-        }
-        Object.assign(found, { enabled: body.enabled, next_run_at_ms: body.enabled ? Date.now() + 60_000 : null });
-        return json(found);
       }
       if (rest === "channels" && method === "GET") {
         if (this.failChannels) return json({ error: this.failChannels.error, message: this.failChannels.message }, this.failChannels.status);

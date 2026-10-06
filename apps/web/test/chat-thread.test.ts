@@ -36,10 +36,9 @@ describe("the activity of the chat", () => {
     expect(plain).toMatchObject({ label: "Ran a command" });
   });
 
-  it("leaves out what belongs to a task: its calls, its approvals and the notes those calls wrote", () => {
+  it("leaves out what belongs to a task: its calls and its approvals", () => {
     const events = [
       call("exec", { task_id: "t1" }),
-      event("memory.written", { key: "from-the-task.md" }),
       event("approval.requested", { task_id: "t1", approval_id: "a1", tool: "write_file", reason: "x" }),
       event("approval.resolved", { approval_id: "a1", decision: "approve" }),
       call("read_file", { target: "notes.md" }),
@@ -47,15 +46,10 @@ describe("the activity of the chat", () => {
     expect(activityOf(events).map((i) => i.kind)).toEqual(["tool"]);
   });
 
-  it("keeps the note a chat call wrote, with the call before it", () => {
+  it("shows a note the Dot saved as the call that wrote it: a note is a file of its memory folder, nothing more", () => {
     const items = activityOf([call("write_file", { target: "/home/dot/memory/trips/rome.md" }), event("memory.written", { key: "trips/rome.md" })]);
-    expect(items.map((i) => i.kind)).toEqual(["tool", "memory"]);
-    expect(items[1]).toMatchObject({ key: "trips/rome.md" });
-  });
-
-  it("drops a note with no call before it, and one with no name", () => {
-    expect(activityOf([event("memory.written", { key: "orphan.md" })])).toEqual([]);
-    expect(activityOf([call("write_file"), event("memory.written", { key: "" })]).map((i) => i.kind)).toEqual(["tool"]);
+    expect(items.map((i) => i.kind)).toEqual(["tool"]);
+    expect(items[0]).toMatchObject({ tool: "write_file", target: "/home/dot/memory/trips/rome.md" });
   });
 
   it("follows an approval from its request to its answer, wherever the answer sits", () => {
@@ -120,9 +114,7 @@ describe("the thread", () => {
     e1.id = 2;
     const e2 = call("grep");
     e2.id = 3;
-    const note = event("memory.written", { key: "x.md" });
-    note.id = 4;
-    expect(lastStepSinceUser(buildThread([u], [e1, e2, note]))).toMatchObject({ tool: "grep" });
+    expect(lastStepSinceUser(buildThread([u], [e1, e2]))).toMatchObject({ tool: "grep" });
     expect(lastStepSinceUser(buildThread([u], []))).toBeNull();
     // A step before the person's last message is an old turn's.
     const later = message("user", "again", 10);
@@ -152,7 +144,7 @@ describe("long runs of tool calls", () => {
     expect(folded[0]).toMatchObject({ kind: "cluster" });
   });
 
-  it("are broken by an approval or a note, which always stand alone", () => {
+  it("are broken by an approval, which always stands alone", () => {
     const events = [
       ...Array.from({ length: 4 }, () => call("read_file")),
       event("approval.requested", { approval_id: "a1", tool: "exec", reason: "" }),

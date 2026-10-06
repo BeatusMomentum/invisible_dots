@@ -1,11 +1,9 @@
 "use client";
 
-import { BrainIcon, ChevronRightIcon, HandIcon } from "lucide-react";
-import Link from "next/link";
+import { ChevronRightIcon, HandIcon } from "lucide-react";
 import { useState } from "react";
-import { clusterSummary, groupActivity, type ActivityItem, type ApprovalStep, type MemoryChip, type ToolStep } from "../../lib/chat-thread";
+import { clusterSummary, groupActivity, type ActivityItem, type ApprovalStep, type ToolStep } from "../../lib/chat-thread";
 import { formatDate, formatMillis } from "../../lib/format";
-import { memoryHref } from "../../lib/memory-view";
 import { cn } from "../../lib/utils";
 import { InlineApproval } from "../approvals/InlineApproval";
 import { FAMILY_ICON } from "../tool-family-icon";
@@ -66,19 +64,6 @@ export function ApprovalLine({ dotId, step }: { dotId: string; step: ApprovalSte
   );
 }
 
-/** A note the Dot saved to its memory; its name leads to the note. */
-export function MemoryNote({ dotId, chip }: { dotId: string; chip: MemoryChip }) {
-  return (
-    <span title={`Saved to memory at ${formatDate(chip.at)}`} className="inline-flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-0.5 text-xs text-muted-foreground">
-      <BrainIcon aria-hidden="true" className="size-3 shrink-0" />
-      <span className="shrink-0">Remembered</span>
-      <Link href={memoryHref(dotId, { note: chip.key })} className="min-w-0 hover:text-foreground hover:underline">
-        <code className="block truncate font-mono">{chip.key}</code>
-      </Link>
-    </span>
-  );
-}
-
 /** A long run of tool calls, folded into one line that opens. */
 function Cluster({ steps }: { steps: readonly ToolStep[] }) {
   const [open, setOpen] = useState(false);
@@ -107,7 +92,7 @@ function Cluster({ steps }: { steps: readonly ToolStep[] }) {
   );
 }
 
-/** What the Dot did between two messages: quiet lines, memory chips, and approvals in the place they were asked. */
+/** What the Dot did between two messages: quiet lines, and approvals in the place they were asked. */
 export function Activity({ dotId, items }: { dotId: string; items: readonly ActivityItem[] }) {
   const groups = groupActivity(items);
   return (
@@ -117,7 +102,7 @@ export function Activity({ dotId, items }: { dotId: string; items: readonly Acti
         const item = group.item;
         return (
           <li key={item.id}>
-            {item.kind === "tool" ? <ToolLine step={item} /> : item.kind === "approval" ? <ApprovalLine dotId={dotId} step={item} /> : <MemoryNote dotId={dotId} chip={item} />}
+            {item.kind === "tool" ? <ToolLine step={item} /> : <ApprovalLine dotId={dotId} step={item} />}
           </li>
         );
       })}

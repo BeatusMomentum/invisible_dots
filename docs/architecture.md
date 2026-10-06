@@ -735,10 +735,7 @@ command detached into another session outlives it.
 | `DELETE /browser-identities/:id` | | `204` after the identity's browser is closed and its directory removed; `404 not_found` |
 | `GET /browser-identities/:id/frame` | | `200 image/jpeg` (`Cache-Control: no-store`), one frame of the identity's window, taken with the server's `browser_watch`; `404 not_found`; `409 not_open` when the identity is closed; `503 busy` when a call of the Dot held the identity for longer than 5 seconds; `502 frame_failed` (the server has no page to show, or sent a frame that is not a JPEG: the engine is the one owner of that rule, the host passes the bytes on as `image/jpeg`) or `crashed` |
 | `POST /browser-identities/:id/close` | | `204` after the identity's browser is closed through `browser_close` and its server has ended; the profile stays. Closing a closed identity is a `204` too; `404 not_found` |
-| `GET /automations` | | `{ automations: Automation[] }`: every cron job of the Dot, paused ones too, as `{ id, name, enabled, schedule: { kind: "at"\|"every"\|"cron", at_ms?, every_ms?, expr?, tz? }, message, next_run_at_ms, last_run_at_ms, last_status, last_error, delete_after_run, created_at_ms }`; times are milliseconds since the epoch, `next_run_at_ms` is `null` while a job is paused |
-| `PATCH /automations/:id` | `{ enabled: bool }` | `200 Automation` (a job already in that state is not touched: resuming a running job does not move its next run); `404 not_found`, `400 invalid_automation` |
-| `DELETE /automations/:id` | | `204`; `404 not_found`, `409 protected` for a system job |
-| `GET /tools` | | `{ tools: [{ name, permission, offered, description }] }`: the engine's tool table (section 8.8) in its order; `offered` is whether the model is offered the tool now (its permission is not `deny`, a memory tool needs memory on, and a tool that creates or deletes a browser identity needs the Dot to manage its identities; before the first config, none); `description` is the one in the tool's schema |
+| `GET /tools` | | `{ tools: [{ name, permission, offered, description }] }`: the engine's tool table (section 8.8) in its order; `offered` is whether the model is offered the tool now (its permission is not `deny`, and a tool that creates or deletes a browser identity needs the Dot to manage its identities; before the first config, none); `description` is the one in the tool's schema |
 | `POST /prepare-sleep` | | `204` after the state is flushed and browser sessions are closed; the agent then starts no new work. A model request in flight is abandoned; a tool in flight gets up to 20 seconds to finish and record its result, then is aborted (section 8.7). A `POST /secrets` (the READY procedure of a VM whose stop failed, so no shutdown followed) lifts that, and so does a new inbound event |
 
 The identity routes and the model's identity tools are one code path, the
@@ -799,7 +796,7 @@ text, spent_usd?}`, `task.completed {task_id, summary, spent_usd?}`,
 `approval.requested {approval_id, task_id?, tool, permission, arguments,
 reason}`, `tool.called {task_id?, tool, permission, decision, ok,
 duration_ms, target?, tty?, interrupted?}`, `browser.identity.created|deleted|launched|closed
-{identity_id, name}`, `memory.written {key}`, `automation.next_run {next_run_at_ms}`.
+{identity_id, name}`, `automation.next_run {next_run_at_ms}`.
 `interrupted: true` marks a call
 the engine stopped during: its outcome is unknown and it was not run again, so
 `ok` is false and `duration_ms` is 0. `tty: true` marks a call that started a
@@ -826,8 +823,7 @@ It is a name or a place, never content. The permission table
 its arguments may be shown: `exec` the first line of the command, as it is;
 `read_file`, `list_dir`, `write_file` and `edit_file` the path; `find_files` the
 query, else the glob, else the path; `grep` the pattern; `apply_patch` the path,
-or `N files, first <path>`; `memory_search` the query; `memory_get` the note
-name; `cron` the action and the name or job id (`add daily-standup`);
+or `N files, first <path>`; `cron` the action and the name or job id (`add daily-standup`);
 `exec_session` `input to <id>`, `terminate <id>` or `output of <id>`, and never
 the input; `list_exec_sessions` nothing. The engine computes it when the call
 starts and keeps it with the call's intent, so a call cut by a stop is reported
@@ -848,24 +844,12 @@ engine always sends it (0 when nothing was spent); the schema makes it optional
 so events logged before it existed stay valid. The host reads it as the
 guest's report: it is never used to enforce anything (the cap is the guest's).
 
-`memory.written {key}` reports a note the Dot wrote: `key` is the note's path
-relative to `/home/dot/memory` (`trips/rome.md` for
-`/home/dot/memory/trips/rome.md`). It comes from the file tools `write_file`,
-`edit_file` and `apply_patch` (a dry run writes nothing), read from the call's
-own arguments with the computer's path resolution, so a relative path or a
-`../` counts as the tool counts it, and the directory itself is no note. The
-engine records the keys with the call's intent before the call runs and sends
-one event per note, right after the call's `tool.called`, in the transaction
-that stores the call's result, only when the call ran ok: a call that failed,
-was denied or was interrupted sends none, and a note an `apply_patch` wrote
-twice is one event. A note written through `exec` is not seen.
-
 `automation.next_run {next_run_at_ms}` is when the earliest enabled automation of
 the Dot is next due, in milliseconds since the epoch, or `null` when none is (no
 job, every job paused, or only one-time jobs that already ran). The engine sends
 it each time that value changes, so the last one the host has is the true one: when
 the cron service arms its timer, which it does after every change of the jobs (the
-tool, `PATCH` and `DELETE /automations`) and after every tick, the engine compares
+`cron` tool) and after every tick, the engine compares
 the value with the one it last reported, kept in its database in the transaction
 that writes the event, and writes the event only when they differ. A restart
 therefore does not say it again, a computer that never had a job has said nothing
@@ -1096,8 +1080,6 @@ browser:
 permissions:                           # allow | ask | deny, keyed by permission name
   computer.exec: allow
   browser.identity.delete: ask
-memory:
-  enabled: true
 limits:
   max_steps_per_task: 60               # model turns before a task is failed
   context_tokens: 32000                # prompt tokens a request may use, 4000..1000000 (section 8.6)
@@ -1221,8 +1203,6 @@ does not know.
 | `write_file` | `files.write` | writes a whole file |
 | `edit_file` | `files.write` | replaces text in a file |
 | `apply_patch` | `files.write` | applies a list of structured edits (replace or add) to files, with a dry run |
-| `memory_search` | `memory.read` | keyword search over the memory notes (offered only when `memory.enabled`) |
-| `memory_get` | `memory.read` | reads one memory note (offered only when `memory.enabled`) |
 | `cron` | `automations` | adds, lists and removes the Dot's own scheduled automations |
 | `computer_screenshot` | `computer.screenshot` | takes a screenshot of the Dot's whole desktop and shows it to the model (no arguments) |
 | `browser_identity_list` | `browser.identity.list` | lists the browser identities with their status (open or available), whether each has a proxy of its own (and nothing of the proxy), and the two limits |
@@ -1308,13 +1288,16 @@ are cut with a marker.
   tool definitions, because a model other than the turn's may not accept them
   (the turn's own model keeps sending them so that its prompt cache is reused).
 - Long-term memory: notes, one file each, in `/home/dot/memory` on the Dot's
-  computer. The Dot writes them with its file tools (`files.write`), and each
-  note a file tool writes is reported to the host as `memory.written` (section
-  5.4); `memory_search` finds a keyword or phrase in their text (a plain search,
-  there is no index and no embedding) and `memory_get` reads one. The system
-  prompt names the 20 most recently changed notes. With `memory.enabled` false,
-  or `memory.read` denied, the memory tools are not offered and the prompt says
-  nothing of the notes.
+  computer, which the Dot keeps itself, as Claude Code keeps its own: nothing
+  is set and nobody else writes them. The system prompt says where they are,
+  that the Dot saves there what a later conversation or task will need and
+  changes or deletes a note that is no longer true, and names the 20 most
+  recently changed. It reads and searches them with the file tools
+  (`read_file`, `grep`, `find_files`: `files.read`) and writes them with
+  `write_file`, `edit_file` and `apply_patch` (`files.write`); a note is a
+  file, and the host sees it as the `tool.called` of the call that wrote it,
+  with its path as the target. A listing of the folder that fails (dot-agentd
+  not answering) leaves the names out of that prompt and the turn goes on.
 - Workspace memory: `/home/dot/workspace` and `/home/dot/memory`, reached
   through the file tools.
 
@@ -1598,11 +1581,11 @@ other engine owns the state.
   `ask` by default) adds and removes them. A firing is recorded as a durable
   inbound row, `automation.fired`, once per firing, and the chat answers it as
   an input: the opening message reads `[Automation "<name>" fired] <message>`
-  and the answer is a `message.assistant` without `in_reply_to`. The person
-  lists, pauses and removes the jobs through `GET /automations`, `PATCH` and
-  `DELETE /automations/:id` (section 5.3), served from the same service object
-  the tool uses; the person does not make one. `GET /tools` shows the permission
-  table with what the model is offered now.
+  and the answer is a `message.assistant` without `in_reply_to`. The jobs are
+  the Dot's own: it lists, adds and removes them with the tool, and the person
+  asks it to in the chat; the host has no route that lists or changes them, and
+  hears only when the earliest is next due (`automation.next_run`). `GET /tools`
+  shows the permission table with what the model is offered now.
 - Automations while the computer is off. The jobs live in the guest and the
   computer powers off when idle, so a job does not fire while it is off: the
   host starts the computer shortly before the earliest run (section 9.5), told
@@ -1905,9 +1888,6 @@ POST   /api/approvals/:id/reject     body: { note? }
 GET    /api/dots/:id/events          ?after=<id>&before=<id>&limit=&types=<a,b>&tools=<a,b>&task_id=&order=asc|desc   `types` are event type names (an unknown one is a 400), `tools` narrows `tool.called` to those tools (`data.tool`) and leaves other types alone, `task_id` keeps the events whose `data.task_id` it is, `order=desc` is the newest first so that a `limit` keeps the newest, and `before` (the id of the oldest event of the previous page, desc only) goes on, older, from there
 GET    /api/dots/:id/files/list      ?path=   { path, entries: [{ name, type, size, mtime }] }: a directory under /home/dot (home when omitted)
 GET    /api/dots/:id/files           ?path=   the bytes of a file under /home/dot, at most 16 MiB (413 `file_too_large`)
-GET    /api/dots/:id/automations     { automations: Automation[] }: the Dot's cron jobs (section 5.3); needs the computer running (409 `computer_stopped`)
-PATCH  /api/dots/:id/automations/:automationId   body: { enabled }   pauses or resumes one; answers the automation
-DELETE /api/dots/:id/automations/:automationId   204
 GET    /api/dots/:id/tools           { tools: [{ name, permission, offered, description }] }: the engine's tool table and what the model is offered now; needs the computer running
 GET    /api/dots/:id/usage           ?since=<ISO 8601 timestamp>   { dot_id, since, spent_usd }
 GET    /api/stream                   SSE: every event, ?dot_id= to filter
@@ -1959,14 +1939,10 @@ no task. Migration `0006_events_task.sql` adds the expression index the task
 filter reads. A type name no event has (`tool.calls`) is a 400, so a typo does not
 look like a quiet Dot.
 
-`GET /api/dots/:id/automations`, `PATCH` and `DELETE /api/dots/:id/automations/:automationId`
-and `GET /api/dots/:id/tools` pass through to the engine's routes of section 5.3:
-the cron jobs and the tool table are the engine's, and the control plane keeps no
-copy of either. They need the computer running (`409 computer_stopped`), the
-engine's own refusals pass through with their code and status, and a `PATCH` whose
-`enabled` is not a boolean is a `400 invalid_request` before the guest is called.
-A job the Dot makes with its `cron` tool needs the approval of `automations`
-(`ask` by default), so a person sees an automation here only after approving it.
+`GET /api/dots/:id/tools` passes through to the engine's route of section 5.3: the
+tool table is the engine's, and the control plane keeps no copy of it. It needs the
+computer running (`409 computer_stopped`), and the engine's own refusals pass
+through with their code and status.
 
 `GET /api/dots/:id/files/list` and `GET /api/dots/:id/files` read the Dot's
 computer through dot-agentd's `GET /v1/files/list` and `GET /v1/files`, and
@@ -2084,7 +2060,7 @@ own key row is left out, so the key is said once. Submitting is `POST /api/dots`
 
 A Dot's settings (`/dots/<id>/settings`) are the same config, edited in place:
 one draft of the whole `DotConfig`, as a form (General, Model, Permissions and
-tools, Computer, Browser, Memory, Limits) or as the same YAML, never a second
+tools, Computer, Browser, Limits) or as the same YAML, never a second
 model of it. `lib/config-fields.ts` is the one table of what can change (where
 each field lives, its words, when a change reaches the Dot) and gives what the
 page needs from it: the list of changes, the notice a save ends with, and the
@@ -2137,8 +2113,7 @@ Between them it shows what the Dot did to answer, read from the same event
 log: each `tool.called` that names no task as one quiet line (the words of
 `lib/events/tool-labels.ts`, which a test keeps equal to the engine's tool
 table, then the call's `target`, and how it ended when that was not well; more
-than three in a row fold into one line that opens), each `memory.written` of
-such a call as a chip, and each `approval.requested` that names no task, where it
+than three in a row fold into one line that opens), and each `approval.requested` that names no task, where it
 was asked, as the approval card while it waits (answerable there) and as a receipt
 line once answered ("Allowed for good" when the answer was "always"). The messages route and the log are two
 views of one log, so a step is placed between two messages by event id
@@ -2232,44 +2207,11 @@ reads while the computer is off: what it was given, what it uses (`GET /computer
 embeds the guest's `system` while it runs), the images, why the last start failed,
 the model spend today and in total, an Automations card, and Start, Reboot and Stop.
 Stop always asks and says that the automations do not run while the computer is stopped
-(Reboot asks only while a task runs). The Automations card, and a note above the list on
-the Memory page's Automations view, read the host's record of the computer (`GET
+(Reboot asks only while a task runs). The Automations card reads the host's record of the computer (`GET
 /computer`: `stop_reason` and `next_automation_at`), which holds both while the computer is
 off: "Paused: you stopped this computer" when the person's stop paused them, otherwise when
 the next one is due (and that a computer asleep starts shortly before), or that none is due;
-both follow `computer.*` events and `automation.next_run`.
-
-The Memory page (`/dots/<id>/memory`) has two views, named in the address
-(`?view=notes|automations`, Notes when it says nothing). Both read the Dot's own
-computer, so a computer that is not running is said, with Start, as on the Computer
-page. Notes are the files the Dot wrote under `/home/dot/memory`, read only (the Dot
-owns them): there is no notes route, so the list walks the folder with
-`GET /files/list`, level by level, at most 40 folders and 4 deep (it says when it
-stopped short), newest written first, with a search by name. The open note is in the
-address (`?note=trips/rome.md`, the key `memory.written` reports) and is looked up in
-that list, never read by the path in the address; a `.md` note is shown as Markdown
-by the one renderer the chat uses and any other text as it is written. A note the
-Dot writes while the page is open (`memory.written`) is tinted in the list and shown
-as a chip ("added" when the list had no such note, "updated" when it had) that leads
-to it, and the list is read again after it and after a turn ends, which also catches
-a note written through a command, an event the engine does not report. The chat's
-"Remembered" chip leads to the same address. Above the notes, a switch sets
-`memory.enabled`: the page sends the whole config with that field changed and
-`expected_config_version`, the version of the config it read, so a config that
-changed meanwhile (another tab, an "Always allow") is refused with 409
-`dot_changed`, said, and read again, never undone; with memory off the engine
-offers no memory tool and does not name the notes in the prompt, and the notes
-on the disk stay readable. Automations are the jobs the Dot's cron tool made
-(`GET /automations`): the schedule in words (`lib/automations.ts` puts the
-common cron shapes in words and shows any other as the expression, always with
-the zone it is read in, which is the computer's when the job names none), the
-next run, how the last run ended and what the Dot is told, a switch that pauses
-or resumes it (`PATCH /automations/<id>`) and a delete after a question. The
-engine reports the last run only, not a history, so the card shows that one. The
-person does not create one here: an automation is the Dot's act and the
-`automations` permission asks by default, so the empty list says how one comes to
-be by what the config does with that permission. The list is read again when the
-cron tool is called, after a decision on an approval and when a run ends.
+it follows `computer.*` events and `automation.next_run`.
 
 The Channels page (`/dots/<id>/channels`) is one card per channel the server runs (`available` in `GET /api/dots/:id/channels`): Telegram always,
 WhatsApp only when the server was started with `INVISIBLE_DOTS_WHATSAPP=1`. Telegram not connected asks for the bot's token (a password field, sent once over

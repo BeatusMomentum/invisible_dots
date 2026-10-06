@@ -47,15 +47,7 @@ export interface ApprovalStep {
   always: boolean;
 }
 
-export interface MemoryChip {
-  kind: "memory";
-  id: number;
-  at: string;
-  /** The note's path under the Dot's memory folder, as `memory.written` reports it. */
-  key: string;
-}
-
-export type ActivityItem = ToolStep | ApprovalStep | MemoryChip;
+export type ActivityItem = ToolStep | ApprovalStep;
 
 export type ThreadItem =
   | { kind: "user"; id: number; message: ChatMessage }
@@ -63,7 +55,7 @@ export type ThreadItem =
   | { kind: "activity"; id: number; items: ActivityItem[] };
 
 /** The event types the chat reads besides the messages. */
-export const CHAT_ACTIVITY_EVENT_TYPES: readonly string[] = ["tool.called", "approval.requested", "approval.resolved", "memory.written"];
+export const CHAT_ACTIVITY_EVENT_TYPES: readonly string[] = ["tool.called", "approval.requested", "approval.resolved"];
 
 export function isChatActivityEvent(event: Pick<StoredEvent, "type">): boolean {
   return CHAT_ACTIVITY_EVENT_TYPES.includes(event.type);
@@ -90,16 +82,12 @@ export function toolStateOf(data: Record<string, unknown>): ToolState {
 export function activityOf(events: readonly StoredEvent[]): ActivityItem[] {
   const items: ActivityItem[] = [];
   const approvals = new Map<string, ApprovalStep>();
-  // `memory.written` names no task. The engine sends it right after the `tool.called` of the call that wrote the
-  // note, so the note belongs to the chat when that call did.
-  let lastCallInChat = false;
   for (const event of [...events].sort((a, b) => a.id - b.id)) {
     const d = event.data ?? {};
     const base = { id: event.id, at: event.created_at };
     switch (event.type) {
       case "tool.called": {
-        lastCallInChat = !hasTask(event);
-        if (!lastCallInChat) break;
+        if (hasTask(event)) break;
         const tool = text(d.tool);
         const { label, family } = toolLabel(tool, d.tty === true);
         items.push({
@@ -144,9 +132,6 @@ export function activityOf(events: readonly StoredEvent[]): ActivityItem[] {
         }
         break;
       }
-      case "memory.written":
-        if (lastCallInChat && text(d.key) !== "") items.push({ ...base, kind: "memory", key: text(d.key) });
-        break;
       default:
         break;
     }
@@ -204,17 +189,15 @@ export function lastStepSinceUser(thread: readonly ThreadItem[]): ToolStep | App
   for (let i = thread.length - 1; i >= 0; i--) {
     const item = thread[i]!;
     if (item.kind !== "activity") return null;
-    for (let j = item.items.length - 1; j >= 0; j--) {
-      const step = item.items[j]!;
-      if (step.kind !== "memory") return step;
-    }
+    const step = item.items.at(-1);
+    if (step) return step;
   }
   return null;
 }
 
 export type ActivityGroup = { kind: "single"; item: ActivityItem } | { kind: "cluster"; steps: ToolStep[] };
 
-/** Consecutive tool steps beyond `CLUSTER_AFTER` fold into one cluster; approvals and memory chips always stand alone. */
+/** Consecutive tool steps beyond `CLUSTER_AFTER` fold into one cluster; approvals always stand alone. */
 export function groupActivity(items: readonly ActivityItem[]): ActivityGroup[] {
   const groups: ActivityGroup[] = [];
   let run: ToolStep[] = [];

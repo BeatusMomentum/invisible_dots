@@ -101,7 +101,6 @@ const SCALARS = {
     set: (c, v) => ({ ...c, browser: { identities: { ...c.browser.identities, max_open: Number(v) } } }),
     show: shownPlain,
   },
-  "memory.enabled": { label: "Memory", applies: "turn", get: (c) => c.memory.enabled, set: (c, v) => ({ ...c, memory: { ...c.memory, enabled: Boolean(v) } }), show: shownSwitch },
   "limits.max_steps_per_task": {
     label: "Steps per task",
     applies: "turn",

@@ -16,7 +16,7 @@ import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { ConfigYamlEditor } from "../yaml-editor";
 import { DeleteDot } from "./delete-dot";
-import { BrowserPanel, ComputerPanel, GeneralPanel, LimitsPanel, MemoryPanel, ModelPanel } from "./panels";
+import { BrowserPanel, ComputerPanel, GeneralPanel, LimitsPanel, ModelPanel } from "./panels";
 import type { PanelProps } from "./panel";
 import { PermissionsPanel } from "./permissions-panel";
 import { ReviewDialog } from "./review-dialog";
@@ -162,7 +162,6 @@ function Editor({
           <PermissionsPanel {...panel} dotId={dotId} computerState={computerState} />
           <ComputerPanel {...panel} />
           <BrowserPanel {...panel} />
-          <MemoryPanel {...panel} />
           <LimitsPanel {...panel} />
         </>
       ) : (

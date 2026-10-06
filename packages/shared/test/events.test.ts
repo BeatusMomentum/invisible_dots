@@ -25,15 +25,16 @@ describe("event type lists", () => {
   it("name every type of the stored log once: the guest's, the host's and the person's message", () => {
     expect(new Set(STORED_EVENT_TYPES).size).toBe(STORED_EVENT_TYPES.length);
     expect(STORED_EVENT_TYPES).toHaveLength(OUTBOUND_EVENT_TYPES.length + HOST_EVENT_TYPES.length + 1);
-    for (const type of ["tool.called", "task.progress", "memory.written", "approval.resolved", "channel.status", "user.message"]) {
+    for (const type of ["tool.called", "task.progress", "automation.next_run", "approval.resolved", "channel.status", "user.message"]) {
       expect(isStoredEventType(type), type).toBe(true);
     }
-    for (const type of ["tool.calls", "", "approval.received", "system.event", 7, undefined]) expect(isStoredEventType(type), String(type)).toBe(false);
+    // The Dot keeps its notes itself: a note written is no event of the log.
+    for (const type of ["tool.calls", "", "approval.received", "system.event", "memory.written", 7, undefined]) expect(isStoredEventType(type), String(type)).toBe(false);
   });
 
   it("match section 5.4", () => {
     expect(INBOUND_EVENT_TYPES).toEqual(["user.message", "task.created", "approval.received", "system.event"]);
-    expect(OUTBOUND_EVENT_TYPES).toHaveLength(15);
+    expect(OUTBOUND_EVENT_TYPES).toHaveLength(14);
     expect(OUTBOUND_EVENT_TYPES).toContain("browser.identity.launched");
     expect(OUTBOUND_EVENT_TYPES).toContain("automation.next_run");
     expect(OUTBOUND_EVENT_TYPES).toContain("agent.started");
@@ -157,7 +158,7 @@ describe("parseOutboundEvent", () => {
     expect(() => parseOutboundEvent({ seq: 2, id: "e", type: "agent.state", ts, data: { state: "NAPPING" } })).toThrow(
       /data\.state/,
     );
-    expect(() => parseOutboundEvent({ seq: 0, id: "e", type: "memory.written", ts, data: { key: "k" } })).toThrow(/seq/);
+    expect(() => parseOutboundEvent({ seq: 0, id: "e", type: "agent.state", ts, data: { state: "IDLE" } })).toThrow(/seq/);
   });
 
   it("carries the time of the next automation run, or null when none is due", () => {

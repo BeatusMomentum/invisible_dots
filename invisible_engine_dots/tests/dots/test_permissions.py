@@ -27,8 +27,6 @@ def test_every_tool_maps_to_the_permission_of_the_design() -> None:
         "write_file": "files.write",
         "edit_file": "files.write",
         "apply_patch": "files.write",
-        "memory_search": "memory.read",
-        "memory_get": "memory.read",
         "cron": "automations",
         "computer_screenshot": "computer.screenshot",
         "browser_identity_list": "browser.identity.list",
@@ -91,7 +89,6 @@ def test_the_table_cannot_be_changed_by_a_caller() -> None:
 
 def test_a_tool_reports_its_permission_and_an_unknown_one_reports_none() -> None:
     assert tool_permission("apply_patch") == "files.write"
-    assert tool_permission("memory_get") == "memory.read"
     for name in ("web_search", "web_fetch", "message", "spawn", "read", "process", ""):
         assert tool_permission(name) == ""
 
@@ -117,15 +114,6 @@ def test_a_missing_permission_is_a_deny() -> None:
 
 def test_a_permission_the_table_does_not_know_offers_nothing() -> None:
     assert offered_tools({"web.fetch": "allow", "subagents": "allow", "message.send": "allow"}) == []
-
-
-def test_the_memory_tools_follow_memory_enabled() -> None:
-    permissions = {"memory.read": "allow", "files.read": "allow"}
-    assert "memory_search" in offered_tools(permissions)
-    assert "memory_get" in offered_tools(permissions, memory_enabled=True)
-    without = offered_tools(permissions, memory_enabled=False)
-    assert "memory_search" not in without and "memory_get" not in without
-    assert "read_file" in without
 
 
 def test_the_result_is_sorted() -> None:
@@ -176,7 +164,7 @@ def test_the_tools_of_one_registry_share_the_computer_of_the_deps(tmp_path, dot_
     deps = _deps(tmp_path, dot_store)
     registry = build_registry(deps)
 
-    for name in ("exec", "read_file", "write_file", "find_files", "grep", "apply_patch", "memory_get"):
+    for name in ("exec", "read_file", "write_file", "find_files", "grep", "apply_patch"):
         assert registry.get(name).computer is deps.computer
 
 

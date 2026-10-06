@@ -6,7 +6,7 @@ import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-
 import { Scheduler } from "@invisible-dots/scheduler";
 import { FakeDriver, ManualClock, waitFor, waitUntilSettledReady } from "@invisible-dots/scheduler/testing";
 import { ApiError, InvisibleDotsClient } from "@invisible-dots/sdk";
-import { MAX_EVENT_PAGE, OPENROUTER_KEY_RULE, type Automation, type DoctorCheck, type StoredEvent } from "@invisible-dots/shared";
+import { MAX_EVENT_PAGE, OPENROUTER_KEY_RULE, type DoctorCheck, type StoredEvent } from "@invisible-dots/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { API_VERSION, buildServer, type FastifyInstance } from "../src/index.js";
 import { hostFacts } from "./host-facts.js";
@@ -185,12 +185,12 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     const call = { tool: "exec", permission: "exec.run", decision: "allow", ok: true, duration_ms: 5 } as const;
     guest.emit("tool.called", { task_id: one.id, ...call, target: "ls" });
     guest.emit("tool.called", { ...call, target: "date" });
-    guest.emit("memory.written", { key: "fares.md" });
-    await waitFor(async () => (await api.events(dot.id, { types: ["memory.written"] })).length === 1, "events stored");
+    guest.emit("browser.identity.created", { identity_id: "bi_shop", name: "shop" });
+    await waitFor(async () => (await api.events(dot.id, { types: ["browser.identity.created"] })).length === 1, "events stored");
 
     const types = (events: StoredEvent[]) => events.map((e) => e.type);
     expect(types(await api.events(dot.id, { types: ["tool.called"] }))).toEqual(["tool.called", "tool.called"]);
-    expect(types(await api.events(dot.id, { types: ["tool.called", "memory.written"] }))).toEqual(["tool.called", "tool.called", "memory.written"]);
+    expect(types(await api.events(dot.id, { types: ["tool.called", "browser.identity.created"] }))).toEqual(["tool.called", "tool.called", "browser.identity.created"]);
     // A task's events: the host's own and the guest's, in id order; the chat's tool call belongs to no task.
     const ofOne = await api.events(dot.id, { taskId: one.id });
     expect(types(ofOne)).toEqual(expect.arrayContaining(["task.created", "task.started", "task.completed", "tool.called"]));
@@ -210,7 +210,9 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     };
     expect((await get("types=")).body.events!.length).toBeGreaterThan(5);
     expect(await get("types=tool.called,tool.calls")).toMatchObject({ status: 400, body: { error: "invalid_request", message: "unknown event type: tool.calls" } });
-    expect((await get("types=tool.called&types=memory.written")).status).toBe(400);
+    expect((await get("types=tool.called&types=browser.identity.created")).status).toBe(400);
+    // The Dot keeps its notes itself: a note written is no event, and asking for one is asking for a type nobody emits.
+    expect(await get("types=memory.written")).toMatchObject({ status: 400, body: { message: "unknown event type: memory.written" } });
     expect((await get("task_id=a&task_id=b")).status).toBe(400);
     expect((await get("task_id=")).status).toBe(400);
 
@@ -224,7 +226,7 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     expect(newest.map((e) => e.data.target)).toEqual(["whoami", "pwd"]);
     const browserCalls = await api.events(dot.id, { types: ["tool.called"], tools: ["browser_navigate", "browser_click"], order: "desc", limit: 1 });
     expect(browserCalls.map((e) => e.data.target)).toEqual(["x-1: https://example.com/"]);
-    expect((await api.events(dot.id, { types: ["tool.called", "memory.written"], tools: ["browser_click"] })).map((e) => e.type)).toEqual(["memory.written"]);
+    expect((await api.events(dot.id, { types: ["tool.called", "browser.identity.created"], tools: ["browser_click"] })).map((e) => e.type)).toEqual(["browser.identity.created"]);
     // `before` goes on, older, from the oldest event of a newest-first page, and only there.
     const calls = await api.events(dot.id, { types: ["tool.called"], order: "desc", limit: 2 });
     expect((await api.events(dot.id, { types: ["tool.called"], order: "desc", limit: 2, before: calls.at(-1)!.id })).map((e) => e.data.target)).toEqual(["x-1: https://example.com/", "date"]);
@@ -337,43 +339,9 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     await expect(api.readFile("no-such-dot", "a")).rejects.toMatchObject({ status: 404 });
   });
 
-  it("automations: list, pause, resume and remove over HTTP, and a tool table that follows the permissions", async () => {
+  it("a tool table that follows the permissions, and no automations route: the jobs are the Dot's own", async () => {
     const dot = await readyDot("automations");
-    const guest = driver.guestOf(dot.id);
-    const job = (over: Partial<Automation>): Automation => ({
-      id: "job_1",
-      name: "daily fares",
-      enabled: true,
-      schedule: { kind: "every", every_ms: 3_600_000 },
-      message: "look",
-      next_run_at_ms: 1_800_000_000_000,
-      last_run_at_ms: null,
-      last_status: null,
-      last_error: null,
-      delete_after_run: false,
-      created_at_ms: 1_700_000_000_000,
-      ...over,
-    });
-    guest.putAutomation(job({}));
-    guest.putAutomation(job({ id: "job_2", name: "paused", enabled: false, next_run_at_ms: null }));
-
-    expect((await api.listAutomations(dot.id)).map((a) => [a.id, a.enabled])).toEqual([["job_1", true], ["job_2", false]]);
-    expect(await api.setAutomationEnabled(dot.id, "job_1", false)).toMatchObject({ id: "job_1", enabled: false, next_run_at_ms: null });
-    expect((await api.listAutomations(dot.id))[0]).toMatchObject({ enabled: false });
-    await api.deleteAutomation(dot.id, "job_2");
-    expect((await api.listAutomations(dot.id)).map((a) => a.id)).toEqual(["job_1"]);
-
-    // The raw routes: no body, a flag that is not a boolean, an unknown job, a missing token.
-    const send = (method: string, path: string, body?: string) =>
-      fetch(`${base}/api/dots/${dot.id}/${path}`, { method, body, headers: { authorization: `Bearer ${TOKEN}`, ...(body ? { "content-type": "application/json" } : {}) } });
-    expect((await send("PATCH", "automations/job_1")).status).toBe(400);
-    const notBoolean = await send("PATCH", "automations/job_1", JSON.stringify({ enabled: "no" }));
-    expect(notBoolean.status).toBe(400);
-    expect(await notBoolean.json()).toMatchObject({ error: "invalid_request" });
-    expect((await send("PATCH", "automations/nope", JSON.stringify({ enabled: true }))).status).toBe(404);
-    expect((await send("DELETE", "automations/nope")).status).toBe(404);
-    expect((await send("DELETE", "automations/job_1")).status).toBe(204);
-    expect((await fetch(`${base}/api/dots/${dot.id}/automations`)).status).toBe(401);
+    expect((await fetch(`${base}/api/dots/${dot.id}/automations`, { headers: { authorization: `Bearer ${TOKEN}` } })).status).toBe(404);
     expect((await fetch(`${base}/api/dots/${dot.id}/tools`)).status).toBe(401);
 
     // Tools: the table, and what the model is offered follows the permissions the config pushed.
@@ -382,8 +350,6 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
       "exec",
       "read_file",
       "write_file",
-      "memory_search",
-      "memory_get",
       "cron",
       "browser_identity_list",
       "browser_identity_create",
@@ -401,25 +367,19 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
       exec: true,
       read_file: true,
       write_file: false,
-      memory_search: true,
-      memory_get: true,
       cron: false,
       browser_identity_list: true,
       browser_identity_create: true,
     });
   });
 
-  it("automations and tools need a running computer (409 computer_stopped) and a Dot that exists", async () => {
+  it("the tools need a running computer (409 computer_stopped) and a Dot that exists", async () => {
     const dot = await readyDot("automation-sleeper");
     await api.stopComputer(dot.id);
     await scheduler.settle();
-    await expect(api.listAutomations(dot.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
-    await expect(api.setAutomationEnabled(dot.id, "job_1", true)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
-    await expect(api.deleteAutomation(dot.id, "job_1")).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
     await expect(api.listTools(dot.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
     await api.startComputer(dot.id);
     await waitFor(async () => (await api.computer(dot.id)).ready, "started again");
-    await expect(api.listAutomations("no-such-dot")).rejects.toMatchObject({ status: 404 });
     await expect(api.listTools("no-such-dot")).rejects.toMatchObject({ status: 404 });
   });
 
@@ -432,17 +392,17 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     const reading = (async () => {
       for await (const event of api.stream({ dotId: "stream-a", after: history[0]!.id, signal: controller.signal })) {
         got.push(event);
-        if (event.type === "memory.written") break;
+        if (event.type === "browser.identity.created") break;
       }
     })();
-    driver.guestOf(b.id).emit("memory.written", { key: "b-only" });
-    driver.guestOf(a.id).emit("memory.written", { key: "a-only" });
+    driver.guestOf(b.id).emit("browser.identity.created", { identity_id: "bi_b", name: "b-only" });
+    driver.guestOf(a.id).emit("browser.identity.created", { identity_id: "bi_a", name: "a-only" });
     await reading;
     controller.abort();
     expect(got.every((e) => e.dot_id === a.id)).toBe(true);
     expect(got.map((e) => e.id)).toEqual([...new Set(got.map((e) => e.id))]);
     expect(got[0]?.id).toBe(history[1]?.id);
-    expect(got.at(-1)?.data).toMatchObject({ key: "a-only" });
+    expect(got.at(-1)?.data).toMatchObject({ name: "a-only" });
   });
 
   it("approval flow over HTTP", async () => {

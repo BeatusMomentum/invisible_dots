@@ -75,7 +75,7 @@ dot-agentd; the engine user never runs a model command or touches a model file.
   agentd.sock for files and runs programs through `dot-agentd relay` (the relay
   is a local child that lives as long as the remote command; killing it ends the
   remote process group). `exec`, the exec sessions, the file tools, `find_files`,
-  `grep`, `apply_patch` and the memory tools take a `Computer`.
+  `grep` and `apply_patch` take a `Computer`.
 - deleted: bubblewrap (agent/tools/sandbox.py), the deny and allow patterns and
   the command guard, the workspace path policy and its extra directories
   (security/), the SSRF guard, the PowerShell and Windows job object code, the
@@ -191,7 +191,7 @@ Kept on purpose, with the reason, for the next cut to decide:
 nanobot/dots/ is new: the contract with the host (protocol, server, engine,
 store, transcript outbox, gate, permission table, projection), the key holder
 and the credentials check, the OpenRouter provider holder, the computer
-(nanobot/dots/computer.py, above), the memory tools, the guest checks and the
+(nanobot/dots/computer.py, above), the guest checks and the
 entry point (`python -I -B -m nanobot`, which answers `--version` and refuses
 every other command). It is described in docs/architecture.md, section 8.8.
 

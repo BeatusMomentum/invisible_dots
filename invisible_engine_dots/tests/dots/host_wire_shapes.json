@@ -14,9 +14,6 @@
           "max_steps_per_task": 60,
           "max_cost_per_task_usd": 1
         },
-        "memory": {
-          "enabled": true
-        },
         "models": {},
         "browser": {
           "identities": {
@@ -30,7 +27,6 @@
           "computer.screenshot": "allow",
           "files.read": "allow",
           "files.write": "allow",
-          "memory.read": "allow",
           "browser.identity.list": "allow",
           "browser.identity.create": "allow",
           "browser.identity.delete": "ask",
@@ -57,9 +53,6 @@
           "max_steps_per_task": 30,
           "max_cost_per_task_usd": 2.5
         },
-        "memory": {
-          "enabled": false
-        },
         "models": {
           "summary": "test/small"
         },
@@ -75,7 +68,6 @@
           "computer.screenshot": "allow",
           "files.read": "allow",
           "files.write": "ask",
-          "memory.read": "allow",
           "browser.identity.list": "allow",
           "browser.identity.create": "allow",
           "browser.identity.delete": "ask",

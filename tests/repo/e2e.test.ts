@@ -192,8 +192,8 @@ describe("the e2e run's contract with the product", () => {
     for (const permission of ["files.write", "computer.exec", "browser.identity.create", "browser.identity.delete"]) {
       expect(resolvePermission(runtime, permission), permission).toBe("ask");
     }
-    // What the run relies on being allowed without a word: the browser, the memory, the other files and commands.
-    for (const permission of ["browser.identity.launch", "browser.navigate", "browser.read", "files.read", "memory.read"]) {
+    // What the run relies on being allowed without a word: the browser, reading files (the memory too) and commands.
+    for (const permission of ["browser.identity.launch", "browser.navigate", "browser.read", "files.read"]) {
       expect(resolvePermission(runtime, permission), permission).toBe("allow");
     }
     expect(resolvePermission(toRuntimeConfig(plain), "computer.exec")).toBe("allow");

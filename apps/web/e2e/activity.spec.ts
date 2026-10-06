@@ -14,10 +14,10 @@ test("the Activity tab reads the log as lines, filters by family at the host, fo
   const dot = await harness.createDot("activity-lines");
   const guest = harness.driver.guestOf(dot.id);
   guest.emit("tool.called", called("exec", "ls -la /home/dot"));
-  guest.emit("memory.written", { key: "fares.md" });
+  guest.emit("browser.identity.created", { identity_id: "bi_fares", name: "fares.md" });
   guest.emit("tool.called", called("exec", "rm -rf /", { decision: "deny", ok: false, duration_ms: 0 }));
   await harness.api.sendMessage(dot.id, "hello there");
-  await expect.poll(async () => (await harness.api.events(dot.id, { types: ["tool.called", "memory.written"] })).length).toBe(3);
+  await expect.poll(async () => (await harness.api.events(dot.id, { types: ["tool.called", "browser.identity.created"] })).length).toBe(3);
 
   // The old Timeline address leads here, and the tab is in the bar.
   await page.goto(`${harness.webUrl}/dots/${dot.id}/timeline`);
@@ -45,14 +45,14 @@ test("the Activity tab reads the log as lines, filters by family at the host, fo
   page.on("request", (request) => {
     if (/\/api\/dots\/[^/]+\/events\?/.test(request.url())) asked.push(new URL(request.url()).search);
   });
-  await page.getByRole("button", { name: "Memory" }).click();
+  await page.getByRole("button", { name: "Browser", exact: true }).click();
   await expect(rows).toHaveCount(1);
   await expect(rows.first()).toContainText("fares.md");
-  expect(asked.some((search) => search.includes("types=memory.written") && search.includes("order=desc"))).toBe(true);
+  expect(asked.some((search) => search.includes("browser.identity.created") && search.includes("order=desc"))).toBe(true);
 
   // Live: an event of the chosen family arrives on top, one of another family does not.
   guest.emit("agent.state", { state: "THINKING" });
-  guest.emit("memory.written", { key: "trips/rome.md" });
+  guest.emit("browser.identity.created", { identity_id: "bi_rome", name: "trips/rome.md" });
   await expect(rows).toHaveCount(2);
   await expect(rows.first()).toContainText("trips/rome.md");
   await expect(page.getByRole("list", { name: "Events" }).getByText("THINKING")).toHaveCount(0);
@@ -68,11 +68,11 @@ test("a long log is read a page at a time from the newest, with nothing skipped 
   const dot = await harness.createDot("activity-paging");
   const guest = harness.driver.guestOf(dot.id);
   const total = 2 * PAGE + 30;
-  for (let i = 0; i < total; i++) guest.emit("memory.written", { key: `note-${String(i).padStart(4, "0")}.md` });
-  await expect.poll(async () => (await harness.api.events(dot.id, { types: ["memory.written"], order: "desc", limit: 1 }))[0]?.data.key).toBe(`note-${String(total - 1).padStart(4, "0")}.md`);
+  for (let i = 0; i < total; i++) guest.emit("browser.identity.created", { identity_id: `bi_${i}`, name: `note-${String(i).padStart(4, "0")}.md` });
+  await expect.poll(async () => (await harness.api.events(dot.id, { types: ["browser.identity.created"], order: "desc", limit: 1 }))[0]?.data.name).toBe(`note-${String(total - 1).padStart(4, "0")}.md`);
 
   await page.goto(`${harness.webUrl}/dots/${dot.id}/activity`);
-  await page.getByRole("button", { name: "Memory" }).click();
+  await page.getByRole("button", { name: "Browser", exact: true }).click();
   const rows = page.getByRole("list", { name: "Events" }).getByRole("listitem");
   await expect(rows).toHaveCount(PAGE);
   await expect(rows.first()).toContainText(`note-${String(total - 1).padStart(4, "0")}.md`);
@@ -93,14 +93,14 @@ test("a long log is read a page at a time from the newest, with nothing skipped 
 test("the events on screen are saved as JSON Lines, as the host stored them", async ({ page, harness }) => {
   const dot = await harness.createDot("activity-export");
   const guest = harness.driver.guestOf(dot.id);
-  guest.emit("memory.written", { key: "a.md" });
-  guest.emit("memory.written", { key: "b.md" });
-  await expect.poll(async () => (await harness.api.events(dot.id, { types: ["memory.written"] })).length).toBe(2);
+  guest.emit("browser.identity.created", { identity_id: "bi_a", name: "a.md" });
+  guest.emit("browser.identity.created", { identity_id: "bi_b", name: "b.md" });
+  await expect.poll(async () => (await harness.api.events(dot.id, { types: ["browser.identity.created"] })).length).toBe(2);
   await page.goto(`${harness.webUrl}/dots/${dot.id}/activity`);
-  await page.getByRole("button", { name: "Memory" }).click();
+  await page.getByRole("button", { name: "Browser", exact: true }).click();
   await expect(page.getByRole("list", { name: "Events" }).getByRole("listitem")).toHaveCount(2);
 
-  const stored = await harness.api.events(dot.id, { types: ["memory.written"] });
+  const stored = await harness.api.events(dot.id, { types: ["browser.identity.created"] });
   const [download] = await Promise.all([page.waitForEvent("download"), page.getByRole("button", { name: "Export 2 events" }).click()]);
   expect(download.suggestedFilename()).toBe(`${dot.id}-events-${stored[0]!.id}-${stored[1]!.id}.jsonl`);
   const text = await readFile((await download.path())!, "utf8");

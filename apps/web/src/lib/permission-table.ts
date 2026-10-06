@@ -47,7 +47,6 @@ export interface PermissionGroup {
 const GROUP_LABELS: Readonly<Record<string, string>> = {
   computer: "Commands and desktop",
   files: "Files",
-  memory: "Memory",
   browser: "Browser",
   automations: "Automations",
 };

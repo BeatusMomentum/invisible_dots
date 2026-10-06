@@ -38,8 +38,6 @@ browser:
 permissions:
   computer.exec: allow
   browser.identity.delete: ask
-memory:
-  enabled: true
 limits:
   max_steps_per_task: 60
   context_tokens: 32000
@@ -116,7 +114,6 @@ describe("parseDotConfig", () => {
       computer: { cpu: 2, memory: "4gb", disk: "40gb", idle_timeout: "15m" },
       browser: { identities: { managed_by_dot: true, max_identities: 20, max_open: 3 } },
       permissions: {},
-      memory: { enabled: true },
       limits: { max_steps_per_task: 60, context_tokens: 32_000, max_cost_per_task_usd: 1 },
     });
   });
@@ -183,6 +180,11 @@ describe("parseDotConfig", () => {
       'permissions.computer.exe: unknown permission "computer.exe"',
     ]);
     expect(issuesOf({ ...MINIMAL, permissions: { "computer.exec": "maybe" } })[0]).toMatch(/^permissions\.computer\.exec:/);
+  });
+
+  it("has no memory to set: the Dot keeps its notes itself, so a memory switch or permission is refused", () => {
+    expect(issuesOf({ ...MINIMAL, memory: { enabled: false } })[0]).toMatch(/memory/);
+    expect(issuesOf({ ...MINIMAL, permissions: { "memory.read": "allow" } })).toEqual(['permissions.memory.read: unknown permission "memory.read"']);
   });
 
   it("accepts the summary model role", () => {

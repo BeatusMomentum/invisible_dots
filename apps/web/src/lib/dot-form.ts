@@ -196,7 +196,7 @@ export type YamlRead = { ok: true; form: DotForm } | { ok: false; issues: FormIs
 /**
  * Read YAML text back into the form. It fails with the schema's issues when the text is not a valid config, and
  * with one issue of its own when it is valid but sets something the form has no control for (the browser's limits,
- * memory off, the step and token limits): the form would drop it, so the person stays in the YAML.
+ * the step and token limits): the form would drop it, so the person stays in the YAML.
  */
 export function yamlToForm(text: string): YamlRead {
   const parsed = safeParseDotConfig(text);
@@ -206,7 +206,7 @@ export function yamlToForm(text: string): YamlRead {
   if (!again.ok || canonical(withoutEmptyInstructions(again.config)) !== canonical(withoutEmptyInstructions(parsed.config))) {
     return {
       ok: false,
-      issues: [{ field: null, path: "", message: "This YAML sets options the form has no controls for (such as the browser limits, memory or the step limit). Keep editing it as YAML." }],
+      issues: [{ field: null, path: "", message: "This YAML sets options the form has no controls for (such as the browser limits or the step limit). Keep editing it as YAML." }],
     };
   }
   return { ok: true, form };

@@ -8,7 +8,6 @@ ALLOW_ALL = {
     "computer.exec": "allow",
     "files.read": "allow",
     "files.write": "allow",
-    "memory.read": "allow",
     "automations": "allow",
 }
 
@@ -21,7 +20,6 @@ def runtime_config_body(**overrides: Any) -> dict[str, Any]:
         "model": {"provider": "openrouter", "id": "z-ai/glm-5.3-flash"},
         "browser": {"identities": {"managed_by_dot": True, "max_identities": 20, "max_open": 3}},
         "permissions": {},
-        "memory": {"enabled": True},
         "limits": {"max_steps_per_task": 60, "context_tokens": 32000, "max_cost_per_task_usd": 1},
     }
     body.update(overrides)

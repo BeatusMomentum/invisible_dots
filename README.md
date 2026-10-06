@@ -274,9 +274,6 @@ History lists the answered ones.
   browser identities and shows the window of an open one. Files is a read-only
   walk through `/home/dot`. Usage shows what the computer was given and what it
   uses, the model spend today and in total, and Start, Reboot and Stop.
-- **Memory**: the notes the Dot wrote (read only) and its automations, each with
-  its schedule in words, its next and last run, a switch that pauses it and a
-  delete. You cannot create one there: an automation is the Dot's own act.
 - **Channels**: Telegram and WhatsApp, below.
 - **Activity**: the whole event log as readable lines, filtered by kind,
   searchable, and exportable as JSON Lines.
@@ -339,10 +336,12 @@ Its tools, each behind a permission
 - **Run commands** on its own computer: a shell with a timeout, background
   jobs, and programs on a pseudo-terminal that it reads as a screen of text.
 - **Read and write files**: read, list, find, grep, write, edit, apply a patch.
-- **Keep notes**: one file per note in `/home/dot/memory`, found again with a
-  keyword search; the newest ones are named in its prompt.
+- **Keep its memory**: one file per note in `/home/dot/memory`, kept by the Dot
+  itself as Claude Code keeps its own: there is nothing to set. It finds them
+  again with its file tools, and the newest ones are named in its prompt.
 - **Schedule itself**: add, list and remove its own automations (at a time,
-  every interval, or a cron expression). This one asks you first by default.
+  every interval, or a cron expression). This one asks you first by default;
+  to pause or remove one, ask the Dot.
 - **Use its browsers**: create, launch and close identities; navigate (http
   and https only), read the page, take screenshots, click, type, select,
   scroll, go back and forward.
@@ -385,7 +384,7 @@ talks to chats.
   the model no, `ask` stops the turn and records the call with its arguments
   ([architecture: policy](docs/architecture.md#84-policy)).
 - The defaults are permissive for the Dot's own computer: running commands,
-  files, the browser and memory are allowed, except deleting a browser
+  files and the browser are allowed, except deleting a browser
   identity, which asks; automations ask; anything unknown is denied. Set any
   permission to `ask` or `deny` in the YAML to be asked first or to forbid it.
 - An approval can be answered in the web UI, the command line, a Telegram
@@ -637,7 +636,7 @@ The full contract every part is written against:
 
 A Dot is one YAML file, checked by one schema: name, goal, instructions,
 model, computer (cpu, memory, disk, idle timeout), browser identities,
-permissions, memory and limits. Every field and its range is in
+permissions and limits. Every field and its range is in
 [architecture: Dot configuration](docs/architecture.md#7-dot-configuration);
 `invisible-dots init` writes a sample.
 

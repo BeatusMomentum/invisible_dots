@@ -38,7 +38,7 @@ disk lay them out. This smoke does, in one Linux container, with no QEMU:
   stops a task and a chat turn and still holds after a crash, the `spent_usd` the
   events of tasks and chat answers carry, the `target` of `tool.called` (the command's first
   line, the path a file tool wrote and none of the content), the tools offered
-  for each permission map (and `GET /tools` through `dot-agentd` saying the same, with `GET /automations` and its refusals), the summary of an outgrown thread going to the
+  for each permission map (and `GET /tools` through `dot-agentd` saying the same, and no `/automations` route), the summary of an outgrown thread going to the
   `models.summary` model with no tool in the request, the text sent to the model, the key reaching no file,
   log or process environment, the browser seams (below), the host's file routes (the TCP port) refusing a symbolic link
   under home that leads to `/proc/<pid>/environ`, the token file or `/etc` while the engine's socket
@@ -165,7 +165,7 @@ removes the volume and the container on exit.
 | `smoke.sh` | the engine smoke's checks; prints `PASS:` or `FAIL:` per check and the summary line |
 | `browser/smoke.sh` | the browser smoke's checks, same output |
 | `browser/proxy.py` | the small forward proxy with Basic authentication that the browser smoke's identity with a proxy goes through |
-| `fake_openrouter.py` | the stand-in for OpenRouter's chat completions: answers by the last message (`RUN-EXEC <cmd>` makes it call the engine's `exec` tool, `SAY-RUN-EXEC <text> :: <cmd>` the same with `<text>` written beside the call, `WRITE-NOTE <path> :: <text>` a `write_file` into `/home/dot/memory/<path>`, `FIND-NOTE <word>` a `memory_search`, `REPEAT-EXEC <cmd>` an `exec` after every result too, a `COST <usd>` line the cost every response reports in its usage, `RUN-TOOL <name> <json>` a call of any tool with those arguments) and logs every request whole |
+| `fake_openrouter.py` | the stand-in for OpenRouter's chat completions: answers by the last message (`RUN-EXEC <cmd>` makes it call the engine's `exec` tool, `SAY-RUN-EXEC <text> :: <cmd>` the same with `<text>` written beside the call, `WRITE-NOTE <path> :: <text>` a `write_file` into `/home/dot/memory/<path>`, `FIND-NOTE <word>` a `grep` of `/home/dot/memory`, `REPEAT-EXEC <cmd>` an `exec` after every result too, a `COST <usd>` line the cost every response reports in its usage, `RUN-TOOL <name> <json>` a call of any tool with those arguments) and logs every request whole |
 | `host-stream.sh` | the fake host's event reader: reads `/v1/agent/events/stream` from its last `seq`, reconnects after a drop, pushes the key and the config on every `agent.started` |
 
 `smoke.sh` is written against the engine as it is: a check that pins something the

@@ -48,9 +48,6 @@ export function truncateText(text: string, max: number = TOOL_RESULT_MAX_CHARS, 
   return text.slice(0, head) + marker(text.length - keep) + (tail > 0 ? text.slice(text.length - tail) : "");
 }
 
-/** The system prompt lists this many most recently updated memory keys (section 8.6). */
-export const SYSTEM_PROMPT_MEMORY_KEYS = 20;
-
 export const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
 export const OPENROUTER_REFERER = "https://github.com/feder-cr/dots";
 export const OPENROUTER_TITLE = "invisible_dots";
@@ -238,8 +235,6 @@ export const AGENT_ROUTES = {
   browserIdentityFrame: (id: string) => `/browser-identities/${encodeURIComponent(id)}/frame`,
   /** `POST` (204): end the identity's browser, keep its profile. Closing a closed identity is not an error. */
   browserIdentityClose: (id: string) => `/browser-identities/${encodeURIComponent(id)}/close`,
-  automations: "/automations",
-  automation: (id: string) => `/automations/${encodeURIComponent(id)}`,
   tools: "/tools",
   prepareSleep: "/prepare-sleep",
 } as const;
@@ -439,17 +434,6 @@ export interface BrowserIdentityListAnswer {
   identities: BrowserIdentity[];
 }
 
-export const AUTOMATION_SCHEDULE_KINDS = ["at", "every", "cron"] as const;
-export type AutomationScheduleKind = (typeof AUTOMATION_SCHEDULE_KINDS)[number];
-
-export const AUTOMATION_RUN_STATUSES = ["ok", "error", "skipped"] as const;
-export type AutomationRunStatus = (typeof AUTOMATION_RUN_STATUSES)[number];
-
-// The shapes below are the one description of what the engine's `GET /automations` and `GET /tools` answer
-// (nanobot/dots/automations.py `automation_json`, permissions.py `tool_table`). The engine is Python and cannot
-// import them: its test writes what it answers into `invisible_engine_dots/tests/dots/wire_shapes.json`, and a
-// test of the host parses that file with these schemas, so a key renamed on either side fails a suite.
-
 /**
  * The last moment an automation may run, in milliseconds since the epoch: 9999-12-31T23:59:59.999Z, the last one a
  * Postgres timestamp and a JavaScript Date both hold. The engine refuses a schedule past it
@@ -458,59 +442,17 @@ export type AutomationRunStatus = (typeof AUTOMATION_RUN_STATUSES)[number];
  */
 export const MAX_RUN_AT_MS = 253_402_300_799_999;
 
-/** When an automation runs: only the fields its kind uses are present. */
-export const automationScheduleSchema = z
-  .object({
-    kind: z.enum(AUTOMATION_SCHEDULE_KINDS),
-    /** `at`: the moment, in milliseconds since the epoch. */
-    at_ms: z.number().int().optional(),
-    /** `every`: the interval in milliseconds. */
-    every_ms: z.number().int().optional(),
-    /** `cron`: a cron expression, read in `tz` (the computer's zone when absent). */
-    expr: z.string().optional(),
-    tz: z.string().optional(),
-  })
-  .strict();
-export type AutomationSchedule = z.infer<typeof automationScheduleSchema>;
-
-/** One automation of a Dot: a job its cron tool made, as `GET /automations` lists it. Times are milliseconds since the epoch. */
-export const automationSchema = z
-  .object({
-    id: z.string(),
-    name: z.string(),
-    enabled: z.boolean(),
-    schedule: automationScheduleSchema,
-    /** What the Dot is told when the automation runs. */
-    message: z.string(),
-    /** Null while the automation is paused or has no run left. */
-    next_run_at_ms: z.number().int().nonnegative().max(MAX_RUN_AT_MS).nullable(),
-    last_run_at_ms: z.number().int().nullable(),
-    last_status: z.enum(AUTOMATION_RUN_STATUSES).nullable(),
-    last_error: z.string().nullable(),
-    /** A one-time automation that removes itself after it ran. */
-    delete_after_run: z.boolean(),
-    created_at_ms: z.number().int(),
-  })
-  .strict();
-export type Automation = z.infer<typeof automationSchema>;
-
-/** `GET /automations`: every automation, paused ones too. */
-export interface AutomationListAnswer {
-  automations: Automation[];
-}
-
-/** `PATCH /automations/:id` body: the one thing the person changes. The answer is the automation. */
-export interface SetAutomationEnabledRequest {
-  enabled: boolean;
-}
-
+// The shape below is the one description of what the engine's `GET /tools` answers (nanobot/dots/permissions.py
+// `tool_table`). The engine is Python and cannot import it: its test writes what it answers into
+// `invisible_engine_dots/tests/dots/wire_shapes.json`, and a test of the host parses that file with this schema, so a
+// key renamed on either side fails a suite.
 /** One tool of the Dot, as `GET /tools` shows it (the engine owns the table: nanobot/dots/permissions.py). */
 export const toolInfoSchema = z
   .object({
     name: z.string(),
     /** The key of the Dot config's `permissions` the tool exercises. */
     permission: z.enum(PERMISSIONS),
-    /** Whether the model is offered the tool now: its permission is not denied (and, for a memory tool, memory is on). */
+    /** Whether the model is offered the tool now: its permission is not denied. */
     offered: z.boolean(),
     /** What the tool's schema tells the model it does. */
     description: z.string(),

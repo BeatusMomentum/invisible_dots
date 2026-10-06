@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parseDotConfig } from "@invisible-dots/shared";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { commandOf, EXIT, interruptIsAsked, run, SAMPLE_DOT, type CliIo, type HostCommands } from "../src/index.js";
 
@@ -74,8 +75,8 @@ const channel = {
 const events = Array.from({ length: 5 }, (_, i) => ({
   id: i + 1,
   dot_id: dot.id,
-  type: i % 2 ? "agent.state" : "memory.written",
-  data: i % 2 ? { state: "IDLE", guest_event_id: "x", guest_ts: now } : { key: `k${i}` },
+  type: i % 2 ? "agent.state" : "automation.next_run",
+  data: i % 2 ? { state: "IDLE", guest_event_id: "x", guest_ts: now } : { next_run_at_ms: null },
   source: "guest",
   guest_seq: i + 1,
   created_at: now,
@@ -288,6 +289,10 @@ describe("commands", () => {
     expect(again.code).toBe(EXIT.failed);
     expect(again.stderr).toMatch(/already exists/);
     expect((await cli(["init", "sample.yaml", "--force"])).code).toBe(EXIT.ok);
+  });
+
+  it("writes a sample the host accepts as it is: every key of it is one the schema knows", () => {
+    expect(parseDotConfig(SAMPLE_DOT).name).toBe("my-first-dot");
   });
 
   it("create sends the YAML text and prints validation details on 400", async () => {
@@ -559,7 +564,7 @@ describe("commands", () => {
       signal: controller.signal,
     };
     expect(await run(["logs", "fare-watch", "--tail", "1"], io)).toBe(EXIT.ok);
-    expect(output).toMatch(/#5 memory\.written/);
+    expect(output).toMatch(/#5 automation\.next_run/);
     expect(output).toMatch(/#6 task\.completed/);
     const stream = requests.find((r) => r.path === "/api/stream");
     expect(stream?.query.get("after")).toBe("5");

@@ -89,7 +89,7 @@ export const CLI_FLAGS = ["--json", "--note", "--no-web"] as const;
 export const TOOLS = {
   exec: "computer.exec",
   write_file: "files.write",
-  memory_search: "memory.read",
+  grep: "files.read",
   browser_identity_create: "browser.identity.create",
   browser_identity_delete: "browser.identity.delete",
   browser_identity_launch: "browser.identity.launch",
@@ -120,7 +120,6 @@ export const EVENTS = [
   "browser.identity.launched",
   "browser.identity.closed",
   "browser.identity.deleted",
-  "memory.written",
   "computer.stopped",
   "dot.deleted",
 ] as const;

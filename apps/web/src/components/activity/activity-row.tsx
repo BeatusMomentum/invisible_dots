@@ -1,6 +1,6 @@
 "use client";
 
-import { BrainIcon, CircleDotIcon, FlagIcon, GlobeIcon, HandIcon, MessageSquareIcon, MonitorIcon, SendIcon, SparklesIcon, type LucideIcon } from "lucide-react";
+import { CircleDotIcon, FlagIcon, GlobeIcon, HandIcon, MessageSquareIcon, MonitorIcon, SendIcon, SparklesIcon, type LucideIcon } from "lucide-react";
 import { toolLabel } from "../../lib/events/tool-labels";
 import type { EventFamily, EventView } from "../../lib/events/view";
 import { formatDate } from "../../lib/format";
@@ -18,7 +18,6 @@ const ICON: Record<EventFamily, LucideIcon> = {
   approvals: HandIcon,
   browser: GlobeIcon,
   computer: MonitorIcon,
-  memory: BrainIcon,
   channels: SendIcon,
   dot: SparklesIcon,
 };

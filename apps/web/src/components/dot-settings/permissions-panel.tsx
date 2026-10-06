@@ -91,7 +91,7 @@ export function PermissionsPanel({ draft, saved, change, dotId, computerState }:
   const silent = computerState !== undefined && (!up || (table.data === null && !table.loading));
 
   return (
-    <Panel id="permissions" title="Permissions and tools" description="What the Dot may do, one permission at a time. A tool is offered to the model when its permission is allowed or asked, and not when it is denied; a memory tool is also left out while memory is off, and the tools that create or delete browser identities while the Dot does not manage its own.">
+    <Panel id="permissions" title="Permissions and tools" description="What the Dot may do, one permission at a time. A tool is offered to the model when its permission is allowed or asked, and not when it is denied; the tools that create or delete browser identities are also left out while the Dot does not manage its own.">
       <PresetPicker permissions={draft.permissions} onChange={(permissions) => change({ ...draft, permissions })} />
       {silent ? (
         <p role="status" className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">

@@ -438,3 +438,21 @@ async def test_http_files_routes_against_fake_agentd(tmp_path: Path) -> None:
         server.close()
         await server.wait_closed()
 
+
+
+@pytest.mark.asyncio
+async def test_a_dot_agentd_that_does_not_answer_is_a_computer_error_of_status_0(tmp_path: Path) -> None:
+    # Its socket is not there: every route fails the way a refused request does, so its callers handle it.
+    comp = AgentdComputer(agentd_socket=str(tmp_path / "gone.sock"))
+    try:
+        for route, call in (
+            ("GET /v1/files/list", comp.list_dir("/home/dot/memory")),
+            ("GET /v1/files", comp.read_bytes("a.txt")),
+            ("PUT /v1/files", comp.write_bytes("a.txt", b"x")),
+            ("GET /v1/screenshot", comp.screenshot()),
+        ):
+            with pytest.raises(ComputerError) as caught:
+                await call
+            assert (caught.value.route, caught.value.status_code) == (route, 0)
+    finally:
+        await comp.aclose()

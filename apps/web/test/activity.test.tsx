@@ -82,7 +82,7 @@ describe("the Activity page", () => {
   });
 
   it("pages older with `before`, keeps the order and the count, and says where the log starts", async () => {
-    for (let i = 0; i < 2 * ACTIVITY_PAGE + 50; i++) plane.store("d1", "memory.written", { key: `note-${i}.md` });
+    for (let i = 0; i < 2 * ACTIVITY_PAGE + 50; i++) plane.store("d1", "message.assistant", { text: `note-${i}.md` });
     await renderActivity();
     await waitFor(() => expect(rows()).toHaveLength(ACTIVITY_PAGE));
     expect(screen.getByRole("status", { name: "" }).textContent).toBe(`${ACTIVITY_PAGE} events read so far.`);
@@ -105,7 +105,7 @@ describe("the Activity page", () => {
   });
 
   it("puts the oldest first, with the way to older events above the list", async () => {
-    for (let i = 0; i < ACTIVITY_PAGE + 5; i++) plane.store("d1", "memory.written", { key: `note-${i}.md` });
+    for (let i = 0; i < ACTIVITY_PAGE + 5; i++) plane.store("d1", "message.assistant", { text: `note-${i}.md` });
     await renderActivity();
     await waitFor(() => expect(rows()).toHaveLength(ACTIVITY_PAGE));
     const list = screen.getByRole("list", { name: "Events" });
@@ -119,27 +119,27 @@ describe("the Activity page", () => {
 
   it("asks the control plane for the families chosen only, and shows live events of those and no others", async () => {
     plane.store("d1", "tool.called", { tool: "exec", target: "ls", ...call });
-    plane.store("d1", "memory.written", { key: "a.md" });
+    plane.store("d1", "message.assistant", { text: "a.md" });
     plane.store("d1", "agent.state", { state: "IDLE" });
     plane.store("d1", "browser.identity.launched", { identity_id: "shop", name: "shop" });
     await renderActivity();
     await waitFor(() => expect(rows()).toHaveLength(4));
 
     await userEvent.click(screen.getByRole("button", { name: "Tools" }));
-    await userEvent.click(screen.getByRole("button", { name: "Memory" }));
+    await userEvent.click(screen.getByRole("button", { name: "Chat" }));
     await waitFor(() => expect(rows()).toHaveLength(2));
     expect(screen.getByRole("button", { name: "Tools" }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("false");
-    expect(eventQueries().at(-1)!.types).toEqual(["tool.called", "memory.written"]);
+    expect(eventQueries().at(-1)!.types).toEqual(["tool.called", "user.message", "message.assistant"]);
 
     await act(async () => plane.push("d1", "agent.state", { state: "THINKING" }));
-    await act(async () => plane.push("d1", "memory.written", { key: "b.md" }));
+    await act(async () => plane.push("d1", "message.assistant", { text: "b.md" }));
     await waitFor(() => expect(rows()).toHaveLength(3));
     expect(within(rows()[0]!).getByText("b.md")).toBeTruthy();
     expect(screen.queryByText("THINKING")).toBeNull();
 
     await userEvent.click(screen.getByRole("button", { name: "Tools" }));
-    await userEvent.click(screen.getByRole("button", { name: "Memory" }));
+    await userEvent.click(screen.getByRole("button", { name: "Chat" }));
     expect(screen.getByRole("button", { name: "All" }).getAttribute("aria-pressed")).toBe("true");
     await waitFor(() => expect(rows().length).toBeGreaterThan(4));
     expect(eventQueries().at(-1)!.types).toBeNull();
@@ -153,7 +153,7 @@ describe("the Activity page", () => {
 
   it("drops the answer to a choice that was changed while it was on its way", async () => {
     plane.store("d1", "tool.called", { tool: "exec", target: "ls", ...call });
-    plane.store("d1", "memory.written", { key: "slow.md" });
+    plane.store("d1", "message.assistant", { text: "slow.md" });
     // The first request, for every type, is held until the person has chosen Tools.
     const real = plane.fetch;
     let release: () => void = () => {};
@@ -177,7 +177,7 @@ describe("the Activity page", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    // The late answer held the memory note too: it must not have come in under the choice of Tools.
+    // The late answer held the reply too: it must not have come in under the choice of Tools.
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(rows()).toHaveLength(1);
     expect(screen.queryByText("slow.md")).toBeNull();
@@ -205,7 +205,7 @@ describe("the Activity page", () => {
   });
 
   it("offers older events when the search finds nothing in the page read", async () => {
-    for (let i = 0; i < ACTIVITY_PAGE + 1; i++) plane.store("d1", "memory.written", { key: i === 0 ? "needle.md" : `hay-${i}.md` });
+    for (let i = 0; i < ACTIVITY_PAGE + 1; i++) plane.store("d1", "message.assistant", { text: i === 0 ? "needle.md" : `hay-${i}.md` });
     await renderActivity();
     await waitFor(() => expect(rows()).toHaveLength(ACTIVITY_PAGE));
     await userEvent.type(screen.getByRole("searchbox"), "needle");
@@ -216,12 +216,12 @@ describe("the Activity page", () => {
   });
 
   it("shows an event that arrives while it is open at the top, once, even when the stream repeats it", async () => {
-    plane.store("d1", "memory.written", { key: "old.md" });
+    plane.store("d1", "message.assistant", { text: "old.md" });
     await renderActivity();
     await waitFor(() => expect(rows()).toHaveLength(1));
     await act(async () => plane.push("d1", "task.failed", { task_id: "task_2", error: "max steps exceeded" }));
     await waitFor(() => expect(rows()).toHaveLength(2));
-    expect(titles()).toEqual(["Task failed", "Memory written"]);
+    expect(titles()).toEqual(["Task failed", "Assistant replied"]);
     expect(rows()[0]!.getAttribute("data-tone")).toBe("error");
   });
 
@@ -232,7 +232,7 @@ describe("the Activity page", () => {
     expect(alert.textContent).toContain("Could not load events");
     expect(alert.textContent).toContain("the event log is not available");
     plane.failEvents = null;
-    plane.store("d1", "memory.written", { key: "back.md" });
+    plane.store("d1", "message.assistant", { text: "back.md" });
     await userEvent.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(rows()).toHaveLength(1));
     expect(screen.queryByRole("alert")).toBeNull();
@@ -258,9 +258,9 @@ describe("the Activity page", () => {
 
     it("saves the events shown as JSON Lines, oldest first, as stored", async () => {
       const stored: StoredEvent[] = [
-        plane.store("d1", "memory.written", { key: "a.md" }),
+        plane.store("d1", "message.assistant", { text: "a.md" }),
         plane.store("d1", "tool.called", { tool: "exec", target: "ls", ...call }),
-        plane.store("d1", "memory.written", { key: "b.md" }),
+        plane.store("d1", "message.assistant", { text: "b.md" }),
       ];
       await renderActivity();
       await waitFor(() => expect(rows()).toHaveLength(3));
@@ -271,7 +271,7 @@ describe("the Activity page", () => {
     });
 
     it("saves only what the search leaves", async () => {
-      const stored = [plane.store("d1", "memory.written", { key: "a.md" }), plane.store("d1", "memory.written", { key: "b.md" })];
+      const stored = [plane.store("d1", "message.assistant", { text: "a.md" }), plane.store("d1", "message.assistant", { text: "b.md" })];
       await renderActivity();
       await waitFor(() => expect(rows()).toHaveLength(2));
       await userEvent.type(screen.getByRole("searchbox"), "b.md");

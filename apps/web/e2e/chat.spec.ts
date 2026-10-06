@@ -50,17 +50,16 @@ test("the person talks to the Dot: the working row follows the turn, the steps s
   const steps = log.getByRole("list", { name: "What the Dot did" });
   await expect(steps.getByTestId("activity-step")).toHaveText(["Listed a folder/home/dot/workspace", "Read a file/home/dot/workspace/fares.csv"]);
 
-  // A note it saves shows as a chip, in the turn.
+  // A note it saves is the call that wrote it, a file of its memory folder: no chip, nothing to open elsewhere.
   guest.emit("tool.called", called("write_file", "/home/dot/memory/trips/lisbon.md", { permission: "files.write" }));
-  guest.emit("memory.written", { key: "trips/lisbon.md" });
-  await expect(log.getByText("Remembered")).toBeVisible();
-  await expect(log.getByText("trips/lisbon.md", { exact: true })).toBeVisible();
+  await expect(steps.getByTestId("activity-step").last()).toHaveText("Wrote a file/home/dot/memory/trips/lisbon.md");
+  await expect(log.getByText("Remembered")).toHaveCount(0);
 
-  // A run of more than three calls folds into one line, which opens on a click. The note above broke the run before it.
+  // A run of more than three calls folds into one line, which opens on a click: with the three above, seven.
   for (const target of ["EUR", "TAP", "Ryanair", "easyJet"]) guest.emit("tool.called", called("grep", target));
-  await expect(log.getByRole("button", { name: "4 steps" })).toBeVisible();
-  await log.getByRole("button", { name: "4 steps" }).click();
-  await expect(log.getByRole("list", { name: "Steps" }).getByTestId("activity-step")).toHaveCount(4);
+  await expect(log.getByRole("button", { name: "7 steps" })).toBeVisible();
+  await log.getByRole("button", { name: "7 steps" }).click();
+  await expect(log.getByRole("list", { name: "Steps" }).getByTestId("activity-step")).toHaveCount(7);
 
   guest.emit("message.assistant", { text: "The cheapest is **EUR 41** on Tuesday:\n\n```\nTAP 41 EUR\n```\n\n[the source](https://example.com/fares)" });
   guest.emit("agent.state", { state: "IDLE" });
@@ -73,15 +72,14 @@ test("the person talks to the Dot: the working row follows the turn, the steps s
 
   // Steps came before the answer, the question before the steps.
   const text = (await log.textContent()) ?? "";
-  expect(text.indexOf("What is the cheapest fare")).toBeLessThan(text.indexOf("4 steps"));
-  expect(text.indexOf("4 steps")).toBeLessThan(text.indexOf("The cheapest is"));
+  expect(text.indexOf("What is the cheapest fare")).toBeLessThan(text.indexOf("7 steps"));
+  expect(text.indexOf("7 steps")).toBeLessThan(text.indexOf("The cheapest is"));
   expect(await page.evaluate(() => (window as unknown as { marker: number }).marker)).toBe(11);
 
   // The conversation comes back as it was on a fresh load: messages from the host, steps from its log.
   await page.reload();
   await expect(page.getByRole("log").getByRole("article", { name: "chat-turn" }).locator("strong")).toHaveText("EUR 41");
-  await expect(page.getByRole("log").getByRole("button", { name: "4 steps" })).toBeVisible();
-  await expect(page.getByRole("log").getByText("trips/lisbon.md", { exact: true })).toBeVisible();
+  await expect(page.getByRole("log").getByRole("button", { name: "7 steps" })).toBeVisible();
 });
 
 test("a conversation longer than a page opens on its newest messages, and goes back a page at a time", async ({ page, harness }) => {

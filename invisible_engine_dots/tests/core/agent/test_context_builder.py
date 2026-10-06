@@ -10,7 +10,7 @@ NOW = datetime(2026, 10, 5, 14, 30, tzinfo=timezone.utc)
 DOT = 'You are the Dot "fare-watch". Your goal:\nWatch fares.'
 
 
-def builder(memory_notes: list[str] | None = None) -> ContextBuilder:
+def builder(memory_notes: tuple[str, ...] = ()) -> ContextBuilder:
     return ContextBuilder(
         DOT,
         workspace="/home/dot/workspace",
@@ -41,21 +41,17 @@ def test_nothing_of_the_upstream_assistants_identity_or_platform_is_left() -> No
         assert leftover not in prompt
 
 
-def test_memory_is_not_mentioned_while_it_is_not_offered() -> None:
-    assert "memory" not in builder(None).build_system_prompt().lower()
+def test_the_memory_section_says_the_dot_keeps_its_notes_itself_with_the_file_tools() -> None:
+    prompt = builder().build_system_prompt()
 
-
-def test_the_memory_section_says_how_notes_are_written_found_and_read() -> None:
-    prompt = builder([]).build_system_prompt()
-
-    assert "Long-term notes live in /home/dot/memory" in prompt
-    for tool in ("write_file", "edit_file", "memory_search", "memory_get"):
+    assert "Your long-term memory is /home/dot/memory, one note per file, and you keep it yourself" in prompt
+    for tool in ("grep", "find_files", "read_file", "write_file", "edit_file"):
         assert tool in prompt
     assert "Most recently changed notes" not in prompt
 
 
 def test_the_memory_section_names_the_notes_it_was_given() -> None:
-    prompt = builder(["b.md", "a.md"]).build_system_prompt()
+    prompt = builder(("b.md", "a.md")).build_system_prompt()
 
     assert "Most recently changed notes: b.md, a.md." in prompt
 

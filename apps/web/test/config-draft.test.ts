@@ -45,7 +45,7 @@ describe("the draft of a config", () => {
 const TOOLS: ToolInfo[] = [
   { name: "exec", permission: "computer.exec", offered: true, description: "Run a command." },
   { name: "exec_session", permission: "computer.exec", offered: true, description: "Use a session." },
-  { name: "memory_search", permission: "memory.read", offered: false, description: "Search memory." },
+  { name: "read_file", permission: "files.read", offered: false, description: "Read a file." },
 ];
 
 describe("the permission rows", () => {
@@ -53,7 +53,7 @@ describe("the permission rows", () => {
 
   it("are grouped by the first word of the permission, in the order of the permissions", () => {
     const groups = permissionGroups(saved, saved, null);
-    expect(groups.map((g) => g.label)).toEqual(["Commands and desktop", "Files", "Memory", "Browser", "Automations"]);
+    expect(groups.map((g) => g.label)).toEqual(["Commands and desktop", "Files", "Browser", "Automations"]);
     expect(groups.find((g) => g.id === "browser")?.rows.map((r) => r.permission)).toEqual([
       "browser.identity.list",
       "browser.identity.create",
@@ -87,7 +87,7 @@ describe("the permission rows", () => {
       { name: "exec", offered: true },
       { name: "exec_session", offered: true },
     ]);
-    expect(rows.find((r) => r.permission === "memory.read")?.tools).toEqual([{ name: "memory_search", offered: false }]);
+    expect(rows.find((r) => r.permission === "files.read")?.tools).toEqual([{ name: "read_file", offered: false }]);
     // A permission no tool of the table uses has an empty list, which is not the same as the table being unknown.
     expect(rows.find((r) => r.permission === "browser.act")?.tools).toEqual([]);
   });

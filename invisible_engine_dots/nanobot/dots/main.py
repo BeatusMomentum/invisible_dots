@@ -162,7 +162,6 @@ async def serve(environment: Environment, stop: asyncio.Event) -> None:
             engine=engine,
             key_holder=key_holder,
             checks=checks,
-            automations=cron,
             refused_uids=refused_uids,
         )
         await server.listen(environment.agent_socket)

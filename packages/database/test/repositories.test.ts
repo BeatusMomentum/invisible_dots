@@ -2,6 +2,7 @@ import { APPROVAL_LIST_LIMIT, newId, parseDotConfig, TASK_LIST_LIMIT, vmName, ty
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DotChangedError, DotNameTakenError, TransactionMisuseError, type Database, type Repositories } from "../src/index.js";
 import { EventsRepository } from "../src/events.js";
+import { loadMigrations } from "../src/migrate.js";
 import { createTestDatabase, testAdapters, type TestDatabase } from "../src/testing.js";
 
 const SETUP_TIMEOUT = 60_000;
@@ -55,7 +56,32 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
       "0006_events_task",
       "0007_dot_config_version",
       "0008_computer_next_automation",
+      "0009_dot_keeps_its_memory",
     ]);
+  });
+
+  it("0009: a config saved with the memory switch and permission loses both and moves its version, and memory.written rows go", async () => {
+    const old = await seedDot(db, "alpha-memory");
+    const untouched = await seedDot(db, "alpha-memory-none");
+    await db.query(
+      `UPDATE dots SET config = jsonb_set(config || '{"memory":{"enabled":false}}'::jsonb, '{permissions}', '{"memory.read":"allow","files.read":"ask"}'::jsonb) WHERE id = $1`,
+      [old.id],
+    );
+    await db.query(
+      `INSERT INTO events (dot_id, type, data, source) VALUES ($1, 'memory.written', '{"key":"a.md"}'::jsonb, 'host'), ($1, 'agent.state', '{"state":"IDLE"}'::jsonb, 'host')`,
+      [old.id],
+    );
+    const sql = (await loadMigrations()).find((migration) => migration.version === "0009_dot_keeps_its_memory")!.sql;
+
+    // Its statements one at a time: the repositories run single statements; `migrate` runs the file as a script.
+    for (const statement of sql.split(/;\s*\n/).filter((part) => part.trim() !== "")) await db.query(statement);
+
+    const after = await db.dots.get(old.id);
+    expect(after?.config).toEqual({ ...old.config, permissions: { "files.read": "ask" } });
+    expect(after?.config_version).toBe(old.config_version + 1);
+    expect((await db.dots.get(untouched.id))?.config_version).toBe(untouched.config_version);
+    const { rows } = await db.query<{ type: string }>("SELECT type FROM events WHERE dot_id = $1 AND type IN ('memory.written', 'agent.state')", [old.id]);
+    expect(rows.map((row) => row.type)).toEqual(["agent.state"]);
   });
 
   it("dots: unique names, resolve by id or name, status with error", async () => {
@@ -335,7 +361,7 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     await guest(dot.id, "message.assistant", { text: "d", spent_usd: 0.25 });
     // An event that predates the report has none, and a type that reports no spend adds none.
     await guest(dot.id, "message.assistant", { text: "old" });
-    await guest(dot.id, "memory.written", { key: "k", spent_usd: 99 });
+    await guest(dot.id, "automation.next_run", { next_run_at_ms: null, spent_usd: 99 });
     // Another Dot's, and a host event of the same type, are not this Dot's.
     await guest(other.id, "task.completed", { task_id: "task_9", summary: "z", spent_usd: 7 });
     await db.events.insertHost(dot.id, "task.completed", { task_id: "task_h", spent_usd: 50 });
@@ -530,7 +556,7 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     });
     let lowId = 0;
     const slow = db.transaction(async (tx) => {
-      lowId = (await tx.events.insertGuest(dot.id, outbound(1, "memory.written", { key: "slow" })))!.id;
+      lowId = (await tx.events.insertGuest(dot.id, outbound(1, "automation.next_run", { next_run_at_ms: null })))!.id;
       await held;
     });
     // Let the transaction draw its id before the autocommit insert starts.

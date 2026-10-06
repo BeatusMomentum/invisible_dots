@@ -86,14 +86,6 @@ def apply_patch_target(params: Mapping[str, Any]) -> str | None:
     return f"{len(paths)} files, first {paths[0]}"
 
 
-def memory_search_target(params: Mapping[str, Any]) -> str | None:
-    return _string(params, "query") or None
-
-
-def memory_get_target(params: Mapping[str, Any]) -> str | None:
-    return _string(params, "name") or None
-
-
 def cron_target(params: Mapping[str, Any]) -> str | None:
     action = _string(params, "action")
     if not action:

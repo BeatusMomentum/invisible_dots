@@ -456,8 +456,7 @@ SOFTWARE.
 
 ## assistant-ui
 
-`apps/web/src/components/elements/approval-card.tsx`,
-`schedule-card.tsx` and `memory-chips.tsx` in the same folder, and
+`apps/web/src/components/elements/approval-card.tsx` and
 `apps/web/src/lib/range.ts` derive from assistant-ui
 (https://github.com/assistant-ui/assistant-ui, commit 0bdf050); each file's first
 comment says what was changed.

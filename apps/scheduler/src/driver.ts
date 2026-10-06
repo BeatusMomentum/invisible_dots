@@ -5,8 +5,6 @@
  */
 import type {
   AgentStateAnswer,
-  Automation,
-  AutomationListAnswer,
   BrowserIdentity,
   BrowserIdentityListAnswer,
   ComputerResources,
@@ -44,9 +42,6 @@ export interface GuestApi {
   getBrowserIdentityFrame(id: string): Promise<Uint8Array>;
   /** End the identity's browser and keep its profile; closing a closed identity is not an error. */
   closeBrowserIdentity(id: string): Promise<void>;
-  listAutomations(): Promise<AutomationListAnswer>;
-  setAutomationEnabled(id: string, enabled: boolean): Promise<Automation>;
-  deleteAutomation(id: string): Promise<void>;
   listTools(): Promise<ToolListAnswer>;
   prepareSleep(timeoutMs?: number): Promise<void>;
   screenshot(): Promise<Uint8Array>;

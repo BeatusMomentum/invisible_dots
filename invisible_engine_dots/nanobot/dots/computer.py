@@ -6,8 +6,8 @@ import asyncio
 import os
 import posixpath
 import signal
-from collections.abc import Mapping
-from contextlib import suppress
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -44,7 +44,7 @@ class RunResult:
 
 
 class ComputerError(Exception):
-    """Error communicating with dot-agentd, carrying route and status only."""
+    """Error communicating with dot-agentd, carrying route and status only (0: dot-agentd did not answer)."""
 
     def __init__(self, route: str, status_code: int) -> None:
         super().__init__(f"{route} failed with status {status_code}")
@@ -163,6 +163,16 @@ async def kill_process_group(process: asyncio.subprocess.Process) -> None:
         await asyncio.wait_for(process.wait(), timeout=5.0)
 
 
+@asynccontextmanager
+async def _reaching(route: str) -> AsyncIterator[None]:
+    """A request to dot-agentd that never got an answer (its socket is gone, it hung up) is a ComputerError
+    of status 0, so a caller that handles a failed request handles this one too."""
+    try:
+        yield
+    except httpx.TransportError as error:
+        raise ComputerError(route, 0) from error
+
+
 class AgentdComputer:
     """The Dot's computer reached through dot-agentd."""
 
@@ -223,7 +233,7 @@ class AgentdComputer:
     async def read_bytes(self, path: str, *, max_bytes: int | None = None) -> bytes | None:
         resolved = self.resolve(path)
         client = self._get_client()
-        async with client.stream("GET", "/v1/files", params={"path": resolved}) as resp:
+        async with _reaching("GET /v1/files"), client.stream("GET", "/v1/files", params={"path": resolved}) as resp:
             if resp.status_code == 404:
                 return None
             if not 200 <= resp.status_code < 300:
@@ -244,12 +254,13 @@ class AgentdComputer:
     async def write_bytes(self, path: str, data: bytes) -> None:
         resolved = self.resolve(path)
         client = self._get_client()
-        resp = await client.put(
-            "/v1/files",
-            params={"path": resolved},
-            content=data,
-            headers={"Content-Type": "application/octet-stream"},
-        )
+        async with _reaching("PUT /v1/files"):
+            resp = await client.put(
+                "/v1/files",
+                params={"path": resolved},
+                content=data,
+                headers={"Content-Type": "application/octet-stream"},
+            )
         if 200 <= resp.status_code < 300:
             return
         raise ComputerError("PUT /v1/files", resp.status_code)
@@ -257,7 +268,8 @@ class AgentdComputer:
     async def list_dir(self, path: str) -> list[Entry] | None:
         resolved = self.resolve(path)
         client = self._get_client()
-        resp = await client.get("/v1/files/list", params={"path": resolved})
+        async with _reaching("GET /v1/files/list"):
+            resp = await client.get("/v1/files/list", params={"path": resolved})
         if resp.status_code == 404:
             return None
         if 200 <= resp.status_code < 300:
@@ -293,7 +305,8 @@ class AgentdComputer:
         return None
 
     async def screenshot(self) -> bytes:
-        resp = await self._get_client().get("/v1/screenshot")
+        async with _reaching("GET /v1/screenshot"):
+            resp = await self._get_client().get("/v1/screenshot")
         if 200 <= resp.status_code < 300:
             return resp.content
         raise ComputerError("GET /v1/screenshot", resp.status_code)

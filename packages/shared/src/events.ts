@@ -44,7 +44,6 @@ export const OUTBOUND_EVENT_TYPES = [
   "approval.requested",
   "tool.called",
   ...IDENTITY_EVENT_TYPES,
-  "memory.written",
   "automation.next_run",
 ] as const;
 export type OutboundEventType = (typeof OUTBOUND_EVENT_TYPES)[number];
@@ -208,7 +207,6 @@ export interface OutboundEventDataMap {
   "browser.identity.deleted": BrowserIdentityEventData;
   "browser.identity.launched": BrowserIdentityEventData;
   "browser.identity.closed": BrowserIdentityEventData;
-  "memory.written": { key: string };
   /**
    * When the earliest enabled automation of the Dot is next due, in milliseconds since the epoch, or null when none is
    * (no job, all paused, or only one-time jobs that ran). The engine sends it each time that changes, so the last one
@@ -391,7 +389,6 @@ export const outboundEventSchema = z.discriminatedUnion("type", [
   z.object({ ...outboundBase, type: z.literal("browser.identity.deleted"), data: identityData }),
   z.object({ ...outboundBase, type: z.literal("browser.identity.launched"), data: identityData }),
   z.object({ ...outboundBase, type: z.literal("browser.identity.closed"), data: identityData }),
-  z.object({ ...outboundBase, type: z.literal("memory.written"), data: z.object({ key: nonEmpty }) }),
   z.object({
     ...outboundBase,
     type: z.literal("automation.next_run"),

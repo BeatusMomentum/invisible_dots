@@ -799,9 +799,6 @@ async function main(): Promise<void> {
     assert(progress.length >= 1 && progress.every((e) => typeof e.data.text === "string" && String(e.data.text).trim() !== ""), `task.progress events: ${progress.length}`);
     const completed = mine.find((e) => e.type === "task.completed");
     assert(completed && progress.every((e) => e.id < completed.id), "a task.progress event is not before task.completed");
-    // memory.written: the note, named by its path under /home/dot/memory.
-    const notes = all.filter((e) => e.id > mark && e.type === "memory.written").map((e) => e.data.key);
-    assert(notes.length === 1 && notes[0] === MEMORY_NOTE, `memory.written keys: ${JSON.stringify(notes)}`);
 
     // The files, by what the model's hash says and by what the host reads.
     const hash = await hashTask("heading.txt hash", `printf '%s' "$(cat ${WORKSPACE}/heading.txt)" | sha256sum`);
@@ -815,7 +812,7 @@ async function main(): Promise<void> {
     assert(isSpend(task.spent_usd) && Math.abs(task.spent_usd - Number(completed.data.spent_usd)) < 1e-9, `the task record says ${task.spent_usd} USD, task.completed ${String(completed.data.spent_usd)}`);
     const usage = await api<{ spent_usd: number }>("GET", route(ROUTES.usage, { id: dotId }));
     assert(usage.spent_usd >= task.spent_usd - 1e-9, `GET usage says ${usage.spent_usd} USD, less than the task's ${task.spent_usd}`);
-    return `identity ${research.id} open; heading.txt and the note hold exactly "${HEADING}"; ${progress.length} task.progress; memory.written ${MEMORY_NOTE}; seed ${state.seedHash.slice(0, 12)}...; spent ${task.spent_usd} USD (usage ${usage.spent_usd}); tools: ${describeTools(all, task.id)}`;
+    return `identity ${research.id} open; heading.txt and the note hold exactly "${HEADING}"; ${progress.length} task.progress; seed ${state.seedHash.slice(0, 12)}...; spent ${task.spent_usd} USD (usage ${usage.spent_usd}); tools: ${describeTools(all, task.id)}`;
   });
 
   await step("f", "the desktop screenshot and the identity's frame, through the API and the web client", async () => {
@@ -1024,11 +1021,11 @@ async function main(): Promise<void> {
     assert((await guestText(dotId, `${WORKSPACE}/heading.txt`)) === HEADING, "heading.txt changed across the restart");
     assert((await guestText(dotId, `/home/dot/memory/${MEMORY_NOTE}`)) === HEADING, "the memory note changed across the restart");
 
-    // A memory is a file: the Dot finds it by searching, after the restart too.
-    const recall = await runTask(`Use the memory_search tool with the query ${HEADING} and answer with only the file name of the note that holds it.`);
+    // A memory is a file: the Dot finds it with its file tools, after the restart too.
+    const recall = await runTask(`Use the grep tool to search /home/dot/memory for ${HEADING} and answer with only the file name of the note that holds it.`);
     const all = await events(dotId);
-    assert(toolOk(all, recall.id, "memory_search"), `no successful memory_search (tools: ${describeTools(all, recall.id)})`);
-    assert((recall.summary ?? "").includes(MEMORY_NOTE), `memory_search answer: ${JSON.stringify(recall.summary)}`);
+    assert(toolOk(all, recall.id, "grep"), `no successful grep (tools: ${describeTools(all, recall.id)})`);
+    assert((recall.summary ?? "").includes(MEMORY_NOTE), `grep answer: ${JSON.stringify(recall.summary)}`);
 
     const history = (await api<{ messages: { role: string; text: string }[] }>("GET", route(ROUTES.messages, { id: dotId }))).messages;
     assert(history.some((m) => m.role === "user" && m.text.includes(PHRASE)), "the conversation lost the first message");

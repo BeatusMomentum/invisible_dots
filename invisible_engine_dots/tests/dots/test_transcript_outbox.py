@@ -359,97 +359,12 @@ class TestToolResults:
         assert dot_store.read(lambda c: s.peek_tool_decision(c, CHAT, "call-3")) is None
 
 
-class TestMemoryWritten:
-    def intent(self, store: DotStore, tool: str, keys: tuple[str, ...], session: str = CHAT) -> None:
-        task_id = None if session == CHAT else "t1"
-        store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("call-1", tool, session, task_id, 5, keys)))
-
-    def test_a_call_that_ran_reports_one_memory_written_per_note_after_its_tool_called(
-        self, dot_store: DotStore, transcript: Transcript
-    ) -> None:
-        self.intent(dot_store, "apply_patch", ("b.md", "trips/a.md"))
-        transcript.append(CHAT, tool_result("call-1", "apply_patch", content="Patch applied"))
-        assert [(kind, data.get("key")) for kind, data in transcript.events()] == [
-            ("tool.called", None),
-            ("memory.written", "b.md"),
-            ("memory.written", "trips/a.md"),
-        ]
-        assert transcript.events()[1][1] == {"key": "b.md"}
-
-    def test_a_task_call_reports_the_note_without_a_task_id(self, dot_store: DotStore, transcript: Transcript) -> None:
-        session = start_task(dot_store)
-        self.intent(dot_store, "write_file", ("a.md",), session)
-        transcript.append(session, tool_result("call-1", "write_file"))
-        assert [kind for kind, _ in transcript.events()] == ["tool.called", "memory.written"]
-        assert transcript.events()[1][1] == {"key": "a.md"}
-
-    def test_the_events_and_the_transcript_row_commit_together(self, dot_store: DotStore) -> None:
-        self.intent(dot_store, "write_file", ("a.md",))
-
-        def failing(c: sqlite3.Connection) -> None:
-            s.append_messages(c, CHAT, [tool_result("call-1", "write_file")], final_index=None)
-            raise RuntimeError("rolled back")
-
-        with pytest.raises(RuntimeError):
-            dot_store.write(failing)
-        assert dot_store.read(lambda c: s.read_outbox_after(c, 0, 10)) == []
-        assert dot_store.read(lambda c: s.peek_tool_intent(c, CHAT, "call-1")).memory_keys == ("a.md",)  # type: ignore[union-attr]
-
-    @pytest.mark.parametrize(
-        "message",
-        [
-            tool_result("call-1", "write_file", content="Error writing file: boom"),
-            tool_result("call-1", "write_file", content="fine looking text", is_error=True),
-        ],
-    )
-    def test_a_failed_call_reports_no_note(self, dot_store: DotStore, transcript: Transcript, message: dict[str, Any]) -> None:
-        self.intent(dot_store, "write_file", ("a.md",))
-        transcript.append(CHAT, message)
-        assert [kind for kind, _ in transcript.events()] == ["tool.called"]
-        assert transcript.events()[0][1]["ok"] is False
-
-    def test_a_denied_call_reports_no_note(self, dot_store: DotStore, transcript: Transcript) -> None:
-        self.intent(dot_store, "write_file", ("a.md",))
-        dot_store.write(lambda c: s.record_tool_decision(c, CHAT, "call-1", "deny"))
-        transcript.append(CHAT, tool_result("call-1", "write_file", content="fine looking text"))
-        assert [kind for kind, _ in transcript.events()] == ["tool.called"]
-
-    def test_an_interrupted_call_reports_no_note(self, dot_store: DotStore, transcript: Transcript) -> None:
-        self.intent(dot_store, "write_file", ("a.md",))
-        transcript.append(CHAT, tool_result("call-1", "write_file", content="interrupted", dots_closed=t.CLOSED_INTERRUPTED))
-        assert [kind for kind, _ in transcript.events()] == ["tool.called"]
-        assert dot_store.read(lambda c: s.peek_tool_intent(c, CHAT, "call-1")) is None
-
-    def test_a_call_that_never_ran_reports_no_note_and_its_intent_is_gone(
-        self, dot_store: DotStore, transcript: Transcript
-    ) -> None:
-        self.intent(dot_store, "write_file", ("a.md",))
-        transcript.append(CHAT, tool_result("call-1", "write_file", content="Not executed", dots_closed=t.CLOSED_NOT_RUN))
-        assert transcript.events() == []
-        assert dot_store.read(lambda c: s.peek_tool_intent(c, CHAT, "call-1")) is None
-
-    def test_an_approved_call_reports_its_note(self, dot_store: DotStore, transcript: Transcript) -> None:
-        self.intent(dot_store, "write_file", ("a.md",))
-        dot_store.write(lambda c: s.record_tool_decision(c, CHAT, "call-1", "ask"))
-        transcript.append(CHAT, tool_result("call-1", "write_file"))
-        assert [(kind, data.get("decision") or data["key"]) for kind, data in transcript.events()] == [
-            ("tool.called", "ask"),
-            ("memory.written", "a.md"),
-        ]
-
-    def test_a_call_with_no_note_or_no_intent_reports_none(self, dot_store: DotStore, transcript: Transcript) -> None:
-        self.intent(dot_store, "write_file", ())
-        transcript.append(CHAT, tool_result("call-1", "write_file"))
-        transcript.append(CHAT, tool_result("call-2", "write_file"))
-        assert [kind for kind, _ in transcript.events()] == ["tool.called", "tool.called"]
-
-
 class TestToolTarget:
     """`tool.called` names what the call acted on, from the target its intent holds (permissions.tool_target)."""
 
     def intent(self, store: DotStore, target: str | None, session: str = CHAT) -> None:
         task_id = None if session == CHAT else "t1"
-        store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("call-1", "exec", session, task_id, 5, (), target)))
+        store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("call-1", "exec", session, task_id, 5, target)))
 
     def test_a_call_that_ran_reports_the_target_of_its_intent(self, dot_store: DotStore, transcript: Transcript) -> None:
         self.intent(dot_store, "ls -la")
@@ -487,7 +402,7 @@ class TestToolTarget:
     def test_a_call_that_started_a_terminal_session_says_so_beside_its_target(
         self, dot_store: DotStore, transcript: Transcript
     ) -> None:
-        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("call-1", "exec", CHAT, None, 5, (), "python3", True)))
+        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("call-1", "exec", CHAT, None, 5, "python3", True)))
         transcript.append(CHAT, tool_result("call-1", content="started"))
         ((_, data),) = transcript.events()
         assert (data["target"], data["tty"]) == ("python3", True)

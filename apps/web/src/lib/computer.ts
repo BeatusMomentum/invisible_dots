@@ -1,7 +1,6 @@
 /** What the Computer page shows: allocated resources from the config, live usage from the VM when it runs. */
 import { COMPUTER_STOPPED, computerIsUp, FRAME_ERROR_CODES } from "@invisible-dots/shared/browser";
 import { ApiError } from "./api";
-import { whenLabel } from "./automations";
 import { relativeTime } from "./time";
 import type { Computer, DotConfig, SystemAnswer, VmState } from "./types";
 
@@ -105,6 +104,11 @@ export function confirmText(action: "stop" | "reboot", taskRunning: boolean): st
     return taskRunning ? `A task is running. Stop the computer anyway? ${cost}` : `Stop this Dot's computer? ${cost}`;
   }
   return taskRunning ? "A task is running. Reboot the computer anyway?" : null;
+}
+
+/** A moment as a person reads a calendar: "Mar 10, 2026, 9:00 AM", in the browser's zone. */
+function whenLabel(ms: number, locale?: string): string {
+  return new Date(ms).toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
 }
 
 export interface AutomationsNote {

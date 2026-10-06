@@ -81,7 +81,6 @@ describe("the settings of a Dot", () => {
           models: { summary: "openai/gpt-5-mini" },
           computer: { cpu: 3, memory: "6gb", disk: "50gb", idle_timeout: "1h" },
           browser: { identities: { managed_by_dot: false, max_identities: 8, max_open: 2 } },
-          memory: { enabled: false },
           limits: { max_steps_per_task: 30, context_tokens: 16_000, max_cost_per_task_usd: 0.5 },
         }),
       }),
@@ -100,7 +99,6 @@ describe("the settings of a Dot", () => {
     expect(screen.getByRole("switch", { name: "You manage its identities" }).getAttribute("aria-checked")).toBe("false");
     expect((field("Most identities") as HTMLInputElement).value).toBe("8");
     expect((field("Most open at once") as HTMLInputElement).value).toBe("2");
-    expect(screen.getByRole("switch", { name: "Memory is off" }).getAttribute("aria-checked")).toBe("false");
     expect((field("Spending cap per task") as HTMLInputElement).value).toBe("0.5");
     expect((field("Steps per task") as HTMLInputElement).value).toBe("30");
     expect((field("Context tokens") as HTMLInputElement).value).toBe("16000");
@@ -112,7 +110,7 @@ describe("the settings of a Dot", () => {
   it("has a section for each part of the config, and a danger zone last", async () => {
     await renderSettings();
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings).toEqual(["General", "Model", "Permissions and tools", "Computer", "Browser", "Memory", "Limits", "VM proxy", "Danger zone"]);
+    expect(headings).toEqual(["General", "Model", "Permissions and tools", "Computer", "Browser", "Limits", "VM proxy", "Danger zone"]);
   });
 });
 
@@ -205,13 +203,13 @@ describe("the permission editor", () => {
     plane.tools = [
       { name: "exec", permission: "computer.exec", offered: true, description: "Run a shell command." },
       { name: "exec_session", permission: "computer.exec", offered: true, description: "Use a command session." },
-      { name: "memory_search", permission: "memory.read", offered: false, description: "Search the memory." },
+      { name: "read_file", permission: "files.read", offered: false, description: "Read a file." },
     ];
     await renderSettings();
     const exec = await screen.findByRole("list", { name: "Tools of Run commands" });
     expect(within(exec).getAllByRole("listitem").map((li) => li.textContent)).toEqual(["exec", "exec_session"]);
-    const memory = within(row("Use memory").closest("li")!).getByRole("list", { name: "Tools of Use memory" });
-    expect(memory.textContent).toBe("memory_searchnot offered");
+    const read = within(row("Read files").closest("li")!).getByRole("list", { name: "Tools of Read files" });
+    expect(read.textContent).toBe("read_filenot offered");
     expect(within(row("Use pages").closest("li")!).getByText("No tool of the Dot uses this permission.")).toBeTruthy();
   });
 
@@ -324,10 +322,9 @@ describe("the other settings", () => {
     expect((plane.updates[1]!.config as DotConfig).models).toEqual({});
   });
 
-  it("saves the memory switch, the browser limits and the spending cap with the rest, in one patch", async () => {
+  it("saves the browser limits and the spending cap with the rest, in one patch", async () => {
     await renderSettings();
     const user = userEvent.setup();
-    await user.click(screen.getByRole("switch", { name: "Memory is on" }));
     await user.click(screen.getByRole("switch", { name: "The Dot manages its identities" }));
     fireEvent.change(field("Most identities"), { target: { value: "9" } });
     fireEvent.change(field("Most open at once"), { target: { value: "4" } });
@@ -339,7 +336,7 @@ describe("the other settings", () => {
     await saveReviewed();
     await waitFor(() => expect(plane.updates).toHaveLength(1));
     const config = plane.updates[0]!.config as DotConfig;
-    expect(config.memory).toEqual({ enabled: false });
+    expect("memory" in config).toBe(false);
     expect(config.browser.identities).toEqual({ managed_by_dot: false, max_identities: 9, max_open: 4 });
     expect(config.limits).toEqual({ max_steps_per_task: 12, context_tokens: 8000, max_cost_per_task_usd: 0.25 });
   });
@@ -425,12 +422,12 @@ describe("the YAML view", () => {
     expect(yamlBox().value).toBe("name: [unclosed");
   });
 
-  it("carries every option between the text and the form, the memory switch included", async () => {
+  it("carries every option between the text and the form, the identity switch included", async () => {
     await renderSettings();
     await userEvent.setup().click(screen.getByRole("button", { name: "Advanced YAML" }));
-    fireEvent.change(yamlBox(), { target: { value: `${yamlBox().value.replace("enabled: true", "enabled: false")}` } });
+    fireEvent.change(yamlBox(), { target: { value: `${yamlBox().value.replace("managed_by_dot: true", "managed_by_dot: false")}` } });
     await userEvent.setup().click(screen.getByRole("button", { name: "Form" }));
-    expect(screen.getByRole("switch", { name: "Memory is off" })).toBeTruthy();
+    expect(screen.getByRole("switch", { name: "You manage its identities" })).toBeTruthy();
   });
 });
 

@@ -46,7 +46,6 @@ describe("setField", () => {
     config = setField(config, "browser.identities.managed_by_dot", false);
     config = setField(config, "browser.identities.max_identities", 30);
     config = setField(config, "browser.identities.max_open", 5);
-    config = setField(config, "memory.enabled", false);
     config = setField(config, "limits.max_steps_per_task", 90);
     config = setField(config, "limits.context_tokens", 64_000);
     config = setField(config, "limits.max_cost_per_task_usd", 2.5);
@@ -59,7 +58,6 @@ describe("setField", () => {
       computer: { cpu: 4, memory: "8gb", disk: "80gb", idle_timeout: "1h" },
       browser: { identities: { managed_by_dot: false, max_identities: 30, max_open: 5 } },
       permissions: {},
-      memory: { enabled: false },
       limits: { max_steps_per_task: 90, context_tokens: 64_000, max_cost_per_task_usd: 2.5 },
     });
   });
@@ -84,11 +82,9 @@ describe("configChanges", () => {
     after = setField(after, "models.summary", "openai/gpt-5-mini");
     after = setPermission(after, "computer.exec", "ask");
     after = setField(after, "computer.idle_timeout", "0");
-    after = setField(after, "memory.enabled", false);
     expect(configChanges(before, after)).toEqual([
       { key: "models.summary", label: "Summary model", before: "the Dot's own model", after: "openai/gpt-5-mini", applies: "turn" },
       { key: "computer.idle_timeout", label: "Sleep after", before: "15m", after: "never", applies: "turn" },
-      { key: "memory.enabled", label: "Memory", before: "on", after: "off", applies: "turn" },
       { key: "limits.max_cost_per_task_usd", label: "Spending cap per task", before: "$1", after: "$3", applies: "turn" },
       { key: "permissions.computer.exec", label: "Run commands", before: "allow", after: "ask", applies: "turn" },
     ]);
@@ -169,11 +165,10 @@ describe("the fields", () => {
       computer: { cpu: 3, memory: "8gb", disk: "50gb", idle_timeout: "1h" },
       browser: { identities: { managed_by_dot: false, max_identities: 2, max_open: 1 } },
       permissions: Object.fromEntries(PERMISSIONS.map((p) => [p, "deny"])),
-      memory: { enabled: false },
       limits: { max_steps_per_task: 5, context_tokens: 5000, max_cost_per_task_usd: 7 },
     });
     // Every difference between two whole configs is a listed change, and putting all of them on a base gives the config back.
-    expect(configChanges(a, b)).toHaveLength(16 + PERMISSIONS.length);
+    expect(configChanges(a, b)).toHaveLength(15 + PERMISSIONS.length);
     expect(configChanges(rebase(a, b, a), b)).toEqual([]);
   });
 });

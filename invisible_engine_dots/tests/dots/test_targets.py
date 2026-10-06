@@ -51,9 +51,6 @@ class TestTheTargetOfEachTool:
             ("apply_patch", {"edits": [{"action": "add"}, "x", {"path": "", "action": "add"}]}, None),
             ("apply_patch", {"edits": "nope"}, None),
             ("apply_patch", {}, None),
-            ("memory_search", {"query": "rome trip"}, "rome trip"),
-            ("memory_search", {}, None),
-            ("memory_get", {"name": "trips"}, "trips"),
             ("cron", {"action": "add", "name": "daily-standup", "message": "SECRET INSTRUCTION", "every_seconds": 60}, "add daily-standup"),
             ("cron", {"action": "list"}, "list"),
             ("cron", {"action": "remove", "job_id": "j1"}, "remove j1"),
@@ -116,4 +113,4 @@ class TestOneLineAndItsLength:
         assert not any(ord(ch) < 32 or ord(ch) == 127 for ch in target)
 
     def test_a_multi_line_search_term_is_one_line(self) -> None:
-        assert tool_target("memory_search", {"query": "a\nb"}) == "a b"
+        assert tool_target("grep", {"pattern": "a\nb"}) == "a b"

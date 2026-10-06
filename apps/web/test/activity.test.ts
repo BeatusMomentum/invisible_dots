@@ -10,7 +10,6 @@ function event(id: number, type: string, data: Record<string, unknown> = {}): St
 describe("typesFor", () => {
   it("asks for every type of the families chosen, and for no type at all when none is chosen", () => {
     expect(typesFor([])).toBeUndefined();
-    expect(typesFor(["memory"])).toEqual(["memory.written"]);
     expect(typesFor(["tools", "browser"])).toEqual(["tool.called", ...typesOf("browser")]);
     expect(typesFor(["tasks"])).toEqual(["task.created", "task.started", "task.progress", "task.completed", "task.failed", "task.cancelled"]);
   });
@@ -33,7 +32,7 @@ describe("matchesSearch", () => {
     expect(matchesSearch(reply, "cheapest friday")).toBe(false);
     expect(matchesSearch(tool, "tuesday")).toBe(false);
     // Data that is not in the line is not searched: the search is over what is on screen.
-    expect(matchesSearch(viewEvent(event(3, "memory.written", { key: "a.md", secret: "hunter2" })), "hunter2")).toBe(false);
+    expect(matchesSearch(viewEvent(event(3, "message.assistant", { text: "a.md", secret: "hunter2" })), "hunter2")).toBe(false);
   });
 
   it("matches the channel a message came through", () => {
@@ -44,7 +43,7 @@ describe("matchesSearch", () => {
 
 describe("the export", () => {
   it("writes one JSON object per line, oldest first, each as the control plane stored it", () => {
-    const events = [event(7, "agent.state", { state: "IDLE" }), event(5, "memory.written", { key: "a.md" })];
+    const events = [event(7, "agent.state", { state: "IDLE" }), event(5, "message.assistant", { text: "a.md" })];
     const text = toJsonl(events);
     expect(text.endsWith("\n")).toBe(true);
     const lines = text.trimEnd().split("\n");

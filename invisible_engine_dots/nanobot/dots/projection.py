@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from nanobot.dots.permissions import TOOL_PERMISSIONS, offered_tools
+from nanobot.dots.permissions import offered_tools
 from nanobot.dots.protocol import MODEL_ROLES, DotRuntimeConfig
 
 # Longest result of one tool call that goes back to the model, in characters.
@@ -31,8 +31,6 @@ class EngineSettings:
     max_cost_usd: float
     context_window_tokens: int
     max_tool_result_chars: int
-    # Whether the model is offered the tools that read the memory notes.
-    memory_read: bool
     workspace: str
     # The system prompt section that says whose Dot this is and what it is for.
     dot_prompt: str
@@ -45,11 +43,7 @@ class EngineSettings:
 
 
 def project(config: DotRuntimeConfig, *, workspace: str, openrouter_base_url: str | None) -> EngineSettings:
-    offered = offered_tools(
-        config.permissions,
-        memory_enabled=config.memory.enabled,
-        managed_identities=config.browser.identities.managed_by_dot,
-    )
+    offered = offered_tools(config.permissions, managed_identities=config.browser.identities.managed_by_dot)
     named = config.models or {}
     return EngineSettings(
         model_id=config.model.id,
@@ -60,7 +54,6 @@ def project(config: DotRuntimeConfig, *, workspace: str, openrouter_base_url: st
         max_cost_usd=config.limits.max_cost_per_task_usd,
         context_window_tokens=config.limits.context_tokens,
         max_tool_result_chars=MAX_TOOL_RESULT_CHARS,
-        memory_read=any(TOOL_PERMISSIONS[name].needs_memory for name in offered),
         workspace=workspace,
         dot_prompt=dot_prompt_section(config),
     )

@@ -461,7 +461,7 @@ class TestSpend:
         )
         assert total["data"]["spent_usd"] == 0.3
 
-    @pytest.mark.parametrize("event_type", ["tool.called", "task.started", "agent.state", "memory.written"])
+    @pytest.mark.parametrize("event_type", ["tool.called", "task.started", "agent.state"])
     def test_an_event_that_does_not_report_spend_is_refused(self, dot_store: DotStore, event_type: str) -> None:
         with pytest.raises(ValueError, match="not an event that reports spend"):
             dot_store.write(lambda c: s.append_outbox_spent(c, event_type, {}, "chat"))
@@ -644,18 +644,8 @@ class TestToolIntents:
         assert [(i.tool_call_id, i.session_key) for i in listed] == [("early", "t"), ("late", "s")]
         assert dot_store.read(s.list_tool_intents) == listed
 
-    def test_an_intent_carries_the_notes_its_call_writes_in_order_and_none_by_default(self, dot_store: DotStore) -> None:
-        with_notes = s.ToolIntent("c1", "apply_patch", "s", "t1", 100, ("b.md", "trips/a.md"))
-        dot_store.write(lambda c: s.record_tool_intent(c, with_notes))
-        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c2", "exec", "s", None, 200)))
-        assert s.ToolIntent("c2", "exec", "s", None, 200).memory_keys == ()
-        assert dot_store.read(lambda c: s.peek_tool_intent(c, "s", "c1")) == with_notes
-        assert dot_store.read(lambda c: s.peek_tool_intent(c, "s", "c2")).memory_keys == ()  # type: ignore[union-attr]
-        assert dot_store.write(lambda c: s.take_tool_intent(c, "s", "c1")) == with_notes
-        assert [i.memory_keys for i in dot_store.read(s.list_tool_intents)] == [()]
-
     def test_an_intent_carries_the_target_its_call_acted_on_and_none_by_default(self, dot_store: DotStore) -> None:
-        named = s.ToolIntent("c1", "exec", "s", "t1", 100, (), "ls -la")
+        named = s.ToolIntent("c1", "exec", "s", "t1", 100, "ls -la")
         dot_store.write(lambda c: s.record_tool_intent(c, named))
         dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c2", "exec", "s", None, 200)))
         assert s.ToolIntent("c2", "exec", "s", None, 200).target is None
@@ -665,32 +655,37 @@ class TestToolIntents:
         assert [i.target for i in dot_store.read(s.list_tool_intents)] == [None]
 
     def test_the_first_start_of_a_call_keeps_its_target_too(self, dot_store: DotStore) -> None:
-        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c1", "exec", "s", None, 1, (), "first")))
-        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c1", "exec", "s", None, 2, (), "second")))
+        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c1", "exec", "s", None, 1, "first")))
+        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c1", "exec", "s", None, 2, "second")))
         assert dot_store.read(lambda c: s.peek_tool_intent(c, "s", "c1")).target == "first"  # type: ignore[union-attr]
 
     def test_an_intent_says_whether_its_call_started_a_terminal_session_and_does_not_by_default(
         self, dot_store: DotStore
     ) -> None:
-        terminal = s.ToolIntent("c1", "exec", "s", None, 1, (), "python3", True)
+        terminal = s.ToolIntent("c1", "exec", "s", None, 1, "python3", True)
         dot_store.write(lambda c: s.record_tool_intent(c, terminal))
-        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c2", "exec", "s", None, 2, (), "ls")))
+        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c2", "exec", "s", None, 2, "ls")))
         assert s.ToolIntent("c2", "exec", "s", None, 2).tty is False
         assert dot_store.read(lambda c: s.peek_tool_intent(c, "s", "c1")) == terminal
         assert dot_store.read(lambda c: s.peek_tool_intent(c, "s", "c2")).tty is False  # type: ignore[union-attr]
         assert dot_store.write(lambda c: s.take_tool_intent(c, "s", "c1")) == terminal
         assert [i.tty for i in dot_store.read(s.list_tool_intents)] == [False]
 
-    def test_the_first_start_of_a_call_keeps_its_notes_too(self, dot_store: DotStore) -> None:
-        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c1", "write_file", "s", None, 1, ("a.md",))))
-        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c1", "write_file", "s", None, 2, ("z.md",))))
-        assert dot_store.read(lambda c: s.peek_tool_intent(c, "s", "c1")).memory_keys == ("a.md",)  # type: ignore[union-attr]
-
-    def test_a_note_name_with_json_special_characters_comes_back_as_it_went(self, dot_store: DotStore) -> None:
-        keys = ('quo"te.md', "tab\tand\\slash.md", "ünï/čode.md", "[brackets].md")
-        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c1", "apply_patch", "s", None, 1, keys)))
-        assert dot_store.read(lambda c: s.peek_tool_intent(c, "s", "c1")).memory_keys == keys  # type: ignore[union-attr]
-
+    def test_a_file_made_when_an_intent_listed_the_notes_its_call_wrote_keeps_working(self, tmp_path: Path) -> None:
+        # A Dot's disk outlives an upgrade: its intents table still has the column the notes were kept in.
+        path = tmp_path / "engine.sqlite"
+        DotStore.open(path).close()
+        conn = sqlite3.connect(path)
+        conn.execute("ALTER TABLE dots_tool_intents ADD COLUMN memory_keys_json TEXT NOT NULL DEFAULT '[]'")
+        conn.commit()
+        conn.close()
+        store = DotStore.open(path)
+        try:
+            intent = s.ToolIntent("c1", "write_file", "s", None, 1, "/home/dot/memory/a.md")
+            store.write(lambda c: s.record_tool_intent(c, intent))
+            assert store.read(lambda c: s.peek_tool_intent(c, "s", "c1")) == intent
+        finally:
+            store.close()
 
 class TestCanonicalArguments:
     def test_ignores_key_order_at_every_level(self) -> None:

@@ -11,7 +11,6 @@ export const PERMISSIONS = [
   "computer.screenshot",
   "files.read",
   "files.write",
-  "memory.read",
   "browser.identity.list",
   "browser.identity.create",
   "browser.identity.delete",
@@ -59,11 +58,6 @@ export const PERMISSION_INFO: Record<Permission, PermissionInfo> = {
     label: "Change files",
     description: "Create, replace and edit files on the Dot's computer, including its memory notes.",
     risk: "medium",
-  },
-  "memory.read": {
-    label: "Use memory",
-    description: "Search and read the Dot's long-term memory notes.",
-    risk: "low",
   },
   "browser.identity.list": {
     label: "List browser identities",

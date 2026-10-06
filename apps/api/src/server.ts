@@ -33,7 +33,6 @@ import {
   MAX_EVENT_PAGE,
   TASK_LIST_LIMIT,
   type ApprovalStatus,
-  type AutomationListAnswer,
   type ChannelKind,
   type DoctorCheck,
   type ListOrder,
@@ -60,7 +59,7 @@ export interface ServerOptions {
   heartbeatMs?: number;
 }
 
-type Params = { id: string; identityId: string; automationId: string; kind: string; peer: string };
+type Params = { id: string; identityId: string; kind: string; peer: string };
 type Body = Record<string, unknown> | undefined;
 
 function digest(value: string): Buffer {
@@ -323,21 +322,7 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     return reply.code(204).send();
   });
 
-  // Automations (the Dot's cron jobs) and tools (its table): both are the engine's, so they need the computer running
-
-  app.get<{ Params: Params }>(
-    "/api/dots/:id/automations",
-    async (request): Promise<AutomationListAnswer> => ({ automations: await scheduler.listAutomations(request.params.id) }),
-  );
-
-  app.patch<{ Params: Params }>("/api/dots/:id/automations/:automationId", async (request) =>
-    scheduler.setAutomationEnabled(request.params.id, request.params.automationId, bodyOf(request).enabled),
-  );
-
-  app.delete<{ Params: Params }>("/api/dots/:id/automations/:automationId", async (request, reply) => {
-    await scheduler.deleteAutomation(request.params.id, request.params.automationId);
-    return reply.code(204).send();
-  });
+  // The tools (its table) are the engine's, so they need the computer running
 
   app.get<{ Params: Params }>(
     "/api/dots/:id/tools",

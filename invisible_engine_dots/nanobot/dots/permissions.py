@@ -49,7 +49,6 @@ class ToolEntry:
     permission: the key of the host's permission map the tool exercises.
     build: factory taking ToolDeps to instantiate the Tool.
     target: from the call's arguments, the one line `tool.called` shows of it (None: nothing).
-    needs_memory: the tool exists only while the Dot's memory is enabled.
     starts_terminal: from the call's arguments, whether it starts a terminal session.
     needs_managed_identities: the tool exists only while the Dot may manage its browser identities itself
         (`browser.identities.managed_by_dot`).
@@ -59,7 +58,6 @@ class ToolEntry:
     permission: str
     build: Callable[[ToolDeps], Tool]
     target: Callable[[Mapping[str, Any]], str | None]
-    needs_memory: bool = False
     # Whether the call starts a terminal session, which `tool.called` marks (`tty`); no other tool does.
     starts_terminal: Callable[[Mapping[str, Any]], bool] = targets.never_starts_terminal
     needs_managed_identities: bool = False
@@ -124,18 +122,6 @@ def _build_apply_patch(deps: ToolDeps) -> Tool:
     from nanobot.agent.tools.apply_patch import ApplyPatchTool
 
     return ApplyPatchTool(computer=deps.computer)
-
-
-def _build_memory_search(deps: ToolDeps) -> Tool:
-    from nanobot.dots.memory_tools import MemorySearchTool
-
-    return MemorySearchTool(computer=deps.computer)
-
-
-def _build_memory_get(deps: ToolDeps) -> Tool:
-    from nanobot.dots.memory_tools import MemoryGetTool
-
-    return MemoryGetTool(computer=deps.computer)
 
 
 def _build_cron(deps: ToolDeps) -> Tool:
@@ -203,8 +189,6 @@ TOOL_PERMISSIONS: Mapping[str, ToolEntry] = MappingProxyType(
         "write_file": ToolEntry("files.write", _build_write_file, targets.path_target),
         "edit_file": ToolEntry("files.write", _build_edit_file, targets.path_target),
         "apply_patch": ToolEntry("files.write", _build_apply_patch, targets.apply_patch_target),
-        "memory_search": ToolEntry("memory.read", _build_memory_search, targets.memory_search_target, needs_memory=True),
-        "memory_get": ToolEntry("memory.read", _build_memory_get, targets.memory_get_target, needs_memory=True),
         "cron": ToolEntry("automations", _build_cron, targets.cron_target),
         "computer_screenshot": ToolEntry("computer.screenshot", _build_computer_screenshot, targets.no_target),
         "browser_identity_list": ToolEntry("browser.identity.list", _build_browser_identity_list, targets.no_target),
@@ -262,20 +246,17 @@ def tool_arguments(tool_name: str, params: Mapping[str, Any]) -> dict[str, Any]:
     return entry.arguments(params) if entry else dict(params)
 
 
-def offered_tools(
-    permissions: Mapping[str, str], *, memory_enabled: bool = True, managed_identities: bool = True
-) -> list[str]:
+def offered_tools(permissions: Mapping[str, str], *, managed_identities: bool = True) -> list[str]:
     """The tools the model is offered, sorted.
 
     A tool is offered when its permission is allow or ask (a permission missing
-    from the map is deny), for a memory tool when memory is enabled, and for a tool
-    that creates or deletes browser identities when the Dot manages them itself.
+    from the map is deny), and for a tool that creates or deletes browser
+    identities when the Dot manages them itself.
     """
     return sorted(
         name
         for name, entry in TOOL_PERMISSIONS.items()
         if permissions.get(entry.permission) in ("allow", "ask")
-        and (memory_enabled or not entry.needs_memory)
         and (managed_identities or not entry.needs_managed_identities)
     )
 

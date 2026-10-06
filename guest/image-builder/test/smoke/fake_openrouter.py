@@ -12,7 +12,7 @@ last user text, substring matches):
   session the last tool result named, and waits for the session to end;
 - a user message with SAY-RUN-EXEC <text> :: <cmd>: the same call with <text> written beside it;
 - a user message with WRITE-NOTE <path> :: <text>: a call of write_file on /home/dot/memory/<path>;
-- a user message with FIND-NOTE <word>: a call of memory_search for <word>;
+- a user message with FIND-NOTE <word>: a call of grep for <word> in /home/dot/memory (the Dot finds its notes with its file tools);
 - a user message with RUN-TOOL <name> <json>: a call of the tool <name> with the arguments <json> (an object;
   the browser tools take their arguments this way);
 - a user message with "interrupted by a restart": a final answer;
@@ -133,7 +133,7 @@ def decide(messages: list[dict]) -> dict:
         return {"tool": {"name": tool_call.group(1), "args": json.loads(tool_call.group(2))}}
     found_note = re.search(r"FIND-NOTE (\S+)", said)
     if found_note:
-        return {"tool": {"name": "memory_search", "args": {"query": found_note.group(1)}}}
+        return {"tool": {"name": "grep", "args": {"pattern": found_note.group(1), "path": "/home/dot/memory"}}}
     narrated = re.search(r"SAY-RUN-EXEC (.+?) :: (.+)$", said, re.M)
     if narrated:
         return {"text": narrated.group(1).strip(), "tool": {"name": "exec", "args": {"command": narrated.group(2).strip()}}}

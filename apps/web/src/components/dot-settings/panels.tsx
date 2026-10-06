@@ -9,7 +9,6 @@ import { Label } from "../ui/label";
 import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { Field, NumberField, SliderField } from "../new-dot/Field";
-import { MEMORY_EFFECT } from "../memory/memory-switch";
 import { Panel, type PanelProps } from "./panel";
 
 export function GeneralPanel({ draft, change, errorOf }: PanelProps) {
@@ -162,20 +161,6 @@ export function BrowserPanel({ draft, change, errorOf }: PanelProps) {
         onChange={(value) => change(setField(draft, "browser.identities.max_open", value))}
         hint="Each open browser uses the computer's memory. It cannot be more than the most identities."
         error={errorOf("browser.identities.max_open")}
-      />
-    </Panel>
-  );
-}
-
-export function MemoryPanel({ draft, change }: PanelProps) {
-  return (
-    <Panel id="memory" title="Memory" description="Whether the Dot keeps notes for later.">
-      <SwitchRow
-        id="set-memory-enabled"
-        label={draft.memory.enabled ? "Memory is on" : "Memory is off"}
-        meaning={draft.memory.enabled ? MEMORY_EFFECT.on : MEMORY_EFFECT.off}
-        checked={draft.memory.enabled}
-        onChange={(next) => change(setField(draft, "memory.enabled", next))}
       />
     </Panel>
   );

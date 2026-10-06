@@ -23,8 +23,6 @@ import {
   SseParser,
   type AgentHealthAnswer,
   type AgentStateAnswer,
-  type Automation,
-  type AutomationListAnswer,
   type BrowserIdentity,
   type BrowserIdentityListAnswer,
   type CreateBrowserIdentityRequest,
@@ -355,19 +353,6 @@ export class GuestClient {
 
   closeBrowserIdentity(id: string): Promise<void> {
     return this.noContent({ method: "POST", path: this.agentPath(AGENT_ROUTES.browserIdentityClose(id)) });
-  }
-
-  listAutomations(): Promise<AutomationListAnswer> {
-    return this.json({ path: this.agentPath(AGENT_ROUTES.automations) });
-  }
-
-  /** Pause (`false`) or resume (`true`) an automation; the answer is the automation as it is now. */
-  setAutomationEnabled(id: string, enabled: boolean): Promise<Automation> {
-    return this.json({ method: "PATCH", path: this.agentPath(AGENT_ROUTES.automation(id)), body: { enabled } });
-  }
-
-  deleteAutomation(id: string): Promise<void> {
-    return this.noContent({ method: "DELETE", path: this.agentPath(AGENT_ROUTES.automation(id)) });
   }
 
   /** The Dot's tools and whether the model is offered each now. */

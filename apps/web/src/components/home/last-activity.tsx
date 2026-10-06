@@ -13,7 +13,7 @@ import { useLiveEvents } from "../events";
  * What counts as the Dot being active: it was talked to, it answered, it did work, asked, remembered or opened a
  * browser. Its agent changing state, a report of the next automation or a start of its computer say nothing of that.
  */
-const ACTIVITY_TYPES = (["chat", "tasks", "tools", "approvals", "memory", "browser"] as const).flatMap(typesOf);
+const ACTIVITY_TYPES = (["chat", "tasks", "tools", "approvals", "browser"] as const).flatMap(typesOf);
 
 /** The newest thing the Dot did or was asked: one request when the card appears, then the stream. */
 function useLastActivity(dotId: string): { event: StoredEvent | null; loading: boolean } {

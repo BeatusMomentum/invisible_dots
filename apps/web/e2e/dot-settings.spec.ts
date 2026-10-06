@@ -22,7 +22,6 @@ test("allow, ask and deny a permission: the host saves one entry, the Dot's engi
   // The tools of a permission, from the Dot's own table, offered while the permission is not denied.
   const exec = page.getByRole("list", { name: "Tools of Run commands" });
   await expect(exec.getByRole("listitem")).toHaveText(["exec"]);
-  await expect(page.getByRole("list", { name: "Tools of Use memory" }).getByRole("listitem")).toHaveText(["memory_search", "memory_get"]);
 
   // Deny: saved as an entry, pushed, and the model is no longer offered the tool.
   await choose(page, "Run commands", "Deny");
@@ -77,7 +76,7 @@ test("a preset sets the rows together, and the review lists every row that moved
   await expect(page.getByText("No changes.")).toBeVisible();
 });
 
-test("the other settings are saved with the permissions: the summary model, the spending cap, the browser limits and memory", async ({ page, harness }) => {
+test("the other settings are saved with the permissions: the summary model, the spending cap and the browser limits", async ({ page, harness }) => {
   const dot = await harness.createDot("config-rest");
   const guest = harness.driver.guestOf(dot.id);
   await page.goto(settings(harness.webUrl, dot.id));
@@ -86,21 +85,19 @@ test("the other settings are saved with the permissions: the summary model, the 
   await page.getByLabel("Most identities").fill("10");
   await page.getByLabel("Most open at once").fill("2");
   await page.getByLabel("Steps per task").fill("25");
-  await page.getByRole("switch", { name: "Memory is on" }).click();
   await choose(page, "Delete browser identities", "Deny");
-  await expect(page.getByText("7 unsaved changes.")).toBeVisible();
+  await expect(page.getByText("6 unsaved changes.")).toBeVisible();
   await saveReviewed(page);
 
   const config = (await harness.api.getDot(dot.id)).config;
   expect(config.models).toEqual({ summary: "openai/gpt-5-mini" });
   expect(config.limits).toMatchObject({ max_cost_per_task_usd: 0.5, max_steps_per_task: 25 });
   expect(config.browser.identities).toMatchObject({ max_identities: 10, max_open: 2 });
-  expect(config.memory.enabled).toBe(false);
+  // There is no memory to set: the Dot keeps its notes itself.
+  expect("memory" in config).toBe(false);
+  await expect(page.getByRole("switch", { name: /^Memory/ })).toHaveCount(0);
   expect(config.permissions).toEqual({ "browser.identity.delete": "deny" });
   await expect.poll(() => guest.config?.models.summary).toBe("openai/gpt-5-mini");
-  await expect.poll(() => guest.config?.memory.enabled).toBe(false);
-  // The memory tools are not offered any more, which the page shows on the next push.
-  await expect(page.getByRole("list", { name: "Tools of Use memory" }).getByRole("listitem")).toHaveText(["memory_searchnot offered", "memory_getnot offered"]);
 
   // Emptying the summary model takes the role out of the config.
   await page.getByLabel(/^Summary model/).fill("");

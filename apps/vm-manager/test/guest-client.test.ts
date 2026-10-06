@@ -60,7 +60,7 @@ function json(res: ServerResponse, status: number, body: unknown) {
 }
 
 function event(seq: number): OutboundEvent {
-  return { seq, id: `evt_${seq}`, type: "memory.written", ts: "2026-10-02T10:00:00.000Z", data: { key: `k${seq}` } };
+  return { seq, id: `evt_${seq}`, type: "automation.next_run", ts: "2026-10-02T10:00:00.000Z", data: { next_run_at_ms: seq } };
 }
 
 describe("GuestClient", () => {
@@ -159,16 +159,9 @@ describe("GuestClient", () => {
     expect(seen.every((s) => s.auth === `Bearer ${TOKEN}`)).toBe(true);
   });
 
-  it("calls the automation and tool routes with the id as one encoded path segment", async () => {
-    const row = { id: "job 1", name: "n", enabled: false };
+  it("calls the tool route with the bearer token", async () => {
     const { port, seen } = await serve((req, res) => {
       switch (`${req.method} ${req.url}`) {
-        case "GET /v1/agent/automations":
-          return json(res, 200, { automations: [row] });
-        case "PATCH /v1/agent/automations/job%201":
-          return json(res, 200, row);
-        case "DELETE /v1/agent/automations/job%201":
-          return res.writeHead(204).end();
         case "GET /v1/agent/tools":
           return json(res, 200, { tools: [{ name: "exec", permission: "computer.exec", offered: true, description: "Run." }] });
         default:
@@ -177,14 +170,8 @@ describe("GuestClient", () => {
     });
     const client = new GuestClient(port, TOKEN);
 
-    expect(await client.listAutomations()).toEqual({ automations: [row] });
-    expect(await client.setAutomationEnabled("job 1", false)).toEqual(row);
-    await client.deleteAutomation("job 1");
     expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["exec"]);
-    expect(JSON.parse(seen[1]!.body)).toEqual({ enabled: false });
-    expect(seen.map((s) => s.auth)).toEqual(Array(4).fill(`Bearer ${TOKEN}`));
-    const missing = await client.deleteAutomation("nope").catch((e: unknown) => e);
-    expect(missing).toMatchObject({ status: 404, code: "not_found" });
+    expect(seen.map((s) => s.auth)).toEqual([`Bearer ${TOKEN}`]);
   });
 
   it("passes the guest's outside_home refusal of a file path on", async () => {

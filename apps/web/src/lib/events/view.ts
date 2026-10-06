@@ -19,7 +19,7 @@ import type { Tone } from "../tone";
 import { toolLabel } from "./tool-labels";
 
 /** What the Activity page filters by: one family per kind of thing that happens to a Dot. */
-export const EVENT_FAMILIES = ["chat", "tasks", "tools", "approvals", "browser", "computer", "memory", "channels", "dot"] as const;
+export const EVENT_FAMILIES = ["chat", "tasks", "tools", "approvals", "browser", "computer", "channels", "dot"] as const;
 export type EventFamily = (typeof EVENT_FAMILIES)[number];
 
 export const FAMILY_LABELS: Record<EventFamily, string> = {
@@ -29,7 +29,6 @@ export const FAMILY_LABELS: Record<EventFamily, string> = {
   approvals: "Approvals",
   browser: "Browser",
   computer: "Computer",
-  memory: "Memory",
   channels: "Channels",
   dot: "Dot",
 };
@@ -62,7 +61,6 @@ const FAMILY_OF: Record<KnownType, EventFamily> = {
   "agent.state": "computer",
   "automation.next_run": "computer",
   "guest.event.refused": "computer",
-  "memory.written": "memory",
   "channel.status": "channels",
   "channel.peer.paired": "channels",
   "channel.changed": "channels",
@@ -187,7 +185,6 @@ const DESCRIBE: { [K in KnownType]: (data: Partial<EventData[K]>) => Draft } = {
   "browser.identity.deleted": (d) => ({ title: "Browser identity deleted", detail: identity(d), tone: "neutral" }),
   "browser.identity.launched": (d) => ({ title: "Browser launched", detail: identity(d) }),
   "browser.identity.closed": (d) => ({ title: "Browser closed", detail: identity(d), tone: "neutral" }),
-  "memory.written": (d) => ({ title: "Memory written", detail: text(d.key), tone: "neutral" }),
   "channel.status": (d) => ({
     title: "Channel status",
     detail: joined(channelName(d.kind), text(d.status), text(d.detail) && `- ${text(d.detail)}`),

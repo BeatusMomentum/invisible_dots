@@ -182,7 +182,7 @@ describe("families", () => {
   });
 
   it("put each row in the family of its type, and leave a type this version does not know in none", () => {
-    expect(viewEvent(event(40, "memory.written", { key: "a.md" })).family).toBe("memory");
+    expect(viewEvent(event(40, "task.progress", { task_id: "t", text: "a" })).family).toBe("tasks");
     expect(viewEvent(event(41, "approval.requested", {})).family).toBe("approvals");
     expect(viewEvent(event(42, "browser.identity.closed", {})).family).toBe("browser");
     expect(viewEvent(event(43, "channel.status", {}, "host")).family).toBe("channels");

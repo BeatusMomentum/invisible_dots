@@ -246,10 +246,6 @@ export const dotConfigSchema = z
           }
         }
       }),
-    memory: z
-      .object({ enabled: z.boolean().default(true) })
-      .strict()
-      .default({ enabled: true }),
     limits: z
       .object({
         max_steps_per_task: z.number().int().min(CONFIG_BOUNDS.maxStepsPerTask.min).max(CONFIG_BOUNDS.maxStepsPerTask.max).default(CONFIG_BOUNDS.maxStepsPerTask.default),
@@ -380,7 +376,7 @@ export function computerResources(config: Pick<DotConfig, "computer">): Computer
 /**
  * The decision for one permission (section 7). An explicit entry in the
  * config wins. Otherwise everything under computer.*, files.*, browser.* and
- * memory.* is allowed, except browser.identity.delete, which asks; the
+ * browser.* is allowed, except browser.identity.delete, which asks; the
  * automations permission asks too, because an automation keeps working after
  * the turn. A permission the registry does not know is denied whatever the
  * config says.
@@ -396,7 +392,7 @@ export function resolvePermission(
 }
 
 const ASK_BY_DEFAULT: ReadonlySet<Permission> = new Set<Permission>(["browser.identity.delete", "automations"]);
-const ALLOWED_NAMESPACES: ReadonlySet<string> = new Set(["computer", "files", "browser", "memory"]);
+const ALLOWED_NAMESPACES: ReadonlySet<string> = new Set(["computer", "files", "browser"]);
 
 function defaultPermission(permission: Permission): PermissionDecision {
   if (ASK_BY_DEFAULT.has(permission)) return "ask";

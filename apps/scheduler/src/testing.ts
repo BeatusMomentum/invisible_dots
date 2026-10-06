@@ -7,7 +7,7 @@
  * outbox with monotonically increasing `seq` replayed after a cursor, and
  * browser identities under the same rules as the real agent's, and a small
  * file system (`putFile`) served through the files routes with the real
- * daemon's errors, automations (`putAutomation`) and a small tool table.
+ * daemon's errors, the automations its engine runs (`putAutomation`) and a small tool table.
  */
 import { crc32, deflateSync } from "node:zlib";
 import {
@@ -21,8 +21,6 @@ import {
   pollGuestHealth,
   type AgentState,
   type AgentStateAnswer,
-  type Automation,
-  type AutomationListAnswer,
   type BrowserIdentity,
   type BrowserIdentityListAnswer,
   type CreateBrowserIdentityRequest,
@@ -55,6 +53,25 @@ import type {
 
 /** The fake desktop's size: a picture a browser draws with real proportions, so a page that shows it is laid out as it will be. */
 const FAKE_DESKTOP = { width: 1280, height: 800 } as const;
+
+/**
+ * A job of the fake's engine, with the fields of nanobot's CronJob that decide when it runs and that a test reads back.
+ * The host never lists the jobs (they are the Dot's, made and changed through its cron tool); it hears only when the
+ * earliest is next due (`automation.next_run`).
+ */
+export interface FakeAutomation {
+  id: string;
+  name: string;
+  enabled: boolean;
+  schedule: { kind: "at" | "every" | "cron"; at_ms?: number; every_ms?: number; expr?: string; tz?: string };
+  message: string;
+  next_run_at_ms: number | null;
+  last_run_at_ms: number | null;
+  last_status: "ok" | "error" | "skipped" | null;
+  last_error: string | null;
+  delete_after_run: boolean;
+  created_at_ms: number;
+}
 
 let desktop: Uint8Array | undefined;
 
@@ -145,18 +162,16 @@ export class FakeGuest implements GuestApi {
   /** Symbolic links of the guest: the absolute path of the link to its target (an absolute path). */
   readonly links = new Map<string, string>();
   /** The automations of the Dot by id (its cron tool made them). */
-  readonly automations = new Map<string, Automation>();
+  readonly automations = new Map<string, FakeAutomation>();
   /**
    * The tools the fake's engine has: the real table's shape, a few rows; `offered` follows the permissions of the
-   * config, for a `memory_` tool also its `memory.enabled`, and for a tool that creates an identity also
-   * `browser.identities.managed_by_dot`, as the engine's `offered_tools` does.
+   * config, and for a tool that creates an identity also `browser.identities.managed_by_dot`, as the engine's
+   * `offered_tools` does.
    */
   readonly tools: Omit<ToolInfo, "offered">[] = [
     { name: "exec", permission: "computer.exec", description: "Run a shell command on the computer." },
     { name: "read_file", permission: "files.read", description: "Read a file." },
     { name: "write_file", permission: "files.write", description: "Write a file." },
-    { name: "memory_search", permission: "memory.read", description: "Search the Dot's memory notes." },
-    { name: "memory_get", permission: "memory.read", description: "Read a memory note." },
     { name: "cron", permission: "automations", description: "Schedule reminders and recurring tasks." },
     { name: "browser_identity_list", permission: "browser.identity.list", description: "List the browser identities." },
     { name: "browser_identity_create", permission: "browser.identity.create", description: "Create a browser identity." },
@@ -460,8 +475,14 @@ export class FakeGuest implements GuestApi {
   }
 
   /** Give the Dot an automation (its cron tool made it). */
-  putAutomation(automation: Automation): void {
+  putAutomation(automation: FakeAutomation): void {
     this.automations.set(automation.id, automation);
+    this.#reportNextRun();
+  }
+
+  /** Take an automation away (its cron tool removed it). */
+  removeAutomation(id: string): void {
+    this.automations.delete(id);
     this.#reportNextRun();
   }
 
@@ -480,39 +501,13 @@ export class FakeGuest implements GuestApi {
 
   #reportedNextRun: number | null = null;
 
-  async listAutomations(): Promise<AutomationListAnswer> {
-    this.#reachable("listAutomations");
-    return { automations: [...this.automations.values()] };
-  }
-
-  async setAutomationEnabled(id: string, enabled: boolean): Promise<Automation> {
-    this.#reachable("setAutomationEnabled");
-    const automation = this.automations.get(id);
-    if (!automation) throw new FakeGuestError(404, `no automation "${id}"`, "not_found");
-    if (automation.enabled !== enabled) {
-      const next = { ...automation, enabled, next_run_at_ms: enabled ? Date.now() + 60_000 : null };
-      this.automations.set(id, next);
-      this.#reportNextRun();
-      return next;
-    }
-    return automation;
-  }
-
-  async deleteAutomation(id: string): Promise<void> {
-    this.#reachable("deleteAutomation");
-    if (!this.automations.delete(id)) throw new FakeGuestError(404, `no automation "${id}"`, "not_found");
-    this.#reportNextRun();
-  }
-
   async listTools(): Promise<ToolListAnswer> {
     this.#reachable("listTools");
     const permissions: Record<string, string | undefined> = this.config?.permissions ?? {};
-    const memoryOn = this.config?.memory.enabled ?? true;
     const managed = this.config?.browser.identities.managed_by_dot ?? true;
     const offered = (tool: Omit<ToolInfo, "offered">): boolean =>
       this.config !== null &&
       (permissions[tool.permission] === "allow" || permissions[tool.permission] === "ask") &&
-      (memoryOn || !tool.name.startsWith("memory_")) &&
       (managed || tool.name !== "browser_identity_create");
     return { tools: this.tools.map((tool) => ({ ...tool, offered: offered(tool) })) };
   }

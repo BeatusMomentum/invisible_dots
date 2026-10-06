@@ -1,15 +1,14 @@
-"""What the engine answers to `GET /automations` and `GET /tools`, and the data of every outbound event it writes,
-pinned in a file the host checks.
+"""What the engine answers to `GET /tools`, and the data of every outbound event it writes, pinned in a file the host
+checks.
 
-The host describes these answers with schemas in `packages/shared/src/protocol.ts` (`automationSchema`,
-`toolInfoSchema`). The engine is Python and cannot import them, so this test writes what the engine really answers into
+The host describes these answers with schemas in `packages/shared/src/protocol.ts` (`toolInfoSchema`). The engine is Python and cannot import them, so this test writes what the engine really answers into
 `wire_shapes.json`, and `apps/scheduler/test/engine-shapes.test.ts` parses that file with the schemas and runs the
 host's fake guest on the same permissions. A key renamed, added or dropped here fails this test until the file is
 written again (`UPDATE_WIRE_SHAPES=1 pytest tests/dots/test_wire_shapes.py`), and then fails the host's test until its
 schema says the same.
 
 The events are not written by hand here: a real engine runs a chat, tasks (one that reports progress, one that
-fails, one cut in the middle of a call), calls that ask for approval, a terminal, a note, and the browser identities,
+fails, one cut in the middle of a call), calls that ask for approval, a terminal, a file, and the browser identities,
 and what its own writers put in the outbox is what is pinned (one event of each type and each set of keys, with the
 values that vary from run to run, such as ids and durations, replaced by stable ones). The host's side of the same
 contract, the events and the config it sends, is written by `apps/scheduler/test/host-shapes.test.ts` into
@@ -31,8 +30,7 @@ from fakes.dot_config import ALLOW_ALL, runtime_config_body
 from fakes.engine_harness import EngineHarness, task_cancelled, task_created, user_message
 from fakes.scripted_provider import ScriptEntry, call, calls, says
 
-from nanobot.cron.types import MAX_RUN_AT_MS, CronJob, CronJobState, CronPayload, CronSchedule
-from nanobot.dots.automations import automation_json
+from nanobot.cron.types import MAX_RUN_AT_MS
 from nanobot.dots import store as dots_store
 from nanobot.dots.permissions import TOOL_PERMISSIONS, offered_tools, tool_table
 from nanobot.dots.protocol import OUTBOUND_EVENT_TYPES
@@ -48,45 +46,12 @@ class _Registry:
         return SimpleNamespace(description=f"description of {name}")
 
 
-def _automations() -> list[dict[str, Any]]:
-    jobs = [
-        CronJob(
-            id="job_every",
-            name="check the shop",
-            schedule=CronSchedule(kind="every", every_ms=3_600_000),
-            payload=CronPayload(message="look at the orders"),
-            state=CronJobState(next_run_at_ms=1_790_000_000_000, last_run_at_ms=1_789_996_400_000, last_status="ok"),
-            created_at_ms=1_789_990_000_000,
-        ),
-        CronJob(
-            id="job_cron",
-            name="morning report",
-            enabled=False,
-            schedule=CronSchedule(kind="cron", expr="0 9 * * 1-5", tz="Europe/Rome"),
-            payload=CronPayload(message="write the report"),
-            state=CronJobState(last_run_at_ms=1_789_900_000_000, last_status="error", last_error="the model was unreachable"),
-            created_at_ms=1_789_000_000_000,
-        ),
-        CronJob(
-            id="job_at",
-            name="remind me",
-            schedule=CronSchedule(kind="at", at_ms=1_791_000_000_000),
-            payload=CronPayload(message="call the dentist"),
-            state=CronJobState(next_run_at_ms=1_791_000_000_000, last_status="skipped"),
-            created_at_ms=1_789_500_000_000,
-            delete_after_run=True,
-        ),
-    ]
-    return [automation_json(job) for job in jobs]
-
-
 _OFFERED_CASES = [
-    {"permissions": {"computer.exec": "allow", "files.read": "ask", "files.write": "deny", "memory.read": "allow", "automations": "deny"}, "memory_enabled": True},
-    {"permissions": {"computer.exec": "allow", "files.read": "ask", "files.write": "deny", "memory.read": "allow", "automations": "deny"}, "memory_enabled": False},
-    {"permissions": {}, "memory_enabled": True},
-    {"permissions": {"computer.exec": "ask", "files.read": "ask", "files.write": "ask", "memory.read": "ask", "automations": "ask"}, "memory_enabled": True},
-    {"permissions": {"browser.identity.list": "allow", "browser.identity.create": "allow", "browser.identity.delete": "ask"}, "memory_enabled": True, "managed_identities": True},
-    {"permissions": {"browser.identity.list": "allow", "browser.identity.create": "allow", "browser.identity.delete": "ask"}, "memory_enabled": True, "managed_identities": False},
+    {"permissions": {"computer.exec": "allow", "files.read": "ask", "files.write": "deny", "automations": "deny"}},
+    {"permissions": {}},
+    {"permissions": {"computer.exec": "ask", "files.read": "ask", "files.write": "ask", "automations": "ask"}},
+    {"permissions": {"browser.identity.list": "allow", "browser.identity.create": "allow", "browser.identity.delete": "ask"}, "managed_identities": True},
+    {"permissions": {"browser.identity.list": "allow", "browser.identity.create": "allow", "browser.identity.delete": "ask"}, "managed_identities": False},
 ]
 
 
@@ -99,7 +64,7 @@ _UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{1
 async def _engine_events(make_engine: MakeEngine) -> list[dict[str, Any]]:
     """Run a real engine through everything it writes events about, and return its outbox, oldest first."""
     script: list[ScriptEntry] = [
-        # A chat turn that opens a terminal and writes a note, then answers.
+        # A chat turn that opens a terminal and writes a file, then answers.
         calls(
             call("c1", "exec", command="echo hi", tty=True),
             call("c2", "write_file", path="/home/dot/memory/trips/lisbon.md", content="TAP 41 EUR"),
@@ -182,10 +147,9 @@ def _shapes(outbound_events: list[dict[str, Any]]) -> dict[str, Any]:
     cases = []
     for case in _OFFERED_CASES:
         case = {"managed_identities": True, **case}
-        offered = offered_tools(case["permissions"], memory_enabled=case["memory_enabled"], managed_identities=case["managed_identities"])
+        offered = offered_tools(case["permissions"], managed_identities=case["managed_identities"])
         cases.append({**case, "offered": offered, "tools": tool_table(_Registry(), offered)})
     return {
-        "automations": _automations(),
         "limits": {"max_run_at_ms": MAX_RUN_AT_MS},
         "outbound_events": outbound_events,
         "tool_offering": cases,
@@ -206,14 +170,10 @@ def test_the_answers_of_the_engine_are_the_ones_the_host_checks(outbound_events:
     assert json.loads(FIXTURE.read_text(encoding="utf-8")) == shapes
 
 
-def test_the_cases_reach_every_kind_of_schedule_and_every_kind_of_tool(outbound_events: list[dict[str, Any]]) -> None:
+def test_the_cases_reach_every_kind_of_tool(outbound_events: list[dict[str, Any]]) -> None:
     shapes = _shapes(outbound_events)
-    assert {a["schedule"]["kind"] for a in shapes["automations"]} == {"at", "every", "cron"}
-    assert {a["last_status"] for a in shapes["automations"]} == {"ok", "error", "skipped"}
     for case in shapes["tool_offering"]:
         assert [row["name"] for row in case["tools"]] == list(TOOL_PERMISSIONS)
-    memory_off = next(c for c in shapes["tool_offering"] if not c["memory_enabled"] and c["permissions"].get("memory.read") == "allow")
-    assert "memory_get" not in memory_off["offered"] and "memory_search" not in memory_off["offered"]
     unmanaged = next(c for c in shapes["tool_offering"] if not c["managed_identities"])
     assert unmanaged["permissions"]["browser.identity.create"] == "allow"
     assert "browser_identity_create" not in unmanaged["offered"] and "browser_identity_delete" not in unmanaged["offered"]
@@ -235,6 +195,5 @@ def test_the_events_pinned_are_one_of_every_type_the_engine_writes_and_every_set
     assert ("task.progress", ("spent_usd", "task_id", "text")) in keys
     assert ("task.failed", ("error", "spent_usd", "task_id")) in keys
     assert ("task.completed", ("spent_usd", "summary", "task_id")) in keys
-    assert ("memory.written", ("key",)) in keys
     assert ("automation.next_run", ("next_run_at_ms",)) in keys
     assert {e["data"]["next_run_at_ms"] for e in outbound_events if e["type"] == "automation.next_run"} == {1_790_000_000_000, None}

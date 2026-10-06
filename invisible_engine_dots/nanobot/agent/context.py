@@ -28,13 +28,12 @@ class ContextBuilder:
         *,
         workspace: str,
         memory_dir: str,
-        memory_notes: Sequence[str] | None,
+        memory_notes: Sequence[str],
         now: datetime,
     ) -> None:
         """`dot_prompt` says whose Dot this is and what it is for (projection.py).
 
-        `memory_notes` is None while the Dot's memory is not offered to the model, and
-        otherwise the names of the most recently changed notes in `memory_dir`.
+        `memory_notes` are the names of the most recently changed notes in `memory_dir`.
         """
         self.dot_prompt = dot_prompt
         self.workspace = workspace
@@ -50,8 +49,8 @@ class ContextBuilder:
             render_template(
                 "agent/platform.md",
                 workspace=self.workspace,
-                memory_dir=self.memory_dir if self.memory_notes is not None else "",
-                memory_notes=list(self.memory_notes or ()),
+                memory_dir=self.memory_dir,
+                memory_notes=list(self.memory_notes),
                 now=self.now.strftime("%Y-%m-%d %H:%M %Z").strip(),
             ),
         ]

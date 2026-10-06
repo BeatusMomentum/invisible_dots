@@ -308,26 +308,14 @@ describe("what the Dot did between its messages", () => {
     expect(screen.getByText("f3.txt")).toBeTruthy();
   });
 
-  it("shows a note the Dot saved as a chip, and leaves out what belongs to a task", async () => {
+  it("shows a note the Dot saved as the call that wrote it, with no chip and no link to a page of notes, and leaves out what belongs to a task", async () => {
     plane.store("d1", "user.message", { text: "remember Rome" });
     plane.store("d1", "tool.called", call({ tool: "write_file", target: "/home/dot/memory/trips/rome.md" }));
-    plane.store("d1", "memory.written", { key: "trips/rome.md" });
     plane.store("d1", "tool.called", call({ tool: "exec", task_id: "t1", target: "the task's command" }));
-    plane.store("d1", "memory.written", { key: "from-a-task.md" });
     await renderChat();
-    const chip = await screen.findByText("trips/rome.md");
-    expect(chip.closest("span")?.textContent).toBe("Rememberedtrips/rome.md");
+    expect(await screen.findByText("/home/dot/memory/trips/rome.md")).toBeTruthy();
+    expect(screen.queryByText(/Remembered/)).toBeNull();
     expect(screen.queryByText("the task's command")).toBeNull();
-    expect(screen.queryByText("from-a-task.md")).toBeNull();
-  });
-
-  it("leads the chip of a saved note to the note in the Memory page", async () => {
-    plane.store("d1", "user.message", { text: "remember Rome" });
-    plane.store("d1", "tool.called", call({ tool: "write_file", target: "/home/dot/memory/trips/rome.md" }));
-    plane.store("d1", "memory.written", { key: "trips/rome.md" });
-    await renderChat();
-    const link = (await screen.findByText("trips/rome.md")).closest("a");
-    expect(link?.getAttribute("href")).toBe("/dots/d1/memory?note=trips%2Frome.md");
   });
 
   /** An approval the chat asked for: in the log, and in the host's list of what waits. */

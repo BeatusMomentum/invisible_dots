@@ -221,7 +221,6 @@ class TestRuntimeConfig:
             (lambda b: b["browser"]["identities"].update(max_identities=0), "browser.identities.max_identities"),
             (lambda b: b["browser"]["identities"].update(max_open=-1), "browser.identities.max_open"),
             (lambda b: b.update(permissions={"files.read": "maybe"}), "permissions.files.read"),
-            (lambda b: b["memory"].update(enabled=1), "memory.enabled"),
             (lambda b: b["limits"].update(max_steps_per_task=0), "limits.max_steps_per_task"),
             (lambda b: b["limits"].update(max_steps_per_task=1.5), "limits.max_steps_per_task"),
             (lambda b: b["limits"].update(context_tokens=3999), "limits.context_tokens"),
@@ -267,7 +266,7 @@ class TestRuntimeConfig:
 
     def test_never_echoes_a_value(self, config_body: Callable[..., dict[str, Any]]) -> None:
         secret = "sk-or-this-must-not-appear"
-        body = config_body(name=secret, goal=1, permissions={"files.read": secret}, memory={"enabled": secret})
+        body = config_body(name=secret, goal=1, permissions={"files.read": secret})
         body["model"]["provider"] = secret
         body["limits"]["context_tokens"] = secret
         with pytest.raises(DotsConfigError) as caught:
