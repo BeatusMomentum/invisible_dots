@@ -3,7 +3,7 @@ import type { DoctorCheck } from "@invisible-dots/shared";
 import { WEB_BUILD_COMMAND, type DoctorDeps } from "@invisible-dots/vm-manager";
 import { EXIT } from "../src/exit.js";
 import type { InstallDeps, InstallOutcome, InstallRequest } from "../src/setup/install.js";
-import { nextSteps, runSetup } from "../src/setup/setup.js";
+import { nextSteps, prepareHost, runSetup } from "../src/setup/setup.js";
 import { FOUND, healthyDoctor } from "../../vm-manager/test/doctor-fakes.js";
 
 const MISSING_QEMU = async () => ({ searched: ["PATH"] });
@@ -163,5 +163,29 @@ describe("setup", () => {
       { id: "openrouter", label: "OpenRouter key", status: "ok", detail: "" },
     ];
     expect(nextSteps(noWebRow)).toEqual(["invisible-dots server"]);
+  });
+  describe("prepareHost, the part of setup that setup --all runs as its second step", () => {
+    const install = { platform: "win32" } as unknown as InstallDeps;
+
+    it("hands back the report once QEMU is ready and leaves what to do next to its caller", async () => {
+      let text = "";
+      const { deps: doctor } = healthyDoctor();
+      const outcome = await prepareHost({ doctor, install, out: (t) => (text += t) });
+      expect(outcome.ready).toBe(true);
+      expect(outcome.ready && outcome.results.map((r) => r.id)).toContain("accelerator");
+      expect(text).toContain("QEMU and its accelerator are ready; nothing to install.");
+      expect(text).not.toContain("this host is ready");
+      expect(text).not.toContain("Next:");
+    });
+
+    it("hands back setup's exit code when it cannot get the host ready", async () => {
+      const { deps: doctor } = healthyDoctor({ findQemu: MISSING_QEMU, acceleratorAccess: async () => FEATURE_OFF });
+      const restart = await prepareHost({ doctor, install, out: () => undefined, installPrerequisites: async () => ({ kind: "restart", lines: [] }) });
+      expect(restart).toEqual({ ready: false, code: EXIT.restart });
+      const failed = await prepareHost({ doctor, install, out: () => undefined, installPrerequisites: async () => ({ kind: "failed", lines: [] }) });
+      expect(failed).toEqual({ ready: false, code: EXIT.failed });
+      const root = await prepareHost({ doctor, install: { platform: "linux", isRoot: true } as unknown as InstallDeps, out: () => undefined });
+      expect(root).toEqual({ ready: false, code: EXIT.usage });
+    });
   });
 });

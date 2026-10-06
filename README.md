@@ -72,12 +72,16 @@ own machine from this repository.
 
 ## Quick start
 
+In short: install Node, Go and Git, clone, `npm ci`, build the command line,
+run `setup --all`, run `server`, and open the web UI to make the first Dot. That
+is eight lines to type on Windows and nine on Linux, then the browser.
+
 ### Requirements
 
 - Linux or Windows, on x86-64, with hardware virtualization on. macOS is not
   supported.
 - Node 24 or newer, Git, and Go 1.25 or newer (to build the guest daemon).
-- QEMU 8.2 or newer; `setup` installs it and enables the accelerator.
+- QEMU 8.2 or newer; `setup --all` installs it and enables the accelerator.
 - At least 20 GiB free for the data directory (`doctor` checks it). Each Dot's
   disk is a copy-on-write overlay that grows as it writes, up to its
   `computer.disk` (40 GB in the sample).
@@ -91,7 +95,10 @@ own machine from this repository.
   `C:\invisible-dots` before every command, the server included.
 - An [OpenRouter](https://openrouter.ai) key.
 
-### 1. Install the tools and build
+### 1. Get the tools and the code
+
+This is the part the repository's own command cannot do, because the command
+needs Node and the checkout to exist first.
 
 **Windows**, in PowerShell:
 
@@ -102,11 +109,6 @@ git clone https://github.com/feder-cr/dots
 cd dots
 npm ci
 npm run build --workspace @invisible-dots/cli
-$env:NEXT_TELEMETRY_DISABLED = "1"
-npm run build --workspace @invisible-dots/web
-$env:CGO_ENABLED = "0"; $env:GOOS = "linux"; $env:GOARCH = "amd64"
-go -C guest/dot-agentd build -trimpath -o bin/dot-agentd ./cmd/dot-agentd
-Remove-Item Env:CGO_ENABLED, Env:GOOS, Env:GOARCH
 ```
 
 **Linux** (Ubuntu 24.04), in bash:
@@ -119,48 +121,73 @@ git clone https://github.com/feder-cr/dots
 cd dots
 npm ci
 npm run build --workspace @invisible-dots/cli
-NEXT_TELEMETRY_DISABLED=1 npm run build --workspace @invisible-dots/web
-CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C guest/dot-agentd build -trimpath -o bin/dot-agentd ./cmd/dot-agentd
 ```
 
-`NEXT_TELEMETRY_DISABLED` keeps Next.js from sending its anonymous build
-telemetry while the web client is built.
+### 2. Get the host ready, in one command
 
-### 2. Get the host ready
-
-The same commands in PowerShell and bash, from the repository folder:
+The same command in PowerShell and bash, from the repository folder:
 
 ```sh
-node apps/cli/dist/invisible-dots.mjs setup
+node apps/cli/dist/invisible-dots.mjs setup --all
 ```
 
-`setup` checks the host and fixes only what is missing. Run it as yourself,
-not as root or administrator: it asks for the rights it needs once.
+Run it as yourself, not as root or administrator: it asks for the rights it
+needs once. It runs four steps in order, and each one skips what is already
+done. These are the commands the quick start used to have you type one by one;
+you can still run any of them alone:
 
-- On **Windows** it enables the Windows Hypervisor Platform and installs QEMU
-  in one elevated step. If it says to restart (exit code 5), restart and come
-  back to this folder.
-- On **Linux** it installs QEMU with `sudo apt-get`. If it prints
-  `sudo usermod -aG kvm $USER`, log out and in again before going on.
+| step | what it does | by hand |
+|---|---|---|
+| 1. The guest daemon | Builds `dot-agentd`, the program that runs inside every Dot's VM, for Linux whatever your host is. It stops here, before changing anything, when Go is missing, and prints the command that installs it. | `go -C guest/dot-agentd build -trimpath -o bin/dot-agentd ./cmd/dot-agentd` with `CGO_ENABLED=0 GOOS=linux GOARCH=amd64` |
+| 2. QEMU and its accelerator | Checks the host and fixes only what is missing. On **Windows** it enables the Windows Hypervisor Platform and installs QEMU in one elevated step (one UAC prompt). On **Linux** it installs QEMU with `sudo apt-get` (sudo asks for your password). | `invisible-dots setup` |
+| 3. The web client | Builds it, with Next.js's anonymous telemetry turned off, unless it is built already. | `npm run build --workspace @invisible-dots/web` |
+| 4. The guest images | Builds the golden image (Ubuntu 24.04, the desktop, the browser) and the runtime disk (the daemon and the engine). It is the longest step, and a second run with unchanged inputs does nothing. | `invisible-dots image build` |
 
-Then:
+Two things can stop it on purpose, and both end with the same advice: run the
+same command again and it carries on.
+
+- On **Windows**, if enabling the accelerator needs a restart, it says so and
+  exits with code 5 after step 2. Restart, come back to this folder and run it
+  again.
+- On **Linux**, if you are not in the `kvm` group yet it prints
+  `sudo usermod -aG kvm $USER`. Log out and in again, then run it again.
+
+Anything else that fails (a missing Go, a failed download, a build error)
+stops the run with the reason and with nothing after that step run. `doctor`
+prints one line per check and the command that fixes each failure; `setup
+--all` ends by telling you what to do next. Ctrl+C stops the image build
+cleanly, and a second Ctrl+C ends the command at once.
+
+### 3. Start the server and open the web UI
+
+`setup --all` ends by printing these:
 
 ```sh
-node apps/cli/dist/invisible-dots.mjs doctor
-node apps/cli/dist/invisible-dots.mjs image build
 node apps/cli/dist/invisible-dots.mjs server
 ```
 
-`doctor` prints one line per check and the command that fixes each failure. Go
-on to `image build` when only the images, the server and the OpenRouter key
-are left. `image build` builds the two guest images on your machine (Ubuntu
-24.04, the desktop, the browser, the engine); it is the longest step, and a
-second run with unchanged inputs does nothing. `server` runs in the foreground
-until Ctrl+C.
+It runs in the foreground until Ctrl+C, and serves the web client too. Open
+http://127.0.0.1:3000 and sign in with the first line of the API token file,
+which these print (the server creates the file the first time it starts):
 
-### 3. Your first Dot
+```bash
+head -1 ~/.invisible-dots/config/api.token
+```
 
-In a second terminal, in the same folder:
+```powershell
+Get-Content $HOME\.invisible-dots\config\api.token -TotalCount 1
+```
+
+On a computer that is ready except for the key, Home shows a field for your
+OpenRouter key; then Create a Dot makes the first Dot. After sign-in the
+browser holds only an HttpOnly session cookie derived from the token, and the
+web server adds the token to each API call itself. The web client is a
+companion: if it was not built or its port is taken, the server says why and
+the API and the command line carry on (`server --no-web` leaves it out).
+
+### Your first Dot from the command line
+
+Instead of the web UI, in a second terminal in the same folder:
 
 ```sh
 node apps/cli/dist/invisible-dots.mjs secret openrouter
@@ -171,14 +198,14 @@ node apps/cli/dist/invisible-dots.mjs logs my-first-dot
 ```
 
 `secret openrouter` asks for the key (it is never a command-line argument, and
-what you paste at the prompt is not shown on the screen; the web UI takes it
-too, see below). `init` writes `dot.yaml`, the Dot's name, goal, model, resources and
-permissions, to edit before `create`. The first Dot takes a while to boot; the
-message waits in the queue until it is ready. `logs` prints the Dot's events
-and keeps following new ones until Ctrl+C (`--no-follow` prints and exits). It
-worked when `logs` shows a `message.assistant` event with the answer and what
-it cost (`spent_usd`). The web UI can do the same steps: its Create a Dot page
-takes the place of `init` and `create`, and its Settings page takes the key.
+what you paste at the prompt is not shown on the screen). `init` writes
+`dot.yaml`, the Dot's name, goal, model, resources and permissions, to edit
+before `create`. The first Dot takes a while to boot; the message waits in the
+queue until it is ready. `logs` prints the Dot's events and keeps following new
+ones until Ctrl+C (`--no-follow` prints and exits). It worked when `logs` shows
+a `message.assistant` event with the answer and what it cost (`spent_usd`). The
+web UI's Create a Dot page takes the place of `init` and `create`, and its
+Settings page takes the key.
 
 ### A shorter command
 
@@ -194,26 +221,6 @@ command. To type it that way:
   ```
 
 - in **PowerShell**, type `npx invisible-dots` from the repository folder.
-
-### Open the web UI
-
-`invisible-dots server` also serves the web client. Open
-http://127.0.0.1:3000 and sign in with the first line of the API token file,
-which these print:
-
-```bash
-head -1 ~/.invisible-dots/config/api.token
-```
-
-```powershell
-Get-Content $HOME\.invisible-dots\config\api.token -TotalCount 1
-```
-
-After that the browser holds only an HttpOnly session cookie derived from the
-token, and the web server adds the token to each API call itself. The web
-client is a companion: if it was not built or its port is taken, the server
-says why and the API and the command line carry on (`server --no-web` leaves
-it out).
 
 ## Using the web UI
 
@@ -706,7 +713,9 @@ it, and to whom:
   come from the server on your PC and its fonts are your system's. A link you
   press (to @BotFather, to an OpenRouter page) opens that site.
 - **Next.js** may send its anonymous build telemetry when the web client is
-  built, unless `NEXT_TELEMETRY_DISABLED=1` is set as in the quick start.
+  built. `setup --all` turns it off for its build; set
+  `NEXT_TELEMETRY_DISABLED=1` yourself when you run
+  `npm run build --workspace @invisible-dots/web` by hand.
 
 Your Dots' disks, memory and conversations stay in the data directory and
 inside their VMs.
@@ -787,7 +796,11 @@ Alpha. Nothing is released or published yet.
   named at the top of this page. It runs the same code path as Linux, and
   every difference between the two is listed in
   [architecture: one mechanism on every host](docs/architecture.md#11-one-mechanism-on-every-host).
-- **No one-command install.** The quick start above is the install.
+- **The install is one command after the checkout, not before it.** Node, Go
+  and Git, the clone, `npm ci` and the build of the command line itself are
+  still typed by hand, because the command needs them to exist before it can
+  run. It does not install Go for you (the Windows installer and snap each ask for
+  administrator rights of their own, and the quick start keeps to one).
 - **A computer you stopped by hand does not wake for its automations** until
   you start it again.
 - **Channels carry text only**, one Telegram bot per Dot; the official

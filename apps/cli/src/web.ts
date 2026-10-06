@@ -19,6 +19,11 @@ import { startProcess, WEB_BUILD_COMMAND, type StartedProcess, type StartProcess
 const ENTRY = ["apps", "web", ".next", "standalone", "apps", "web", "server.js"] as const;
 const STATIC = ["apps", "web", ".next", "standalone", "apps", "web", ".next", "static"] as const;
 
+/** The script `npm run build --workspace @invisible-dots/web` runs, which `setup --all` runs with node itself. */
+export function webBuildScript(repoRoot: string): string {
+  return join(repoRoot, "apps", "web", "scripts", "build.mjs");
+}
+
 export async function locateWebBuild(repoRoot: string): Promise<WebBuild> {
   const entry = join(repoRoot, ...ENTRY);
   for (const path of [entry, join(repoRoot, ...STATIC)]) {

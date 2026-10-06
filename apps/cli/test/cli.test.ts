@@ -4,7 +4,7 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { commandOf, EXIT, run, SAMPLE_DOT, type CliIo, type HostCommands } from "../src/index.js";
+import { commandOf, EXIT, interruptIsAsked, run, SAMPLE_DOT, type CliIo, type HostCommands } from "../src/index.js";
 
 const TOKEN = "cli-test-token-0123456789";
 
@@ -572,6 +572,10 @@ describe("host commands", () => {
         calls.push("setup");
         return EXIT.restart;
       },
+      setupAll: async () => {
+        calls.push("setup --all");
+        return EXIT.ok;
+      },
       imageBuild: async () => {
         calls.push("image build");
         return EXIT.failed;
@@ -589,10 +593,11 @@ describe("host commands", () => {
     expect((await cli(["doctor"], { host })).stdout).toBe("all 10 checks ok\n");
     expect((await cli(["doctor", "--json"], { host })).code).toBe(EXIT.ok);
     expect((await cli(["setup"], { host })).code).toBe(EXIT.restart);
+    expect((await cli(["setup", "--all"], { host })).code).toBe(EXIT.ok);
     expect((await cli(["image", "build"], { host })).code).toBe(EXIT.failed);
     expect((await cli(["server"], { host })).code).toBe(EXIT.ok);
     expect((await cli(["server", "--no-web"], { host })).code).toBe(EXIT.ok);
-    expect(calls).toEqual(["doctor json=false", "doctor json=true", "setup", "image build", "server web=true", "server web=false"]);
+    expect(calls).toEqual(["doctor json=false", "doctor json=true", "setup", "setup --all", "image build", "server web=true", "server web=false"]);
     // None of them needs the API or its token.
     expect(requests).toHaveLength(0);
   });
@@ -603,6 +608,7 @@ describe("host commands", () => {
     expect((await cli(["image", "pull"], { host })).stderr).toMatch(/unknown image subcommand "pull"/);
     expect((await cli(["image", "build", "now"], { host })).code).toBe(EXIT.usage);
     expect((await cli(["setup", "x"], { host })).code).toBe(EXIT.usage);
+    expect((await cli(["setup", "--all", "x"], { host })).code).toBe(EXIT.usage);
     expect((await cli(["doctor", "all"], { host })).stderr).toMatch(/doctor takes no arguments/);
     expect(calls).toEqual([]);
 
@@ -612,6 +618,22 @@ describe("host commands", () => {
     const failed = await cli(["server"], { host });
     expect(failed.code).toBe(EXIT.failed);
     expect(failed.stderr).toBe("invisible-dots: another invisible-dots server (pid 42) is already running\n");
+  });
+
+  it("lists setup --all in the help, first among the host commands", async () => {
+    const help = (await cli(["--help"])).stdout;
+    expect(help).toMatch(/invisible-dots setup --all .*everything in one run/);
+    expect(help.indexOf("setup --all")).toBeLessThan(help.indexOf("invisible-dots setup  "));
+  });
+
+  it("asks the process to stop on Ctrl-C only for logs, image build and setup --all", () => {
+    expect(interruptIsAsked(["logs", "fare-watch"])).toBe(true);
+    expect(interruptIsAsked(["image", "build"])).toBe(true);
+    expect(interruptIsAsked(["setup", "--all"])).toBe(true);
+    expect(interruptIsAsked(["--all", "setup"])).toBe(true);
+    expect(interruptIsAsked(["setup"])).toBe(false);
+    expect(interruptIsAsked(["server"])).toBe(false);
+    expect(interruptIsAsked(["approvals", "--all"])).toBe(false);
   });
 
   it("finds the command word for main.ts wherever the flags are", () => {

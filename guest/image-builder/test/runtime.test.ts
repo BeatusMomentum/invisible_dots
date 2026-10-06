@@ -8,7 +8,7 @@ import { fileBytes, listFiles, parseIso } from "../../../packages/iso/test/iso-r
 import { BUILDER_ENGINE_LOCK, defaultAssetRoot, GUEST_UNITS } from "../src/assets.js";
 import { readManifest, verifyImage, type RuntimeManifest } from "../src/manifest.js";
 import { RUNTIME_ISO_LABEL } from "@invisible-dots/vm-manager";
-import { assertLinuxAmd64Elf, buildRuntimeIso, defaultRuntimeInputs, runtimeFiles, type RuntimeInputs } from "../src/runtime.js";
+import { agentdBuildCommand, assertLinuxAmd64Elf, buildRuntimeIso, defaultRuntimeInputs, runtimeFiles, type RuntimeInputs } from "../src/runtime.js";
 import { sha256 } from "./http-fixture.js";
 
 /** The first bytes of an ELF executable for `machine` (0x3e is x86-64, 0xb7 arm64). */
@@ -60,6 +60,23 @@ afterEach(async () => {
 });
 
 const at = (iso: string) => new Date(`2026-10-02T${iso}Z`);
+
+describe("agentdBuildCommand", () => {
+  it("builds, for linux/amd64 without cgo, exactly the file the runtime disk takes", () => {
+    const build = agentdBuildCommand(join("repo", "root"));
+    expect(build.command).toBe("go");
+    expect(build.env).toEqual({ CGO_ENABLED: "0", GOOS: "linux", GOARCH: "amd64" });
+    expect(build.args).toEqual([
+      "-C",
+      join("repo", "root", "guest", "dot-agentd"),
+      "build",
+      "-trimpath",
+      "-o",
+      defaultRuntimeInputs(join("repo", "root")).agentdBinary,
+      "./cmd/dot-agentd",
+    ]);
+  });
+});
 
 describe("buildRuntimeIso", () => {
   it("writes the IDOTS-RT disk with the engine, dot-agentd, the hook and the units", async () => {

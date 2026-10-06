@@ -32,6 +32,8 @@ export const CLI_VERSION = "0.1.0";
 export interface HostCommands {
   doctor(options: { json: boolean }, io: CliIo): Promise<number>;
   setup(io: CliIo): Promise<number>;
+  /** `setup --all`: setup, the builds and `image build` in one run that can be run again (setup/all.ts). */
+  setupAll(io: CliIo): Promise<number>;
   imageBuild(io: CliIo): Promise<number>;
   server(io: CliIo, options: { web: boolean }): Promise<number>;
 }
@@ -61,8 +63,10 @@ class UsageError extends Error {}
 
 export const USAGE = `invisible-dots - control your Dots
 
-Getting this host ready (the same four commands on Linux and Windows):
-  invisible-dots setup                          get QEMU and its accelerator ready (may ask for administrator rights once)
+Getting this host ready (the same commands on Linux and Windows):
+  invisible-dots setup --all                    everything in one run, in order: the guest daemon, QEMU and its accelerator, the web client, the images;
+                                                run it again after a restart or a failure and it carries on
+  invisible-dots setup                          just QEMU and its accelerator (may ask for administrator rights once)
   invisible-dots doctor [--json]                check everything; one line per check and the command that fixes a failure
   invisible-dots image build                    build the golden image and the runtime ISO
   invisible-dots server [--no-web]              run the control plane and the web client in the foreground (--no-web: the control plane only)
@@ -106,7 +110,7 @@ Environment:
   ${ENV.TOKEN}      API token (default: the first line of <${ENV.HOME}>/config/api.token)
 
 Exit codes: 0 ok; 1 the server reported an error, a doctor check is not ok or a setup step failed;
-2 usage error; 3 server unreachable; 4 missing or refused token; 5 restart the computer, then run doctor.
+2 usage error; 3 server unreachable; 4 missing or refused token; 5 restart the computer, then run doctor (or setup --all again).
 `;
 
 export const SAMPLE_DOT = `# A Dot configuration (docs/architecture.md, section 7).
@@ -154,6 +158,20 @@ const OPTIONS = {
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
+
+/**
+ * Whether Ctrl-C asks the command to stop (through `io.signal`) instead of ending the process at once: `logs` ends
+ * cleanly, and `image build`, alone or as the last step of `setup --all`, kills its builder VM first. `server` installs
+ * its own handlers.
+ */
+export function interruptIsAsked(argv: string[]): boolean {
+  try {
+    const { positionals, values } = parseArgs({ args: argv, options: OPTIONS, allowPositionals: true, strict: false });
+    return positionals[0] === "logs" || positionals[0] === "image" || (positionals[0] === "setup" && values.all === true);
+  } catch {
+    return false;
+  }
+}
 
 /** The command word of an argument list, so main.ts can decide what Ctrl-C does before `run` starts. */
 export function commandOf(argv: string[]): string | undefined {
@@ -283,7 +301,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
     switch (command) {
       case "setup":
         noArguments(args, "setup");
-        return await (await host()).setup(io);
+        return values.all === true ? await (await host()).setupAll(io) : await (await host()).setup(io);
       case "doctor":
         noArguments(args, "doctor");
         return await (await host()).doctor({ json: values.json === true }, io);

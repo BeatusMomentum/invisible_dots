@@ -51,12 +51,19 @@ function printOutcome(outcome: InstallOutcome, out: (text: string) => void): voi
   for (const line of outcome.lines) out(`${line}\n`);
 }
 
-export async function runSetup(deps: SetupDeps): Promise<number> {
+/** What `prepareHost` ends with: the doctor report once QEMU and the accelerator are ready, or the exit code of the run that could not get them ready. */
+export type HostOutcome = { ready: true; results: readonly DoctorCheck[] } | { ready: false; code: number };
+
+/**
+ * The work of `setup`, up to QEMU and its accelerator being ready: the one place that does it, run by `setup` itself
+ * and as a step of `setup --all`. It prints what it does; what to do next is the caller's to say.
+ */
+export async function prepareHost(deps: SetupDeps): Promise<HostOutcome> {
   const { out } = deps;
   const refusal = setupRefusal(deps.install);
   if (refusal) {
     out(`${refusal}\n`);
-    return EXIT.usage;
+    return { ready: false, code: EXIT.usage };
   }
   out("checking this host first (invisible-dots doctor):\n\n");
   const before = await runDoctor(deps.doctor);
@@ -71,40 +78,45 @@ export async function runSetup(deps: SetupDeps): Promise<number> {
 
   if (setupReady(before)) {
     out("QEMU and its accelerator are ready; nothing to install.\n");
-  } else if (!request.installQemu && !request.enableAccelerator) {
+    return { ready: true, results: before };
+  }
+  if (!request.installQemu && !request.enableAccelerator) {
     out("setup cannot fix this by installing something:\n");
     for (const id of SETUP_CHECKS) {
       const check = checks.get(id);
       if (check && check.status !== "ok") out(`  ${check.label}: ${check.detail}${check.fix ? `\n  fix: ${check.fix}` : ""}\n`);
     }
-    return EXIT.failed;
-  } else {
-    let outcome: InstallOutcome;
-    try {
-      outcome = await (deps.installPrerequisites ?? installHostPrerequisites)(request, deps.install);
-    } catch (error) {
-      outcome = { kind: "failed", lines: [(error as Error).message] };
-    }
-    printOutcome(outcome, out);
-    if (outcome.kind === "restart") return EXIT.restart;
-    if (outcome.kind === "failed") {
-      out("setup stopped; nothing after the failed step was run.\n");
-      return EXIT.failed;
-    }
-    if (outcome.kind === "manual") {
-      out("then run: invisible-dots doctor\n");
-      return EXIT.failed;
-    }
-    out("\nchecking again:\n\n");
-    const after = await runDoctor(deps.doctor);
-    out(`${renderReport(after)}\n`);
-    if (!setupReady(after)) {
-      out("QEMU or its accelerator is still not usable; see the fix lines above.\n");
-      return EXIT.failed;
-    }
-    return finish(after, out);
+    return { ready: false, code: EXIT.failed };
   }
-  return finish(before, out);
+  let outcome: InstallOutcome;
+  try {
+    outcome = await (deps.installPrerequisites ?? installHostPrerequisites)(request, deps.install);
+  } catch (error) {
+    outcome = { kind: "failed", lines: [(error as Error).message] };
+  }
+  printOutcome(outcome, out);
+  if (outcome.kind === "restart") return { ready: false, code: EXIT.restart };
+  if (outcome.kind === "failed") {
+    out("setup stopped; nothing after the failed step was run.\n");
+    return { ready: false, code: EXIT.failed };
+  }
+  if (outcome.kind === "manual") {
+    out("then run: invisible-dots doctor\n");
+    return { ready: false, code: EXIT.failed };
+  }
+  out("\nchecking again:\n\n");
+  const after = await runDoctor(deps.doctor);
+  out(`${renderReport(after)}\n`);
+  if (!setupReady(after)) {
+    out("QEMU or its accelerator is still not usable; see the fix lines above.\n");
+    return { ready: false, code: EXIT.failed };
+  }
+  return { ready: true, results: after };
+}
+
+export async function runSetup(deps: SetupDeps): Promise<number> {
+  const outcome = await prepareHost(deps);
+  return outcome.ready ? finish(outcome.results, deps.out) : outcome.code;
 }
 
 function finish(results: readonly DoctorCheck[], out: (text: string) => void): number {

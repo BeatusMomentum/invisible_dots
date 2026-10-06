@@ -43,10 +43,12 @@ import { connectApi } from "./api-client.js";
 import type { CliIo, HostCommands } from "./cli.js";
 import { doctorCommand } from "./doctor/command.js";
 import { EXIT } from "./exit.js";
+import { runSetupAll } from "./setup/all.js";
+import { buildAgent, buildWeb, type BuildDeps } from "./setup/build.js";
 import { currentUserIsRoot, type InstallDeps } from "./setup/install.js";
 import { parseWindowsQemuPin } from "./setup/qemu-pin.js";
 import { serve } from "./serve.js";
-import { runSetup } from "./setup/setup.js";
+import { prepareHost, runSetup, type SetupDeps } from "./setup/setup.js";
 import { locateWebBuild, startWebServer } from "./web.js";
 
 /**
@@ -78,6 +80,20 @@ function doctorDeps(io: CliIo): DoctorDeps {
   return {
     ...hostDoctorDeps({ env: io.env, home: paths.home, images: createImageChecks(paths), openRouterKey: () => openRouterKey(io.env, io.fetch) }),
     webBuild: () => locateWebBuild(REPO_ROOT),
+  };
+}
+
+function setupDeps(io: CliIo): SetupDeps {
+  return { doctor: doctorDeps(io), install: installDeps(io), out: io.stdout };
+}
+
+function buildDeps(io: CliIo): BuildDeps {
+  return {
+    run: runProcess,
+    env: io.env,
+    repoRoot: REPO_ROOT,
+    node: process.execPath,
+    webBuilt: async () => (await locateWebBuild(REPO_ROOT)).missing === undefined,
   };
 }
 
@@ -144,7 +160,20 @@ async function imageBuild(io: CliIo): Promise<number> {
 export function realHostCommands(): HostCommands {
   return {
     doctor: (options, io) => doctorCommand(doctorDeps(io), options, io.stdout),
-    setup: (io) => runSetup({ doctor: doctorDeps(io), install: installDeps(io), out: io.stdout }),
+    setup: (io) => runSetup(setupDeps(io)),
+    setupAll: (io) => {
+      const builds = buildDeps(io);
+      return runSetupAll({
+        out: io.stdout,
+        agent: () => buildAgent(builds),
+        host: () => prepareHost(setupDeps(io)),
+        web: () => buildWeb(builds),
+        images: () => imageBuild(io),
+        env: io.env,
+        tokenPath: hostPaths(io.env).apiTokenPath,
+        ...(io.signal ? { signal: io.signal } : {}),
+      });
+    },
     imageBuild,
     server: async (io, options) => {
       await serve(
