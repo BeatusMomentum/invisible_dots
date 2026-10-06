@@ -7,7 +7,7 @@ CREATE TABLE channel_bindings (
   dot_id         text NOT NULL REFERENCES dots (id) ON DELETE CASCADE,
   kind           text NOT NULL CHECK (kind IN ('telegram', 'whatsapp')),
   enabled        boolean NOT NULL DEFAULT true,
-  -- What the channel sends unasked: {approvals, notify_tasks}. Never a credential.
+  -- What the channel sends unasked: {approvals, notify_tasks, show_arguments}. Never a credential.
   settings       jsonb NOT NULL,
   status         text NOT NULL CHECK (status IN ('connecting', 'connected', 'needs_relink', 'error')),
   status_detail  text,
@@ -18,6 +18,12 @@ CREATE TABLE channel_bindings (
   created_at     timestamptz NOT NULL DEFAULT now(),
   UNIQUE (dot_id, kind)
 );
+
+-- One Telegram bot serves one Dot: two pollers on one bot take turns failing. The check in the hub answers a clear
+-- 409 early; this index is the rule, so two requests that race past the check cannot both win. It covers Telegram
+-- alone: a WhatsApp number is learned only when the phone is scanned, and several Dots may be devices linked to one
+-- phone.
+CREATE UNIQUE INDEX channel_bindings_account_key ON channel_bindings (account) WHERE kind = 'telegram' AND account IS NOT NULL;
 
 -- The people allowed to talk to the Dot through the binding. Anyone else is dropped before a write.
 CREATE TABLE channel_peers (
@@ -43,19 +49,13 @@ CREATE TABLE channel_pairings (
   PRIMARY KEY (binding_id, code_hash)
 );
 
--- A message the hub already handed to the Dot, by the channel's own id: a redelivered update is
--- recognised here and dropped. Only idempotency lives here; where a message came from is in the
--- `user.message` event it became.
-CREATE TABLE channel_inbound (
-  binding_id   text NOT NULL REFERENCES channel_bindings (id) ON DELETE CASCADE,
-  external_id  text NOT NULL,
-  message_id   text NOT NULL,
-  created_at   timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (binding_id, external_id)
-);
-
-CREATE INDEX channel_inbound_created_idx ON channel_inbound (created_at);
-
 -- A reply is routed back to its chat by the `user.message` event it answers (`in_reply_to` is that
 -- event's message id), so the event log needs a way to find one.
 CREATE INDEX events_user_message_idx ON events (dot_id, (data->>'message_id')) WHERE type = 'user.message';
+
+-- A channel message is handed to the Dot once, by the channel's own id. The `user.message` event already carries where
+-- the message came from, so the event log is the one owner: a second row for the same Dot, binding and channel
+-- message id is refused by the index, in the transaction that would have written it.
+CREATE UNIQUE INDEX events_user_message_origin_key
+  ON events (dot_id, (data->'origin'->>'binding_id'), (data->'origin'->>'external_id'))
+  WHERE type = 'user.message' AND data->'origin' IS NOT NULL;

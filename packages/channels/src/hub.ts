@@ -73,7 +73,7 @@ const LABEL_MAX = 64;
 
 const SETTING_KEYS = Object.keys(DEFAULT_CHANNEL_SETTINGS);
 
-/** The unique index that holds the rule "one account serves one Dot" (migrations 0008 and 0010: Telegram only). */
+/** The unique index that holds the rule "one account serves one Dot" (migration 0004: Telegram only). */
 const ACCOUNT_KEY = "channel_bindings_account_key";
 
 function accountInUse(kind: ChannelKind, account: string | null): ControlPlaneError {

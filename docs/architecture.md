@@ -1384,7 +1384,7 @@ SQL files applied in order at start.
 - `inbound_events(seq bigserial pk, id text unique, dot_id fk, type, data jsonb, ts, task_id, run_id, created_at, sent_at, delivered_at, dropped_at, drop_reason, failures int, last_error, retry_at)`: the outbox of host to guest events (section 9.2)
 - `secrets(scope text, name text, value_enc bytea, updated_at, pk(scope, name))`: `scope` is `global` or a dot id; no foreign key can cover that, so deleting a Dot deletes the secrets scoped to it in the same statement (`DotsRepository.delete`)
 
-- `channel_bindings(id text pk, dot_id fk cascade, kind 'telegram'|'whatsapp', enabled bool, settings jsonb, status, status_detail, account, event_cursor bigint, created_at)`, unique `(dot_id, kind)`: one Dot's link to one channel kind (section 9.8), and unique `account` among the `telegram` bindings whose account is known: one bot serves one Dot (a database that already has a bot twice keeps the oldest binding and sends the others to `needs_relink` with the account cleared, never failing the migration; a WhatsApp number is learned at the scan and may be linked on several Dots, each a device of the phone); `settings` is `{approvals, notify_tasks, show_arguments}` and never a credential; `account` is the channel's public name for the account (a bot's username); `event_cursor` is the id of the last event of the Dot the hub dealt with
+- `channel_bindings(id text pk, dot_id fk cascade, kind 'telegram'|'whatsapp', enabled bool, settings jsonb, status, status_detail, account, event_cursor bigint, created_at)`, unique `(dot_id, kind)`: one Dot's link to one channel kind (section 9.8), and unique `account` among the `telegram` bindings whose account is known: one bot serves one Dot (a WhatsApp number is learned at the scan and may be linked on several Dots, each a device of the phone); `settings` is `{approvals, notify_tasks, show_arguments}` and never a credential; `account` is the channel's public name for the account (a bot's username); `event_cursor` is the id of the last event of the Dot the hub dealt with
 - `channel_peers(binding_id fk cascade, peer_id, chat_id, role 'owner'|'user', label, created_at, pk(binding_id, peer_id))`: the people allowed to talk through the binding, by the channel's stable id, with the chat they paired from
 - `channel_pairings(binding_id fk cascade, code_hash, expires_at, consumed_at, pk(binding_id, code_hash))`: one-time pairing codes, stored hashed
 - Where a channel message came from is in its `user.message` event (section 5.4), the one owner of that fact; there is no table of handled messages. An index on `events` by `(dot_id, data->>'message_id')` for `user.message` lets an answer find the message it answers
@@ -1569,7 +1569,7 @@ list of type names, `task_id` matches `data->>'task_id'` (the one place the
 contract puts the task, so the host's `task.created` and `task.cancelled` and
 the guest's `task.*`, `tool.called` and `approval.requested` of a task all
 match), and both combine with `after` and `limit`. A chat turn's events carry
-no task. Migration `0007_events_task.sql` adds the expression index the task
+no task. Migration `0006_events_task.sql` adds the expression index the task
 filter reads. A type name no event has (`tool.calls`) is a 400, so a typo does not
 look like a quiet Dot.
 

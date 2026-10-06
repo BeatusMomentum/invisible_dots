@@ -99,7 +99,9 @@ func TestRemoteFilesRefuseDanglingLinksThatLeaveHome(t *testing.T) {
 }
 
 // A dangling link whose target is inside home is not a way out: reading it is a
-// 404 like any missing file, and a write creates the file at the target.
+// 404 like any missing file. A link to a directory is followed by a write, as
+// every directory of a path is; a link that is the file itself is replaced by
+// the file, as a rename does it, and what it pointed to is left alone.
 func TestRemoteFilesFollowDanglingLinksInsideHome(t *testing.T) {
 	f := newFixture(t)
 	symlinkMust(t, filepath.Join(f.home, "later.txt"), filepath.Join(f.home, "soon"))
@@ -110,6 +112,39 @@ func TestRemoteFilesFollowDanglingLinksInsideHome(t *testing.T) {
 	wantStatus(t, f.do(http.MethodPut, filesURL("/v1/files", "soon-dir/x"), bytes.NewReader([]byte("N"))), http.StatusNoContent)
 	if raw, _ := os.ReadFile(filepath.Join(f.home, "no-such-dir", "x")); string(raw) != "N" {
 		t.Errorf("a write through a dangling link in home wrote %q", raw)
+	}
+
+	wantStatus(t, f.do(http.MethodPut, filesURL("/v1/files", "soon"), bytes.NewReader([]byte("F"))), http.StatusNoContent)
+	if _, err := os.Lstat(filepath.Join(f.home, "later.txt")); err == nil {
+		t.Error("a write on a dangling file link created the file it points to")
+	}
+	if info, err := os.Lstat(filepath.Join(f.home, "soon")); err != nil || !info.Mode().IsRegular() {
+		t.Errorf("a write on a dangling file link left %v (%v), want the link replaced by a regular file", info, err)
+	}
+	if raw, _ := os.ReadFile(filepath.Join(f.home, "soon")); string(raw) != "F" {
+		t.Errorf("the file that replaced the dangling link holds %q", raw)
+	}
+}
+
+// A link to an existing file in home is replaced by a write the same way: the
+// file it pointed to keeps its content.
+func TestRemoteFilesWriteReplacesALiveFileLink(t *testing.T) {
+	f := newFixture(t)
+	real := filepath.Join(f.home, "real.txt")
+	if err := os.WriteFile(real, []byte("kept"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	symlinkMust(t, "real.txt", filepath.Join(f.home, "alias"))
+
+	wantStatus(t, f.do(http.MethodPut, filesURL("/v1/files", "alias"), bytes.NewReader([]byte("N"))), http.StatusNoContent)
+	if info, err := os.Lstat(filepath.Join(f.home, "alias")); err != nil || !info.Mode().IsRegular() {
+		t.Errorf("a write on a file link left %v (%v), want the link replaced by a regular file", info, err)
+	}
+	if raw, _ := os.ReadFile(filepath.Join(f.home, "alias")); string(raw) != "N" {
+		t.Errorf("the file that replaced the link holds %q", raw)
+	}
+	if raw, _ := os.ReadFile(real); string(raw) != "kept" {
+		t.Errorf("the file the link pointed to holds %q, want it untouched", raw)
 	}
 }
 

@@ -38,7 +38,7 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect(again.applied).toEqual([]);
     expect(again.alreadyApplied).toContain("0001_initial");
     const { rows } = await db.query<{ version: string }>("SELECT version FROM schema_migrations ORDER BY version");
-    expect(rows.map((r) => r.version)).toEqual(["0001_initial", "0002_inbound_events", "0003_task_spend", "0004_channels", "0005_channel_prompts", "0006_inbound_by_event", "0007_events_task", "0008_channel_account_and_arguments", "0009_dot_config_version", "0010_account_key_telegram_only"]);
+    expect(rows.map((r) => r.version)).toEqual(["0001_initial", "0002_inbound_events", "0003_task_spend", "0004_channels", "0005_channel_prompts", "0006_events_task", "0007_dot_config_version"]);
   });
 
   it("dots: unique names, resolve by id or name, status with error", async () => {

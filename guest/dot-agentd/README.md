@@ -103,7 +103,9 @@ without it.
   target would be), and one whose real location is not under the
   real home (`/proc/<pid>/environ` included) is a `403 outside_home`; a link in
   home that leads out of it lists as `other`. The engine's socket is not limited. `PUT` creates parent directories
-  and replaces the file atomically, keeping an existing file's mode.
+  and replaces the file atomically, keeping an existing file's mode; a symbolic link at the
+  path itself (inside home, dangling or not) is replaced by the file, as a rename does it, and
+  what it pointed to is left alone.
   `GET /v1/files/list` without `path` lists home.
 - `POST /v1/system/poweroff`: starts the poweroff command without waiting for
   it and answers `202 { "status": "powering_off" }`; a command that cannot be
