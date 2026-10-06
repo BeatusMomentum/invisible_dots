@@ -9,6 +9,7 @@ import { DotShell } from "../src/components/DotShell";
 import { DotEventScope, EventStreamProvider } from "../src/components/events";
 import { AttentionProvider } from "../src/components/shell/attention";
 import { Toaster } from "../src/components/ui/sonner";
+import { BROWSER_ACTIVITY_EVENT_TYPES, BROWSER_ACTIVITY_TOOLS, BROWSER_ACTIVITY_WINDOW } from "../src/lib/browser-activity";
 import { parseComputerQuery } from "../src/lib/computer-view";
 import { stubMatchMedia, stubObjectUrls } from "./support/browser";
 import { dotRecord, FakeControlPlane } from "./support/control-plane";
@@ -178,6 +179,20 @@ describe("the browsers", () => {
     const next = await screen.findByRole("region", { name: "Window of Alpha" });
     await waitFor(() => expect(within(next).getByLabelText("Page the Dot last opened").textContent).toBe("https://example.com/fares"));
     expect(requested(/GET \/api\/dots\/d1\/events$/)).toHaveLength(1);
+  });
+
+  it("reads only the newest window of the browser calls in one request, however long the log of the Dot's other tools is", async () => {
+    plane.identities = [identity("a", "Alpha", "open")];
+    plane.store("d1", "tool.called", { tool: "browser_navigate", permission: "browser.navigate", decision: "allow", ok: true, duration_ms: 90, target: "a: https://example.com/fares" }, secondsAgo(600));
+    // Two and a half pages of the Dot's other calls, all newer than its page: none of them may cross the wire.
+    for (let i = 0; i < 2500; i++) plane.store("d1", "tool.called", { tool: i % 2 === 0 ? "exec" : "read_file", permission: "computer.exec", decision: "allow", ok: true, duration_ms: 1, target: "ls" }, secondsAgo(500));
+    plane.store("d1", "tool.called", { tool: "browser_click", permission: "browser.act", decision: "allow", ok: true, duration_ms: 40, target: "a: #buy" }, secondsAgo(400));
+    await renderComputer({ view: "browser" });
+    const stage = await screen.findByRole("region", { name: "Window of Alpha" });
+    await waitFor(() => expect(within(stage).getByLabelText("Page the Dot last opened").textContent).toBe("https://example.com/fares"));
+    expect(plane.eventQueries).toEqual([
+      { after: 0, limit: BROWSER_ACTIVITY_WINDOW, types: [...BROWSER_ACTIVITY_EVENT_TYPES], tools: [...BROWSER_ACTIVITY_TOOLS], taskId: null, order: "desc" },
+    ]);
   });
 
   it("marks the browser the Dot is using now when a call arrives, and the mark follows only that browser", async () => {

@@ -9,6 +9,7 @@ import {
   type AutomationListAnswer,
   type BrowserIdentity,
   type ChannelKind,
+  type ListOrder,
   type StoredEvent,
   type ToolInfo,
   type ToolListAnswer,
@@ -333,8 +334,18 @@ export class InvisibleDotsClient {
 
   // Approvals
 
-  async listApprovals(status?: ApprovalStatus): Promise<ApprovalRecord[]> {
-    return (await this.#json<ApprovalsAnswer>("GET", "/api/approvals", { query: { status } })).approvals;
+  /**
+   * The approvals with one status or any of several (every one when omitted), oldest first and at most
+   * `APPROVAL_LIST_LIMIT`. With `order: "desc"` they come newest first by the time of their last change (the answer,
+   * for an answered one), so a `limit` keeps the newest, and `before` (the id of the last approval of the previous
+   * page) pages on from there; `before` needs `order: "desc"`.
+   */
+  async listApprovals(
+    status?: ApprovalStatus | readonly ApprovalStatus[],
+    page: { limit?: number; order?: ListOrder; before?: string } = {},
+  ): Promise<ApprovalRecord[]> {
+    const statuses = status === undefined ? undefined : typeof status === "string" ? status : status.join(",");
+    return (await this.#json<ApprovalsAnswer>("GET", "/api/approvals", { query: { status: statuses, ...page } })).approvals;
   }
 
   /** Allow what the Dot asked for; with `always` its permission is also set to `allow` in the Dot's config. */
@@ -350,15 +361,24 @@ export class InvisibleDotsClient {
 
   /**
    * The Dot's stored events, oldest first. `types` keeps only those type names and `taskId` only the events of that
-   * task (`data.task_id`); an unknown type name is a 400.
+   * task (`data.task_id`); an unknown type name is a 400. `tools` narrows the `tool.called` events to those of these
+   * tools and leaves the other types alone. With `order: "desc"` the newest come first, so a `limit` keeps the newest
+   * of what the filters keep.
    */
   async events(
     idOrName: string,
-    options: { after?: number; limit?: number; types?: readonly string[]; taskId?: string } = {},
+    options: { after?: number; limit?: number; types?: readonly string[]; tools?: readonly string[]; taskId?: string; order?: ListOrder } = {},
   ): Promise<StoredEvent[]> {
     return (
       await this.#json<EventsAnswer>("GET", `/api/dots/${enc(idOrName)}/events`, {
-        query: { after: options.after, limit: options.limit, types: options.types?.length ? options.types.join(",") : undefined, task_id: options.taskId },
+        query: {
+          after: options.after,
+          limit: options.limit,
+          types: options.types?.length ? options.types.join(",") : undefined,
+          tools: options.tools?.length ? options.tools.join(",") : undefined,
+          task_id: options.taskId,
+          order: options.order,
+        },
       })
     ).events;
   }

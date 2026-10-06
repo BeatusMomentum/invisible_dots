@@ -46,10 +46,35 @@ export function matchesFilters(dotId: string | null, permission: string | null, 
   return (dotId === null || itemDotId === dotId) && (permission === null || itemPermission === permission);
 }
 
-/** Answered approvals, the one answered last first. */
-export function historyOrder(items: readonly Approval[]): Approval[] {
-  const when = (item: Approval) => Date.parse(item.resolved_at ?? item.created_at);
-  return items.filter((item) => item.status !== "pending").sort((a, b) => when(b) - when(a));
+/** How many answered approvals History asks the control plane for at a time. */
+export const HISTORY_PAGE = 50;
+
+/** The answered approvals History holds, the one answered last first as the control plane lists them, and where the next page goes on. */
+export interface HistoryRows {
+  rows: readonly Approval[];
+  /** The id of the last approval of the oldest page held, which the next page goes on after; null when the list has ended. */
+  cursor: string | null;
+}
+
+/**
+ * What History holds after the newest page was read. When that page reaches into the rows already held (or is the whole
+ * list) they stay below it with their cursor; when it does not, more was answered since than a page holds and what is
+ * held is no longer next to the new rows, so only the page is kept and the older ones are read again on request.
+ */
+export function newestHistoryPage(held: HistoryRows | undefined, page: readonly Approval[]): HistoryRows {
+  const last = page.length === HISTORY_PAGE ? page[page.length - 1]!.id : null;
+  if (held === undefined || held.rows.length === 0) return { rows: page, cursor: last };
+  if (page.length < HISTORY_PAGE) return { rows: page, cursor: null };
+  const heldIds = new Set(held.rows.map((row) => row.id));
+  if (!page.some((row) => heldIds.has(row.id))) return { rows: page, cursor: last };
+  const pageIds = new Set(page.map((row) => row.id));
+  return { rows: [...page, ...held.rows.filter((row) => !pageIds.has(row.id))], cursor: held.cursor };
+}
+
+/** What History holds after the page that goes on from its cursor was read. */
+export function olderHistoryPage(held: HistoryRows, page: readonly Approval[]): HistoryRows {
+  const heldIds = new Set(held.rows.map((row) => row.id));
+  return { rows: [...held.rows, ...page.filter((row) => !heldIds.has(row.id))], cursor: page.length === HISTORY_PAGE ? page[page.length - 1]!.id : null };
 }
 
 /** The approvals to list as waiting, the one waiting longest first, followed by those this page saw answered (kept in their place as receipts). */

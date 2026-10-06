@@ -64,7 +64,9 @@ export class FakeControlPlane {
   /** The stored event log, as `GET /api/dots/:id/events` pages through it; `push` and `store` add to it. */
   events: StoredEvent[] = [];
   /** What each `GET .../events` asked for, so a test can see that a page cut by type was asked for by type. */
-  eventQueries: Array<{ after: number; limit: number; types: string[] | null; taskId: string | null }> = [];
+  eventQueries: Array<{ after: number; limit: number; types: string[] | null; tools: string[] | null; taskId: string | null; order: string | null }> = [];
+  /** What each `GET /api/approvals` asked for. */
+  approvalQueries: Array<{ status: string[] | null; limit: number | null; order: string | null; before: string | null }> = [];
   /** The body of every `POST /api/dots/:id/tasks`, as the browser sent it. */
   createdTasks: unknown[] = [];
   /** Answer `POST /api/dots/:id/tasks` with this error instead of 201. */
@@ -234,8 +236,17 @@ export class FakeControlPlane {
     }
     if (pathname === "/api/dots") return json({ dots: this.dots });
     if (pathname === "/api/approvals") {
-      const status = searchParams.get("status");
-      return json({ approvals: this.approvals.filter((a) => !status || a.status === status) });
+      const status = searchParams.get("status")?.split(",") ?? null;
+      const limit = searchParams.get("limit") === null ? null : Number(searchParams.get("limit"));
+      const order = searchParams.get("order");
+      const before = searchParams.get("before");
+      this.approvalQueries.push({ status, limit, order, before });
+      // The real route: oldest first, or with order=desc the newest by last change, a cursor being the id of the last row seen.
+      const changed = (a: ApprovalRecord) => Date.parse(a.resolved_at ?? a.created_at);
+      const listed = this.approvals.filter((a) => !status || status.includes(a.status));
+      const ordered = order === "desc" ? [...listed].sort((a, b) => changed(b) - changed(a) || b.id.localeCompare(a.id)) : listed;
+      const from = before === null ? 0 : ordered.findIndex((a) => a.id === before) + 1 || ordered.length;
+      return json({ approvals: ordered.slice(from, from + (limit ?? 500)) });
     }
     const answer = /^\/api\/approvals\/([^/]+)\/(approve|reject)$/.exec(pathname);
     if (answer && method === "POST") {
@@ -290,13 +301,20 @@ export class FakeControlPlane {
         const limit = Math.min(Number(searchParams.get("limit") ?? 500), this.eventPage);
         // The real route's filters: `types` (a comma-separated list) and `task_id` (data.task_id).
         const types = searchParams.get("types")?.split(",");
+        const tools = searchParams.get("tools")?.split(",");
         const taskId = searchParams.get("task_id");
-        this.eventQueries.push({ after, limit, types: types ?? null, taskId });
-        return json({
-          events: this.events
-            .filter((e) => e.dot_id === record.id && e.id > after && (!types || types.includes(e.type)) && (taskId === null || e.data.task_id === taskId))
-            .slice(0, limit),
-        });
+        const order = searchParams.get("order");
+        this.eventQueries.push({ after, limit, types: types ?? null, tools: tools ?? null, taskId, order });
+        // `tools` narrows tool.called only, `order=desc` is the newest first and the limit keeps the newest.
+        const kept = this.events.filter(
+          (e) =>
+            e.dot_id === record.id &&
+            e.id > after &&
+            (!types || types.includes(e.type)) &&
+            (!tools || e.type !== "tool.called" || tools.includes(String(e.data.tool))) &&
+            (taskId === null || e.data.task_id === taskId),
+        );
+        return json({ events: (order === "desc" ? [...kept].reverse() : kept).slice(0, limit) });
       }
       if (rest === "messages" && method === "GET") {
         // The host logs the person's side as `user.message`, which the shared event type list does not hold.

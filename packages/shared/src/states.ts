@@ -68,10 +68,14 @@ export const TASK_LIST_LIMIT = 200;
 export const CONVERSATION_LIST_LIMIT = 500;
 
 /**
- * How many approvals (the OLDEST, in the order they were asked) `GET /api/approvals` answers with, for one status or
- * all of them; a list this long may be cut, and newer approvals are not reachable through the route.
+ * How many approvals `GET /api/approvals` answers with at most: by default the OLDEST ones, in the order they were
+ * asked; with `order=desc` the newest (by the time of their last change), and `before` pages on from there.
  */
 export const APPROVAL_LIST_LIMIT = 500;
+
+/** The order a list route can be asked for: `asc` is the oldest first (the default of each route), `desc` the newest first. */
+export const LIST_ORDERS = ["asc", "desc"] as const;
+export type ListOrder = (typeof LIST_ORDERS)[number];
 
 /**
  * `approvals.status` (section 9.1). An approval is `expired` when its task
@@ -79,6 +83,9 @@ export const APPROVAL_LIST_LIMIT = 500;
  */
 export const APPROVAL_STATUSES = ["pending", "approved", "rejected", "expired"] as const;
 export type ApprovalStatus = (typeof APPROVAL_STATUSES)[number];
+
+/** The statuses of an approval nobody is waiting on any more: someone answered it, or its task ended first. */
+export const ANSWERED_APPROVAL_STATUSES: readonly ApprovalStatus[] = ["approved", "rejected", "expired"];
 
 /** `events.source` (section 9.1). */
 export const EVENT_SOURCES = ["host", "guest"] as const;

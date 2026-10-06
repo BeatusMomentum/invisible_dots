@@ -8,7 +8,7 @@
  * URLs are shown (no user or password, query values masked). `browser_identity_create` names the identity it made,
  * not an id, and `browser_identity_list` names nothing, so neither says anything about an identity here.
  */
-import { toolLabel } from "./events/tool-labels";
+import { TOOL_LABELS, toolLabel } from "./events/tool-labels";
 import { mergeEvents } from "./timeline";
 import type { StoredEvent } from "./types";
 
@@ -24,6 +24,16 @@ function actsOnIdentity(tool: string): boolean {
   const { family } = toolLabel(tool);
   return family === "browser" || family === "browser-identity";
 }
+
+/** Those tools by name: what the control plane keeps `tool.called` events to, so the other tools' calls never cross the wire. */
+export const BROWSER_ACTIVITY_TOOLS: readonly string[] = Object.keys(TOOL_LABELS).filter(actsOnIdentity);
+
+/**
+ * How many of the newest events of those types and tools the view reads and keeps. What it needs is the newest call of
+ * each open browser and its newest navigation since it opened, which a long run of calls to one browser can push out
+ * of this window for another: that browser then shows no page, as one whose page the Dot did not choose does.
+ */
+export const BROWSER_ACTIVITY_WINDOW = 500;
 
 export interface BrowserCall {
   identityId: string;
@@ -53,8 +63,9 @@ export function isBrowserActivityEvent(event: StoredEvent): boolean {
   return event.type === "browser.identity.launched" || event.type === "browser.identity.closed";
 }
 
+/** The events merged in id order, and no more than the newest BROWSER_ACTIVITY_WINDOW of them: a page left open for days does not keep them all. */
 export function mergeBrowserEvents(current: readonly StoredEvent[], incoming: readonly StoredEvent[]): StoredEvent[] {
-  return mergeEvents(current, incoming.filter(isBrowserActivityEvent));
+  return mergeEvents(current, incoming.filter(isBrowserActivityEvent)).slice(-BROWSER_ACTIVITY_WINDOW);
 }
 
 export interface IdentityActivity {

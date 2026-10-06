@@ -213,6 +213,21 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     expect((await get("types=tool.called&types=memory.written")).status).toBe(400);
     expect((await get("task_id=a&task_id=b")).status).toBe(400);
     expect((await get("task_id=")).status).toBe(400);
+
+    // Newest first, and a tool filter that narrows tool.called only: the newest browser call is found past the calls of other tools.
+    const browser = { ...call, tool: "browser_navigate", target: "x-1: https://example.com/" };
+    guest.emit("tool.called", browser);
+    guest.emit("tool.called", { ...call, target: "pwd" });
+    guest.emit("tool.called", { ...call, target: "whoami" });
+    await waitFor(async () => (await api.events(dot.id, { types: ["tool.called"] })).length === 5, "more events stored");
+    const newest = await api.events(dot.id, { types: ["tool.called"], order: "desc", limit: 2 });
+    expect(newest.map((e) => e.data.target)).toEqual(["whoami", "pwd"]);
+    const browserCalls = await api.events(dot.id, { types: ["tool.called"], tools: ["browser_navigate", "browser_click"], order: "desc", limit: 1 });
+    expect(browserCalls.map((e) => e.data.target)).toEqual(["x-1: https://example.com/"]);
+    expect((await api.events(dot.id, { types: ["tool.called", "memory.written"], tools: ["browser_click"] })).map((e) => e.type)).toEqual(["memory.written"]);
+    expect((await get("order=sideways")).status).toBe(400);
+    expect((await get("order=desc&order=asc")).status).toBe(400);
+    expect((await get("tools=a&tools=b")).status).toBe(400);
     await expect(api.events("no-such-dot", { types: ["tool.called"] })).rejects.toMatchObject({ status: 404 });
   });
 
@@ -436,6 +451,33 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     await expect(api.approve("apr_missing")).rejects.toMatchObject({ status: 404 });
     const raw = await fetch(`${base}/api/approvals?status=maybe`, { headers: { authorization: `Bearer ${TOKEN}` } });
     expect(raw.status).toBe(400);
+  });
+
+  it("approvals: several statuses at once, newest answer first, a limit that keeps the newest and a cursor", async () => {
+    const dot = await readyDot("asks-often");
+    const guest = driver.guestOf(dot.id);
+    const ids = [guest.requestApproval(undefined), guest.requestApproval(undefined), guest.requestApproval(undefined)];
+    await waitFor(async () => (await api.listApprovals("pending")).filter((a) => a.dot_id === dot.id).length === 3, "three pending");
+    await api.reject(ids[1]!, {});
+    await api.approve(ids[0]!, {});
+    const mine = async (...args: Parameters<typeof api.listApprovals>) => (await api.listApprovals(...args)).filter((a) => a.dot_id === dot.id).map((a) => a.id);
+    // Answered, the last answered first (ids[0] after ids[1]); the one still pending is not among them.
+    expect(await mine(["approved", "rejected", "expired"], { order: "desc" })).toEqual([ids[0], ids[1]]);
+    expect(await mine(["pending", "rejected"])).toEqual([ids[1], ids[2]]);
+    const newestOne = await api.listApprovals(["approved", "rejected", "expired"], { order: "desc", limit: 1 });
+    expect(newestOne.map((a) => a.id)).toEqual([ids[0]]);
+    expect((await api.listApprovals(["approved", "rejected", "expired"], { order: "desc", limit: 1, before: ids[0]! })).map((a) => a.id)).toEqual([ids[1]]);
+
+    const get = async (query: string) => (await fetch(`${base}/api/approvals?${query}`, { headers: { authorization: `Bearer ${TOKEN}` } })).status;
+    expect(await get("status=approved,maybe")).toBe(400);
+    expect(await get("status=")).toBe(400);
+    expect(await get("status=approved&status=rejected")).toBe(400);
+    expect(await get("order=newest")).toBe(400);
+    expect(await get("limit=0")).toBe(400);
+    expect(await get("limit=501")).toBe(400);
+    expect(await get(`order=desc&before=${ids[0]}&limit=1`)).toBe(200);
+    expect(await get(`before=${ids[0]}`)).toBe(400);
+    expect(await get("order=desc&before=")).toBe(400);
   });
 
   it("approve with always over HTTP sets the permission in the Dot's config and pushes it", async () => {

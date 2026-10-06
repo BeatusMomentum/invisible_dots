@@ -395,27 +395,54 @@ describe("History", () => {
     expect(await screen.findByText("No approval has been answered yet.")).toBeTruthy();
   });
 
-  it("shows fifty rows and the rest on request", async () => {
-    plane.approvals = Array.from({ length: 60 }, (_, i) => approvalRecord(`a${i}`, "d1", { status: "approved", resolved_at: hoursAgo(i + 1) }));
+  it("asks for the answered approvals newest first, fifty at a time, and reads older ones on request", async () => {
+    plane.approvals = Array.from({ length: 120 }, (_, i) => approvalRecord(`a${String(i).padStart(3, "0")}`, "d1", { status: "approved", resolved_at: hoursAgo(i + 1) }));
     await renderInbox({ tab: "history" });
     const table = await screen.findByRole("table");
     expect(within(table).getAllByRole("row")).toHaveLength(51);
-    await userEvent.click(screen.getByRole("button", { name: "Show 10 more" }));
-    expect(within(table).getAllByRole("row")).toHaveLength(61);
-    expect(screen.queryByRole("button", { name: /Show .* more/ })).toBeNull();
+    const history = () => plane.approvalQueries.filter((q) => q.status?.includes("approved"));
+    expect(history()).toEqual([{ status: ["approved", "rejected", "expired"], limit: 50, order: "desc", before: null }]);
+
+    await userEvent.click(screen.getByRole("button", { name: "Show older answers" }));
+    await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(101));
+    await userEvent.click(screen.getByRole("button", { name: "Show older answers" }));
+    await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(121));
+    // Each page went on after the last row of the one before, and the list ended in the short one.
+    expect(history().map((q) => q.before)).toEqual([null, "a049", "a099"]);
+    expect(screen.queryByRole("button", { name: "Show older answers" })).toBeNull();
   });
 
-  it("says that only the first approvals are listed when the control plane's list is as long as it can be", async () => {
-    plane.approvals = Array.from({ length: APPROVAL_LIST_LIMIT }, (_, i) => approvalRecord(`a${i}`, "d1", { status: "approved", resolved_at: hoursAgo(1) }));
+  it("lists the newest answer however many approvals were asked before it, and no waiting one takes its place", async () => {
+    // More than the control plane lists oldest first by default, and a pending one that is the oldest of all.
+    plane.approvals = [
+      approvalRecord("pending-old", "d1", { created_at: hoursAgo(5000) }),
+      ...Array.from({ length: APPROVAL_LIST_LIMIT + 20 }, (_, i) => approvalRecord(`b${i}`, "d1", { status: "approved", created_at: hoursAgo(4000 - i), resolved_at: hoursAgo(3000 - i) })),
+      approvalRecord("newest", "d1", { status: "rejected", resolved_at: hoursAgo(0) }),
+    ];
     await renderInbox({ tab: "history" });
-    const notice = await screen.findByRole("status");
-    expect(notice.textContent).toContain(`The first ${APPROVAL_LIST_LIMIT} approvals`);
-    cleanup();
+    const table = await screen.findByRole("table");
+    expect(within(table).getAllByRole("row")[1]!.textContent).toContain("Denied");
+    expect(screen.queryByText(/first [0-9]+ approvals/)).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
 
-    plane.approvals = plane.approvals.slice(1);
+  it("keeps the older answers it read when a new answer arrives", async () => {
+    plane.approvals = Array.from({ length: 70 }, (_, i) => approvalRecord(`a${String(i).padStart(3, "0")}`, "d1", { status: "approved", resolved_at: hoursAgo(i + 2) }));
     await renderInbox({ tab: "history" });
-    await screen.findByRole("table");
-    expect(screen.queryByText(/The first \d+ approvals/)).toBeNull();
+    const table = await screen.findByRole("table");
+    await userEvent.click(screen.getByRole("button", { name: "Show older answers" }));
+    await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(71));
+    plane.approvals.push(approvalRecord("fresh", "d1", { status: "rejected", resolved_at: hoursAgo(0) }));
+    act(() => plane.push("d1", "approval.resolved", { approval_id: "fresh", decision: "reject" }));
+    await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(72));
+    expect(within(table).getAllByRole("row")[1]!.textContent).toContain("Denied");
+  });
+
+  it("says so when none of the newest answers is under the filters while older ones remain", async () => {
+    plane.approvals = Array.from({ length: 60 }, (_, i) => approvalRecord(`a${i}`, "d1", { status: "approved", resolved_at: hoursAgo(i + 1) }));
+    await renderInbox({ tab: "history", dot: "d2" });
+    expect(await screen.findByText("None of the newest answers are under these filters.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Show older answers" })).toBeTruthy();
   });
 
   it("reads the log again when an approval is answered, and says when it cannot be read", async () => {

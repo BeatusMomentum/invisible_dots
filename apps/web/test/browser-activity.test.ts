@@ -1,6 +1,6 @@
 import type { StoredEvent } from "@invisible-dots/shared/browser";
 import { describe, expect, it } from "vitest";
-import { browserCall, identityActivity, isBrowserActivityEvent, mergeBrowserEvents, USING_NOW_SECONDS } from "../src/lib/browser-activity";
+import { BROWSER_ACTIVITY_TOOLS, BROWSER_ACTIVITY_WINDOW, browserCall, identityActivity, isBrowserActivityEvent, mergeBrowserEvents, USING_NOW_SECONDS } from "../src/lib/browser-activity";
 
 let n = 0;
 function event(type: string, data: Record<string, unknown>, at: string): StoredEvent {
@@ -49,6 +49,31 @@ describe("which calls name a browser", () => {
     const other = event("message.assistant", { text: "x" }, at(2));
     expect([launched, nav, other].map(isBrowserActivityEvent)).toEqual([true, true, false]);
     expect(mergeBrowserEvents([nav], [launched, nav, other]).map((e) => e.id)).toEqual([launched.id, nav.id]);
+  });
+});
+
+describe("what is read of the log", () => {
+  it("names the tools whose target is an identity's, from the one table of tools, and no other", () => {
+    expect([...BROWSER_ACTIVITY_TOOLS].sort()).toEqual(
+      [
+        "browser_back", "browser_click", "browser_click_at", "browser_forward", "browser_identity_close", "browser_identity_delete", "browser_identity_launch",
+        "browser_navigate", "browser_press_key", "browser_read_text", "browser_reload", "browser_screenshot", "browser_scroll", "browser_select_option",
+        "browser_snapshot", "browser_type",
+      ].sort(),
+    );
+    // Every name it holds is one browserCall takes for a browser's, so the filter in the database loses nothing the view reads.
+    for (const tool of BROWSER_ACTIVITY_TOOLS) expect(browserCall(call(tool, "a: x", 1)), tool).not.toBeNull();
+  });
+
+  it("keeps no more than the newest window of events when it merges, the live ones too", () => {
+    const log = Array.from({ length: BROWSER_ACTIVITY_WINDOW + 25 }, (_, i) => call("browser_click", "a: #go", i));
+    const kept = mergeBrowserEvents([], log);
+    expect(kept).toHaveLength(BROWSER_ACTIVITY_WINDOW);
+    expect(kept[0]!.id).toBe(log[25]!.id);
+    expect(kept.at(-1)!.id).toBe(log.at(-1)!.id);
+    const live = call("browser_click", "a: #go", 999);
+    expect(mergeBrowserEvents(kept, [live])).toHaveLength(BROWSER_ACTIVITY_WINDOW);
+    expect(mergeBrowserEvents(kept, [live]).at(-1)!.id).toBe(live.id);
   });
 });
 

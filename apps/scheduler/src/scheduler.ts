@@ -43,6 +43,7 @@ import {
   type DotConfig,
   type FilesListAnswer,
   type InboundEvent,
+  type ListOrder,
   type MessageOrigin,
   type StoredEvent,
   type SystemAnswer,
@@ -665,8 +666,12 @@ export class Scheduler {
 
   // Approvals
 
-  listApprovals(status?: ApprovalStatus): Promise<ApprovalRecord[]> {
-    return this.db.approvals.list({ status });
+  /** The approvals of one status or several (every one when omitted); `page` is what the approvals repository's `list` takes. */
+  listApprovals(
+    status?: ApprovalStatus | readonly ApprovalStatus[],
+    page: { limit?: number; order?: ListOrder; before?: string } = {},
+  ): Promise<ApprovalRecord[]> {
+    return this.db.approvals.list({ status, ...page });
   }
 
   /**
@@ -765,13 +770,14 @@ export class Scheduler {
    */
   async listEvents(
     idOrName: string,
-    filter: { after?: number; limit?: number; types?: readonly string[]; taskId?: string } = {},
+    filter: { after?: number; limit?: number; types?: readonly string[]; tools?: readonly string[]; taskId?: string; order?: ListOrder } = {},
   ): Promise<StoredEvent[]> {
     const unknown = filter.types?.filter((type) => !isStoredEventType(type)) ?? [];
     if (unknown.length > 0) throw new ControlPlaneError(400, "invalid_request", `unknown event type: ${unknown.join(", ")}`);
     if (filter.taskId === "") throw new ControlPlaneError(400, "invalid_request", "task_id must not be empty");
     const types = filter.types === undefined || filter.types.length === 0 ? undefined : filter.types;
-    return this.events.query({ dotId: await this.#historyDotId(idOrName), after: filter.after, limit: filter.limit, types, taskId: filter.taskId });
+    const tools = filter.tools === undefined || filter.tools.length === 0 ? undefined : filter.tools;
+    return this.events.query({ dotId: await this.#historyDotId(idOrName), after: filter.after, limit: filter.limit, types, tools, taskId: filter.taskId, order: filter.order });
   }
 
   /** The model spend the Dot's guest reported since `since` (every event when omitted), from the event log. */

@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../lib/api";
-import { BROWSER_ACTIVITY_EVENT_TYPES, identityActivity, isBrowserActivityEvent, mergeBrowserEvents, type IdentityActivity } from "../../lib/browser-activity";
-import { readEventLog } from "../../lib/event-log";
+import { BROWSER_ACTIVITY_EVENT_TYPES, BROWSER_ACTIVITY_TOOLS, BROWSER_ACTIVITY_WINDOW, identityActivity, isBrowserActivityEvent, mergeBrowserEvents, type IdentityActivity } from "../../lib/browser-activity";
+import { readRecentEvents } from "../../lib/event-log";
 import type { StoredEvent } from "../../lib/types";
 import { useNow } from "../../lib/use-now";
 import { useLiveEvents } from "../events";
@@ -16,8 +16,9 @@ export interface BrowserActivity {
 }
 
 /**
- * What the Dot does with its browsers: the log of its browser calls and of its browsers opening and closing, read
- * once while `wanted` (a Dot with no browser open has nothing to follow) and kept current by the live stream. The
+ * What the Dot does with its browsers: the newest window of the log of its browser calls and of its browsers opening
+ * and closing (only those cross the wire, newest first), read once while `wanted` (a Dot with no browser open has
+ * nothing to follow) and kept current by the live stream. The
  * clock is renewed every few seconds so that "using now" ends by itself when the calls stop.
  */
 export function useBrowserActivity(dotId: string, wanted: boolean): BrowserActivity {
@@ -33,7 +34,7 @@ export function useBrowserActivity(dotId: string, wanted: boolean): BrowserActiv
 
   const load = useCallback(() => {
     const mine = ++generation.current;
-    readEventLog(api, dotId, { types: BROWSER_ACTIVITY_EVENT_TYPES, keep: isBrowserActivityEvent })
+    readRecentEvents(api, dotId, { types: BROWSER_ACTIVITY_EVENT_TYPES, tools: BROWSER_ACTIVITY_TOOLS, keep: isBrowserActivityEvent, count: BROWSER_ACTIVITY_WINDOW })
       .then((read) => {
         if (mine !== generation.current) return;
         setEvents((current) => mergeBrowserEvents(current, read));

@@ -1,12 +1,11 @@
 "use client";
 
-import { APPROVAL_LIST_LIMIT } from "@invisible-dots/shared/browser";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { api } from "../../lib/api";
 import { askedTitle, askOfRecord, permissionInfo } from "../../lib/approval-view";
 import { statusTone, formatDate } from "../../lib/format";
-import { historyOrder, matchesFilters } from "../../lib/inbox";
+import { matchesFilters } from "../../lib/inbox";
 import { relativeTime } from "../../lib/time";
 import type { Approval } from "../../lib/types";
 import { cn } from "../../lib/utils";
@@ -14,12 +13,9 @@ import { TONE_CLASS } from "../dot/tone";
 import { ErrorAlert } from "../ErrorAlert";
 import { useLiveRefresh } from "../events";
 import { useShell } from "../shell/attention";
-import { useResource } from "../ui";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
-
-/** Rows shown before the rest opens on request. */
-const PAGE = 50;
+import { useHistory } from "./use-history";
 
 const ANSWER_WORD: Record<string, string> = { approved: "Allowed", rejected: "Denied", expired: "Expired" };
 
@@ -34,35 +30,32 @@ function Answer({ status }: { status: string }) {
 
 /**
  * Every approval that is no longer waiting (S6, History): allowed, denied, or expired because the task ended first,
- * the one answered last first. The control plane lists the oldest approvals, up to a limit, so a list that long may be
- * missing the newest ones, and the page says so.
+ * the one answered last first. The control plane lists them newest first a page at a time and the older ones are read
+ * on request, so the newest answer is always there however many approvals the Dots have asked for.
  */
 export function History({ filter }: { filter: { dotId: string | null; permission: string | null } }) {
   const { dots } = useShell();
-  const history = useResource(() => api.listApprovals(), "inbox:history");
+  const history = useHistory();
   useLiveRefresh(history.reload, ["approval.requested", "approval.resolved"]);
-  const [shown, setShown] = useState(PAGE);
   const names = useMemo(() => new Map((dots.data ?? []).map((dot) => [dot.id, dot.name])), [dots.data]);
 
   const rows = useMemo(
-    () => historyOrder(history.data ?? []).filter((row) => matchesFilters(filter.dotId, filter.permission, row.dot_id, row.permission)),
-    [history.data, filter.dotId, filter.permission],
+    () => (history.rows ?? []).filter((row) => matchesFilters(filter.dotId, filter.permission, row.dot_id, row.permission)),
+    [history.rows, filter.dotId, filter.permission],
   );
-  const visible = rows.slice(0, shown);
-  const cut = history.data !== undefined && history.data.length >= APPROVAL_LIST_LIMIT;
 
   return (
     <div className="space-y-4">
       <ErrorAlert error={history.error} title="Could not load the history" />
-      {history.data === undefined && !history.error ? <Skeleton className="h-40 w-full" aria-busy="true" /> : null}
+      {history.rows === undefined && !history.error ? <Skeleton className="h-40 w-full" aria-busy="true" /> : null}
 
-      {cut ? (
-        <p role="status" className="rounded-lg border bg-muted px-3 py-2 text-sm">
-          The first {APPROVAL_LIST_LIMIT} approvals the Dots asked for are listed. The control plane does not list later ones yet, so the newest are not shown here.
+      {history.rows !== undefined && rows.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          {history.hasMore
+            ? "None of the newest answers are under these filters."
+            : `No approval has been answered${filter.dotId !== null || filter.permission !== null ? " under these filters" : " yet"}.`}
         </p>
       ) : null}
-
-      {history.data !== undefined && rows.length === 0 ? <p className="text-sm text-muted-foreground">No approval has been answered{filter.dotId !== null || filter.permission !== null ? " under these filters" : " yet"}.</p> : null}
 
       {rows.length > 0 ? (
         <div className="overflow-x-auto rounded-lg border">
@@ -88,7 +81,7 @@ export function History({ filter }: { filter: { dotId: string | null; permission
               </tr>
             </thead>
             <tbody className="divide-y">
-              {visible.map((row: Approval) => {
+              {rows.map((row: Approval) => {
                 const when = row.resolved_at ?? row.created_at;
                 return (
                   <tr key={row.id} className="align-top">
@@ -119,9 +112,9 @@ export function History({ filter }: { filter: { dotId: string | null; permission
         </div>
       ) : null}
 
-      {rows.length > visible.length ? (
-        <Button type="button" variant="outline" size="sm" onClick={() => setShown(shown + PAGE)}>
-          Show {Math.min(PAGE, rows.length - visible.length)} more
+      {history.hasMore ? (
+        <Button type="button" variant="outline" size="sm" disabled={history.loadingMore} onClick={history.loadMore}>
+          {history.loadingMore ? "Loading" : "Show older answers"}
         </Button>
       ) : null}
     </div>

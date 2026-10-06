@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readDismissed, writeDismissed } from "../src/lib/dismissed";
 import { FAILED_WINDOW_MS, failedRecently, loadFailedTasks, recentFailures } from "../src/lib/failed-tasks";
-import { historyOrder, inboxHref, matchesFilters, parseInboxQuery, resolveDotFilter, waitingOrder } from "../src/lib/inbox";
+import { HISTORY_PAGE, inboxHref, matchesFilters, newestHistoryPage, olderHistoryPage, parseInboxQuery, resolveDotFilter, waitingOrder } from "../src/lib/inbox";
 import { approvalRecord, taskRecord } from "./support/control-plane";
 
 describe("the Inbox's address", () => {
@@ -47,17 +47,36 @@ describe("what the filters keep", () => {
   });
 });
 
-describe("the order of the lists", () => {
-  it("puts the answered approvals last answered first, and leaves the waiting ones out of the history", () => {
-    const rows = [
-      approvalRecord("old", "d", { status: "approved", created_at: "2026-01-01T00:00:00Z", resolved_at: "2026-01-01T00:05:00Z" }),
-      approvalRecord("new", "d", { status: "rejected", created_at: "2026-01-02T00:00:00Z", resolved_at: "2026-01-02T00:01:00Z" }),
-      approvalRecord("waiting", "d", { created_at: "2026-01-03T00:00:00Z" }),
-      approvalRecord("expired", "d", { status: "expired", created_at: "2026-01-01T12:00:00Z", resolved_at: null }),
-    ];
-    expect(historyOrder(rows).map((row) => row.id)).toEqual(["new", "expired", "old"]);
+describe("the lists of the Inbox", () => {
+  it("keeps the older rows under a refreshed newest page that reaches them, with their cursor", () => {
+    const page = (from: number, count: number) => Array.from({ length: count }, (_, i) => approvalRecord(`a${from + i}`, "d", { status: "approved", resolved_at: "2026-01-01T00:00:00Z" }));
+    const first = newestHistoryPage(undefined, page(100, HISTORY_PAGE));
+    expect(first.cursor).toBe(`a${100 + HISTORY_PAGE - 1}`);
+    const older = olderHistoryPage(first, page(100 + HISTORY_PAGE, 10));
+    expect(older.rows).toHaveLength(HISTORY_PAGE + 10);
+    // The list ended inside that page: nothing goes on after it.
+    expect(older.cursor).toBeNull();
+    // One answered since: the new page is the new row and all but the last row of the old one, so it reaches the held rows.
+    const refreshed = newestHistoryPage(older, [approvalRecord("new", "d", { status: "approved" }), ...older.rows.slice(0, HISTORY_PAGE - 1)]);
+    expect(refreshed.rows.map((row) => row.id)).toEqual(["new", ...older.rows.map((row) => row.id)]);
+    expect(refreshed.cursor).toBeNull();
   });
 
+  it("drops the older rows when a refreshed newest page does not reach them, as a gap would otherwise hide answers", () => {
+    const rows = (from: number, count: number) => Array.from({ length: count }, (_, i) => approvalRecord(`a${from + i}`, "d", { status: "approved" }));
+    const held = olderHistoryPage(newestHistoryPage(undefined, rows(1000, HISTORY_PAGE)), rows(500, HISTORY_PAGE));
+    expect(held.rows).toHaveLength(2 * HISTORY_PAGE);
+    expect(held.cursor).toBe(`a${500 + HISTORY_PAGE - 1}`);
+    const refreshed = newestHistoryPage(held, rows(2000, HISTORY_PAGE));
+    expect(refreshed.rows.map((row) => row.id)).toEqual(rows(2000, HISTORY_PAGE).map((row) => row.id));
+    expect(refreshed.cursor).toBe(`a${2000 + HISTORY_PAGE - 1}`);
+  });
+
+  it("holds a short first page whole and ends the list there", () => {
+    const short = [approvalRecord("a", "d", { status: "rejected" })];
+    expect(newestHistoryPage(undefined, short)).toEqual({ rows: short, cursor: null });
+    expect(newestHistoryPage({ rows: short, cursor: null }, [])).toEqual({ rows: [], cursor: null });
+  });
   it("puts the approval that has waited longest first, and breaks a tie by id", () => {
     const items = [
       { id: "c", createdAt: "2026-01-02T00:00:00Z" },

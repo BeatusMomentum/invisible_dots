@@ -195,6 +195,30 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     }
   });
 
+  it("events: newest first with a limit, and a tool filter that touches tool.called only", async () => {
+    const dot = await seedDot(db, "newest-first");
+    let seq = 0;
+    const guest = (type: OutboundEvent["type"], data: Record<string, unknown>) => db.events.insertGuest(dot.id, outbound(++seq, type, data));
+    const call = { permission: "exec.run", decision: "allow", ok: true, duration_ms: 1 };
+    await guest("tool.called", { tool: "exec", ...call });
+    const nav = await guest("tool.called", { tool: "browser_navigate", ...call });
+    await guest("tool.called", { tool: "exec", ...call });
+    const click = await guest("tool.called", { tool: "browser_click", ...call });
+    const state = await guest("agent.state", { state: "IDLE" });
+    await guest("tool.called", { tool: "exec", ...call });
+    const ids = async (query: Parameters<typeof db.events.list>[0]) => (await db.events.list({ dotId: dot.id, ...query })).map((e) => e.id);
+    const all = await ids({});
+    expect(await ids({ order: "desc" })).toEqual([...all].reverse());
+    expect(await ids({ order: "desc", limit: 2 })).toEqual([all[5]!, all[4]!]);
+    // `tools` narrows tool.called to those tools and leaves other types as they are.
+    expect(await ids({ types: ["tool.called"], tools: ["browser_navigate", "browser_click"] })).toEqual([nav!.id, click!.id]);
+    expect(await ids({ types: ["tool.called", "agent.state"], tools: ["browser_click"], order: "desc" })).toEqual([state!.id, click!.id]);
+    // The limit counts what is kept: the newest browser call is found past three calls of other tools.
+    expect(await ids({ types: ["tool.called"], tools: ["browser_navigate", "browser_click"], order: "desc", limit: 1 })).toEqual([click!.id]);
+    // With `after`, newest first still reads the events after it.
+    expect(await ids({ after: nav!.id, order: "desc", limit: 1 })).toEqual([all[5]!]);
+  });
+
   it("events: the spend of a Dot sums the events that end a unit of spend, from a moment on", async () => {
     const dot = await seedDot(db, "spender");
     const other = await seedDot(db, "bystander");
@@ -455,6 +479,58 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect(listed).toHaveLength(APPROVAL_LIST_LIMIT);
     expect(listed.map((a) => a.id)).not.toContain(ids[APPROVAL_LIST_LIMIT]);
     expect(await db.approvals.list({ dotId: dot.id, limit: APPROVAL_LIST_LIMIT + 1 })).toHaveLength(APPROVAL_LIST_LIMIT + 1);
+  });
+
+  it("approvals: newest first by the time of their last change, several statuses at once, and a cursor pages on without a gap", async () => {
+    const dot = await seedDot(db, "approval-newest");
+    const ask = (reason: string) => {
+      const approval_id = newId("apr");
+      return db.approvals.insertRequested(dot.id, { approval_id, tool: "exec", permission: "computer.exec" as const, arguments: {}, reason }).then(() => approval_id);
+    };
+    const first = await ask("first");
+    const second = await ask("second");
+    const third = await ask("third");
+    const fourth = await ask("fourth");
+    // Times set by hand: the clock of two statements in a row may be the same.
+    await db.approvals.resolve(third, "approved", null);
+    await db.approvals.resolve(first, "rejected", null);
+    await db.query("UPDATE approvals SET status = 'expired' WHERE id = $1", [second]);
+    const minutes = (m: number) => new Date(Date.UTC(2026, 0, 1, 12, m));
+    const at: [string, number, number | null][] = [[first, 0, 30], [second, 1, 40], [third, 2, 20], [fourth, 3, null]];
+    for (const [id, created, resolved] of at) {
+      await db.query("UPDATE approvals SET created_at = $2, resolved_at = $3 WHERE id = $1", [id, minutes(created), resolved === null ? null : minutes(resolved)]);
+    }
+    // Answered last first (second at :40, first at :30, third at :20); the pending fourth sorts by when it was asked.
+    const ids = async (options: Parameters<typeof db.approvals.list>[0]) => (await db.approvals.list({ dotId: dot.id, ...options })).map((a) => a.id);
+    expect(await ids({ order: "asc" })).toEqual([first, second, third, fourth]);
+    expect(await ids({ order: "desc", status: ["approved", "rejected", "expired"] })).toEqual([second, first, third]);
+    expect(await ids({ order: "desc", status: "pending" })).toEqual([fourth]);
+    expect(await ids({ status: ["approved", "expired"] })).toEqual([second, third]);
+    // The newest ones survive a limit, which is the point of the order: an old list does not hide the new answers.
+    expect(await ids({ order: "desc", status: ["approved", "rejected", "expired"], limit: 2 })).toEqual([second, first]);
+    // A cursor is the id of the last row seen; pages cover the list once, in order.
+    const answered = ["approved", "rejected", "expired"] as const;
+    expect(await ids({ order: "desc", status: answered, limit: 2, before: first })).toEqual([third]);
+    expect(await ids({ order: "desc", status: answered, limit: 2, before: third })).toEqual([]);
+    expect(await ids({ order: "desc", status: answered, before: "apr_nobody" })).toEqual([]);
+    await expect(db.approvals.list({ dotId: dot.id, before: first })).rejects.toThrow(/order/);
+  });
+
+  it("approvals: the newest of more than APPROVAL_LIST_LIMIT are listed when asked for, and no pending one uses a place of the answered", async () => {
+    const dot = await seedDot(db, "approval-newest-limit");
+    const ids: string[] = [];
+    for (let i = 0; i < APPROVAL_LIST_LIMIT + 3; i++) {
+      const approval_id = newId("apr");
+      ids.push(approval_id);
+      await db.approvals.insertRequested(dot.id, { approval_id, tool: "exec", permission: "computer.exec" as const, arguments: {}, reason: `ask ${i}` });
+    }
+    // The last three are answered; the others stay pending.
+    for (const id of ids.slice(-3)) await db.approvals.resolve(id, "approved", null);
+    const answered = await db.approvals.list({ dotId: dot.id, status: ["approved", "rejected", "expired"], order: "desc" });
+    expect(answered).toHaveLength(3);
+    expect(answered.map((a) => a.id).sort()).toEqual(ids.slice(-3).sort());
+    // The pending ones are listed by their status and do not take a place of the limit: all but the answered three, up to it.
+    expect(await db.approvals.list({ dotId: dot.id, status: "pending" })).toHaveLength(APPROVAL_LIST_LIMIT);
   });
 
   it("approvals: found by the end of their id, in lowercase, within one Dot, resolved ones included", async () => {

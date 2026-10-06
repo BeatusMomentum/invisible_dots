@@ -1,19 +1,22 @@
 import { MAX_EVENT_PAGE, type StoredEvent } from "@invisible-dots/shared/browser";
 import { describe, expect, it } from "vitest";
-import { readEventLog } from "../src/lib/event-log";
+import { readEventLog, readRecentEvents } from "../src/lib/event-log";
 
 function log(count: number): StoredEvent[] {
   return Array.from({ length: count }, (_, i) => ({ id: i + 1, dot_id: "d1", type: i % 3 === 0 ? "tool.called" : "agent.state", data: {}, source: "guest", guest_seq: i, created_at: "2026-03-10T12:00:00Z" }) as StoredEvent);
 }
 
 function clientOf(events: StoredEvent[]) {
-  const asked: Array<{ after?: number; limit?: number; types?: readonly string[] }> = [];
+  const asked: Array<{ after?: number; limit?: number; types?: readonly string[]; tools?: readonly string[]; order?: string }> = [];
   return {
     asked,
     // The control plane's filter: the types a caller names are kept in the database, the limit counts what is kept.
-    async events(_dot: string, options: { after?: number; limit?: number; types?: readonly string[] } = {}) {
+    async events(_dot: string, options: { after?: number; limit?: number; types?: readonly string[]; tools?: readonly string[]; order?: "asc" | "desc" } = {}) {
       asked.push(options);
-      return events.filter((e) => e.id > (options.after ?? 0) && (!options.types || options.types.includes(e.type))).slice(0, options.limit);
+      const kept = events.filter(
+        (e) => e.id > (options.after ?? 0) && (!options.types || options.types.includes(e.type)) && (!options.tools || e.type !== "tool.called" || options.tools.includes(String(e.data.tool))),
+      );
+      return (options.order === "desc" ? [...kept].reverse() : kept).slice(0, options.limit);
     },
   };
 }
@@ -53,5 +56,25 @@ describe("readEventLog", () => {
 
   it("returns an empty log as nothing", async () => {
     expect(await readEventLog(clientOf([]), "d1", { types: ["tool.called"] })).toEqual([]);
+  });
+});
+
+describe("readRecentEvents", () => {
+  it("asks once for the newest events of the types and tools, newest first, and gives them oldest first", async () => {
+    const events = log(5 * MAX_EVENT_PAGE).map((e) => ({ ...e, data: { tool: e.id % 2 === 0 ? "browser_click" : "exec" } }) as StoredEvent);
+    const client = clientOf(events);
+    const read = await readRecentEvents(client, "d1", { types: ["tool.called"], tools: ["browser_click"], count: 10 });
+    expect(client.asked).toEqual([{ limit: 10, types: ["tool.called"], tools: ["browser_click"], order: "desc" }]);
+    expect(read).toHaveLength(10);
+    expect(read.every((event) => event.data.tool === "browser_click")).toBe(true);
+    expect(read.map((event) => event.id)).toEqual([...read.map((event) => event.id)].sort((a, b) => a - b));
+    expect(read.at(-1)!.id).toBe(events.filter((e) => e.type === "tool.called" && e.data.tool === "browser_click").at(-1)!.id);
+  });
+
+  it("never asks for more than a page, and drops from what it got what the caller's predicate refuses", async () => {
+    const client = clientOf(log(30));
+    const read = await readRecentEvents(client, "d1", { types: ["tool.called", "agent.state"], keep: (event) => event.id % 2 === 0, count: 10 * MAX_EVENT_PAGE });
+    expect(client.asked.map((a) => a.limit)).toEqual([MAX_EVENT_PAGE]);
+    expect(read.map((event) => event.id)).toEqual(Array.from({ length: 15 }, (_, i) => 2 * (i + 1)));
   });
 });

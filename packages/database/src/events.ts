@@ -1,4 +1,4 @@
-import { MAX_EVENT_PAGE, USAGE_EVENT_TYPES, type EventSource, type OutboundEvent, type StoredEvent } from "@invisible-dots/shared";
+import { MAX_EVENT_PAGE, USAGE_EVENT_TYPES, type EventSource, type ListOrder, type OutboundEvent, type StoredEvent } from "@invisible-dots/shared";
 import { isoRequired, type Queryable } from "./rows.js";
 
 interface EventRow {
@@ -32,8 +32,12 @@ export interface EventQuery {
   types?: readonly string[];
   /** Only the events of this task (`data.task_id`). */
   taskId?: string;
-  /** At most this many, oldest first (default 500). */
+  /** Narrows the `tool.called` events to those of these tools (`data.tool`); events of other types are not affected. */
+  tools?: readonly string[];
+  /** At most this many (default 500). */
   limit?: number;
+  /** `asc` (the default) is the oldest first; `desc` the newest first, so a limit keeps the newest. */
+  order?: ListOrder;
 }
 
 /**
@@ -110,6 +114,11 @@ export class EventsRepository {
       params.push(query.taskId);
       taskFilter = `AND data->>'task_id' = $${params.length}`;
     }
+    let toolFilter = "";
+    if (query.tools !== undefined) {
+      params.push([...query.tools]);
+      toolFilter = `AND (type <> 'tool.called' OR data->>'tool' = ANY($${params.length}))`;
+    }
     params.push(limit);
     const { rows } = await this.q.query<EventRow>(
       `SELECT * FROM events
@@ -117,7 +126,8 @@ export class EventsRepository {
           AND id > $2
           AND ($3::text[] IS NULL OR type = ANY($3))
           ${taskFilter}
-        ORDER BY id
+          ${toolFilter}
+        ORDER BY id ${query.order === "desc" ? "DESC" : ""}
         LIMIT $${params.length}`,
       params,
     );

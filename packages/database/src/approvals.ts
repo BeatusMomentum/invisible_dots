@@ -1,4 +1,4 @@
-import { APPROVAL_LIST_LIMIT, type ApprovalRequestedData, type ApprovalStatus } from "@invisible-dots/shared";
+import { APPROVAL_LIST_LIMIT, type ApprovalRequestedData, type ApprovalStatus, type ListOrder } from "@invisible-dots/shared";
 import type { ApprovalRecord } from "@invisible-dots/shared";
 import { iso, isoRequired, type Queryable } from "./rows.js";
 
@@ -77,12 +77,31 @@ export class ApprovalsRepository {
     return rows.map(toRecord);
   }
 
-  async list(options: { status?: ApprovalStatus; dotId?: string; limit?: number } = {}): Promise<ApprovalRecord[]> {
+  /**
+   * The approvals of one status or of several, of one Dot or of all. `asc` (the default) is the oldest first, in the
+   * order they were asked. `desc` is the newest first by the time of the last change, the answer for an answered
+   * approval and the request for a pending one, so a limit keeps the newest and never hides a recent answer behind old
+   * ones. `before` (desc only) is the id of the last row of the previous page: the list goes on after it, and an id
+   * that is not an approval lists nothing.
+   */
+  async list(
+    options: { status?: ApprovalStatus | readonly ApprovalStatus[]; dotId?: string; limit?: number; order?: ListOrder; before?: string } = {},
+  ): Promise<ApprovalRecord[]> {
+    if (options.before !== undefined && options.order !== "desc") throw new Error("approvals: `before` pages a list in order desc");
+    const status = options.status === undefined ? null : typeof options.status === "string" ? [options.status] : [...options.status];
+    const filters = [status, options.dotId ?? null, options.limit ?? APPROVAL_LIST_LIMIT];
+    const where = "($1::text[] IS NULL OR status = ANY($1)) AND ($2::text IS NULL OR dot_id = $2)";
+    if (options.order !== "desc") {
+      const { rows } = await this.q.query<ApprovalRow>(`SELECT * FROM approvals WHERE ${where} ORDER BY created_at, id LIMIT $3`, filters);
+      return rows.map(toRecord);
+    }
+    const changed = "COALESCE(resolved_at, created_at)";
     const { rows } = await this.q.query<ApprovalRow>(
       `SELECT * FROM approvals
-        WHERE ($1::text IS NULL OR status = $1) AND ($2::text IS NULL OR dot_id = $2)
-        ORDER BY created_at, id LIMIT $3`,
-      [options.status ?? null, options.dotId ?? null, options.limit ?? APPROVAL_LIST_LIMIT],
+        WHERE ${where}
+          AND ($4::text IS NULL OR (${changed}, id) < (SELECT ${changed}, id FROM approvals WHERE id = $4))
+        ORDER BY ${changed} DESC, id DESC LIMIT $3`,
+      [...filters, options.before ?? null],
     );
     return rows.map(toRecord);
   }

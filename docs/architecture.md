@@ -1610,11 +1610,11 @@ DELETE /api/dots/:id/channels/:kind  unlink: the channel stops, its token (Whats
 POST   /api/dots/:id/channels/:kind/pairing   201 { code, deep_link, message, expires_at }: a one-time code, valid ten minutes; `message` is what to send the account to pair
 DELETE /api/dots/:id/channels/:kind/peers/:peer   revoke a paired person
 
-GET    /api/approvals                ?status=pending|approved|rejected|expired
+GET    /api/approvals                ?status=<a,b>&limit=&order=asc|desc&before=<id>   `status` is one or several of pending|approved|rejected|expired; oldest first by default, `order=desc` is the newest first by the time of the last change (the answer, for an answered one) and `before` (the id of the last row of the previous page, desc only) goes on from there
 POST   /api/approvals/:id/approve    body: { note?, always?: true }   `always` also sets the approval's permission to `allow` in the Dot's config in the same transaction (then pushed like a PATCH, `dot.updated` logged); `approval.resolved` carries `always: true`
 POST   /api/approvals/:id/reject     body: { note? }
 
-GET    /api/dots/:id/events          ?after=<id>&limit=&types=<a,b>&task_id=   `types` are event type names (an unknown one is a 400), `task_id` keeps the events whose `data.task_id` it is
+GET    /api/dots/:id/events          ?after=<id>&limit=&types=<a,b>&tools=<a,b>&task_id=&order=asc|desc   `types` are event type names (an unknown one is a 400), `tools` narrows `tool.called` to those tools (`data.tool`) and leaves other types alone, `task_id` keeps the events whose `data.task_id` it is, `order=desc` is the newest first so that a `limit` keeps the newest
 GET    /api/dots/:id/files/list      ?path=   { path, entries: [{ name, type, size, mtime }] }: a directory under /home/dot (home when omitted)
 GET    /api/dots/:id/files           ?path=   the bytes of a file under /home/dot, at most 16 MiB (413 `file_too_large`)
 GET    /api/dots/:id/automations     { automations: Automation[] }: the Dot's cron jobs (section 5.3); needs the computer running (409 `computer_stopped`)
@@ -1659,10 +1659,13 @@ total; the task's own `spent_usd` still shows what was heard of it. Like
 `/events`, it reads the history of a deleted Dot by id.
 
 `GET /api/dots/:id/events` filters in the database: `types` is a comma-separated
-list of type names, `task_id` matches `data->>'task_id'` (the one place the
+list of type names, `tools` a comma-separated list of tool names that narrows the
+`tool.called` events (the other types pass), `task_id` matches `data->>'task_id'` (the one place the
 contract puts the task, so the host's `task.created` and `task.cancelled` and
 the guest's `task.*`, `tool.called` and `approval.requested` of a task all
-match), and both combine with `after` and `limit`. A chat turn's events carry
+match), and all combine with `after` and `limit`; `order=desc` reads from the newest
+event back (the limit then counts the newest that the filters keep, and the page is
+newest first). A chat turn's events carry
 no task. Migration `0007_events_task.sql` adds the expression index the task
 filter reads. A type name no event has (`tool.calls`) is a 400, so a typo does not
 look like a quiet Dot.
@@ -1860,10 +1863,12 @@ stays in place as a receipt until the person leaves the page. Keys: `j` and `k`
 move between the cards, `a` allows the selected one once and `d` denies it; a
 destructive card is not allowed by a key, `a` moves the focus to its Allow once
 button, whose press is the confirmation. History lists every approval that is no
-longer waiting, the last answered first. `GET /api/approvals` answers with the
-oldest `APPROVAL_LIST_LIMIT` approvals (500), so when a list is that long the page
-says that the newest are not listed: a named gap, until the route can page or
-order. Channels needing a relink join "Needs you" with the channels page.
+longer waiting, the last answered first: it asks `GET /api/approvals` for the
+answered statuses with `order=desc` and `limit=50`, and "Show older answers" asks
+for the next page with `before` the last id it holds, so the newest answer is
+listed however many approvals the Dots have asked for. A live refresh reads the
+newest page again and keeps the older rows it reaches (when more was answered in
+between than a page holds, the older rows are dropped and read again on request). Channels needing a relink join "Needs you" with the channels page.
 
 The Computer page (`/dots/<id>/computer`) has four views, named in the address
 (`?view=screen|browser|files|usage`, Screen when it says nothing; the old
@@ -1881,8 +1886,12 @@ this now". Both come from the log, not from the identity routes, which know
 neither: the `target` of a `tool.called` of a browser tool starts with the
 identity's id (`<id>` or `<id>: <detail>`, the detail of `browser_navigate` being
 its URL as a command's URLs are shown), and a mark lasts 20 s after the call
-(`lib/browser-activity.ts`; the log is read once while a browser is open, then
-followed live). The page is the last successful navigation after the browser's
+(`lib/browser-activity.ts`; the newest 500 events of the browser tools' calls and
+of `browser.identity.launched|closed` are read once while a browser is open,
+newest first and filtered by `types` and `tools` in the database, so the Dot's
+other calls never cross the wire, then followed live and kept to the newest 500;
+a long run of calls to one browser can push another's last navigation out of that
+window, and that browser then shows no page). The page is the last successful navigation after the browser's
 last `launched` or `closed`; a page reached by a link is not known. The person
 creates (a name and an optional proxy, checked by `checkIdentityRequest`, the
 engine's own rule), closes (`POST .../close`, the profile stays, asked first when
