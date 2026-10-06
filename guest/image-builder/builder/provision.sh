@@ -91,6 +91,11 @@ install -d -o dot -g dot -m 2775 /home/dot/workspace
 install -d -o dot -g dot -m 0755 /home/dot/downloads /home/dot/documents /home/dot/memory
 install -d -o dotengine -g dotengine -m 0700 /home/dotengine
 install -d -o dot -g dot -m 0700 /home/dot/browsers
+# The home of each browser identity's MCP server (architecture 4.2). It is outside /home/dot on purpose: the
+# server saves the proxy of its browser, password included, in a session file under its home, and the
+# host's file routes read /home/dot and nothing else. dot owns it: the server runs as dot.
+install -d -o root -g root -m 0755 /var/lib/invisible-dots
+install -d -o dot -g dot -m 0700 /var/lib/invisible-dots/mcp
 
 step "recording installed versions"
 # shellcheck source=/dev/null

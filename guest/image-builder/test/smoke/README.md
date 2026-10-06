@@ -62,7 +62,10 @@ and the checks read that file. What they pin:
   none open, with no call made to find out;
 - a proxy password is in no approval, event, engine log or `dot-agentd` log, and on no process's command line (the
   relay is told the variable's name, `--env-from`, and reads the value from its own environment); `/health` counts the identities
-  and the open ones.
+  and the open ones;
+- a server's home is `/var/lib/invisible-dots/mcp/<identity_id>`, outside `/home/dot`, and a delete removes it; the stand-in
+  saves the proxy with its password in `sessions/<identity_id>.json` there, as the real server does, and the TCP port refuses
+  that file, its directory and a link to it with `403 outside_home`.
 
 The real server and a real Firefox are not run by this smoke: they are the browser smoke's (below).
 
@@ -95,6 +98,9 @@ engine, the GeoIP file) and at a launch (the egress address, for the timezone). 
   the server and Firefox and leaves the profile locked: the next launch works with that stale
   lock; what a page stored in the profile (localStorage) before the model's close, and before
   SIGTERM, which asks the browser to close, is still there after the next launch;
+- an identity with a proxy (a small authenticating forward proxy, `browser/proxy.py`): the real server saves the proxy with
+  its password in its session file under its home, no file under `/home/dot` holds the password, the TCP port refuses the
+  file (`403 outside_home`), the identity's directory has no MCP home, and a delete removes the home;
 - the key is in no file, process environment or log, the browser's included, and the identity's
   events are all in the stream.
 

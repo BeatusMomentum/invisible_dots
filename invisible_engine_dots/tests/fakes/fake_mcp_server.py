@@ -2,7 +2,9 @@
 
 It speaks real MCP through the SDK, answers with the sentences the real server uses, and writes what
 it was started with and every call it receives to `$INVISIBLE_MCP_HOME/record.jsonl`, so a test can
-assert on the process's environment, working directory and calls. Its behavior is steered by
+assert on the process's environment, working directory and calls. Like the real server, a successful
+`browser_open` writes down who `main` is (seed, proxy with its password, profile directory) in
+`$INVISIBLE_MCP_HOME/sessions/<$INVISIBLE_MCP_SESSION_ID>.json`, so a test can assert where that file is. Its behavior is steered by
 `$INVISIBLE_MCP_HOME/control.json`, because the engine hands the process an environment of its own
 and a test cannot add a variable to it.
 
@@ -88,6 +90,18 @@ async def _serve() -> None:
 
     record({"kind": "start", "pid": os.getpid(), "argv": sys.argv[1:], "env": dict(os.environ), "cwd": os.getcwd()})
 
+    def remember(role: str) -> None:
+        """What the real server's `Work.remember` saves: who the browser is, the proxy included."""
+        session_id = os.environ.get("INVISIBLE_MCP_SESSION_ID") or "default"
+        who = {
+            "seed": 1,
+            "proxy": os.environ.get("STEALTHFOX_PROXY"),
+            "profile_dir": os.environ.get("STEALTHFOX_PROFILE_DIR"),
+        }
+        saved = home / "sessions" / f"{session_id}.json"
+        saved.parent.mkdir(parents=True, exist_ok=True)
+        saved.write_bytes(json.dumps({"browsers": {role: who}, "focus": role}).encode("utf-8"))
+
     tools = {tool["name"]: tool for tool in _tools()}
     state: dict[str, Any] = {
         "download_left": int(control.get("download_answers", 0)),
@@ -119,6 +133,7 @@ async def _serve() -> None:
                     "Call browser_open again in a minute; nothing else needs doing."
                 )
             state["open"] = True
+            remember(role)
             return text(f"the {role} browser is open. seed: remembered by the profile")
         if name == "browser_close":
             if control.get("refuse_close"):

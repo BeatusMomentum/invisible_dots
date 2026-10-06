@@ -31,9 +31,16 @@ describe("protocol constants", () => {
     expect(identityPaths("shop-ab12cd")).toEqual({
       root: "/home/dot/browsers/shop-ab12cd",
       profile: "/home/dot/browsers/shop-ab12cd/profile",
-      mcp: "/home/dot/browsers/shop-ab12cd/mcp",
+      mcp: "/var/lib/invisible-dots/mcp/shop-ab12cd",
     });
-    expect(identityPaths("x", "/tmp/b/").profile).toBe("/tmp/b/x/profile");
+    expect(identityPaths("x", "/tmp/b/", "/tmp/m/").profile).toBe("/tmp/b/x/profile");
+    expect(identityPaths("x", "/tmp/b/", "/tmp/m/").mcp).toBe("/tmp/m/x");
+  });
+
+  it("keeps the home of an MCP server, which saves its proxy with the password, out of what the file routes read", () => {
+    const sessionFile = `${identityPaths("shop-ab12cd").mcp}/sessions/shop-ab12cd.json`;
+    expect(checkHomePath(sessionFile)).toEqual({ ok: false, problem: "path must be inside /home/dot" });
+    expect(checkHomePath(GUEST_PATHS.mcpHomes)).toEqual({ ok: false, problem: "path must be inside /home/dot" });
   });
 });
 

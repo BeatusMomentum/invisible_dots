@@ -77,9 +77,13 @@ MODEL_ROLES = ("summary",)
 # keeps the two equal, and packages/shared/test/events.test.ts pins the unit).
 TOOL_TARGET_MAX = 160
 
-# Where the browser identities of a Dot live, and the display their browsers draw on (GUEST_PATHS.browsers and
-# GUEST_DISPLAY in packages/shared protocol.ts; tests/repo/vendored-nanobot.test.ts keeps them equal).
+# Where the browser identities of a Dot live, where the MCP server of each keeps its own files (outside /home/dot on
+# purpose: the server saves the proxy of the browser it opened, password included, under its home, and the host's
+# file routes read /home/dot and nothing else), and the display their browsers draw on (GUEST_PATHS.browsers,
+# GUEST_PATHS.mcpHomes and GUEST_DISPLAY in packages/shared protocol.ts; tests/repo/vendored-nanobot.test.ts keeps
+# them equal).
 BROWSERS_DIR = "/home/dot/browsers"
+MCP_HOMES_DIR = "/var/lib/invisible-dots/mcp"
 GUEST_DISPLAY = ":0"
 
 # The environment of one identity's invisible-playwright-mcp process: each key is the name in ENV of

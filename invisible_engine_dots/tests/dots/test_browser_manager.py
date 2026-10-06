@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from fakes.browser_manager import mcp_home
 from fakes.fake_mcp_server import install_fake_mcp, read_record, write_control
 from fakes.local_computer import LocalComputer
 
@@ -29,7 +30,7 @@ from nanobot.dots.browser import (
     result_is_error,
     result_text,
 )
-from nanobot.dots.protocol import BROWSER_ENV
+from nanobot.dots.protocol import BROWSER_ENV, BROWSERS_DIR, MCP_HOMES_DIR
 from nanobot.dots.store import DotStore
 
 FAST = {"open_retry_initial_s": 0.01, "open_retry_max_s": 0.02}
@@ -42,6 +43,7 @@ class Env:
         self.tmp_path = tmp_path
         self.store = store
         self.browsers = tmp_path / "browsers"
+        self.mcp_homes = tmp_path / "mcp-homes"
         self.relay_log = tmp_path / "relay.jsonl"
         (tmp_path / "bin").mkdir()
         self.mcp_bin = install_fake_mcp(tmp_path / "bin")
@@ -57,6 +59,7 @@ class Env:
             "max_open": 3,
             "max_identities": 20,
             "browsers_dir": str(self.browsers),
+            "mcp_homes_dir": str(self.mcp_homes),
             **FAST,
             **options,
         }
@@ -65,7 +68,7 @@ class Env:
         return manager
 
     def mcp_home(self, identity_id: str) -> Path:
-        return self.browsers / identity_id / "mcp"
+        return mcp_home(self.tmp_path, identity_id)
 
     def record(self, identity_id: str) -> list[dict[str, Any]]:
         return read_record(self.mcp_home(identity_id))
@@ -107,7 +110,8 @@ async def test_creates_the_directories_and_the_row_and_follows_them_through_laun
 
     assert identity.id.startswith("shopping-account-") and len(identity.id) == len("shopping-account-") + 6
     root = env.browsers / identity.id
-    assert (root / "profile").is_dir() and (root / "mcp").is_dir()
+    assert (root / "profile").is_dir() and env.mcp_home(identity.id).is_dir()
+    assert not (root / "mcp").exists()
     assert not (root / "metadata.json").exists()
     assert (identity.name, identity.status, identity.last_used_at, identity.proxy) == (
         "Shopping Account",
@@ -173,9 +177,12 @@ async def test_delete_closes_the_session_removes_the_directory_and_the_row(env: 
     identity = await manager.create("temp")
     await manager.launch(identity.id)
 
+    assert env.mcp_home(identity.id).is_dir()
+
     await manager.delete(identity.id)
 
     assert not (env.browsers / identity.id).exists()
+    assert not env.mcp_home(identity.id).exists()
     assert manager.get(identity.id) is None
     assert not manager.is_open(identity.id)
     assert env.event_types()[-2:] == ["browser.identity.closed", "browser.identity.deleted"]
@@ -188,7 +195,7 @@ async def test_a_row_whose_directory_is_gone_can_still_be_deleted(env: Env) -> N
     manager = env.manager()
     identity = await manager.create("half")
     (env.browsers / identity.id / "profile").rmdir()
-    (env.browsers / identity.id / "mcp").rmdir()
+    env.mcp_home(identity.id).rmdir()
     (env.browsers / identity.id).rmdir()
 
     await manager.delete(identity.id)
@@ -249,7 +256,7 @@ async def test_starts_the_server_as_dot_through_the_relay_with_the_environment_o
     root = env.browsers / identity.id
     [start] = [entry for entry in env.record(identity.id) if entry["kind"] == "start"]
     environment = start["env"]
-    assert environment[BROWSER_ENV["MCP_HOME"]] == str(root / "mcp")
+    assert environment[BROWSER_ENV["MCP_HOME"]] == str(env.mcp_home(identity.id))
     assert environment[BROWSER_ENV["MCP_SESSION_ID"]] == identity.id
     assert environment[BROWSER_ENV["PROFILE_DIR"]] == str(root / "profile")
     assert environment[BROWSER_ENV["HEADLESS"]] == "0"
@@ -272,6 +279,28 @@ async def test_starts_the_server_as_dot_through_the_relay_with_the_environment_o
     assert mcp_runs[0]["env_from"] == [BROWSER_ENV["PROXY"]]
     assert "user:pw" not in json.dumps(mcp_runs[0])
     assert not mcp_runs[0]["tty"]
+
+
+def test_the_default_home_of_the_servers_is_outside_the_directory_the_host_reads() -> None:
+    # The host's file routes read /home/dot and nothing else (checkHomePath); the server saves the proxy of its
+    # browser, password included, under its home.
+    assert BROWSERS_DIR.startswith("/home/dot/")
+    assert not (MCP_HOMES_DIR + "/").startswith("/home/dot/")
+
+
+async def test_the_session_file_with_the_proxy_password_is_under_the_servers_home_and_nowhere_in_the_browsers_directory(
+    env: Env,
+) -> None:
+    manager = env.manager()
+    identity = await manager.create("shop", "http://user:pw-secret@proxy.test:8080")
+
+    await manager.launch(identity.id)
+
+    session_file = env.mcp_home(identity.id) / "sessions" / f"{identity.id}.json"
+    assert "pw-secret" in session_file.read_text(encoding="utf-8")
+    assert env.mcp_homes not in env.browsers.parents and env.browsers not in env.mcp_homes.parents
+    holders = [path for path in env.browsers.rglob("*") if path.is_file() and b"pw-secret" in path.read_bytes()]
+    assert holders == []
 
 
 async def test_leaves_the_proxy_variable_unset_for_an_identity_without_a_proxy_even_if_the_engine_has_one(

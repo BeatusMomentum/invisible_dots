@@ -4,6 +4,7 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import { GUEST_PATHS } from "@invisible-dots/shared";
 import { describe, expect, it } from "vitest";
 import { BUILDER_PYTHON_LOCK, defaultAssetRoot, GUEST_ASSETS, GUEST_UNITS, unitAsset } from "../src/assets.js";
 import { GUEST_PINS } from "../src/pins.js";
@@ -211,6 +212,13 @@ describe("guest units", () => {
     // No sudoers rule and no config directory are written: the engine's config lives in its database.
     expect(install).not.toMatch(/visudo|NOPASSWD|sudoers\.d|\/etc\/invisible-dots\/[a-z]+\//);
     expect(text("builder/user-data.yaml")).toMatch(/- name: dotengine\n[\s\S]*?groups: \[dot\]/);
+  });
+
+  it("the provisioner and install.sh make the home of the MCP servers, dot's, outside the home the host reads", () => {
+    expect(GUEST_PATHS.mcpHomes.startsWith(`${GUEST_PATHS.home}/`)).toBe(false);
+    for (const file of ["builder/provision.sh", "runtime/install.sh"]) {
+      expect(text(file), file).toContain(`install -d -o dot -g dot -m 0700 ${GUEST_PATHS.mcpHomes}\n`);
+    }
   });
 
   it("install.sh refuses a golden image without the engine's environment", () => {

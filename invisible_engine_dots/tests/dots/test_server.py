@@ -16,6 +16,7 @@ from typing import Any
 
 import aiohttp
 import pytest
+from fakes.browser_manager import mcp_home
 from fakes.dot_config import ALLOW_ALL, runtime_config_body
 from fakes.engine_harness import EngineHarness, user_message
 from fakes.fake_mcp_server import write_control
@@ -571,7 +572,7 @@ class TestBrowserIdentities:
         slow = (await api.call("POST", "/browser-identities", {"name": "slow"})).json
         other = (await api.call("POST", "/browser-identities", {"name": "other"})).json
         await api.h.browser.launch(other["id"])
-        write_control(api.h.tmp_path / "browsers" / slow["id"] / "mcp", download_answers=100_000)
+        write_control(mcp_home(api.h.tmp_path, slow["id"]), download_answers=100_000)
         launching = asyncio.create_task(api.h.browser.launch(slow["id"]))
         await asyncio.sleep(0.3)
 
@@ -654,7 +655,7 @@ class TestBrowserIdentityActions:
     async def test_a_frame_the_server_cannot_give_is_502_frame_failed(self, make_api: Callable[..., Any]) -> None:
         api: Api = await make_api()
         identity = (await api.call("POST", "/browser-identities", {"name": "blank"})).json
-        write_control(api.h.tmp_path / "browsers" / identity["id"] / "mcp", fail_watch=True)
+        write_control(mcp_home(api.h.tmp_path, identity["id"]), fail_watch=True)
         await api.h.browser.launch(identity["id"])
 
         failed = await api.call("GET", f"/browser-identities/{identity['id']}/frame")

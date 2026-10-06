@@ -101,6 +101,12 @@ export const GUEST_PATHS = {
   documents: "/home/dot/documents",
   memory: "/home/dot/memory",
   browsers: "/home/dot/browsers",
+  /**
+   * The home of each browser identity's MCP server (`<mcpHomes>/<identity_id>`). Outside `/home/dot` on purpose: the
+   * server saves the proxy of the browser it opened, password included, in a session file under its home, and the
+   * file routes of the host read `/home/dot` and nothing else (architecture sections 4.2 and 6).
+   */
+  mcpHomes: "/var/lib/invisible-dots/mcp",
   runDir: "/run/invisible-dots",
   agentdSocket: "/run/invisible-dots/agentd.sock",
   /** The engine's API, in a directory of the engine's user dot cannot write (architecture 4.2). */
@@ -146,13 +152,20 @@ export function checkHomePath(raw: unknown): HomePathCheck {
   return { ok: true, path: `/${kept.join("/")}` };
 }
 
-/** Paths of one browser identity under a browsers root (default `/home/dot/browsers`). */
-export function identityPaths(identityId: string, browsersDir: string = GUEST_PATHS.browsers) {
+/**
+ * Paths of one browser identity: its directory and profile under a browsers root (default `/home/dot/browsers`), and
+ * the home of its MCP server under an MCP homes root (default `/var/lib/invisible-dots/mcp`, outside the home).
+ */
+export function identityPaths(
+  identityId: string,
+  browsersDir: string = GUEST_PATHS.browsers,
+  mcpHomesDir: string = GUEST_PATHS.mcpHomes,
+) {
   const root = join(browsersDir, identityId);
   return {
     root,
     profile: join(root, "profile"),
-    mcp: join(root, "mcp"),
+    mcp: join(mcpHomesDir, identityId),
   };
 }
 

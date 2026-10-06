@@ -476,12 +476,22 @@ because cloud-init adds no group to a user that exists already.
   memory/                           long-term memory notes the Dot writes itself (files; section 8.6)
   browsers/<identity_id>/
     profile/                        the browser profile
-    mcp/                            INVISIBLE_MCP_HOME for that identity's server
+/var/lib/invisible-dots/            root, 0755
+  mcp/<identity_id>/                INVISIBLE_MCP_HOME for that identity's server (dot, 0700; outside /home/dot on purpose)
 /run/invisible-dots/                dot:dotengine 2750
   agentd.sock                       dot-agentd's local API for the engine (dot:dotengine 0660)
 /run/invisible-dots-agent/          dotengine:dot 2750
   agent.sock                        the engine's API, reached by dot-agentd's proxy (dotengine:dot 0660)
 ```
+
+The home of an identity's MCP server is not under `/home/dot` because the
+server saves who its browser is, the proxy with its password included, in
+`<home>/sessions/<identity_id>.json` on every `browser_open`: a file under
+`/home/dot` would be served by the host's file routes (section 9.6), which read
+`/home/dot` and nothing else, and dot-agentd's TCP listener refuses a path
+outside it (`403 outside_home`). The directory is made by the image's
+provisioner and by `install.sh` (dot owns it, the server runs as dot) and the
+`BrowserManager` makes and removes one subdirectory per identity.
 
 Each socket sits in a directory its server owns and only the other side may
 enter, setgid so the socket takes that side's group (`install.sh` writes both
@@ -832,7 +842,13 @@ ignores anything else.
   the password replaced. The browser's own process is the one exception, by
   decision: it runs as `dot` with the proxy in its environment, so the `dot`
   user, and the model through `exec`, can read the proxy of an identity whose
-  browser is open from that process's `/proc/<pid>/environ`. The proxy is never
+  browser is open from that process's `/proc/<pid>/environ`. The server's
+  session file is the second copy on disk, again by the server's own design
+  (it saves who its browser is, the proxy included, in
+  `/var/lib/invisible-dots/mcp/<identity_id>/sessions/<identity_id>.json`, as
+  `dot`, after every `browser_open`): the model's `exec` can read it, but it is
+  outside `/home/dot`, so the host's file routes (the API, the SDK, the Files
+  tab) can never serve it; deleting the identity removes it. The proxy is never
   on a command line, which every user of the VM can read: the engine tells the
   relay the variable's name (`--env-from`) and the relay reads the value from
   its own environment, which only `dotengine` can read.
@@ -842,7 +858,7 @@ ignores anything else.
   launch of the same profile gets the same one back.
 - Launching an identity starts one `invisible-playwright-mcp` process over
   stdio. Its environment is the allowlist of section 4.1 plus, through the MCP
-  server's documented settings: its home (`INVISIBLE_MCP_HOME=<identity>/mcp`)
+  server's documented settings: its home (`INVISIBLE_MCP_HOME=/var/lib/invisible-dots/mcp/<identity_id>`)
   and session id (`INVISIBLE_MCP_SESSION_ID=<identity_id>`), the identity's
   profile directory (`<identity>/profile`), headed mode, `DISPLAY=:0`, and the
   identity's proxy when it has one. The names of the browser layer's own
@@ -1342,7 +1358,8 @@ state.
   registry no turn sees.
 - Browser identities. `BrowserManager` (`nanobot/dots/browser.py`) owns the
   identities (their rows in `dots_browser_identities`, their directories under
-  `/home/dot/browsers`, made and removed as dot through the Computer) and one
+  `/home/dot/browsers` and their servers' homes under `/var/lib/invisible-dots/mcp`,
+  made and removed as dot through the Computer) and one
   `invisible-playwright-mcp` process per open identity, started as dot through
   `dot-agentd relay` with the environment of section 6 and nanobot's MCP client
   on a registry of its own. Launch, close and delete run one at a time; calls on
@@ -1698,7 +1715,8 @@ only the early answer; the rule is dot-agentd's: its TCP listener (the host's
 door) resolves every path to its real location with the symbolic links followed
 and refuses one that is not under home, `403 outside_home`, which passes through
 (a link under home to `/proc/<pid>/environ`, where the browser server runs as `dot`
-with the proxy password in its environment, shows nothing). The same goes for the
+with the proxy password in its environment, shows nothing; the session file the
+server saves the proxy in is not under home at all, section 4.2). The same goes for the
 `PUT` and the listing of that listener; a link that stays in home works, one that
 leaves it lists as `other`. The engine's socket is not confined. A read is one buffered answer of at most 16 MiB; a larger
 file is a `413 file_too_large` and the host stops reading it as soon as it passes

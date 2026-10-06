@@ -299,17 +299,7 @@ check "a PATCH of an automation whose body is not {enabled: bool} is a 400" "[ \
 # A link a page could make the Dot stage must not show the proxy password in /proc/<pid>/environ of the browser server
 # (it runs as dot), nor the Dot's token. The engine's socket takes any path dot can open.
 su -s /bin/bash dot -c 'printf hello > /home/dot/hello.txt; ln -s /home/dot/hello.txt /home/dot/hello-link; ln -s /proc/self/environ /home/dot/environ-link; ln -s /etc/invisible-dots/config.json /home/dot/config-link; ln -s /etc /home/dot/etc-link'
-files_get() { api -w '\n%{http_code}' --get --data-urlencode "path=$1" http://127.0.0.1:1024/v1/files; }
-files_list() { api -w '\n%{http_code}' --get --data-urlencode "path=$1" http://127.0.0.1:1024/v1/files/list; }
 reads_hello() { local out; out=$(files_get "$1"); [ "$(printf '%s\n' "$out" | tail -n 1)" = 200 ] && [ "$(printf '%s\n' "$out" | head -n 1)" = hello ]; }
-refuses_outside_home() {
-  local p out
-  for p in "$@"; do
-    out=$(files_get "$p")
-    [ "$(printf '%s\n' "$out" | tail -n 1)" = 403 ] || { echo "no 403 for $p: $out"; return 1; }
-    printf '%s\n' "$out" | grep -q '"error":"outside_home"' || { echo "not outside_home for $p: $out"; return 1; }
-  done
-}
 lists_links_as_other() {
   [ "$(files_list etc-link | tail -n 1)" = 403 ] || return 1
   files_list . | head -n 1 | jq -e '([.entries[]|select(.name=="environ-link" or .name=="etc-link" or .name=="config-link")|.type]|sort)==["other","other","other"] and ([.entries[]|select(.name=="hello-link")|.type]==["file"])' >/dev/null
@@ -350,7 +340,8 @@ check "the host pushes the allow-everything config once more (204 204)" "[ \"\$(
 # One stand-in process per open identity, started by dot-agentd as dot through the relay. Its record
 # ($INVISIBLE_MCP_HOME/record.jsonl) holds its environment, its working directory and every call it received.
 BROWSERS=/home/dot/browsers
-rec() { echo "$BROWSERS/$1/mcp/record.jsonl"; }
+MCP_HOMES=/var/lib/invisible-dots/mcp   # the stand-ins' homes, outside /home/dot (architecture 4.2)
+rec() { echo "$MCP_HOMES/$1/record.jsonl"; }
 fakes_running() { pgrep -u dot -f fake_mcp_server.py | wc -l; }
 wait_fakes() { # n: the stand-in's processes of dot number n within 10 s
   for _ in $(seq 1 50); do [ "$(fakes_running)" = "$1" ] && return 0; sleep 0.2; done
@@ -362,7 +353,7 @@ mcp_env_ok() { # id, expected STEALTHFOX_PROXY ("" for none)
   jq -s -e --arg id "$1" --arg proxy "$2" --arg key "$KEY" '
     [.[] | select(.kind == "start")][0] as $s | ($s.env) as $e
     | $s.cwd == ("/home/dot/browsers/" + $id)
-    and $e.INVISIBLE_MCP_HOME == ("/home/dot/browsers/" + $id + "/mcp")
+    and $e.INVISIBLE_MCP_HOME == ("/var/lib/invisible-dots/mcp/" + $id)
     and $e.INVISIBLE_MCP_SESSION_ID == $id
     and $e.STEALTHFOX_PROFILE_DIR == ("/home/dot/browsers/" + $id + "/profile")
     and $e.STEALTHFOX_HEADLESS == "0" and $e.DISPLAY == ":0" and $e.HOME == "/home/dot"
@@ -382,7 +373,7 @@ ID1=$(jq -r .id /tmp/bid-1.json)
 identity_one_ok() { jq -e --arg id "$1" '.id == $id and .name == "research" and .status == "available" and .profilePath == ("/home/dot/browsers/" + $id + "/profile") and (has("proxy") | not)' /tmp/bid-1.json >/dev/null; }
 check "POST /browser-identities answers 201 with a closed identity whose profile is under /home/dot/browsers" "[ '$CODE1' = 201 ] && identity_one_ok '$ID1'"
 check "browser.identity.created names it" "wait_event $STREAM '.type==\"browser.identity.created\" and .data.identity_id==\"$ID1\" and .data.name==\"research\"'"
-check "its profile and MCP directories exist, dot's" "[ \"\$(stat -c %U $BROWSERS/$ID1/profile $BROWSERS/$ID1/mcp | tr '\n' ' ')\" = 'dot dot ' ]"
+check "its profile and MCP home exist, dot's, the home outside /home/dot and not in the identity's directory" "[ \"\$(stat -c %U $BROWSERS/$ID1/profile $MCP_HOMES/$ID1 | tr '\n' ' ')\" = 'dot dot ' ] && [ ! -e $BROWSERS/$ID1/mcp ]"
 check "no browser runs for a closed identity, and /health counts one identity, none open" "[ \"\$(fakes_running)\" = 0 ] && health_is 1 0"
 
 check "the model launches the identity" "tool_turn 1 browser_identity_launch '{\"identity_id\":\"$ID1\"}'"
@@ -401,7 +392,7 @@ check "the screenshot reached the model's next request as an image part" "jq -s 
 ID2=$(new_identity second); ID3=$(new_identity third); ID4=$(new_identity lossy)
 check "three more identities exist; /health counts four, one open" "[ -n '$ID2' ] && [ -n '$ID3' ] && [ -n '$ID4' ] && health_is 4 1"
 # The fourth identity's server reports its browser gone after the first page action, as after a Firefox crash.
-printf '{"lose_browser_once":true}' > "$BROWSERS/$ID4/mcp/control.json"
+printf '{"lose_browser_once":true}' > "$MCP_HOMES/$ID4/control.json"
 check "the model launches the second and the third identity: three are open (max_open 3), three servers run as dot" "tool_turn 4 browser_identity_launch '{\"identity_id\":\"$ID2\"}' && tool_turn 5 browser_identity_launch '{\"identity_id\":\"$ID3\"}' && wait_fakes 3 && health_is 4 3"
 check "the model launches a fourth identity" "tool_turn 6 browser_identity_launch '{\"identity_id\":\"$ID4\"}'"
 check "the least recently used identity (the first) was closed: browser.identity.closed" "closed $ID1"
@@ -423,6 +414,15 @@ ID5=$(identity_named shopping)
 check "the identity is listed with its proxy redacted, and browser.identity.created names it" "[ \"\$(api $A/browser-identities/$ID5 | jq -r .proxy)\" = 'http://smoke-user:***@127.0.0.1:9' ] && wait_event $STREAM '.type==\"browser.identity.created\" and .data.identity_id==\"$ID5\" and .data.name==\"shopping\"'"
 check "the model launches it: the least recently used of the three open (the second) is closed" "tool_turn 9 browser_identity_launch '{\"identity_id\":\"$ID5\"}' && launched $ID5 && closed $ID2 && wait_fakes 3"
 check "its server got the proxy in STEALTHFOX_PROXY (dot's process, not the engine's), with the rest of the environment as before" "mcp_env_ok $ID5 '$PROXY'"
+# The real server writes who `main` is, the proxy with its password included, to <home>/sessions/<session id>.json
+# (the stand-in does the same). The host's file routes reach /home/dot only, and the home of the servers is outside it.
+SESSION_FILE=$MCP_HOMES/$ID5/sessions/$ID5.json
+session_file_refused() { # the TCP port, which the host's file routes are the client of, refuses every way to it
+  su -s /bin/bash dot -c "ln -s $MCP_HOMES /home/dot/mcp-link"
+  refuses_outside_home "$SESSION_FILE" "$MCP_HOMES/$ID5/sessions" "mcp-link/$ID5/sessions/$ID5.json" "../../var/lib/invisible-dots/mcp/$ID5/sessions/$ID5.json"
+}
+check "the session file the server saved holds the proxy with its password, and it is outside /home/dot" "[ \"\$(stat -c %U $SESSION_FILE)\" = dot ] && grep -q $PROXY_PASSWORD $SESSION_FILE && ! grep -rqs $PROXY_PASSWORD /home/dot"
+check "the TCP port refuses that file, its directory and a link to it (403 outside_home): no file route of the host can read the proxy" "session_file_refused"
 check "the proxy password is in no event, no engine log and no dot-agentd log after the launch either" "no_proxy_password_in $STREAM /tmp/engine.log /tmp/agentd.log"
 check "the proxy password is on no process's command line, which every user can read (the relay of the open browser names the variable and nothing else)" "cmdline_holds '--env-from STEALTHFOX_PROXY' && ! cmdline_holds \$PROXY_PASSWORD"
 
@@ -442,7 +442,7 @@ check "the delete is still pending after kill -9" "st | jq -e --arg id \"$APD\" 
 check "after the restart every identity is available, none open, and /health counts five and none" "api $A/browser-identities | jq -e '(.identities|length)==5 and all(.identities[]; .status==\"available\")' >/dev/null && health_is 5 0"
 check "approval.received approve accepted (202)" "[ \"\$(ev ap-del approval.received '{\"approval_id\":\"'$APD'\",\"decision\":\"approve\"}')\" = 202 ]"
 check "tool.called browser_identity_delete: ok, decision ask" "wait_event $STREAM '.type==\"tool.called\" and .data.tool==\"browser_identity_delete\" and .data.ok==true and .data.decision==\"ask\" and .data.target==\"$ID3\" and .seq > $LASTD'"
-check "browser.identity.deleted names it; its directory is gone and it is no longer listed" "wait_event $STREAM '.type==\"browser.identity.deleted\" and .data.identity_id==\"$ID3\" and .data.name==\"third\"' && [ ! -e $BROWSERS/$ID3 ] && [ \"\$(api -o /dev/null -w '%{http_code}' $A/browser-identities/$ID3)\" = 404 ] && health_is 4 0"
+check "browser.identity.deleted names it; its directory is gone and it is no longer listed" "wait_event $STREAM '.type==\"browser.identity.deleted\" and .data.identity_id==\"$ID3\" and .data.name==\"third\"' && [ ! -e $BROWSERS/$ID3 ] && [ ! -e $MCP_HOMES/$ID3 ] && [ \"\$(api -o /dev/null -w '%{http_code}' $A/browser-identities/$ID3)\" = 404 ] && health_is 4 0"
 
 # SIGTERM closes an open browser through browser_close before its server ends.
 check "the model launches an identity again after the restart" "tool_turn 10 browser_identity_launch '{\"identity_id\":\"$ID4\"}' && wait_fakes 1"
@@ -477,7 +477,7 @@ check "a server killed while idle closes its identity at once, with no call: clo
 check "the model launches it once more, so the delete below meets an open identity" "tool_turn 13 browser_identity_launch '{\"identity_id\":\"$ID5\"}' && wait_fakes 1 && health_is 4 1"
 check "DELETE /browser-identities/:id of the open identity answers 204" "[ \"\$(api -o /dev/null -w '%{http_code}' -X DELETE $A/browser-identities/$ID5)\" = 204 ]"
 check "its browser was closed, then it was deleted: closed, then deleted" "wait_event $STREAM '.type==\"browser.identity.deleted\" and .data.identity_id==\"$ID5\"' && grep '^data: ' $STREAM | sed 's/^data: //' | jq -s -e '[.[] | select(.data.identity_id==\"$ID5\" and (.type==\"browser.identity.closed\" or .type==\"browser.identity.deleted\")) | .type] | .[-2:] == [\"browser.identity.closed\",\"browser.identity.deleted\"]' >/dev/null"
-check "its server ended, its directory is gone, /health counts three identities, none open" "wait_fakes 0 && [ ! -e $BROWSERS/$ID5 ] && health_is 3 0"
+check "its server ended, its directory and its server's home (the session file with the proxy) are gone, /health counts three identities, none open" "wait_fakes 0 && [ ! -e $BROWSERS/$ID5 ] && [ ! -e $MCP_HOMES/$ID5 ] && health_is 3 0"
 check "the proxy password is in no event, no engine log and no dot-agentd log at the end of the browser checks" "no_proxy_password_in $STREAM /tmp/engine.log /tmp/agentd.log"
 echo '{"computer.exec":"allow"}' > /tmp/perms.json
 check "the host pushes the allow-everything config once more (204 204)" "[ \"\$(push)\" = '204 204' ]"

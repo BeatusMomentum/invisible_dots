@@ -92,6 +92,7 @@ sleep 3
 start_host_stream
 
 BROWSERS=/home/dot/browsers
+MCP_HOMES=/var/lib/invisible-dots/mcp   # the servers' homes, outside /home/dot (architecture 4.2)
 FIREFOX='\.cache/invisible-playwright/firefox-'   # what the cached engine's processes are called
 firefox_running() { pgrep -u dot -f "$FIREFOX" | wc -l; }
 # A process's environment is read by its own user only (the container's root has no CAP_SYS_PTRACE), so what runs
@@ -148,7 +149,7 @@ mcp_env_ok() {
   local env; env=$(su -s /bin/bash dot -c "tr '\\0' '\\n' < /proc/$MCP_PID/environ")
   [ "$(stat -c %U "/proc/$MCP_PID")" = dot ] \
     && grep -qx "STEALTHFOX_PROFILE_DIR=$BROWSERS/$ID/profile" <<< "$env" \
-    && grep -qx "INVISIBLE_MCP_HOME=$BROWSERS/$ID/mcp" <<< "$env" \
+    && grep -qx "INVISIBLE_MCP_HOME=$MCP_HOMES/$ID" <<< "$env" \
     && grep -qx 'STEALTHFOX_HEADLESS=0' <<< "$env" && grep -qx 'DISPLAY=:0' <<< "$env" && grep -qx 'HOME=/home/dot' <<< "$env" \
     && ! grep -q '^INVISIBLE_DOTS_\|^TIKTOKEN_CACHE_DIR=\|^OPENROUTER_API_KEY=' <<< "$env" \
     && ! grep -qF "$KEY" <<< "$env"
@@ -226,13 +227,39 @@ check "the restarted engine answers /health" "wait_health && wait_key"
 check "the model launches the identity again after SIGTERM" "tool_turn 26 browser_identity_launch '{\"identity_id\":\"$ID\"}' && launched_times $ID 4"
 check "what the page stored before SIGTERM is in the profile after it (SIGTERM made the browser close, so Firefox flushed)" "tool_turn 27 browser_navigate '{\"identity_id\":\"$ID\",\"url\":\"$PAGES/store.html?k=term\"}' && tool_turn 28 browser_read_text '{\"identity_id\":\"$ID\"}' && sent_to_model 'stored before: kept-term'"
 
+# --- an identity with a proxy: the real server saves the proxy, password included, and no file route of the host reaches it ---
+# The server writes who `main` is (seed, proxy, profile) to <home>/sessions/<session id>.json on every browser_open. That
+# file must not be under /home/dot, which is all the host's file routes read (architecture 4.2 and 6).
+PROXY_USER=smoke-user
+PROXY_PASSWORD=Pw7c1dSmokeReal
+install -m 0644 "$HERE/proxy.py" /tmp/proxy.py
+su -s /bin/bash nobody -c "python3 /tmp/proxy.py 8099 $PROXY_USER $PROXY_PASSWORD" > /tmp/proxy.log 2>&1 &
+proxy_up() { for _ in $(seq 1 20); do (exec 3<>/dev/tcp/127.0.0.1/8099) 2>/dev/null && return 0; sleep 0.5; done; return 1; }
+check "the authenticating proxy of the smoke is up" "proxy_up"
+CODE2=$(api -o /tmp/bid-2.json -w '%{http_code}' -X POST -H 'content-type: application/json' -d "{\"name\":\"proxied\",\"proxy\":\"http://$PROXY_USER:$PROXY_PASSWORD@127.0.0.1:8099\"}" "$A/browser-identities")
+ID2=$(jq -r .id /tmp/bid-2.json)
+check "POST /browser-identities with a proxy answers 201 and shows the proxy without its password" "[ '$CODE2' = 201 ] && jq -e '.proxy == \"http://$PROXY_USER:***@127.0.0.1:8099\"' /tmp/bid-2.json >/dev/null"
+check "the model launches it: the real server opens a browser behind the proxy" "tool_turn 40 browser_identity_launch '{\"identity_id\":\"$ID2\"}' && launched_times $ID2 1"
+SESSION_FILE=$MCP_HOMES/$ID2/sessions/$ID2.json
+check "the real server saved the proxy with its password in its session file, dot's, in its home outside /home/dot" "[ \"\$(stat -c %U $SESSION_FILE)\" = dot ] && grep -qF $PROXY_PASSWORD $SESSION_FILE && [ ! -e $BROWSERS/$ID2/mcp ]"
+check "no file under /home/dot holds the proxy password: the profile, the caches and the logs are clean too" "[ -z \"\$(grep -rlaF $PROXY_PASSWORD /home/dot 2>/dev/null)\" ]"
+session_file_refused() { # the TCP port, which the host's file routes are the client of, refuses every way to it
+  su -s /bin/bash dot -c "ln -s $MCP_HOMES /home/dot/mcp-link"
+  refuses_outside_home "$SESSION_FILE" "$MCP_HOMES/$ID2/sessions" "mcp-link/$ID2/sessions/$ID2.json" "../../var/lib/invisible-dots/mcp/$ID2/sessions/$ID2.json"
+}
+check "the TCP port refuses that file, its directory and a link to it (403 outside_home): no file route of the host answers with the proxy" "session_file_refused"
+check "the identity's directory, which the host can list, has its profile and no MCP home" "files_list browsers/$ID2 | head -n 1 | jq -e '([.entries[].name] | index(\"profile\") != null) and ([.entries[].name] | index(\"mcp\") == null)' >/dev/null"
+check "the model closes the proxied identity: Firefox and its server end" "tool_turn 42 browser_identity_close '{\"identity_id\":\"$ID2\"}' && closed $ID2 && { for _ in \$(seq 1 100); do [ -z \"\$(session_pids $ID2)\" ] && break; sleep 0.3; done; [ -z \"\$(session_pids $ID2)\" ]; }"
+check "the host deletes it: its directory and its server's home, with the session file, are gone" "[ \"\$(api -o /dev/null -w '%{http_code}' -X DELETE $A/browser-identities/$ID2)\" = 204 ] && [ ! -e $BROWSERS/$ID2 ] && [ ! -e $MCP_HOMES/$ID2 ]"
+
 # --- what the real browser must not have leaked ---
 sleep 3
 stop_host_stream
 ALL=/tmp/stream-all.txt
 timeout 5 curl "${H[@]}" -N "$A/events/stream?after=0" > "$ALL" 2>/dev/null
 check "seqs of the full stream are 1..N without a gap" "[ \"\$(seqs $ALL | tr '\n' ' ')\" = \"\$(seq 1 \$(seqs $ALL | wc -l) | tr '\n' ' ')\" ]"
-check "the identity's events are all there: created once, launched four times, closed twice (the model's close and SIGTERM; kill -9 reports nothing)" "grep '^data: ' $ALL | sed 's/^data: //' | jq -s -e '([.[] | select(.type==\"browser.identity.created\")] | length) == 1 and ([.[] | select(.type==\"browser.identity.launched\")] | length) == 4 and ([.[] | select(.type==\"browser.identity.closed\")] | length) == 2' >/dev/null"
+check "the identities' events are all there: created twice, launched five times, closed three times (the model's close, SIGTERM and the proxied identity's close; kill -9 reports nothing), deleted once" "grep '^data: ' $ALL | sed 's/^data: //' | jq -s -e '([.[] | select(.type==\"browser.identity.created\")] | length) == 2 and ([.[] | select(.type==\"browser.identity.launched\")] | length) == 5 and ([.[] | select(.type==\"browser.identity.closed\")] | length) == 3 and ([.[] | select(.type==\"browser.identity.deleted\")] | length) == 1' >/dev/null"
+check "the proxy password is in no event of the whole stream, no engine log and no dot-agentd log" "! grep -qF $PROXY_PASSWORD $ALL /tmp/engine.log /tmp/agentd.log"
 check "the key is in no file of the engine, the config or the Dot (the browser's profile and cache included)" "! grep -rIl \"$KEY\" /home/dotengine /etc/invisible-dots /home/dot /run/invisible-dots /run/invisible-dots-agent 2>/dev/null | grep -q ."
 check "the key is not in the environment of any process, Firefox's included" "! environ_holds \"$KEY\""
 check "the key is in no engine log and no dot-agentd log" "! grep -q \"$KEY\" /tmp/engine.log /tmp/agentd.log"
