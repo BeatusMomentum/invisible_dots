@@ -8,6 +8,7 @@ records every call it gets, so what a tool sends is read off the server and not 
 from __future__ import annotations
 
 import base64
+import inspect
 import json
 import re
 from collections.abc import AsyncIterator, Callable, Iterator
@@ -28,8 +29,8 @@ from nanobot.agent.tools.exec_session import ExecSessionManager
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.cron.service import CronService
 from nanobot.dots import store as s
-from nanobot.dots.browser import BrowserManager
-from nanobot.dots.browser_tools import PAGE_TOOLS
+from nanobot.dots.browser import REQUEST_TIMEOUT_S, BrowserManager
+from nanobot.dots.browser_tools import PAGE_TOOLS, TYPE_TEXT_MAX, TYPING_SECONDS_PER_KEY_MAX
 from nanobot.dots.images import IMAGES_HEADER, TurnImages, bind_turn_images, reset_turn_images
 from nanobot.dots.permissions import ToolDeps, build_registry
 from nanobot.dots.store import DotStore
@@ -181,6 +182,27 @@ async def test_the_model_cannot_choose_the_browser_or_add_an_argument_the_tool_d
     assert isinstance(support, ToolResult) and support.is_error and "browser" in support
     assert isinstance(seed, ToolResult) and seed.is_error
     assert env.page_calls(identity_id) == []
+
+
+async def test_the_longest_text_is_typed_and_a_longer_one_is_refused_before_it_reaches_the_server(env: Env) -> None:
+    identity_id = await env.open_identity()
+    longest = "x" * TYPE_TEXT_MAX
+
+    typed = await env.run("browser_type", identity_id=identity_id, selector="#q", text=longest)
+    refused = await env.run("browser_type", identity_id=identity_id, selector="#q", text=longest + "y")
+
+    assert not isinstance(typed, ToolResult) or not typed.is_error, typed
+    assert f"at most {TYPE_TEXT_MAX}" in said(refused)
+    # The server was asked once: a text it could still be typing when the call times out never reaches it.
+    assert env.page_calls(identity_id) == [("browser_type", {"selector": "#q", "text": longest, "browser": "main"})]
+
+
+def test_the_longest_text_is_typed_in_half_the_time_of_a_call_at_the_slowest_pace_and_one_more_key_is_not() -> None:
+    assert TYPE_TEXT_MAX * TYPING_SECONDS_PER_KEY_MAX <= REQUEST_TIMEOUT_S / 2
+    assert (TYPE_TEXT_MAX + 1) * TYPING_SECONDS_PER_KEY_MAX > REQUEST_TIMEOUT_S / 2
+    # The call waits that long: the one number is the manager's default, and the text is described to the model.
+    assert inspect.signature(BrowserManager).parameters["request_timeout_s"].default == REQUEST_TIMEOUT_S
+    assert str(TYPE_TEXT_MAX) in PAGE_TOOLS["browser_type"].properties["text"]["description"]
 
 
 # ---------------------------------------------------------------------------

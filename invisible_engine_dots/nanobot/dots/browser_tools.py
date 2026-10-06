@@ -24,6 +24,7 @@ from typing import Any
 
 from nanobot.agent.tools.base import Tool, ToolResult
 from nanobot.dots.browser import (
+    REQUEST_TIMEOUT_S,
     BrowserIdentity,
     BrowserIdentityError,
     BrowserManager,
@@ -43,6 +44,15 @@ _IDENTITY_ID = {
     "description": "The id of a browser identity, as browser_identity_list shows it.",
 }
 _OPEN_FIRST = " The identity must be open (browser_identity_launch)."
+
+# The MCP server fills a field by typing it, key by key, at the pace of the library's typing persona: 120 to 280 ms a
+# key (invisible-playwright, `_behaviour.py`). A call that outlives REQUEST_TIMEOUT_S is cancelled by the client while
+# the server goes on typing, the identity's lock is released, and the next call runs against a page that is still
+# being typed into. So a text may be as long as half of that time allows at the slowest pace, which leaves the other
+# half to the page, the pauses and the rest of the call. (The pin of the MCP is decisions.md's; a library that does
+# not type in the background would lift this.)
+TYPING_SECONDS_PER_KEY_MAX = 0.28
+TYPE_TEXT_MAX = int(REQUEST_TIMEOUT_S / 2 / TYPING_SECONDS_PER_KEY_MAX)
 
 
 @dataclass(frozen=True)
@@ -184,7 +194,14 @@ PAGE_TOOLS: Mapping[str, PageTool] = {
             "browser_type",
             "Fill the field a selector names with a text, replacing what it held." + _OPEN_FIRST,
             "browser_type",
-            {"selector": _SELECTOR, "text": {"type": "string", "description": "The text to put in the field."}},
+            {
+                "selector": _SELECTOR,
+                "text": {
+                    "type": "string",
+                    "maxLength": TYPE_TEXT_MAX,
+                    "description": f"The text to put in the field, at most {TYPE_TEXT_MAX} characters: it is typed key by key, as a person types, which takes time.",
+                },
+            },
             ("selector", "text"),
             _taken("selector", "text"),
         ),

@@ -1169,7 +1169,7 @@ does not know.
 | `browser_screenshot` | `browser.read` | takes a screenshot of the page and shows it to the model: `identity_id` |
 | `browser_click` | `browser.act` | clicks the element a selector names: `identity_id, selector` |
 | `browser_click_at` | `browser.act` | clicks a point of the viewport: `identity_id, x, y` |
-| `browser_type` | `browser.act` | fills a field, replacing what it held: `identity_id, selector, text` |
+| `browser_type` | `browser.act` | fills a field, replacing what it held: `identity_id, selector, text` (at most 214 characters: the MCP server types a field key by key, 120 to 280 ms a key, in the background of the call, so a text longer than half the 120 s a call waits at the slowest pace could still be typed while the next call runs; a longer one is refused by the schema before it reaches the server) |
 | `browser_press_key` | `browser.act` | presses a key or a shortcut: `identity_id, key` |
 | `browser_select_option` | `browser.act` | chooses an option of a select element by its visible label or its value, as the server does: `identity_id, selector, value` |
 | `browser_scroll` | `browser.act` | scrolls one screen: `identity_id, direction` (`up` is PageUp, `down` is PageDown) |

@@ -97,6 +97,10 @@ _BROWSER_GONE = "the MCP server reports its browser gone (Firefox crashed or its
 _DATA_URL = "data:"
 
 CLOSE_TIMEOUT_S = 30.0
+# How long a call of a browser tool waits for its answer. The call is cancelled on the client after that, and the MCP
+# server may go on with it (a long typing), so what a tool lets a call ask for must finish well inside it
+# (`browser_tools.TYPE_TEXT_MAX`).
+REQUEST_TIMEOUT_S = 120
 # How long a frame waits for the identity's call in flight before it gives up with `busy`.
 FRAME_WAIT_S = 5.0
 
@@ -220,7 +224,7 @@ class BrowserManager:
         open_deadline_s: float = 900.0,
         open_retry_initial_s: float = 2.0,
         open_retry_max_s: float = 30.0,
-        request_timeout_s: int = 120,
+        request_timeout_s: int = REQUEST_TIMEOUT_S,
         close_timeout_s: float = CLOSE_TIMEOUT_S,
         frame_wait_s: float = FRAME_WAIT_S,
     ) -> None:
