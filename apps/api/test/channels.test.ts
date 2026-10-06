@@ -46,7 +46,7 @@ describe.each(testAdapters())("channel routes of the control-plane API (%s)", { 
       types: [new TelegramChannelType({ apiRoot: bots.apiRoot, pollSeconds: 30 })],
       backoff: { initialMs: 1, maxMs: 5, jitter: 0 },
     });
-    app = buildServer({ scheduler, channels: hub, token: API_TOKEN });
+    app = buildServer({ scheduler, channels: hub, doctor: async () => [], token: API_TOKEN });
     await scheduler.start();
     await hub.start();
     await app.listen({ host: "127.0.0.1", port: 0 });

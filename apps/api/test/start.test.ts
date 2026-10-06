@@ -13,6 +13,7 @@ import { FakeDriver, waitFor } from "@invisible-dots/scheduler/testing";
 import { InvisibleDotsClient } from "@invisible-dots/sdk";
 import { newId, parseDotConfig, permissionBitsEnforced } from "@invisible-dots/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { healthyDoctor } from "../../vm-manager/test/doctor-fakes.js";
 import { startServer, STOP_SIGNALS, untilStopSignal, type RunningServer, type StartServerOptions } from "../src/index.js";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {} };
@@ -103,6 +104,25 @@ describe("startServer on an empty INVISIBLE_DOTS_HOME", { timeout: 120_000 }, ()
 
     await stopped(server);
     await expect(stat(server.paths.serverLockPath)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("serves the host report: the machine's rows, this home's images, and the OpenRouter row from its own Scheduler", async () => {
+    // The machine (QEMU, the accelerator, the disk) is faked; the images, the home and the key are this server's own.
+    const { findQemu, run, accelerator, acceleratorAccess, freeSpace } = healthyDoctor().deps;
+    const server = await start({ doctor: { findQemu, run, accelerator, acceleratorAccess, freeSpace } });
+    const api = new InvisibleDotsClient({ baseUrl: server.url, token: server.token });
+
+    const before = await api.doctor();
+    expect(before.checks.map((c) => c.id)).toEqual(["node", "qemu", "qemu-img", "accelerator", "accelerator-probe", "disk", "golden-image", "runtime-image", "openrouter"]);
+    expect(before.ok).toBe(false);
+    const row = (id: string) => before.checks.find((c) => c.id === id);
+    expect(row("qemu")?.status).toBe("ok");
+    expect(row("golden-image")).toMatchObject({ status: "missing", detail: `none in ${server.paths.imagesDir}`, fix: "invisible-dots image build" });
+    expect(row("runtime-image")?.status).toBe("missing");
+    expect(row("openrouter")).toMatchObject({ status: "missing", detail: "no key stored", fix: "invisible-dots secret openrouter" });
+
+    await api.setOpenRouterKey("sk-or-first");
+    expect((await api.doctor()).checks.find((c) => c.id === "openrouter")).toEqual({ id: "openrouter", label: "OpenRouter key", status: "ok", detail: "stored" });
   });
 
   it("a restart keeps the token, the key and the data", async () => {

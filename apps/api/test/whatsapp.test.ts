@@ -52,10 +52,10 @@ describe.each(testAdapters())("WhatsApp routes of the control-plane API (%s)", {
       types: [new FakeChannelType(), new WhatsAppChannelType({ connector: () => connector, pauseMs: () => 0 })],
       backoff: { initialMs: 1, maxMs: 5, jitter: 0 },
     });
-    app = buildServer({ scheduler, channels: hub, token: API_TOKEN, heartbeatMs: 50 });
+    app = buildServer({ scheduler, channels: hub, doctor: async () => [], token: API_TOKEN, heartbeatMs: 50 });
     // The server as it is when WhatsApp was not asked for: Telegram only. It never starts a binding.
     plainHub = new ChannelHub({ db, host: scheduler, types: [new FakeChannelType()] });
-    plain = buildServer({ scheduler, channels: plainHub, token: API_TOKEN });
+    plain = buildServer({ scheduler, channels: plainHub, doctor: async () => [], token: API_TOKEN });
     await scheduler.start();
     await hub.start();
     await app.listen({ host: "127.0.0.1", port: 0 });

@@ -14,8 +14,9 @@ import { parseArgs } from "node:util";
 import QRCode from "qrcode";
 import { ApiError, type DotSummary, type InvisibleDotsClient, type TaskRecord } from "@invisible-dots/sdk";
 import { CHANNEL_KINDS, ENV, type ChannelKind, type ChannelRecord, type StoredEvent } from "@invisible-dots/shared";
+import { STORE_OPENROUTER_KEY } from "@invisible-dots/vm-manager";
 import { apiUrl, AuthSetupError, connectApi, DEFAULT_URL } from "./api-client.js";
-import { addTelegramChannel, STORE_OPENROUTER_KEY } from "./commands.js";
+import { addTelegramChannel } from "./commands.js";
 import { EXIT } from "./exit.js";
 
 export { DEFAULT_URL } from "./api-client.js";

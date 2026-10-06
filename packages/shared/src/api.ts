@@ -214,6 +214,40 @@ export interface HealthResponse {
   openrouter_configured: boolean;
 }
 
+/**
+ * One row of the host report (`GET /api/doctor` and `invisible-dots doctor`, architecture section 11.1):
+ * - ok: present and working.
+ * - missing: absent; `fix` installs or creates it.
+ * - failed: present but not working, or the check itself could not tell.
+ */
+export type DoctorStatus = "ok" | "missing" | "failed";
+
+export type DoctorCheckId =
+  | "node"
+  | "qemu"
+  | "qemu-img"
+  | "accelerator"
+  | "accelerator-probe"
+  | "disk"
+  | "golden-image"
+  | "runtime-image"
+  | "openrouter";
+
+export interface DoctorCheck {
+  id: DoctorCheckId;
+  label: string;
+  status: DoctorStatus;
+  detail: string;
+  /** The command or action that fixes a check that is not ok. */
+  fix?: string;
+}
+
+/** Every check in the contract's order; `ok` is true only when every check is ok. */
+export interface DoctorAnswer {
+  ok: boolean;
+  checks: DoctorCheck[];
+}
+
 export interface DotsAnswer {
   dots: DotSummary[];
 }

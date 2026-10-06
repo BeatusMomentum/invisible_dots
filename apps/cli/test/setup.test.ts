@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { CheckResult, DoctorDeps } from "../src/doctor/checks.js";
+import type { DoctorCheck } from "@invisible-dots/shared";
+import type { DoctorDeps } from "@invisible-dots/vm-manager";
 import { EXIT } from "../src/exit.js";
 import type { InstallDeps, InstallOutcome, InstallRequest } from "../src/setup/install.js";
 import { nextSteps, runSetup } from "../src/setup/setup.js";
-import { FOUND, healthyDoctor } from "./fakes.js";
+import { FOUND, healthyDoctor } from "../../vm-manager/test/doctor-fakes.js";
 
 const MISSING_QEMU = async () => ({ searched: ["PATH"] });
-const FEATURE_OFF: CheckResult = { id: "accelerator", label: "accelerator", status: "missing", detail: "the HypervisorPlatform feature is disabled", fix: "invisible-dots setup" };
+const FEATURE_OFF: DoctorCheck = { id: "accelerator", label: "accelerator", status: "missing", detail: "the HypervisorPlatform feature is disabled", fix: "invisible-dots setup" };
 
 /**
  * A setup run against fakes. `install` stands in for the platform module:
@@ -132,7 +133,7 @@ describe("setup", () => {
   });
 
   it("names the server and the key as the next steps while they are missing", () => {
-    const missingKey: CheckResult[] = [
+    const missingKey: DoctorCheck[] = [
       { id: "golden-image", label: "golden image", status: "ok", detail: "" },
       { id: "runtime-image", label: "runtime ISO", status: "ok", detail: "" },
       { id: "openrouter", label: "OpenRouter key", status: "failed", detail: "" },

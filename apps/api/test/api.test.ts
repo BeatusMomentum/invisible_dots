@@ -6,11 +6,17 @@ import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-
 import { Scheduler } from "@invisible-dots/scheduler";
 import { FakeDriver, ManualClock, waitFor, waitUntilSettledReady } from "@invisible-dots/scheduler/testing";
 import { ApiError, InvisibleDotsClient } from "@invisible-dots/sdk";
-import { OPENROUTER_KEY_RULE, type StoredEvent } from "@invisible-dots/shared";
+import { OPENROUTER_KEY_RULE, type DoctorCheck, type StoredEvent } from "@invisible-dots/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildServer, type FastifyInstance } from "../src/index.js";
 
 const TOKEN = "test-token-0123456789abcdef";
+
+/** What the host report answers on this fake host: one row that is not ok, with the command that fixes it. */
+const REPORT: DoctorCheck[] = [
+  { id: "node", label: "Node", status: "ok", detail: "24.19.0" },
+  { id: "qemu", label: "QEMU", status: "missing", detail: "qemu-system-x86_64 not found", fix: "invisible-dots setup" },
+];
 
 const yaml = (name: string, idle = "15m") =>
   `name: ${name}\ngoal: watch fares\nmodel:\n  provider: openrouter\n  id: test/model\ncomputer:\n  idle_timeout: ${idle}\n`;
@@ -39,7 +45,7 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
       dispatcher: { retryDelayMs: 0 },
     });
     channels = new ChannelHub({ db, host: scheduler, types: [new FakeChannelType()] });
-    app = buildServer({ scheduler, channels, token: TOKEN, heartbeatMs: 50 });
+    app = buildServer({ scheduler, channels, doctor: async () => REPORT, token: TOKEN, heartbeatMs: 50 });
     await app.listen({ host: "127.0.0.1", port: 0 });
     base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
     api = new InvisibleDotsClient({ baseUrl: base, token: TOKEN });
@@ -70,6 +76,11 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
       status: 401,
       code: "unauthorized",
     });
+  });
+
+  it("doctor: the host report with its verdict, only with the token", async () => {
+    expect((await fetch(`${base}/api/doctor`)).status).toBe(401);
+    expect(await api.doctor()).toEqual({ ok: false, checks: REPORT });
   });
 
   it("health, unknown routes and malformed bodies answer {error, message}", async () => {

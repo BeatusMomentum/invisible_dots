@@ -17,6 +17,7 @@
     "@invisible-dots/channels": "0.0.0",
     "@invisible-dots/database": "0.0.0",
     "@invisible-dots/events": "0.0.0",
+    "@invisible-dots/image-builder": "0.0.0",
     "@invisible-dots/scheduler": "0.0.0",
     "@invisible-dots/sdk": "0.0.0",
     "@invisible-dots/vm-manager": "0.0.0"

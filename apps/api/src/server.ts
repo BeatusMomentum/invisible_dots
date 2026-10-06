@@ -13,6 +13,7 @@ import type {
   ChannelPairingAnswer,
   ChannelRecord,
   ChannelsAnswer,
+  DoctorAnswer,
   DotsAnswer,
   EventsAnswer,
   HealthResponse,
@@ -21,7 +22,8 @@ import type {
   TasksAnswer,
   UsageAnswer,
 } from "@invisible-dots/sdk/types";
-import { APPROVAL_STATUSES, CHANNEL_KINDS, type ApprovalStatus, type ChannelKind } from "@invisible-dots/shared";
+import { APPROVAL_STATUSES, CHANNEL_KINDS, type ApprovalStatus, type ChannelKind, type DoctorCheck } from "@invisible-dots/shared";
+import { doctorAnswer } from "@invisible-dots/vm-manager";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 
 export const API_VERSION = "0.1.0";
@@ -32,6 +34,8 @@ export const SSE_HEARTBEAT_MS = 15_000;
 export interface ServerOptions {
   scheduler: Scheduler;
   channels: ChannelHub;
+  /** Runs the host checks of architecture section 11.1 on the machine this server runs on; `startServer` binds the real ones. */
+  doctor(): Promise<DoctorCheck[]>;
   token: string;
   logger?: Logger;
   heartbeatMs?: number;
@@ -156,6 +160,9 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     const { database, openrouter_configured } = await scheduler.health();
     return { status: "ok", database, version: API_VERSION, openrouter_configured };
   });
+
+  // The host report `invisible-dots doctor` prints: what is missing for a Dot to run, and the command that fixes it. It runs QEMU's accelerator probe, so it takes a moment.
+  app.get("/api/doctor", async (): Promise<DoctorAnswer> => doctorAnswer(await options.doctor()));
 
   // Dots
 

@@ -8,8 +8,10 @@ import { ChannelHub, TelegramChannelType, WhatsAppChannelType, type ChannelType 
 import type { Database } from "@invisible-dots/database";
 import { errorMessage, prefixedStderrLogger, Scheduler, type ComputerDriver, type Logger, type SchedulerOptions } from "@invisible-dots/scheduler";
 import { ensureDir, ENV, hostPaths, type HostPaths } from "@invisible-dots/shared";
+import { hostDoctorDeps, openRouterCheck, runDoctor, type DoctorDeps } from "@invisible-dots/vm-manager";
 import { loadOrCreateApiToken, loadOrGenerateMasterKey, parseListen, saveMasterKey, type ListenAddress } from "./config.js";
 import { assertNothingEncrypted, openControlPlaneDatabase } from "./database.js";
+import { imageChecks } from "./doctor.js";
 import { acquireServerLock } from "./lock.js";
 import { API_VERSION, buildServer, type FastifyInstance } from "./server.js";
 import { createVmDriver } from "./vm-driver.js";
@@ -22,6 +24,8 @@ export interface StartServerOptions {
   logger?: Logger;
   /** The VM layer; default the real one over QEMU. Tests pass a fake. */
   driver?: ComputerDriver;
+  /** Replaces single dependencies of the host report (QEMU discovery, the runner, the disk, the images); the OpenRouter row always asks the Scheduler. Tests pass fakes. */
+  doctor?: Partial<DoctorDeps>;
   /** Passed through to the Scheduler (timers, lifecycle and dispatcher tuning). */
   scheduler?: Omit<SchedulerOptions, "db" | "driver" | "logger">;
   /** The kinds of messaging channel this server can run; default Telegram, and WhatsApp when INVISIBLE_DOTS_WHATSAPP=1. Tests pass fakes. */
@@ -108,7 +112,16 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
       logger: options.logger ?? prefixedStderrLogger("channels", debug),
     });
     cleanup.push(() => channels.close());
-    const app = buildServer({ scheduler, channels, token: token.value, logger });
+    const doctorDeps: DoctorDeps = {
+      ...hostDoctorDeps({
+        env,
+        home: paths.home,
+        images: () => imageChecks(paths),
+        openRouterKey: async () => openRouterCheck((await scheduler.health()).openrouter_configured),
+      }),
+      ...options.doctor,
+    };
+    const app = buildServer({ scheduler, channels, doctor: () => runDoctor(doctorDeps), token: token.value, logger });
     cleanup.push(() => app.close());
 
     await scheduler.start();

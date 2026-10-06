@@ -32,8 +32,8 @@ test covers. The complete list today:
 | what | Linux | Windows | where |
 |---|---|---|---|
 | QEMU accelerator | `-accel kvm` | `-accel whpx` | `apps/vm-manager/src/host.ts` `accelerator()` |
-| how `invisible-dots doctor` reads the accelerator before probing it | `/dev/kvm` opens read-write | the `HypervisorPlatform` feature state through `Get-CimInstance` | `apps/cli/src/setup/install.ts` `checkAcceleratorAccess()` |
-| how `invisible-dots setup` installs QEMU and enables the accelerator | `sudo apt-get install` (or the distribution's equivalent, printed) | one UAC prompt: enables the Windows Hypervisor Platform feature and runs the official QEMU installer silently | `apps/cli/src/setup/install.ts` `installHostPrerequisites()`, given the host's platform by `apps/cli/src/host.ts` |
+| how `doctor` (the CLI's and `GET /api/doctor`'s) reads the accelerator before probing it | `/dev/kvm` opens read-write | the `HypervisorPlatform` feature state through `Get-CimInstance` | `apps/vm-manager/src/accelerator-access.ts` `checkAcceleratorAccess()`, given the host's platform by `hostAccessDeps()` in the same file |
+| how `invisible-dots setup` installs QEMU and enables the accelerator | `sudo apt-get install` (or the distribution's equivalent, printed) | one UAC prompt: enables the Windows Hypervisor Platform feature and runs the official QEMU installer silently | `apps/cli/src/setup/install.ts` `installHostPrerequisites()`, given the host's platform by `hostAccessDeps()` of `apps/vm-manager/src/accelerator-access.ts` |
 | `setup` run as root | refused: it would check `/dev/kvm` as root and add root to the `kvm` group, not the person who runs the server; it calls `sudo` itself | there is no root; setup always runs as the normal user and elevates its one step | `apps/cli/src/setup/install.ts` `setupRefusal()` |
 | a file or directory private to the user (`config/`, `master.key`, `api.token`, `db/`, the data directory) | mode `0600` / `0700` | an ACL that no account but the current user can use, inheritance removed (`icacls`), because Windows ignores the mode bits and a directory under a drive root inherits "Authenticated Users: Modify"; SYSTEM and the local Administrators may stay, as root does on Linux, since some machines grant them explicitly on every new directory | `packages/shared/src/files.ts` `permissionBitsEnforced()` and `restrictToOwner()` |
 
@@ -80,7 +80,7 @@ image and an arm64 browser build, which are not wired.
 apps/
   api/             control-plane HTTP API + SSE, and the control plane composed as one process (`invisible-dots server` runs it)
   scheduler/       task dispatcher, wake on work, sleep on idle
-  vm-manager/      QEMU driver: overlays, seed and runtime ISOs, QEMU argv, port forwards, the guest client, the host's one process runner
+  vm-manager/      QEMU driver: overlays, seed and runtime ISOs, QEMU argv, port forwards, the guest client, the host's one process runner, the doctor report (section 11.1)
   web/             Next.js web client
   cli/             `invisible-dots`: setup, doctor, image build, server, and the API client commands
 packages/
@@ -1521,11 +1521,17 @@ GET    /api/dots/:id/usage           ?since=<ISO 8601 timestamp>   { dot_id, sin
 GET    /api/stream                   SSE: every event, ?dot_id= to filter
 PUT    /api/secrets/openrouter       body: { value, dot_id? }
 GET    /api/health
+GET    /api/doctor                   { ok, checks: [{ id, label, status: ok|missing|failed, detail, fix? }] }: the host report of section 11.1, run on the machine the server runs on
 ```
 
 `GET /api/health` answers `{ status: "ok", database: "ok", version,
 openrouter_configured }`; the last field is whether a global OpenRouter key is
 stored, which `invisible-dots doctor` reports.
+
+`GET /api/doctor` answers the report of section 11.1 as the server's own host
+sees it, the same rows in the same order as `invisible-dots doctor --json`
+(`{ ok, checks }`, `ok` true only when every check is). It runs QEMU's
+accelerator probe, so it takes a moment and it is not polled.
 
 `GET /api/dots/:id/usage` answers the model spend the Dot's guest reported, in
 USD, since `since` (the first event when omitted; a malformed `since` is a 400).
@@ -1883,6 +1889,12 @@ run on, the accelerator rows say so, and the report still prints.
 - The OpenRouter key is read from the running server's `GET /api/health`,
   because only the server may open the embedded database (section 9.1). While
   the server is down that row is `failed`, with the command that starts it.
+  Inside the server (`GET /api/doctor`) the row asks the Scheduler directly.
+- One code runs the report in both places: `runDoctor` in
+  `apps/vm-manager/src/doctor.ts`, over the real machine's
+  `hostDoctorDeps()` and the images' rows of `apps/api/src/doctor.ts`; the CLI
+  only renders it (`apps/cli/src/doctor/render.ts`). The wire types
+  (`DoctorCheck`, `DoctorAnswer`) are in `packages/shared/src/api.ts`.
 
 ### 11.2 setup
 

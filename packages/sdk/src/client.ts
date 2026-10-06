@@ -14,6 +14,7 @@ import type {
   ComputerAnswer,
   ConversationMessage,
   CreateTaskRequest,
+  DoctorAnswer,
   DotRecord,
   DotsAnswer,
   DotSummary,
@@ -131,6 +132,11 @@ export class InvisibleDotsClient {
 
   health(): Promise<HealthResponse> {
     return this.#json("GET", "/api/health");
+  }
+
+  /** The host checks of `invisible-dots doctor`, run on the machine the server runs on; it takes a moment (the accelerator probe). */
+  doctor(): Promise<DoctorAnswer> {
+    return this.#json("GET", "/api/doctor");
   }
 
   setOpenRouterKey(value: string, dotId?: string): Promise<{ pushed: number }> {
