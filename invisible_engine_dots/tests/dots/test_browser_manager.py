@@ -26,6 +26,7 @@ from nanobot.dots import store as dots_store
 from nanobot.dots.browser import (
     BrowserIdentityError,
     BrowserManager,
+    _scrub,
     result_is_error,
     result_text,
 )
@@ -354,19 +355,49 @@ async def test_what_a_page_tool_returns_of_the_proxy_is_redacted_in_results_and_
         assert "s3cret" not in result_text(result)
 
 
-# The credentials of this proxy are written percent-encoded, with a lowercase escape, so the password as
-# written, decoded and encoded again are three different strings.
+# The credentials of the first proxy are written percent-encoded, with a lowercase escape, so the password as
+# written, decoded and encoded again are different strings. The second one has a quote, a backslash and a slash
+# in its password: its repr, its JSON-escaped text and `quote` with the default `safe="/"` differ from those too.
 ENCODED_PROXY = "http://us%40er:p%40ss%3aword@proxy.test:8080"
-PASSWORD_FORMS = ("password_as_written", "password_decoded", "password_encoded_again", "basic_credentials")
+ESCAPING_PROXY = "http://us%40er:p%22a%5cb%2fc%27d%40e@proxy.test:8080"
+PASSWORD_FORMS = (
+    "password_as_written",
+    "password_decoded",
+    "password_encoded_again",
+    "password_encoded_keeping_slash",
+    "password_repr",
+    "password_json",
+    "basic_credentials",
+)
+# How many of PASSWORD_FORMS are different strings for each proxy.
+DISTINCT_FORMS = {ENCODED_PROXY: 4, ESCAPING_PROXY: 7}
 
 
+def password_secrets(proxy: str) -> list[str]:
+    """The strings of `proxy` that must reach no answer, no journal and no transcript."""
+    forms = proxy_forms(proxy)
+    secrets = list(dict.fromkeys(forms[name] for name in PASSWORD_FORMS))
+    assert len(secrets) == DISTINCT_FORMS[proxy]
+    return secrets
+
+
+async def journal_until(capfd: pytest.CaptureFixture[str], marker: str) -> str:
+    """What the engine wrote to its stderr, which the journal keeps, until `marker` is in it."""
+    journal = ""
+    async with asyncio.timeout(15):
+        while marker not in journal:
+            journal += capfd.readouterr().err
+            await asyncio.sleep(0.02)
+    return journal
+
+
+@pytest.mark.parametrize("proxy", [ENCODED_PROXY, ESCAPING_PROXY])
 @pytest.mark.parametrize("form", sorted(proxy_forms(ENCODED_PROXY)))
-async def test_the_password_leaves_in_no_form_a_server_can_repeat_it(env: Env, form: str) -> None:
+async def test_the_password_leaves_in_no_form_a_server_can_repeat_it(env: Env, proxy: str, form: str) -> None:
     manager = env.manager()
-    identity = await manager.create("forms", ENCODED_PROXY)
+    identity = await manager.create("forms", proxy)
     mcp_home = env.mcp_home(identity.id)
-    secrets = [proxy_forms(ENCODED_PROXY)[name] for name in PASSWORD_FORMS]
-    assert len(set(secrets)) == len(secrets)
+    secrets = password_secrets(proxy)
 
     write_control(mcp_home, fail_open=True, echo_proxy_as=form)
     with pytest.raises(BrowserIdentityError) as failed_launch:
@@ -381,6 +412,66 @@ async def test_the_password_leaves_in_no_form_a_server_can_repeat_it(env: Env, f
         assert "***" in said
         for secret in secrets:
             assert secret not in said
+
+
+@pytest.mark.parametrize("proxy", [ENCODED_PROXY, ESCAPING_PROXY])
+async def test_the_password_does_not_reach_the_journal_through_the_stderr_of_the_server(
+    env: Env, capfd: pytest.CaptureFixture[str], proxy: str
+) -> None:
+    manager = env.manager()
+    identity = await manager.create("journal", proxy)
+    write_control(env.mcp_home(identity.id), stderr_proxy=True)
+    secrets = password_secrets(proxy)
+    capfd.readouterr()
+
+    await manager.launch(identity.id)
+    journal = await journal_until(capfd, "[stderr written]")
+    await manager.close(identity.id)
+
+    # Everything the server wrote got through with the credentials hidden: a line for each form, and the long
+    # line, which the pump has to cut, so a password may be split across two reads.
+    for name in proxy_forms(proxy):
+        assert f"[{name}] " in journal
+    assert "[url] http://us%40er:***@proxy.test:8080" in journal
+    assert journal.count("padding") >= 40_000
+    assert "***" in journal
+    for secret in secrets:
+        assert secret not in journal
+
+
+async def test_the_stderr_of_a_server_with_a_proxy_without_a_password_reaches_the_journal_as_it_is(
+    env: Env, capfd: pytest.CaptureFixture[str]
+) -> None:
+    manager = env.manager()
+    identity = await manager.create("open proxy", "http://proxy.test:8080")
+    write_control(env.mcp_home(identity.id), stderr_proxy=True)
+    capfd.readouterr()
+
+    await manager.launch(identity.id)
+    journal = await journal_until(capfd, "[stderr written]")
+
+    assert "[url] http://proxy.test:8080\n" in journal
+    assert "***" not in journal
+
+
+def test_a_password_with_a_backslash_and_both_quotes_is_hidden_in_a_traceback_and_in_json() -> None:
+    # Written raw in the URL, as a user may paste it: `repr` doubles the backslash and escapes the single quote
+    # (the URL holds both kinds), `json.dumps` escapes the double quote and the backslash.
+    proxy = "http://us\"er:pa\"ss\\w'rd@proxy.test:8080"
+    password = "pa\"ss\\w'rd"
+    texts = [
+        str(ValueError(f"proxy URL {proxy!r} is not valid")),
+        json.dumps({"error": f"cannot use {proxy}"}),
+        json.dumps({"password": password}),
+        f"{{'password': {password!r}}}",
+        f"proxy password {password}",
+    ]
+
+    for text in texts:
+        scrubbed = _scrub(text, proxy)
+        assert scrubbed != text
+        for piece in ("w'rd", "w\\'rd", "w\\\\'rd", "ss\\\\w", "pa\\\"ss", "pa\"ss"):
+            assert piece not in scrubbed, (piece, scrubbed)
 
 
 async def test_a_proxy_without_a_password_leaves_what_the_server_says_as_it_is(env: Env) -> None:

@@ -61,8 +61,15 @@ def _allow(method: str, *allowed: str) -> None:
 
 def _identity_error(error: BrowserIdentityError) -> HttpError:
     """The answer for a failed browser identity request; its status is the shared table's (`not_open` is an
-    action on a closed identity: the Dot's tools make it, and so does a frame of one)."""
-    return HttpError(IDENTITY_ERROR_STATUS[error.code], error.code, error.message)
+    action on a closed identity: the Dot's tools make it, and so does a frame of one).
+
+    `launch_failed` has no status because no route launches. If one ever raises it, the engine has a defect
+    and answers as one: a logged 500 `internal` that keeps the reason, not a failure inside this table."""
+    status = IDENTITY_ERROR_STATUS.get(error.code)
+    if status is None:
+        logger.error("a browser identity route raised {} which no route answers with: {}", error.code, error.message)
+        return HttpError(500, "internal", error.message)
+    return HttpError(status, error.code, error.message)
 
 
 def _identity_json(identity: BrowserIdentity) -> dict[str, object]:

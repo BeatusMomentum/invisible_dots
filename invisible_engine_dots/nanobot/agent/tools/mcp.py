@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 from nanobot.agent.tools.base import Tool, ToolResult
 from nanobot.agent.tools.context import tool_log_content_allowed
+from nanobot.agent.tools.mcp_stderr import FilteredStderr
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.utils.cancellation import task_is_cancelling
 
@@ -41,6 +42,9 @@ class MCPServerConfig(BaseModel):
     # Tool results keep their image blocks as image_url content blocks; off, an image
     # is reported by its MIME type and its bytes are dropped.
     images: bool = False
+    # Stdio: what the server writes to its stderr (the engine's journal) goes through this first. A server that
+    # is handed a secret sets it to a function that hides the secret; without one the stderr is inherited.
+    stderr_filter: Callable[[str], str] | None = Field(default=None, exclude=True)
     # Only register these tools; accepts raw MCP names or wrapped mcp_<server>_<tool> names.
     # ["*"] = all capabilities (tools, resources, prompts); any restriction = only the
     # listed tools, no resources or prompts.
@@ -958,7 +962,17 @@ async def connect_mcp_servers(
                     env=cfg.env or None,
                     cwd=cfg.cwd or None,
                 )
-                read, write = await server_stack.enter_async_context(stdio_client(params))
+                if cfg.stderr_filter is None:
+                    read, write = await server_stack.enter_async_context(stdio_client(params))
+                else:
+                    stderr = FilteredStderr(cfg.stderr_filter)
+                    try:
+                        read, write = await server_stack.enter_async_context(
+                            stdio_client(params, errlog=stderr.errlog)
+                        )
+                    finally:
+                        # The process has its own copy of the descriptor (or never started).
+                        stderr.close_write_end()
             elif transport_type == "sse":
                 if not await _probe_http_url(cfg.url):
                     logger.warning("MCP server '{}': {} unreachable, skipping", name, _redact_url(cfg.url))

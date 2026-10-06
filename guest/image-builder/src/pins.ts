@@ -121,6 +121,15 @@ export function downloadFileName(pin: { url: string }): string {
   return new URL(pin.url).pathname.split("/").pop() ?? "";
 }
 
+/**
+ * The name the GeoIP archive is cached under: its tag first, because every release has the same file name upstream
+ * and a pin bump would otherwise delete the only verified copy of the release the previous pin names, which the
+ * project has deleted by then. (The seed keeps `downloadFileName`: the guest finds the archive by it.)
+ */
+export function geoipCacheName(pin: GeoipPin): string {
+  return `geoip-${pin.tag}-${downloadFileName(pin)}`;
+}
+
 export function parseBaseImagePin(value: unknown): BaseImagePin {
   const where = "virtualization/images/base.json";
   const o = asObject(value, where);

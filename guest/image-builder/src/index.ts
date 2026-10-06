@@ -11,6 +11,7 @@
  */
 export { defaultAssetRoot, GUEST_ASSETS, GUEST_UNITS } from "./assets.js";
 export { checksumFromSums, DownloadError, fetchVerified, sha256File, type Fetch, type FetchVerifiedOptions, type VerifiedFile } from "./download.js";
+export { GEOIP_NOTICES, type DataNotice } from "./geoip-notices.js";
 export { buildGoldenImage, GOLDEN_DEFAULTS, GoldenBuildError, type GoldenBuildOptions, type GoldenBuildResult } from "./golden.js";
 export {
   manifestPathFor,

@@ -39,8 +39,10 @@ def proxy_forms(proxy: str) -> dict[str, str]:
 
     The real wrapper splits the URL with `urlparse` and unquotes the user and the password
     (`invisible_playwright_mcp/mcp/proxy.py`), so what it hands on and what a proxy's answer or a log line
-    repeats is the password as written, decoded or encoded again, with the user in front of it, or the
-    Basic credentials of a `Proxy-Authorization` header.
+    repeats is the password as written, decoded or encoded again (`quote` with its `safe=""` and with its
+    default `safe="/"`), with the user in front of it, or the Basic credentials of a `Proxy-Authorization`
+    header. A traceback or a log line writes it escaped too: the `repr` of the URL or of the password
+    (`ValueError(f"proxy URL {url!r} ...")` doubles a backslash) or the inside of a JSON string.
     """
     parsed = urlparse(proxy)
     written_user, written_password = parsed.username or "", parsed.password or ""
@@ -49,9 +51,14 @@ def proxy_forms(proxy: str) -> dict[str, str]:
         "password_as_written": written_password,
         "password_decoded": password,
         "password_encoded_again": quote(password, safe=""),
+        "password_encoded_keeping_slash": quote(password),
+        "password_repr": repr(password)[1:-1],
+        "password_json": json.dumps(password)[1:-1],
         "userinfo_as_written": f"{written_user}:{written_password}",
         "userinfo_decoded": f"{user}:{password}",
         "basic_credentials": base64.b64encode(f"{user}:{password}".encode()).decode(),
+        "url_repr": repr(proxy),
+        "url_json": json.dumps(proxy),
     }
 
 
@@ -80,6 +87,8 @@ def write_control(mcp_home: Path, **control: Any) -> None:
     echo_proxy_on_pages: `browser_navigate` fails and `browser_read_text` answers naming that proxy too.
     echo_proxy_as: the name of one of `proxy_forms`: `browser_open` (with `fail_open`), `browser_navigate` and
         `browser_read_text` say that form of the proxy's credentials instead of the whole URL.
+    stderr_proxy: the process writes the proxy URL and every form of `proxy_forms` to its stderr when it starts,
+        one per line, and once more all of them in the middle of one very long line.
     lose_browser_once: the first page action after opening reports the browser gone, as after a Firefox crash.
     lose_browser_always: every page action does.
     refuse_close: `browser_close` fails.
@@ -112,6 +121,15 @@ async def _serve() -> None:
             out.write(json.dumps(entry) + "\n")
 
     record({"kind": "start", "pid": os.getpid(), "argv": sys.argv[1:], "env": dict(os.environ), "cwd": os.getcwd()})
+    if control.get("stderr_proxy"):
+        proxy_url = os.environ.get("STEALTHFOX_PROXY", "")
+        forms = proxy_forms(proxy_url)
+        for name, form in forms.items():
+            sys.stderr.write(f"[{name}] {form}\n")
+        sys.stderr.write(f"[url] {proxy_url}\n")
+        sys.stderr.write("padding " * 20_000 + " ".join(forms.values()) + " padding" * 20_000 + "\n")
+        sys.stderr.write("[stderr written]\n")
+        sys.stderr.flush()
 
     tools = {tool["name"]: tool for tool in _tools()}
     state: dict[str, Any] = {

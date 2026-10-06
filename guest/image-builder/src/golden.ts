@@ -11,9 +11,10 @@ import { writeIso } from "@invisible-dots/iso";
 import { hostPaths, replaceFile, type HostPaths } from "@invisible-dots/shared";
 import { BUILDER_BROWSER_BUILD, BUILDER_ENGINE_BUILD, BUILDER_ENGINE_LOCK, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_USER_DATA, defaultAssetRoot, readGuestAsset } from "./assets.js";
 import { DownloadError, fetchVerified, sha256File, type Fetch, type FetchVerifiedOptions } from "./download.js";
+import { GEOIP_NOTICES } from "./geoip-notices.js";
 import { acquireLock, type Lock } from "./lock.js";
 import { manifestPathFor, writeManifest, type GoldenManifest } from "./manifest.js";
-import { BASE_IMAGE, downloadFileName, GUEST_PINS, type BaseImagePin, type GeoipPin, type GuestPins, type PinnedDownload } from "./pins.js";
+import { BASE_IMAGE, downloadFileName, geoipCacheName, GUEST_PINS, type BaseImagePin, type GeoipPin, type GuestPins, type PinnedDownload } from "./pins.js";
 import { waitForExit, type ProcessRunner } from "./process.js";
 import { parseHashedLock, parsePythonLock, type PythonLock } from "./python-lock.js";
 import { builderQemuArgs, type Accelerator, type QemuPrograms } from "./qemu.js";
@@ -179,7 +180,7 @@ async function buildLocked(options: GoldenBuildOptions & Resolved, target: Targe
   };
   const nodeTarball = await fetchPinned(pins.node);
   const uvTarball = await fetchPinned(pins.uv);
-  const geoipArchive = await fetchGeoip(pins.geoip, join(cacheDir, downloadFileName(pins.geoip)), downloads);
+  const geoipArchive = await fetchGeoip(pins.geoip, join(cacheDir, geoipCacheName(pins.geoip)), downloads);
 
   // Next to the images, not in the system temp directory: the disk grows to
   // several GiB and the final rename stays on one filesystem.
@@ -247,6 +248,7 @@ async function buildLocked(options: GoldenBuildOptions & Resolved, target: Targe
         "mcp-requirements.lock": createHash("sha256").update(target.pythonLock).digest("hex"),
         apt_packages: [...pins.apt_packages],
       },
+      notices: [...GEOIP_NOTICES],
       engine: { lock_sha256: createHash("sha256").update(target.engineLock).digest("hex") },
       installed: installedComponents(consoleText),
       builder: { accelerator: options.accelerator },
@@ -274,7 +276,7 @@ async function fetchGeoip(pin: GeoipPin, dest: string, options: FetchVerifiedOpt
   try {
     await fetchVerified({ url: pin.url, sha256: pin.sha256 }, dest, options);
   } catch (error) {
-    if (error instanceof DownloadError && error.message.includes("HTTP 404")) {
+    if (error instanceof DownloadError && error.status === 404) {
       throw new DownloadError(
         `${error.message}: the pinned GeoIP release ${pin.tag} is gone from GitHub (daijro/geoip-all-in-one keeps only its latest releases). ` +
           `Pin the current one in guest/image-builder/pins.json: its tag, its URL and the "digest" GitHub shows for geoip-aio-all.mmdb.zip at ` +

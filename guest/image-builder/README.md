@@ -69,8 +69,14 @@ image's SHA-256; `invisible-dots doctor` checks an image against it with
    about a week before it is deleted), when it is gone, or when the digest of
    the pinned asset changed; its message names the tag, URL and SHA-256 to put
    into `pins.json`. A host that already built with the pin keeps the verified
-   archive in `images/.cache` and does not need the network for it; an older
-   tree whose pin is gone builds there only with such a cached archive. The
+   archive in `images/.cache`, under a name that starts with the release tag
+   (`geoip-<tag>-geoip-aio-all.mmdb.zip`: every release has the same file name
+   upstream, so a bump leaves the archive of the previous pin where it is),
+   and does not need the network for it; an older tree whose pin is gone
+   builds there only with such a cached archive. The database merges free
+   editions of third-party databases that ask to be credited: their credits
+   are in `src/geoip-notices.ts`, which each golden manifest records as
+   `notices` and `THIRD_PARTY_NOTICES.md` repeats. The
    browser smoke runs the same script on the same pinned archive. The only
    browser a Dot has is that server: a test refuses any other browser or browser
    library among the apt packages, the lock and the build scripts. `provision.sh`

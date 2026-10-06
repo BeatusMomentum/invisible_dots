@@ -11,9 +11,13 @@ import { replaceFile } from "@invisible-dots/shared";
 export type Fetch = typeof globalThis.fetch;
 
 export class DownloadError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
+  /** The HTTP status the server answered with; undefined for every failure that is not such an answer. */
+  readonly status?: number;
+
+  constructor(message: string, options?: { cause?: unknown; status?: number }) {
     super(message, options);
     this.name = "DownloadError";
+    if (options?.status !== undefined) this.status = options.status;
   }
 }
 
@@ -155,7 +159,8 @@ async function openResponse(
     done();
     await response.body?.cancel().catch(() => undefined);
     const message = `${url}: HTTP ${response.status}`;
-    throw response.status >= 500 ? new RetryableError(message) : new DownloadError(message);
+    const failure = { status: response.status };
+    throw response.status >= 500 ? new RetryableError(message, failure) : new DownloadError(message, failure);
   }
   return { response, signal: controller.signal, touch, done };
 }

@@ -8,6 +8,7 @@ import { randomBytes } from "node:crypto";
 import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { sha256File } from "./download.js";
+import type { DataNotice } from "./geoip-notices.js";
 import type { BaseImagePin, GeoipPin } from "./pins.js";
 import { replaceFile } from "@invisible-dots/shared";
 
@@ -42,6 +43,8 @@ export interface GoldenManifest {
     "mcp-requirements.lock": string;
     apt_packages: string[];
   };
+  /** The credits that the data inside the image asks for (the GeoIP database): what a person who runs Dots may read about it. */
+  notices: DataNotice[];
   /** The engine's Python environment (builder/engine-requirements.lock): the lock the runtime disk's copy must equal. */
   engine: { lock_sha256: string };
   /** What the provisioner reported it installed (node, uv, browser-engine, ubuntu, kernel, ...). */

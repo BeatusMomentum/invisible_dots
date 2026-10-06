@@ -208,6 +208,10 @@ every other command). It is described in docs/architecture.md, section 8.8.
   browser), both when a call finds out and, through `connect_mcp_servers(on_ended=...)` and
   the read-stream filter, when the transport ends with no call in flight. Without
   `on_terminated` the provider reconnects as before.
+  `MCPServerConfig.stderr_filter` (nanobot/agent/tools/mcp_stderr.py): a stdio server whose
+  config sets it gets a pipe for its stderr, which a thread reads, passes through the
+  filter line by line and writes to the engine's stderr, instead of inheriting the
+  engine's stderr; the BrowserManager sets it to hide the proxy password.
   The one server is `invisible-playwright-mcp`, started by the `BrowserManager`
   (nanobot/dots/browser.py) through `dot-agentd relay`; `main.py` no longer builds an
   `MCPProvider` of its own.

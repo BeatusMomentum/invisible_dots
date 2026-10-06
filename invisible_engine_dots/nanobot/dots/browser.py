@@ -33,6 +33,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import functools
+import json
 import posixpath
 import re
 import sqlite3
@@ -538,6 +539,8 @@ class BrowserManager:
             env=self._computer.spawn_env(secrets=secrets),
             tool_timeout=self._request_timeout_s,
             images=True,
+            # The server's stderr is the engine's journal: what it writes there goes through the same scrub.
+            stderr_filter=(lambda text: _scrub(text, proxy)) if proxy else None,
         )
 
     def _live_sessions(self) -> list[_Session]:
@@ -753,18 +756,43 @@ class BrowserManager:
             logger.info("browser identity {} closed", identity_id)
 
 
+def _escaped_forms(text: str) -> set[str]:
+    """`text` as it is, and as it reads inside a Python string literal or a JSON string.
+
+    A traceback or a log line shows a value through `repr` (which doubles a backslash and, in a string that
+    holds both kinds of quote, escapes the single one) or through `json.dumps` (which escapes a quote, a
+    backslash and a non-ASCII character), so those are the other texts to find. Both quote styles of `repr`
+    are covered, since which one it picks depends on the whole string the value is part of.
+    """
+    doubled = text.replace("\\", "\\\\")
+    return {
+        found
+        for found in (
+            text,
+            repr(text)[1:-1],
+            doubled,
+            doubled.replace("'", "\\'"),
+            json.dumps(text)[1:-1],
+            json.dumps(text, ensure_ascii=False)[1:-1],
+        )
+        if found
+    }
+
+
 @functools.lru_cache(maxsize=64)
 def _proxy_scrubber(proxy: str) -> tuple[re.Pattern[str], dict[str, str]]:
     """What to find in a text of the server and what to put there, for one stored proxy URL.
 
     The server splits the URL into a server, a user and a password (percent-decoded), so what it or Firefox
-    repeats is not only the URL as stored: it is the password alone, as written, decoded or encoded again,
-    the user and the password together, or the Basic credentials of a `Proxy-Authorization` header. All of
-    them are found in one pass, longest first, so that the text put in place of one is never searched again.
-    A password too short to be told from the text around it is hidden too: the page text it garbles is the
-    price of a password that leaves nowhere.
+    repeats is not only the URL as stored: it is the password alone, as written, decoded or encoded again
+    (`quote` with `safe=""` and with its default `safe="/"`), the user and the password together, or the Basic
+    credentials of a `Proxy-Authorization` header. A traceback also writes the URL and the password escaped
+    (`repr`, JSON). All of them are found in one pass, longest first, so that the text put in place of one
+    is never searched again. A password too short to be told from the text around it is hidden too: the page
+    text it garbles is the price of a password that leaves nowhere.
     """
-    replacements = {proxy: redact_proxy(proxy)}
+    redacted = redact_proxy(proxy)
+    replacements = {found: redacted for found in _escaped_forms(proxy)}
     try:
         parts = urlsplit(proxy.strip())
         written_user, written_password = parts.username or "", parts.password or ""
@@ -773,13 +801,14 @@ def _proxy_scrubber(proxy: str) -> tuple[re.Pattern[str], dict[str, str]]:
     if written_password:
         user, password = unquote(written_user), unquote(written_password)
         users = {written_user, user, quote(user, safe="")}
-        passwords = {form for form in (written_password, password, quote(password, safe="")) if form}
+        passwords = {form for form in (written_password, password, quote(password, safe=""), quote(password)) if form}
         for form in users:
             for secret in passwords:
                 replacements[f"{form}:{secret}"] = f"{form}:***"
         replacements[base64.b64encode(f"{user}:{password}".encode()).decode()] = "***"
         for secret in passwords:
-            replacements.setdefault(secret, "***")
+            for found in _escaped_forms(secret):
+                replacements.setdefault(found, "***")
     pattern = re.compile("|".join(re.escape(found) for found in sorted(replacements, key=len, reverse=True)))
     return pattern, replacements
 

@@ -238,7 +238,10 @@ QEMU on the same disk would corrupt it.
 - The **golden image** carries the operating system and third-party software:
   Ubuntu 24.04, Xvfb and a minimal XFCE session, the libraries
   the browser needs, Node 24, `uv`, `invisible-playwright-mcp` in its own
-  Python environment, the browser engine already downloaded, and the Python
+  Python environment, the browser engine already downloaded together with the
+  GeoIP database a launch with the timezone left to `auto` needs (one pinned
+  release, unpacked where the browser reads it, so a first launch downloads
+  nothing; a later launch may fetch a newer one and use that), and the Python
   environment of the Dot's engine (`/opt/invisible-dots-engine`). It changes
   rarely. It is never modified once a VM uses it: a new one gets a new version
   in its name.
@@ -268,7 +271,14 @@ QEMU on the same disk would corrupt it.
   runs on an older golden image.
 - Every input of the golden image is pinned by content: the cloud image, Node
   and `uv` by SHA-256 (`virtualization/images/base.json`,
-  `guest/image-builder/pins.json`), and the whole Python environment of
+  `guest/image-builder/pins.json`), the GeoIP database as one release of
+  `daijro/geoip-all-in-one` by URL and SHA-256 (`geoip` in `pins.json`: the host
+  checks the hash when it downloads the archive, the guest checks it again
+  before it unpacks it, the manifest records it as `pinned.geoip`, and each
+  verified archive stays in the cache under its tag, so a tree whose pinned
+  release the project has since deleted still builds from a host that has it;
+  the data's credits are in the manifest's `notices` and in
+  `THIRD_PARTY_NOTICES.md`), and the whole Python environment of
   `invisible-playwright-mcp`, transitive packages included, by
   `guest/image-builder/builder/mcp-requirements.lock`, every package at an
   exact version with the SHA-256 of its files. The builder installs it with
@@ -1322,9 +1332,15 @@ state.
   `not_open`; a file never claims an open browser for a process that is gone. Text
   a page tool returns, and its errors, have the proxy in its redacted form and its
   password in none: the server splits the URL into a user and a decoded password, so
-  the password alone, as written, decoded or encoded again, the user with it, and the
-  Basic credentials of a header are hidden as well (a short password garbles the
-  page text it also occurs in, which is the price of one that leaves nowhere). A close calls
+  the password alone, as written, decoded or encoded again (`quote` with and without
+  `safe=""`), the user with it, the Basic credentials of a header, and the URL and the
+  password as a traceback or a JSON log line writes them (`repr`, JSON escapes) are hidden
+  as well (a short password garbles the page text it also occurs in, which is the price
+  of one that leaves nowhere). The server's stderr, which would reach the engine's
+  journal, goes through the same scrub: `connect_mcp_servers` gives a server whose
+  config has a `stderr_filter` a pipe instead of the inherited stderr, and a thread
+  writes each line, filtered, to the engine's stderr (a line the filter fails on is
+  withheld, never written raw). A close calls
   `browser_close` first, so Firefox flushes its profile, then ends the process.
   Every `browser.identity.*` event commits with the row change it describes.
   The model's identity and page tools (`browser_tools.py`) and the routes of

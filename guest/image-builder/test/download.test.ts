@@ -101,6 +101,19 @@ describe("fetchVerified", () => {
     expect(http.requests).toEqual(["/gone.img"]);
   });
 
+  it("carries the HTTP status of a refused answer, so a caller does not read the message to know it", async () => {
+    const gone = await fetchVerified({ url: http.url("/gone.img"), sha256: IMAGE_SHA }, join(dir, "gone.img"), fast).catch((e: unknown) => e);
+    http.set("/flaky.img", { body: "busy", status: 503 });
+    const busy = await fetchVerified({ url: http.url("/flaky.img"), sha256: IMAGE_SHA }, join(dir, "flaky.img"), fast).catch((e: unknown) => e);
+    const mismatch = await fetchVerified({ url: http.url("/release/image.img"), sha256: "1".repeat(64) }, join(dir, "image.img"), fast).catch((e: unknown) => e);
+
+    expect(gone).toBeInstanceOf(DownloadError);
+    expect((gone as DownloadError).status).toBe(404);
+    expect((busy as DownloadError).status).toBe(503);
+    // A failure that is not an answer of the server has no status.
+    expect((mismatch as DownloadError).status).toBeUndefined();
+  });
+
   it("retries a 5xx and gives up after the last attempt", async () => {
     http.set("/flaky.img", { body: "busy", status: 503 });
     await expect(fetchVerified({ url: http.url("/flaky.img"), sha256: IMAGE_SHA }, join(dir, "flaky.img"), fast)).rejects.toThrow(/HTTP 503/);

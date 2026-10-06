@@ -7,7 +7,10 @@ The MIT license in `LICENSE` covers this repository, except:
   its section below.
 
 That fork, and the text this repository's history holds through the earlier
-TypeScript engine, come with the notices below.
+TypeScript engine, come with the notices below. The golden image that
+`invisible-dots image build` makes on a host also holds data that is not part
+of this repository, the GeoIP database: its credits are in the section "GeoIP
+data in the golden image".
 
 ## Open Multi-Agent
 
@@ -116,3 +119,36 @@ build installs them from PyPI as the wheels their publishers released, pinned
 by hash in `guest/image-builder/builder/engine-requirements.lock`, each under
 its own license. The runtime disk carries the fork's own source with its
 `LICENSE` and `UPSTREAM.md` (`/opt/invisible-dots/engine/` in the guest).
+
+## GeoIP data in the golden image
+
+The browser of a Dot looks up the time zone and the coordinates of its proxy's
+address in a GeoIP database when a launch leaves the time zone to `auto`. The
+golden image carries one release of it, so a first launch downloads nothing:
+the file `geoip-aio-all.mmdb.zip` of one release of
+`daijro/geoip-all-in-one` (https://github.com/daijro/geoip-all-in-one),
+pinned in `guest/image-builder/pins.json` by its URL and SHA-256 and recorded
+in each golden manifest as `pinned.geoip`. That project merges the free
+editions of the databases below into one file (country codes, coordinates and
+a time zone computed from them), and each of them is published on the
+condition that the product using it credits it. The image is built on the host
+of whoever runs Dots and this repository does not distribute it or the data;
+the credits are kept here, and in each golden manifest as `notices`
+(`guest/image-builder/src/geoip-notices.ts` holds the one list, and a test
+keeps this section equal to it). Each source's license governs its own data;
+the license of the merged file is the one `daijro/geoip-all-in-one` publishes.
+
+- IP2Location LITE (https://lite.ip2location.com), CC BY-SA 4.0
+  (https://creativecommons.org/licenses/by-sa/4.0/): This site or product includes IP2Location LITE data available from https://lite.ip2location.com.
+- MaxMind GeoLite2 (https://www.maxmind.com), GeoLite2 End User License Agreement
+  (https://www.maxmind.com/en/geolite2/eula): This product includes GeoLite2 Data created by MaxMind, available from https://www.maxmind.com/.
+- DB-IP Lite (https://db-ip.com), CC BY 4.0
+  (https://creativecommons.org/licenses/by/4.0/): IP Geolocation by DB-IP (https://db-ip.com)
+- IPinfo free country database (https://ipinfo.io), CC BY-SA 4.0
+  (https://creativecommons.org/licenses/by-sa/4.0/): IP address data powered by IPinfo (https://ipinfo.io)
+- IPLocate.io free IP to Country database (https://www.iplocate.io), CC BY-SA 4.0
+  (https://creativecommons.org/licenses/by-sa/4.0/): IP address data powered by IPLocate.io (https://www.iplocate.io)
+- GeoFeed + Whois + ASN country database of tdulcet/ip-geolocation-dbs, built from sapics/ip-location-db, CC0 1.0
+  (https://creativecommons.org/publicdomain/zero/1.0/): No credit is required; the data comes from tdulcet/ip-geolocation-dbs (https://github.com/tdulcet/ip-geolocation-dbs).
+- OpenStreetMap contributors, through the time zone boundaries of timezone-boundary-builder that tzfpy carries, ODbL 1.0
+  (https://opendatacommons.org/licenses/odbl/1-0/): Contains time zone data derived from OpenStreetMap, (c) OpenStreetMap contributors (https://www.openstreetmap.org/copyright).

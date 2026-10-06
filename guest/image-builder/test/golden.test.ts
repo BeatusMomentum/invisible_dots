@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { hostPaths, type HostPaths } from "@invisible-dots/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BUILDER_BROWSER_BUILD, BUILDER_ENGINE_BUILD, BUILDER_ENGINE_LOCK, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_USER_DATA, defaultAssetRoot } from "../src/assets.js";
+import { GEOIP_NOTICES } from "../src/geoip-notices.js";
 import { buildGoldenImage, GOLDEN_DEFAULTS, GoldenBuildError, type GoldenBuildOptions } from "../src/golden.js";
 import { readManifest, verifyImage, type GoldenManifest } from "../src/manifest.js";
 import type { BaseImagePin, GuestPins } from "../src/pins.js";
@@ -21,6 +22,9 @@ const GEOIP_NEXT = Buffer.from("the next week of geoip ".repeat(1000));
 const NODE_FILE = "node-v24.21.0-linux-x64.tar.xz";
 const UV_FILE = "uv-x86_64-unknown-linux-gnu.tar.gz";
 const GEOIP_FILE = "geoip-aio-all.mmdb.zip";
+/** The cache keeps each release under its tag: every release has the same file name upstream. */
+const GEOIP_CACHED = `geoip-2026.09.30-${GEOIP_FILE}`;
+const GEOIP_NEXT_CACHED = `geoip-2026.10.07-${GEOIP_FILE}`;
 
 const OK_CONSOLE = [
   "[    0.000000] Linux version 6.8.0",
@@ -144,6 +148,8 @@ describe("buildGoldenImage", () => {
         "invisible-playwright": "0.25.7",
         apt_packages: ["xvfb", "imagemagick"],
       },
+      // What the GeoIP data asks to be credited with travels with the image.
+      notices: [...GEOIP_NOTICES],
       // The engine's lock, which the runtime disk's copy must equal.
       engine: { lock_sha256: sha256(await readFile(join(defaultAssetRoot(), BUILDER_ENGINE_LOCK))) },
       installed: { node: "v24.21.0", "browser-engine": "151.0" },
@@ -157,7 +163,7 @@ describe("buildGoldenImage", () => {
     expect((await readdir(paths.imagesDir)).sort()).toEqual(
       [".cache", "noble-server-cloudimg-amd64.img", `golden-${result.version}.json`, `golden-${result.version}.qcow2`].sort(),
     );
-    expect((await readdir(join(paths.imagesDir, ".cache"))).sort()).toEqual([GEOIP_FILE, NODE_FILE, UV_FILE]);
+    expect((await readdir(join(paths.imagesDir, ".cache"))).sort()).toEqual([GEOIP_CACHED, NODE_FILE, UV_FILE]);
   });
 
   it("does nothing when an image for the same inputs exists", async () => {
@@ -186,6 +192,22 @@ describe("buildGoldenImage", () => {
     expect(second.created).toBe(true);
     expect(second.version).not.toBe(first.version);
     expect(((await readManifest(second.manifest)) as GoldenManifest).pinned.geoip).toEqual(geoip);
+  });
+
+  it("keeps the verified archive of every GeoIP release it built with, so an older tree still builds offline", async () => {
+    await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }).opts);
+    const geoip = { tag: "2026.10.07", url: http.url(`/geoip/2026.10.07/${GEOIP_FILE}`), sha256: sha256(GEOIP_NEXT) };
+    await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }, { pins: { ...pins, geoip } }).opts);
+    const cache = join(paths.imagesDir, ".cache");
+    expect((await readdir(cache)).sort()).toEqual([GEOIP_CACHED, GEOIP_NEXT_CACHED, NODE_FILE, UV_FILE].sort());
+
+    // The pin goes back to the first release, which upstream has deleted by now: its cached copy is enough.
+    http.set(`/geoip/2026.09.30/${GEOIP_FILE}`, { body: "gone", status: 404 });
+    const requests = http.requests.length;
+    const again = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }, { diskSize: "12G" }).opts);
+
+    expect(again.created).toBe(true);
+    expect(http.requests.slice(requests).filter((path) => path.startsWith("/geoip/"))).toEqual([]);
   });
 
   it("refuses a GeoIP file that does not hash to its pin, before booting anything", async () => {

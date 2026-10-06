@@ -23,6 +23,7 @@ from fakes.scripted_provider import call, calls, says
 from loguru import logger
 
 from nanobot.dots import store as s
+from nanobot.dots.browser import BrowserIdentityError
 from nanobot.dots.checks import GuestChecks
 from nanobot.dots.server import AgentServer
 
@@ -670,6 +671,30 @@ class TestBrowserIdentityActions:
         assert (api.h.tmp_path / "browsers" / identity["id"] / "profile").is_dir()
         assert api.h.types().count("browser.identity.closed") == 1
         assert (await api.call("POST", "/browser-identities/nobody-abc123/close")).status == 404
+
+    async def test_a_launch_failure_that_reaches_a_route_is_a_logged_500_internal_and_not_a_crash_of_the_boundary(
+        self, make_api: Callable[..., Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # No route launches, so no HTTP status names `launch_failed`: if one ever raises it, that is a defect in
+        # the engine, and it must answer as one (with the reason kept) instead of failing in the status table.
+        api: Api = await make_api()
+        identity = (await api.call("POST", "/browser-identities", {"name": "defect"})).json
+
+        async def failing_close(identity_id: str) -> None:
+            raise BrowserIdentityError("launch_failed", f"the launch of {identity_id} failed under a route")
+
+        monkeypatch.setattr(api.h.browser, "close", failing_close)
+        lines: list[str] = []
+        sink = logger.add(lambda message: lines.append(str(message)), level="ERROR")
+        try:
+            answer = await api.call("POST", f"/browser-identities/{identity['id']}/close")
+        finally:
+            logger.remove(sink)
+
+        assert answer.status == 500
+        assert answer.json["error"] == "internal"
+        assert answer.json["message"] == f"the launch of {identity['id']} failed under a route"
+        assert any("launch_failed" in line for line in lines)
 
     async def test_an_action_names_the_one_method_it_takes_and_nothing_else_is_a_route(
         self, make_api: Callable[..., Any]
