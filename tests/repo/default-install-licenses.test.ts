@@ -1,5 +1,5 @@
 /**
- * Nothing under the GPL is installed by default. `npm ci` installs what package-lock.json says, so the lock is
+ * The default npm install holds nothing under the GPL. `npm ci` installs what package-lock.json says, so the lock is
  * scanned: no package of it may need a GPL or AGPL license (the WhatsApp client's dependency libsignal is GPL-3.0 and
  * lives in its own opt-in folder, optional/whatsapp), and a package whose license the lock does not state is not
  * allowed to hide one. LGPL is not GPL; the few LGPL packages that remain (the image library Next.js may install, as

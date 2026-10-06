@@ -421,6 +421,18 @@ What it does not protect against, by design or not yet:
 - The model's commands run as `dot`, which can read an identity's proxy,
   password included, from the open browser's environment and from the browser
   server's own session file.
+- The split between the three users is the guest operating system's. A flaw in
+  the guest's kernel, or a way to become root that this repository does not
+  know of, would end it. The VM is what stands between the Dot and your PC
+  then, with the reach into your PC's loopback listed below.
+- The computer daemon holds three capabilities (`CAP_SETUID`, `CAP_SETGID` and
+  `CAP_KILL`, to run the model's work as `dot`) and may run one command as
+  root, the power-off. A flaw in the daemon would be worth more than one in an
+  ordinary program. Its one door, a TCP port inside the guest, needs the Dot's
+  token, which `dot` cannot read.
+- Nothing limits how much disk, memory or processor time the model's commands
+  use of their own VM, so a runaway command can starve the Dot's own daemons
+  until the VM is stopped or restarted.
 - When typing in the browser is set to `ask`, the approval shows the text being
   typed, password or not.
 - Each Dot can reach services on your PC's loopback through `10.0.2.2`.
@@ -543,7 +555,7 @@ flowchart LR
     DB[("PostgreSQL<br/>embedded PGlite by default")]
   end
   subgraph VM["One QEMU VM per Dot"]
-    AGD["dot-agentd<br/>the computer daemon, user dot"]
+    AGD["dot-agentd<br/>the computer daemon, user dotagentd"]
     ENG["Engine, a nanobot fork<br/>user dotengine, key in memory"]
     DESK["Xvfb and XFCE desktop"]
     BR["invisible-playwright-mcp<br/>one per open identity"]
@@ -802,8 +814,12 @@ listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)), and invisible_dots
 does not redistribute it. Whoever copies a golden image to another machine takes
 on those licenses
 ([architecture: licensing](docs/architecture.md#113-licensing)). Nothing under
-the GPL is installed by default; the WhatsApp client, which brings a GPL-3.0
-dependency, is an opt-in install.
+the GPL is installed by the default `npm install`; the WhatsApp client, which
+brings a GPL-3.0 dependency, is an opt-in install. The Dot's computer is
+another matter: the VM image holds the Ubuntu guest operating system and the
+packages the golden image installs on it (the Linux kernel, Xvfb, XFCE and the
+rest), which are mostly GPL and LGPL software under their own licenses and are
+downloaded from their publishers on your machine, as described above.
 
 invisible_dots is an independent project, not affiliated with OpenRouter,
 Telegram, WhatsApp or Meta.

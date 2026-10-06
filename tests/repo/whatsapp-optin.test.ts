@@ -1,6 +1,6 @@
 /**
  * WhatsApp is an opt-in adapter over an unofficial client, and the client is an opt-in install: Baileys depends on
- * libsignal, which is GPL-3.0, and nothing GPL is installed by default. These checks keep what makes that true: the
+ * libsignal, which is GPL-3.0, and the default npm install holds nothing GPL. These checks keep what makes that true: the
  * client is declared by no workspace and is in no default lock; it lives in its own folder with its own lock file, at
  * one exact version, every package with its integrity hash; one documented command installs it; and the one glue
  * file that loads it does so by path, when a connection opens, so neither the bundle nor a server that never links

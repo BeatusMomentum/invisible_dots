@@ -100,8 +100,8 @@ jobs:
         if: always()
         run: node .github/scripts/test-guard.mjs vitest-report.json --suite postgres
 
-  # The WhatsApp client (Baileys) is an opt-in install: it depends on libsignal, which is GPL-3.0, and nothing GPL is
-  # installed by default. The jobs above never install it. This one does, with the command a person runs
+  # The WhatsApp client (Baileys) is an opt-in install: it depends on libsignal, which is GPL-3.0, and the default
+  # npm install holds nothing GPL. The jobs above never install it. This one does, with the command a person runs
   # (npm run whatsapp:install), to prove the adapter against the real library: the types (the real module has the
   # shape the adapter writes down) and the tests that need it, on PGlite and on PostgreSQL.
   whatsapp-client:

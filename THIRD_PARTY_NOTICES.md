@@ -12,7 +12,10 @@ TypeScript engine, and the web client's files that derive from other projects
 has a section below) come with the notices below. The golden image that
 `invisible-dots image build` makes on a host also holds data that is not part
 of this repository, the GeoIP database: its credits are in the section "GeoIP
-data in the golden image". Nothing under the GPL is installed by default; the
+data in the golden image". The default `npm install` holds nothing under the GPL
+(the golden image's guest operating system is Ubuntu, which carries GPL software
+under its own licenses, downloaded from Ubuntu's archive by whoever builds the
+image: docs/architecture.md section 11.3); the
 one GPL-3.0 dependency, `libsignal` of the optional WhatsApp client, is left out
 of the default install and is described in the section "The opt-in WhatsApp
 client and `libsignal` (GPL-3.0)".
@@ -545,7 +548,7 @@ SOFTWARE.
 
 ## The opt-in WhatsApp client and `libsignal` (GPL-3.0)
 
-Nothing under the GPL is installed by default. The WhatsApp adapter
+The default `npm install` holds nothing under the GPL. The WhatsApp adapter
 (`packages/channels/src/whatsapp-baileys/`) uses Baileys (MIT), a client of the
 WhatsApp Web protocol, which depends on the npm package `libsignal`, under the
 GNU General Public License, version 3, and so does not fit this repository's MIT

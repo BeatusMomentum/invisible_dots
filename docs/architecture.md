@@ -522,9 +522,25 @@ tries both as the model does. The model can connect to TCP port 1024 inside its 
 computer too, and gets `401` without the token. A process of `dot` could listen
 on port 1024 only while dot-agentd is not running, and the host does not send
 the token or the key to a listener that cannot answer the proof of section 5.1.
-What stays: the daemon's three capabilities make a flaw in dot-agentd worth
-more than a flaw in an ordinary program; it is a small program and its one door,
-the TCP port, needs the token.
+What this does not protect, stated as it is:
+
+- The split is the guest operating system's. A flaw in the guest's kernel, or a
+  way to become root that is not known here, would let a process of `dot` read
+  what the other two users hold. The VM is the outer wall then, and what it lets
+  the guest reach is section 3.6's.
+- The daemon's three capabilities make a flaw in dot-agentd worth more than a
+  flaw in an ordinary program: `CAP_SETUID` lets it become any user, root
+  included, and it is the one user with a sudo rule (the power-off). It is a
+  small program and its one door, the TCP port, needs the token, which `dot`
+  cannot read; the model can reach the port and gets `401`.
+- `dot` owns the desktop, the browser and `/home/dot`, and reads the proxy of an
+  identity whose browser is open (section 6). That is the model's computer, not
+  a leak out of it.
+- Nothing limits how much disk, memory or processor time `dot`'s processes use
+  of the VM's (no cgroup limit, no quota), so a runaway command can starve the
+  daemons of the same VM until the host stops or restarts it. The control plane
+  records a VM that stops without being asked as STOPPED and starts it again
+  when the Dot has work (section 9.5).
 
 There is no long-running browser service. The engine's `BrowserManager`
 starts one `invisible-playwright-mcp` process per launched browser identity
@@ -2510,7 +2526,7 @@ Cloud API (a business account and a public webhook) is a later adapter on the sa
 hub.
 
 - **Licenses and the opt-in install.** Baileys is MIT, but it depends on
-  `libsignal`, which is GPL-3.0, and nothing GPL is installed by default. No
+  `libsignal`, which is GPL-3.0, and the default `npm install` holds nothing GPL. No
   workspace declares Baileys (not as a regular, dev, optional or peer dependency),
   so the root `package-lock.json` holds none of it and `npm ci` installs no GPL
   package (`tests/repo/default-install-licenses.test.ts` scans the lock file's
@@ -2785,6 +2801,13 @@ lines are `guest/image-builder/src/geoip-notices.ts`, which each golden manifest
 records as `notices` together with `notices_statement`, and
 `THIRD_PARTY_NOTICES.md` repeats; a test keeps the three equal.
 
-Nothing under the GPL is installed by default (section 9.8, WhatsApp). The few LGPL packages
-of the lock file are the prebuilt image libraries (`@img/sharp-*`) that Next.js may
-install; the notices name them.
+The default `npm install` holds nothing under the GPL (section 9.8, WhatsApp); that is a
+statement about the npm lock file and no more. The few LGPL packages of the lock file
+are the prebuilt image libraries (`@img/sharp-*`) that Next.js may install; the notices
+name them. The VM image is a different thing: it carries the Ubuntu guest operating
+system and the apt packages the golden image installs on it (`apt_packages` of
+`guest/image-builder/pins.json`: Xvfb, XFCE and their libraries, over the Linux kernel,
+bash and the rest of Ubuntu's base), most of it GPL or LGPL software under its own
+licenses and source offers, downloaded from Ubuntu's archive on the machine that builds
+the image and published by no one here. Whoever copies a golden image to another
+machine takes those licenses with it (the paragraph above).
