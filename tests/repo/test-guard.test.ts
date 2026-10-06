@@ -116,9 +116,10 @@ describe("test-guard", () => {
       for (const host of ["linux", "win32"]) expect(floors[suite]?.[host]?.min_passed, `${suite} ${host}`).toBeGreaterThan(0);
     }
     expect(floors.postgres?.linux?.min_passed).toBeGreaterThan(0);
+    for (const host of ["linux", "win32"]) expect(floors.whatsapp?.[host]?.min_passed, `whatsapp ${host}`).toBeGreaterThan(0);
     expect(floors.pytest?.linux?.min_passed).toBeGreaterThan(0);
     const workflow = readFileSync(join(repo, ".github", "workflows", "tests.yml"), "utf8");
-    for (const suite of ["vitest", "postgres", "go", "pytest", "playwright"]) expect(workflow).toMatch(new RegExp(`test-guard\\.mjs \\S+ --suite ${suite}\\b`));
+    for (const suite of ["vitest", "postgres", "whatsapp", "go", "pytest", "playwright"]) expect(workflow).toMatch(new RegExp(`test-guard\\.mjs \\S+ --suite ${suite}\\b`));
     const hook = readFileSync(join(repo, ".githooks", "pre-push"), "utf8");
     expect(hook).toContain("npm run typecheck");
     expect(hook).toContain("node .github/scripts/test-guard.mjs tmp/vitest-report.json --suite vitest");

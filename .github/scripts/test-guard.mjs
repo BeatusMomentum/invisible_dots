@@ -14,8 +14,8 @@
 //           JUnit XML report (a file ending in .xml: pytest --junitxml for
 //           the Python engine, Playwright's junit reporter for the web
 //           client's browser tests).
-// --suite   the entry of the floors file to apply: vitest, postgres, go,
-//           pytest or playwright.
+// --suite   the entry of the floors file to apply: vitest, postgres, whatsapp,
+//           go, pytest or playwright.
 // --floors  default .github/test-floors.json. The entry is chosen by the
 //           host this runs on (linux, win32), so CI and the pre-push hook
 //           read the same numbers from the same file.
@@ -35,7 +35,7 @@ function fail(message) {
 
 const args = process.argv.slice(2);
 const reportPath = args.shift();
-const usage = "usage: test-guard.mjs <report> --suite <vitest|postgres|go|pytest|playwright> [--floors <file>]";
+const usage = "usage: test-guard.mjs <report> --suite <vitest|postgres|whatsapp|go|pytest|playwright> [--floors <file>]";
 if (!reportPath) fail(usage);
 let suite;
 let floorsPath = ".github/test-floors.json";

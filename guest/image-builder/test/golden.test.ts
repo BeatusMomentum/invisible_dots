@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { hostPaths, type HostPaths } from "@invisible-dots/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BUILDER_BROWSER_BUILD, BUILDER_ENGINE_BUILD, BUILDER_ENGINE_LOCK, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_USER_DATA, defaultAssetRoot } from "../src/assets.js";
-import { GEOIP_NOTICES } from "../src/geoip-notices.js";
+import { GEOIP_NOTICES, GEOIP_STATEMENT } from "../src/geoip-notices.js";
 import { buildGoldenImage, GOLDEN_DEFAULTS, GoldenBuildError, type GoldenBuildOptions } from "../src/golden.js";
 import { readManifest, verifyImage, type GoldenManifest } from "../src/manifest.js";
 import type { BaseImagePin, GuestPins } from "../src/pins.js";
@@ -148,8 +148,9 @@ describe("buildGoldenImage", () => {
         "invisible-playwright": "0.25.7",
         apt_packages: ["xvfb", "imagemagick"],
       },
-      // What the GeoIP data asks to be credited with travels with the image.
+      // What the GeoIP data asks to be credited with, and what that means together, travel with the image.
       notices: [...GEOIP_NOTICES],
+      notices_statement: GEOIP_STATEMENT,
       // The engine's lock, which the runtime disk's copy must equal.
       engine: { lock_sha256: sha256(await readFile(join(defaultAssetRoot(), BUILDER_ENGINE_LOCK))) },
       installed: { node: "v24.21.0", "browser-engine": "151.0" },

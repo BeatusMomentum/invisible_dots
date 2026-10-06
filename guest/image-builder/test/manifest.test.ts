@@ -36,6 +36,7 @@ describe("readManifest", () => {
 
     expect(manifest.kind).toBe("golden");
     expect(manifest.kind === "golden" ? manifest.notices : "not golden").toBeUndefined();
+    expect(manifest.kind === "golden" ? manifest.notices_statement : "not golden").toBeUndefined();
   });
 });
 

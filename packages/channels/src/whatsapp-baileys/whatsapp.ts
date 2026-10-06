@@ -35,13 +35,14 @@ import { BaileysConnector, type BaileysOptions } from "./baileys.js";
 import { isDirectJid, lidJid, lidOf, phoneJid, phoneOf } from "./jid.js";
 import type { WhatsAppConnection, WhatsAppConnector, WhatsAppEnd, WhatsAppEvents, WhatsAppIncoming } from "./port.js";
 
-export interface WhatsAppOptions {
-  /** Makes the connector of a Dot's binding; default Baileys. The tests give it a fake. */
-  connector?: (dotId: string, secrets: ChannelSecrets) => WhatsAppConnector;
-  baileys?: BaileysOptions;
+/** The connection is made by Baileys, loaded from where the opt-in client is installed, or by whatever `connector` makes (the tests give it a fake). */
+export type WhatsAppOptions = (
+  | { connector: (dotId: string, secrets: ChannelSecrets) => WhatsAppConnector }
+  | { baileys: BaileysOptions }
+) & {
   /** How long to wait before a send, in milliseconds; default a random 0.4 to 1.5 seconds. */
   pauseMs?: () => number;
-}
+};
 
 const PAIRING_MESSAGE = /^pair\s+([A-Za-z0-9]+)$/i;
 /** More restarts than this in a row, with no connection in between, is a loop and not a link finishing. */
@@ -224,10 +225,10 @@ export class WhatsAppChannelType implements ChannelType {
   readonly scrubNames = [] as const;
   readonly scanned = true as const;
 
-  constructor(private readonly options: WhatsAppOptions = {}) {}
+  constructor(private readonly options: WhatsAppOptions) {}
 
   async create(binding: ChannelBindingRecord, secrets: ChannelSecrets): Promise<Channel> {
-    const connector = this.options.connector?.(binding.dot_id, secrets) ?? new BaileysConnector(binding.dot_id, secrets, this.options.baileys);
+    const connector = "connector" in this.options ? this.options.connector(binding.dot_id, secrets) : new BaileysConnector(binding.dot_id, secrets, this.options.baileys);
     return new WhatsAppChannel(connector, this.options.pauseMs ?? defaultPause);
   }
 

@@ -6,4 +6,5 @@ export * from "./pairing.js";
 export * from "./text.js";
 export * from "./link.js";
 export * from "./telegram/telegram.js";
+export * from "./whatsapp-baileys/client.js";
 export * from "./whatsapp-baileys/whatsapp.js";

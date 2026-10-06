@@ -2,7 +2,8 @@
  * Baileys' authentication state over the encrypted secrets of the Dot, instead of the plaintext JSON files of
  * its multi-file helper. The state is the linked device's identity and its Signal keys: whoever holds it is
  * that WhatsApp account, which makes it worth more than a bot token. It is kept as one encrypted secret for the
- * credentials and one per group of keys (`SignalDataTypeMap` names the groups), under the Dot's id like
+ * credentials and one per group of keys (`SignalKeyGroup` names the groups, and the typecheck made with the
+ * library installed proves the list is the library's own), under the Dot's id like
  * every secret, so it is deleted with the channel and the Dot and never reaches the guest.
  *
  * The whole state lives in memory while the connection is open; a change is written before `set` resolves,
@@ -10,15 +11,15 @@
  * that changed go in one transaction (`ChannelSecrets.putAll`), so a crash leaves the state as it was or as it
  * is now, never a step apart; and once the channel or its Dot is deleted nothing is written back.
  */
-import type { AuthenticationCreds, AuthenticationState, SignalDataSet, SignalDataTypeMap } from "baileys";
 import type { ChannelSecrets } from "../channel.js";
+import type { SignalKeyData, SignalKeyGroup, WhatsAppAuthState, WhatsAppClient, WhatsAppCreds } from "./client.js";
 
 export const WHATSAPP_CREDS_SECRET = "whatsapp_creds";
 
-type KeyGroup = keyof SignalDataTypeMap;
+type KeyGroup = SignalKeyGroup;
 
-/** One secret per group of keys. A `Record` over the library's own key list, so a group added by a Baileys upgrade is a compile error here, not a key that is never saved. */
-const GROUP_SECRETS: Record<KeyGroup, string> = {
+/** One secret per group of keys. A `Record` over the key list, so a group missing here is a compile error, not a key that is never saved; the typecheck made with the library installed proves the list is the library's. */
+export const GROUP_SECRETS: Record<KeyGroup, string> = {
   "pre-key": "whatsapp_keys_pre_key",
   session: "whatsapp_keys_session",
   "sender-key": "whatsapp_keys_sender_key",
@@ -34,16 +35,13 @@ const GROUP_SECRETS: Record<KeyGroup, string> = {
 /** Every secret the state is kept in: what the hub deletes when the channel goes. */
 export const WHATSAPP_AUTH_SECRETS: readonly string[] = [WHATSAPP_CREDS_SECRET, ...Object.values(GROUP_SECRETS)];
 
-/** The parts of Baileys the state needs; the caller passes the module it loaded, so this file never imports it. */
-export interface BaileysAuthLib {
-  initAuthCreds(): AuthenticationCreds;
-  BufferJSON: { replacer(key: string, value: unknown): unknown; reviver(key: string, value: unknown): unknown };
-  proto: { Message: { AppStateSyncKeyData: { fromObject(object: { [key: string]: unknown }): SignalDataTypeMap["app-state-sync-key"] } } };
-}
+/** The parts of Baileys the state needs; the caller passes the module it loaded, so this file never loads it. */
+export type BaileysAuthLib<Creds extends WhatsAppCreds = WhatsAppCreds, KeyData extends SignalKeyData = SignalKeyData> = Pick<WhatsAppClient<Creds, KeyData>, "initAuthCreds" | "BufferJSON" | "proto">;
 
-export class AuthStore {
+/** The store keeps what the library handed it as it was; `Creds` and `KeyData` are the library's own types of it (the defaults are the adapter's loose view). */
+export class AuthStore<Creds extends WhatsAppCreds = WhatsAppCreds, KeyData extends SignalKeyData = SignalKeyData> {
   /** What `makeWASocket` takes as `auth`. */
-  readonly state: AuthenticationState;
+  readonly state: WhatsAppAuthState<Creds, KeyData>;
   readonly #groups = new Map<KeyGroup, Record<string, unknown>>();
   readonly #dirty = new Set<KeyGroup>();
   #credsDirty = false;
@@ -53,24 +51,24 @@ export class AuthStore {
   private constructor(
     private readonly dotId: string,
     private readonly secrets: ChannelSecrets,
-    private readonly lib: BaileysAuthLib,
-    creds: AuthenticationCreds,
+    private readonly lib: BaileysAuthLib<Creds, KeyData>,
+    creds: Creds,
   ) {
     this.state = {
       creds,
       keys: {
         get: async (type, ids) => {
           const group = this.#groups.get(type) ?? {};
-          const found: Record<string, never> = {};
+          const found: Record<string, unknown> = {};
           for (const id of ids) {
             const value = group[id];
             if (value === undefined) continue;
             // The group is stored as plain JSON; this one is a protobuf message to Baileys.
-            (found as Record<string, unknown>)[id] = type === "app-state-sync-key" ? this.lib.proto.Message.AppStateSyncKeyData.fromObject(value as { [key: string]: unknown }) : value;
+            found[id] = type === "app-state-sync-key" ? this.lib.proto.Message.AppStateSyncKeyData.fromObject(value as { [key: string]: unknown }) : value;
           }
           return found;
         },
-        set: async (data: SignalDataSet) => {
+        set: async (data) => {
           this.#assertOpen();
           for (const [type, entries] of Object.entries(data) as [KeyGroup, Record<string, unknown>][]) {
             const group = this.#groups.get(type) ?? {};
@@ -93,7 +91,7 @@ export class AuthStore {
       const text = await secrets.get(dotId, name);
       return text === null ? null : JSON.parse(text, lib.BufferJSON.reviver);
     };
-    const creds = ((await read(WHATSAPP_CREDS_SECRET)) as AuthenticationCreds | null) ?? lib.initAuthCreds();
+    const creds = ((await read(WHATSAPP_CREDS_SECRET)) as WhatsAppCreds | null) ?? lib.initAuthCreds();
     const store = new AuthStore(dotId, secrets, lib, creds);
     for (const [group, name] of Object.entries(GROUP_SECRETS) as [KeyGroup, string][]) {
       const stored = (await read(name)) as Record<string, unknown> | null;

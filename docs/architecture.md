@@ -293,8 +293,10 @@ QEMU on the same disk would corrupt it.
   most recently before it (older ones are removed after a build), so a tree
   whose pinned release the project has since deleted still builds from a host
   that has it, and the cache does not grow with every weekly pin;
-  the data's credits are in the manifest's `notices` and in
-  `THIRD_PARTY_NOTICES.md`), and the whole Python environment of
+  the data's licenses and credits, source by source, are in the manifest's
+  `notices` and `notices_statement` and in `THIRD_PARTY_NOTICES.md`: they are the
+  sources' own data licenses, and since the person who runs the build makes the
+  image on their own machine, this project does not redistribute the data), and the whole Python environment of
   `invisible-playwright-mcp`, transitive packages included, by
   `guest/image-builder/builder/mcp-requirements.lock`, every package at an
   exact version with the SHA-256 of its files. The builder installs it with
@@ -2507,19 +2509,50 @@ of its own (a spare SIM or eSIM), never the one a person lives on. The official
 Cloud API (a business account and a public webhook) is a later adapter on the same
 hub.
 
-- **Licenses.** Baileys is MIT, but it depends on `libsignal`, which is GPL-3.0.
-  Neither is in this repository; the command bundle leaves Baileys out
-  (`external` in `apps/cli/scripts/build.mjs`, checked by a test), so no build of
-  ours embeds GPL code, and the server resolves it from `node_modules` when WhatsApp
-  is linked. `THIRD_PARTY_NOTICES.md` says what that means for whoever
-  distributes an installation.
+- **Licenses and the opt-in install.** Baileys is MIT, but it depends on
+  `libsignal`, which is GPL-3.0, and nothing GPL is installed by default. No
+  workspace declares Baileys (not as a regular, dev, optional or peer dependency),
+  so the root `package-lock.json` holds none of it and `npm ci` installs no GPL
+  package (`tests/repo/default-install-licenses.test.ts` scans the lock file's
+  licenses). The client lives apart in `optional/whatsapp/`: its own
+  `package.json` (Baileys at one exact version, a release candidate) and
+  `package-lock.json` (the integrity hash of every package), outside the
+  workspaces. One command installs it, `npm run whatsapp:install` from the
+  repository root: `npm ci --prefix optional/whatsapp --ignore-scripts`, a clean
+  install of that lock file without install scripts. `client.ts` is the one file
+  that names the library: it looks for it in that folder when a connection opens
+  (`createRequire` from the folder, then one `import()` of the file's URL), loads it
+  only if it is there and is the pinned release, and otherwise throws
+  `WhatsAppClientMissingError` (not installed) or `WhatsAppClientVersionError` (the
+  installed `node_modules/baileys` is not the exact version
+  `optional/whatsapp/package.json` declares, which stays the one owner of the pin:
+  a pull that moves it leaves the old release installed until the install is made
+  again). Both messages name the command and the variable that turn WhatsApp on.
+  The error is the channel's status detail, the server logs it at start when
+  `INVISIBLE_DOTS_WHATSAPP=1` is set and `whatsappClientProblem` finds one (the
+  same check the loader makes), and the "it is off" answer of linking carries the
+  same words (`WHATSAPP_ENABLE_HELP`). Nothing imports the
+  library by name, not even as types: the adapter writes down what it uses of it
+  (`WhatsAppClient`, with the library's credentials and key data as type
+  parameters) and compiles without it; `npm run typecheck:whatsapp` (a CI job,
+  with the client installed) proves the real module has that shape, that the
+  options of the socket the adapter builds (`socketConfig`, typed
+  `WhatsAppSocketConfig`) are each an option of the library with a type it takes
+  and none is a name it lacks, that the adapter's auth state is one the library
+  accepts, and that the key groups are the library's own. (The methods of
+  `WhatsAppClient` are compared in both directions, so those two are asserted
+  separately, one way.) `npm run test:whatsapp` runs the tests that need
+  the real library (`packages/channels/test-optin/`, left out of the default
+  suite). The command bundle has no import of it, so no build of ours embeds GPL
+  code. `THIRD_PARTY_NOTICES.md` says what that means for whoever distributes an
+  installation that has `optional/whatsapp/node_modules`.
 - **Off by default.** The server runs WhatsApp only when started with
   `INVISIBLE_DOTS_WHATSAPP=1` (`defaultChannelTypes` in `apps/api/src/start.ts`).
   Otherwise the type does not exist: `GET .../channels` lists only the kinds it
   runs (`available`), and linking answers 400 with how to turn it on. Baileys is
-  loaded by a dynamic `import()` when a connection opens, so a server that never
-  links WhatsApp never loads it, and no file but `baileys.ts` and `auth-state.ts`
-  names it (a test reads the sources).
+  loaded by `client.ts` when a connection opens, so a server that never
+  links WhatsApp never loads it, and no file but `client.ts` names it (a test reads
+  the sources).
 - **One port.** `port.ts` is what the channel needs of a connection (messages in,
   text out, a code to scan, why it ended); `baileys.ts` implements it over
   the network and `FakeWhatsAppConnector` for tests, because WhatsApp cannot be
@@ -2737,3 +2770,21 @@ downloaded from their publishers when a host builds its golden image, each
 under its own license, as the wheels the publishers released. This project publishes no image (section
 3.3); whoever copies a golden image to another machine takes on the license
 terms of the components inside it.
+
+The GeoIP database in the golden image is data, and its licenses are the data
+sources', not the code license of the project that merges them:
+`daijro/geoip-all-in-one` carries a GPL-3.0 `LICENSE` file for its scripts and
+states no license for the file it publishes, which merges IP2Location LITE and
+IPinfo and IPLocate.io (CC BY-SA 4.0), MaxMind GeoLite2 (its End User License
+Agreement), DB-IP Lite (CC BY 4.0), the GeoFeed + Whois + ASN country database of
+`tdulcet/ip-geolocation-dbs` (CC0 1.0) and, for the time zone computed from the
+coordinates, OpenStreetMap-derived boundaries (ODbL 1.0). The golden image is built
+by the person who runs Dots, on their own machine, from the pinned release, so
+this project does not redistribute the data. The sources, licenses and credit
+lines are `guest/image-builder/src/geoip-notices.ts`, which each golden manifest
+records as `notices` together with `notices_statement`, and
+`THIRD_PARTY_NOTICES.md` repeats; a test keeps the three equal.
+
+Nothing under the GPL is installed by default (section 9.8, WhatsApp). The few LGPL packages
+of the lock file are the prebuilt image libraries (`@img/sharp-*`) that Next.js may
+install; the notices name them.

@@ -100,6 +100,44 @@ jobs:
         if: always()
         run: node .github/scripts/test-guard.mjs vitest-report.json --suite postgres
 
+  # The WhatsApp client (Baileys) is an opt-in install: it depends on libsignal, which is GPL-3.0, and nothing GPL is
+  # installed by default. The jobs above never install it. This one does, with the command a person runs
+  # (npm run whatsapp:install), to prove the adapter against the real library: the types (the real module has the
+  # shape the adapter writes down) and the tests that need it, on PGlite and on PostgreSQL.
+  whatsapp-client:
+    name: the WhatsApp client, opt-in (types and tests on the real library)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18.4-alpine3.23
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      DATABASE_URL: postgres://postgres:test@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: install the client, as a person who enables WhatsApp does
+        run: npm run whatsapp:install
+      - name: the real module has the shape the adapter writes down
+        run: npm run typecheck:whatsapp
+      - name: vitest with the real client
+        run: npm run test:whatsapp -- --reporter=default --reporter=json --outputFile=vitest-report.json
+      - name: refuse a run with too few tests or an unexpected skip
+        if: always()
+        run: node .github/scripts/test-guard.mjs vitest-report.json --suite whatsapp
+
   iso:
     name: the Linux kernel reads our ISO images
     runs-on: ubuntu-latest
@@ -271,7 +309,7 @@ jobs:
           python -m invisible_core.claims
 
   gate:
-    needs: [node, postgres, iso, go, engine, smoke, browser-smoke, web, english, claims]
+    needs: [node, postgres, whatsapp-client, iso, go, engine, smoke, browser-smoke, web, english, claims]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -283,7 +321,7 @@ jobs:
           node -e '
             const needs = JSON.parse(process.env.RESULTS);
             const names = Object.keys(needs);
-            if (names.length !== 10) { console.error(`expected 10 jobs, got ${names.length}`); process.exit(1); }
+            if (names.length !== 11) { console.error(`expected 11 jobs, got ${names.length}`); process.exit(1); }
             let ok = true;
             for (const name of names) {
               console.log(`${name}: ${needs[name].result}`);

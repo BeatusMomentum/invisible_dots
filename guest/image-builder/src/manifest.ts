@@ -44,10 +44,13 @@ export interface GoldenManifest {
     apt_packages: string[];
   };
   /**
-   * The credits that the data inside the image asks for (the GeoIP database): what a person who runs Dots may read about it.
-   * Absent from the manifest of an image built before they were recorded, which `readManifest` still reads as it is.
+   * The licenses and credits of the data inside the image (the GeoIP database), source by source: what a person who
+   * runs Dots may read about it. Absent from the manifest of an image built before they were recorded, which
+   * `readManifest` still reads as it is.
    */
   notices?: DataNotice[];
+  /** What those notices mean together: who built the image, that invisible_dots redistributes nothing, and what whoever shares it owes. Recorded with `notices`. */
+  notices_statement?: string;
   /** The engine's Python environment (builder/engine-requirements.lock): the lock the runtime disk's copy must equal. */
   engine: { lock_sha256: string };
   /** What the provisioner reported it installed (node, uv, browser-engine, ubuntu, kernel, ...). */
