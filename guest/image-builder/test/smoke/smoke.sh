@@ -436,7 +436,7 @@ check "the frame was the server's browser_watch with the browser role main, and 
 CLOSED_BEFORE=$(closed_total $ID5)
 check "POST /browser-identities/:id/close answers 204: the browser is closed, the server ends, closed is emitted once, the profile stays" "[ \"\$(status_of $A/browser-identities/$ID5/close /dev/null -X POST)\" = 204 ] && wait_fakes 0 && wait_closed_total $ID5 $((CLOSED_BEFORE + 1)) && [ -d $BROWSERS/$ID5/profile ] && [ \"\$(api $A/browser-identities/$ID5 | jq -r .status)\" = available ] && health_is 4 0"
 check "closing a closed identity answers 204 and emits nothing; an unknown one is 404" "[ \"\$(status_of $A/browser-identities/$ID5/close /dev/null -X POST)\" = 204 ] && [ \"\$(status_of $A/browser-identities/nobody-abc123/close /dev/null -X POST)\" = 404 ] && [ \"\$(closed_total $ID5)\" = $((CLOSED_BEFORE + 1)) ]"
-check "the model launches it again, so the delete below meets an open identity" "tool_turn 12 browser_identity_launch '{\"identity_id\":\"$ID5\"}' && wait_fakes 1 && health_is 4 1"
+check "the model launches it again, so the idle kill below meets an open identity" "tool_turn 12 browser_identity_launch '{\"identity_id\":\"$ID5\"}' && wait_fakes 1 && health_is 4 1"
 # A server that dies while nothing calls it (its relay ends with it): the engine hears of it when it happens.
 CLOSED_BEFORE=$(closed_total $ID5)
 check "a server killed while idle closes its identity at once, with no call: closed is emitted once and /health counts none open" "pkill -9 -u dot -f fake_mcp_server.py; wait_fakes 0 && wait_closed_total $ID5 $((CLOSED_BEFORE + 1)) && health_is 4 0 && [ \"\$(api $A/browser-identities/$ID5 | jq -r .status)\" = available ]"

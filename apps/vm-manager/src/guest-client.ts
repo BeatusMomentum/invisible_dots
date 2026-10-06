@@ -17,6 +17,7 @@ import {
   isFatalGuestError,
   parseOutboundEvent,
   pollGuestHealth,
+  PREPARE_SLEEP_TIMEOUT_MS,
   SseParser,
   type AgentHealthAnswer,
   type AgentStateAnswer,
@@ -328,7 +329,7 @@ export class GuestClient {
   }
 
   /** Flushes state and closes browser sessions; can take a while with several browsers open. */
-  prepareSleep(timeoutMs = 60_000): Promise<void> {
+  prepareSleep(timeoutMs = PREPARE_SLEEP_TIMEOUT_MS): Promise<void> {
     return this.noContent({ method: "POST", path: this.agentPath(AGENT_ROUTES.prepareSleep), timeoutMs });
   }
 

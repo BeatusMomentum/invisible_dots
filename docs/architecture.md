@@ -647,10 +647,11 @@ command detached into another session outlives it.
 The identity routes and the model's identity tools are one code path, the
 `BrowserManager` (section 6), so its limits hold for both. A route answers an
 error as `{ error: <code>, message }` with the status of its code: `invalid`
-400, `not_found` 404, `limit` and `not_open` 409, `busy` 503, `launch_failed`,
-`crashed` and `frame_failed` 502. The engine has no route that launches an
+400, `not_found` 404, `limit` and `not_open` 409, `busy` 503, `crashed` and
+`frame_failed` 502. The engine has no route that launches an
 identity: only the model's tools open a browser, so `browser.identity.launch`
-alone decides whether one starts. The host may look at an open identity (the
+alone decides whether one starts, and `launch_failed` is an answer of those tools,
+never of a route. The host may look at an open identity (the
 frame) and close it (or delete it); these are the owner's actions, not the Dot's, so
 no permission of the Dot applies to them. A frame is no use of the identity: it does
 not move it in the least-recently-used order, does not touch `last_used_at`,
@@ -1123,8 +1124,10 @@ starts it again. What it guarantees:
   flight and give a tool in flight up to 20 seconds to finish and commit its
   result, then close the open browsers: at most 4 s on SIGTERM, which leaves about
   6 of systemd's `TimeoutStopSec=30` to checkpoint the database, and up to a
-  browser's own 30 s close on prepare-sleep, which only the host's 60 s bound (20 s
-  grace, 5 s cancel wait and 30 s stay inside it). A tool cut at
+  browser's own 30 s close on prepare-sleep: only the host's 60 s bounds it, and
+  the 20 s of grace, the 5 s of cancel wait and the 30 s close fit inside, with 5 s
+  to spare for the flush (`PREPARE_SLEEP_TIMEOUT_MS` of packages/shared, with the sum
+  checked by a test of the engine). A tool cut at
   the grace keeps its intent, and the next entry of its unit reports it as
   interrupted. Measured in the engine smoke before the browsers existed, with a
   task's `sleep 70` still running at SIGTERM and the event stream connected: the
@@ -1317,7 +1320,11 @@ state.
   when it happens, from the client's transport, so a process that dies while idle
   is closed at once, frees its slot of `max_open`, and the next action says
   `not_open`; a file never claims an open browser for a process that is gone. Text
-  a page tool returns, and its errors, have the proxy in its redacted form. A close calls
+  a page tool returns, and its errors, have the proxy in its redacted form and its
+  password in none: the server splits the URL into a user and a decoded password, so
+  the password alone, as written, decoded or encoded again, the user with it, and the
+  Basic credentials of a header are hidden as well (a short password garbles the
+  page text it also occurs in, which is the price of one that leaves nowhere). A close calls
   `browser_close` first, so Firefox flushes its profile, then ends the process.
   Every `browser.identity.*` event commits with the row change it describes.
   The model's identity and page tools (`browser_tools.py`) and the routes of

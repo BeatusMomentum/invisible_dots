@@ -8,7 +8,7 @@ import { randomBytes } from "node:crypto";
 import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { sha256File } from "./download.js";
-import type { BaseImagePin } from "./pins.js";
+import type { BaseImagePin, GeoipPin } from "./pins.js";
 import { replaceFile } from "@invisible-dots/shared";
 
 export interface PinnedComponent {
@@ -34,6 +34,8 @@ export interface GoldenManifest {
   pinned: {
     node: PinnedComponent;
     uv: PinnedComponent;
+    /** The GeoIP release the image carries, checked against this hash at the build (the browser's own launch may fetch a newer one). */
+    geoip: GeoipPin;
     "invisible-playwright-mcp": string;
     "invisible-playwright": string;
     /** SHA-256 of builder/mcp-requirements.lock: the whole Python environment, transitive packages included. */

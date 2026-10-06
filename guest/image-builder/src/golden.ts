@@ -10,10 +10,10 @@ import { basename, join } from "node:path";
 import { writeIso } from "@invisible-dots/iso";
 import { hostPaths, replaceFile, type HostPaths } from "@invisible-dots/shared";
 import { BUILDER_BROWSER_BUILD, BUILDER_ENGINE_BUILD, BUILDER_ENGINE_LOCK, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_USER_DATA, defaultAssetRoot, readGuestAsset } from "./assets.js";
-import { fetchVerified, sha256File, type Fetch, type FetchVerifiedOptions } from "./download.js";
+import { DownloadError, fetchVerified, sha256File, type Fetch, type FetchVerifiedOptions } from "./download.js";
 import { acquireLock, type Lock } from "./lock.js";
 import { manifestPathFor, writeManifest, type GoldenManifest } from "./manifest.js";
-import { BASE_IMAGE, downloadFileName, GUEST_PINS, type BaseImagePin, type GuestPins, type PinnedDownload } from "./pins.js";
+import { BASE_IMAGE, downloadFileName, GUEST_PINS, type BaseImagePin, type GeoipPin, type GuestPins, type PinnedDownload } from "./pins.js";
 import { waitForExit, type ProcessRunner } from "./process.js";
 import { parseHashedLock, parsePythonLock, type PythonLock } from "./python-lock.js";
 import { builderQemuArgs, type Accelerator, type QemuPrograms } from "./qemu.js";
@@ -179,6 +179,7 @@ async function buildLocked(options: GoldenBuildOptions & Resolved, target: Targe
   };
   const nodeTarball = await fetchPinned(pins.node);
   const uvTarball = await fetchPinned(pins.uv);
+  const geoipArchive = await fetchGeoip(pins.geoip, join(cacheDir, downloadFileName(pins.geoip)), downloads);
 
   // Next to the images, not in the system temp directory: the disk grows to
   // several GiB and the final rename stays on one filesystem.
@@ -207,6 +208,7 @@ async function buildLocked(options: GoldenBuildOptions & Resolved, target: Targe
         python: target.python,
         nodeTarball,
         uvTarball,
+        geoipArchive,
         engineLock: target.engineLock,
         engineBuild: target.engineBuild,
         browserBuild: target.browserBuild,
@@ -239,6 +241,7 @@ async function buildLocked(options: GoldenBuildOptions & Resolved, target: Targe
       pinned: {
         node: { version: pins.node.version, sha256: pins.node.sha256, url: pins.node.url },
         uv: { version: pins.uv.version, sha256: pins.uv.sha256, url: pins.uv.url },
+        geoip: { ...pins.geoip },
         "invisible-playwright-mcp": target.python.mcpVersion,
         "invisible-playwright": target.python.playwrightVersion,
         "mcp-requirements.lock": createHash("sha256").update(target.pythonLock).digest("hex"),
@@ -261,6 +264,27 @@ async function buildLocked(options: GoldenBuildOptions & Resolved, target: Targe
     if (error instanceof GoldenBuildError) throw error;
     throw new GoldenBuildError((error as Error).message, workDir, { cause: error });
   }
+}
+
+/**
+ * The pinned GeoIP release, hashed against its pin like the other inputs. The project publishes no checksum list, so
+ * the pin alone decides; and it keeps only its latest releases, so a 404 means the pin has to be refreshed.
+ */
+async function fetchGeoip(pin: GeoipPin, dest: string, options: FetchVerifiedOptions): Promise<string> {
+  try {
+    await fetchVerified({ url: pin.url, sha256: pin.sha256 }, dest, options);
+  } catch (error) {
+    if (error instanceof DownloadError && error.message.includes("HTTP 404")) {
+      throw new DownloadError(
+        `${error.message}: the pinned GeoIP release ${pin.tag} is gone from GitHub (daijro/geoip-all-in-one keeps only its latest releases). ` +
+          `Pin the current one in guest/image-builder/pins.json: its tag, its URL and the "digest" GitHub shows for geoip-aio-all.mmdb.zip at ` +
+          "https://api.github.com/repos/daijro/geoip-all-in-one/releases/latest",
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+  return dest;
 }
 
 /** Boots the builder VM, reports its progress, and returns the whole serial console once it has stopped. */

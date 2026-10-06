@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fakes.fake_mcp_server import install_fake_mcp, read_record, write_control
+from fakes.fake_mcp_server import install_fake_mcp, proxy_forms, read_record, write_control
 from fakes.local_computer import LocalComputer
 
 from nanobot.agent.tools.base import ToolResult
@@ -352,6 +352,46 @@ async def test_what_a_page_tool_returns_of_the_proxy_is_redacted_in_results_and_
     for result in (failed, read):
         assert "http://user:***@proxy.test:8080" in result_text(result)
         assert "s3cret" not in result_text(result)
+
+
+# The credentials of this proxy are written percent-encoded, with a lowercase escape, so the password as
+# written, decoded and encoded again are three different strings.
+ENCODED_PROXY = "http://us%40er:p%40ss%3aword@proxy.test:8080"
+PASSWORD_FORMS = ("password_as_written", "password_decoded", "password_encoded_again", "basic_credentials")
+
+
+@pytest.mark.parametrize("form", sorted(proxy_forms(ENCODED_PROXY)))
+async def test_the_password_leaves_in_no_form_a_server_can_repeat_it(env: Env, form: str) -> None:
+    manager = env.manager()
+    identity = await manager.create("forms", ENCODED_PROXY)
+    mcp_home = env.mcp_home(identity.id)
+    secrets = [proxy_forms(ENCODED_PROXY)[name] for name in PASSWORD_FORMS]
+    assert len(set(secrets)) == len(secrets)
+
+    write_control(mcp_home, fail_open=True, echo_proxy_as=form)
+    with pytest.raises(BrowserIdentityError) as failed_launch:
+        await manager.launch(identity.id)
+    write_control(mcp_home, echo_proxy_as=form)
+    await manager.launch(identity.id)
+    failed = await manager.call_tool(identity.id, "browser_navigate", {"url": "https://example.org/"})
+    read = await manager.call_tool(identity.id, "browser_read_text", {})
+
+    assert result_is_error(failed) and not result_is_error(read)
+    for said in (failed_launch.value.message, result_text(failed), result_text(read)):
+        assert "***" in said
+        for secret in secrets:
+            assert secret not in said
+
+
+async def test_a_proxy_without_a_password_leaves_what_the_server_says_as_it_is(env: Env) -> None:
+    manager = env.manager()
+    identity = await manager.create("open proxy", "http://proxy.test:8080")
+    write_control(env.mcp_home(identity.id), echo_proxy_on_pages=True)
+    await manager.launch(identity.id)
+
+    read = await manager.call_tool(identity.id, "browser_read_text", {})
+
+    assert result_text(read) == "page behind http://proxy.test:8080"
 
 
 async def test_reports_a_command_that_cannot_be_started_without_its_arguments(env: Env) -> None:

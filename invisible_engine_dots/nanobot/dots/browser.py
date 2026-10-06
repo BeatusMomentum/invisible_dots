@@ -32,12 +32,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import functools
 import posixpath
 import re
 import sqlite3
 from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
+from urllib.parse import quote, unquote, urlsplit
 
 from loguru import logger
 
@@ -76,7 +78,12 @@ FRAME_WAIT_S = 5.0
 
 SessionState = Literal["opening", "open", "closing"]
 
-ErrorCode = Literal["not_found", "invalid", "limit", "not_open", "busy", "launch_failed", "crashed", "frame_failed"]
+# What an identity route (list, create, get, delete, frame, close) can fail with: IDENTITY_ERROR_STATUS of
+# protocol.py names the HTTP status of each.
+RouteErrorCode = Literal["not_found", "invalid", "limit", "not_open", "busy", "crashed", "frame_failed"]
+# `launch_failed` is the launch's alone: the model's browser_identity_launch and browser_open fail with it, and
+# no route launches (architecture section 5.3), so no HTTP status names it.
+ErrorCode = Literal[RouteErrorCode, "launch_failed"]
 
 
 class BrowserIdentityError(Exception):
@@ -746,11 +753,43 @@ class BrowserManager:
             logger.info("browser identity {} closed", identity_id)
 
 
+@functools.lru_cache(maxsize=64)
+def _proxy_scrubber(proxy: str) -> tuple[re.Pattern[str], dict[str, str]]:
+    """What to find in a text of the server and what to put there, for one stored proxy URL.
+
+    The server splits the URL into a server, a user and a password (percent-decoded), so what it or Firefox
+    repeats is not only the URL as stored: it is the password alone, as written, decoded or encoded again,
+    the user and the password together, or the Basic credentials of a `Proxy-Authorization` header. All of
+    them are found in one pass, longest first, so that the text put in place of one is never searched again.
+    A password too short to be told from the text around it is hidden too: the page text it garbles is the
+    price of a password that leaves nowhere.
+    """
+    replacements = {proxy: redact_proxy(proxy)}
+    try:
+        parts = urlsplit(proxy.strip())
+        written_user, written_password = parts.username or "", parts.password or ""
+    except ValueError:
+        written_user = written_password = ""  # the server's own parse fails too: only the URL can be named
+    if written_password:
+        user, password = unquote(written_user), unquote(written_password)
+        users = {written_user, user, quote(user, safe="")}
+        passwords = {form for form in (written_password, password, quote(password, safe="")) if form}
+        for form in users:
+            for secret in passwords:
+                replacements[f"{form}:{secret}"] = f"{form}:***"
+        replacements[base64.b64encode(f"{user}:{password}".encode()).decode()] = "***"
+        for secret in passwords:
+            replacements.setdefault(secret, "***")
+    pattern = re.compile("|".join(re.escape(found) for found in sorted(replacements, key=len, reverse=True)))
+    return pattern, replacements
+
+
 def _scrub(text: str, proxy: str | None) -> str:
-    """A text of the server with the proxy it may echo in its redacted form."""
-    if proxy and proxy in text:
-        return text.replace(proxy, redact_proxy(proxy))
-    return text
+    """A text of the server with the proxy it may echo, and its password in any form, redacted."""
+    if not proxy:
+        return text
+    pattern, replacements = _proxy_scrubber(proxy)
+    return pattern.sub(lambda found: replacements[found.group(0)], text)
 
 
 def _scrub_result(result: Any, proxy: str | None) -> Any:

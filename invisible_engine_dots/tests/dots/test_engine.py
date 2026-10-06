@@ -37,7 +37,7 @@ from nanobot.dots.engine import (
     approval_granted_continuation,
     approval_rejected_continuation,
 )
-from nanobot.dots.protocol import DotsConfigError
+from nanobot.dots.protocol import PREPARE_SLEEP_TIMEOUT_S, DotsConfigError
 from nanobot.dots.transcript_outbox import CLOSED, CLOSED_INTERRUPTED, INBOUND_ID
 from nanobot.providers.base import LLMResponse
 
@@ -1441,6 +1441,16 @@ class TestStoppingWithBrowsersOpen:
         closed.clear()
         await h.engine.stop()
         assert closed == []
+
+    def test_the_steps_of_a_prepare_sleep_fit_inside_the_hosts_wait_with_a_margin(self) -> None:
+        # The host gives up on a prepare-sleep after PREPARE_SLEEP_TIMEOUT_S and stops the guest, which would cut
+        # the browsers mid-close: the grace, the wait for the cancelled turns and the closes have to end before
+        # that, with room for the flush of the state and the answer.
+        steps = (
+            engine_module.STOP_GRACE_S + engine_module._CANCEL_WAIT_S + engine_module._CLOSE_BROWSERS_ON_SLEEP_S
+        )
+        margin_s = 5
+        assert steps + margin_s <= PREPARE_SLEEP_TIMEOUT_S
 
     async def test_a_config_applies_the_browser_limits_to_the_manager(self, make_engine: MakeEngine) -> None:
         h = started(make_engine([]))

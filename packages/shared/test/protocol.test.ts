@@ -8,6 +8,7 @@ import {
   identityPaths,
   isIdentityAnswer,
   OPENROUTER_KEY_RULE,
+  PREPARE_SLEEP_TIMEOUT_MS,
   truncateText,
   vmName,
 } from "../src/browser.js";
@@ -20,6 +21,8 @@ describe("protocol constants", () => {
     expect(AGENT_ROUTES.browserIdentity("a b")).toBe("/browser-identities/a%20b");
     expect(AGENT_ROUTES.browserIdentityFrame("a b")).toBe("/browser-identities/a%20b/frame");
     expect(AGENT_ROUTES.browserIdentityClose("a b")).toBe("/browser-identities/a%20b/close");
+    // Section 9.5: the engine's steps of a prepare-sleep (20 s of grace, 5 s of cancel wait, a 30 s browser close) fit inside.
+    expect(PREPARE_SLEEP_TIMEOUT_MS).toBe(60_000);
   });
 
   it("lays out an identity directory", () => {
@@ -40,7 +43,6 @@ describe("identity error answers", () => {
       limit: 409,
       not_open: 409,
       busy: 503,
-      launch_failed: 502,
       crashed: 502,
       frame_failed: 502,
     });

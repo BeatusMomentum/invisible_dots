@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs as root inside the builder VM, from the builder's seed disk (label
-# cidata), which also carries pins.env and the Node and uv tarballs. Installs
+# cidata), which also carries pins.env, the Node and uv tarballs and the GeoIP archive. Installs
 # everything the golden image carries (architecture section 3.3), then wipes
 # the instance state so every Dot boots as a fresh cloud-init instance, and
 # powers off.
@@ -62,19 +62,19 @@ step "installing invisible-playwright-mcp $MCP_VERSION, fetching the browser eng
 # lock names and with a file whose SHA-256 it lists, nothing resolved from the index. The engine is
 # fetched with the invisible-playwright of that environment, so the cached engine is the one the
 # server's seal expects, and the GeoIP database that a launch with the timezone left to "auto" needs
-# is fetched beside it, so a Dot's first launch downloads nothing. Both land in
-# ~dot/.cache/invisible-playwright.
+# is unpacked beside it from the pinned release the seed carries (hash-checked on the host and again by
+# the script), so a Dot's first launch downloads nothing. Both land in ~dot/.cache/invisible-playwright.
 as_dot() { sudo -u dot -H env PATH="/home/dot/.local/bin:/usr/local/bin:/usr/bin:/bin" "$@"; }
 mcp_env=/home/dot/.local/share/invisible-dots/mcp
-bash "$payload/$BROWSER_BUILD" "$payload/$PYTHON_LOCK" "$mcp_env"
+bash "$payload/$BROWSER_BUILD" "$payload/$PYTHON_LOCK" "$mcp_env" "$payload/$GEOIP_ARCHIVE" "$GEOIP_TAG" "$GEOIP_SHA256"
 # `version` prints the wrapper on its first line and the engine on the line
 # that starts with "engine" (tag, Firefox version, BuildID); the engine line
 # is the one that says which browser the image carries.
 engine_version="$(as_dot "$mcp_env/bin/invisible-playwright" version | sed -n 's/^engine[[:space:]]*//p')"
 [ -n "$engine_version" ] || { console "invisible-playwright version printed no engine line"; false; }
-# The GeoIP database is named by its release tag (a date), the directory it was cached in.
+# The GeoIP database is named by its release tag (a date), the directory it was cached in: the pinned one.
 geoip_database="$(as_dot "$mcp_env/bin/python" -c 'from invisible_core.download import geoip_mmdb_path; print(geoip_mmdb_path().parent.name)')"
-[ -n "$geoip_database" ] || { console "no GeoIP database in the cache of invisible-playwright"; false; }
+[ "$geoip_database" = "$GEOIP_TAG" ] || { console "the cache of invisible-playwright holds GeoIP release '$geoip_database', not the pinned $GEOIP_TAG"; false; }
 
 step "installing the engine's Python environment"
 # The engine's third-party dependencies come from the hashed lock on the seed,

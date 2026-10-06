@@ -398,7 +398,7 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     guest.launchIdentity(identity.id);
 
     const browserAnswers = Object.entries(IDENTITY_ERROR_STATUS).filter(([, status]) => status >= 500);
-    expect(browserAnswers.map(([code]) => code).sort()).toEqual(["busy", "crashed", "frame_failed", "launch_failed"]);
+    expect(browserAnswers.map(([code]) => code).sort()).toEqual(["busy", "crashed", "frame_failed"]);
     for (const [code, status] of browserAnswers) {
       guest.identityFault = code as IdentityErrorCode;
       await expect(scheduler.identityFrame(dot.id, identity.id)).rejects.toMatchObject({ status, code });

@@ -73,7 +73,12 @@ if [ "$suite" = browser ]; then
   # The packages of the golden image (pins.json), as provision.sh installs them.
   apt-get install -y -qq --no-install-recommends $(jq -r '.apt_packages[]' "$TREE/guest/image-builder/pins.json") >/dev/null
   # The Dot's browser, with the script provision.sh runs on the same lock. dot reaches its home, not the tree.
-  bash "$builder/build-browser-env.sh" "$builder/mcp-requirements.lock" /home/dot/.local/share/invisible-dots/mcp
+  # The GeoIP release pins.json names, fetched here (the image builder fetches it on the host) and checked
+  # against its SHA-256 by the script itself.
+  geoip_dir=$(mktemp -d)
+  read -r GEOIP_TAG GEOIP_URL GEOIP_SHA < <(jq -r '.geoip | "\(.tag) \(.url) \(.sha256)"' "$TREE/guest/image-builder/pins.json")
+  curl -fsSL "$GEOIP_URL" -o "$geoip_dir/geoip-aio-all.mmdb.zip"
+  bash "$builder/build-browser-env.sh" "$builder/mcp-requirements.lock" /home/dot/.local/share/invisible-dots/mcp "$geoip_dir/geoip-aio-all.mmdb.zip" "$GEOIP_TAG" "$GEOIP_SHA"
 fi
 
 exec bash "$checks"

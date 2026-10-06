@@ -23,6 +23,14 @@ describe("the pins in this checkout", () => {
     expect(Object.keys(GUEST_PINS)).not.toContain("python_packages");
   });
 
+  it("pin the GeoIP database to one release of daijro/geoip-all-in-one by its exact URL and SHA-256", () => {
+    const { geoip } = GUEST_PINS;
+    expect(geoip.tag).toMatch(/^\d{4}\.\d{2}\.\d{2}$/);
+    expect(geoip.url).toBe(`https://github.com/daijro/geoip-all-in-one/releases/download/${geoip.tag}/geoip-aio-all.mmdb.zip`);
+    expect(geoip.sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(downloadFileName(geoip)).toBe("geoip-aio-all.mmdb.zip");
+  });
+
   it("install the desktop, the browser libraries and the screenshot tool dot-agentd calls", () => {
     expect(GUEST_PINS.apt_packages).toEqual(
       expect.arrayContaining([
@@ -48,6 +56,15 @@ describe("pin validation", () => {
 
   it("rejects a hash that is not lowercase hex", () => {
     expect(() => parseGuestPins({ ...good, node: { ...good.node, sha256: "ABC" } })).toThrow(/node.sha256/);
+  });
+
+  it("rejects a GeoIP pin that is not a hash, not a release of the project, or whose URL names another tag", () => {
+    expect(() => parseGuestPins({ ...good, geoip: { ...good.geoip, sha256: "latest" } })).toThrow(/geoip.sha256/);
+    expect(() => parseGuestPins({ ...good, geoip: { ...good.geoip, url: "https://example.org/geoip-aio-all.mmdb.zip" } })).toThrow(/geoip.url/);
+    expect(() => parseGuestPins({ ...good, geoip: { ...good.geoip, tag: "2026.01.01" } })).toThrow(/geoip.url/);
+    expect(() => parseGuestPins({ ...good, geoip: { ...good.geoip, url: good.geoip.url.replace("https:", "http:") } })).toThrow(/not an https URL/);
+    const { geoip: _removed, ...without } = good;
+    expect(() => parseGuestPins(without)).toThrow(/geoip must be an object/);
   });
 
   it("rejects plain http", () => {

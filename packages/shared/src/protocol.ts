@@ -166,9 +166,18 @@ export const AGENT_ROUTES = {
 } as const;
 
 /**
+ * How long the host waits for `POST /prepare-sleep` before it gives up and stops the guest anyway (architecture
+ * section 9.5). The engine's work inside it (the grace of a tool in flight, the wait for the cancelled turns,
+ * the close of every open browser) has to fit; nanobot/dots/protocol.py holds the same number in seconds
+ * and tests/dots/test_engine.py checks the sum of those steps against it.
+ */
+export const PREPARE_SLEEP_TIMEOUT_MS = 60_000;
+
+/**
  * The HTTP status of each error code the engine answers on the identity routes (architecture section 5.3):
  * `invalid`, `not_found`, `limit` and `not_open` are the caller's, `busy` is a call holding the browser, and
- * `launch_failed`, `crashed` and `frame_failed` are the browser's. nanobot/dots/protocol.py holds the same
+ * `crashed` and `frame_failed` are the browser's. There is no `launch_failed` here: no route launches (the model's
+ * tools do), so no answer of a route carries it. nanobot/dots/protocol.py holds the same
  * table and serves its answers from it; the control plane passes an answer with one of these pairs through
  * as it is, so the UI can tell a busy or crashed browser from an unreachable computer.
  */
@@ -178,7 +187,6 @@ export const IDENTITY_ERROR_STATUS = {
   limit: 409,
   not_open: 409,
   busy: 503,
-  launch_failed: 502,
   crashed: 502,
   frame_failed: 502,
 } as const;

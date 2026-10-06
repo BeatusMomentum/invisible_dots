@@ -111,13 +111,29 @@ describe("the Dot's browser", () => {
     expect(build).toContain('as_dot "$env_dir/bin/invisible-playwright" fetch');
   });
 
-  it("has the GeoIP database fetched beside the engine, so a first launch downloads nothing, and records its release", () => {
-    expect(build).toContain("from invisible_core.download import ensure_geoip_mmdb");
-    // The fetch comes after the engine's, from the same environment, as dot (the cache is dot's).
-    expect(build.indexOf("ensure_geoip_mmdb")).toBeGreaterThan(build.indexOf('"$env_dir/bin/invisible-playwright" fetch'));
-    expect(build).toMatch(/as_dot "\$env_dir\/bin\/python" -c 'from invisible_core\.download import ensure_geoip_mmdb/);
+  it("has the pinned GeoIP database unpacked beside the engine, so a first launch downloads nothing, and records its release", () => {
+    // The script takes the archive, its tag and its hash from the seed, and checks the hash before it unpacks anything.
+    expect(build).toContain('geoip_sha256="${5:?$usage}"');
+    expect(build).toContain('echo "$geoip_sha256  $geoip_zip" | sha256sum --check --status -');
+    expect(build.indexOf("sha256sum --check")).toBeLessThan(build.indexOf("uv venv"));
+    // Nothing is resolved from the network by the script: the browser's own "latest release" fetch is not used.
+    expect(build).not.toContain("ensure_geoip_mmdb");
+    // The unpacking comes after the engine's fetch, from the same environment, as dot (the cache is dot's), and it
+    // fails when the browser's own lookup would not find the file it wrote.
+    expect(build.indexOf("bundle.extract")).toBeGreaterThan(build.indexOf('"$env_dir/bin/invisible-playwright" fetch'));
+    expect(build).toMatch(/as_dot "\$env_dir\/bin\/python" - "\$dot_geoip" "\$geoip_tag" <<'PYTHON'/);
+    expect(build).toContain("if geoip_mmdb_path() != target / GEOIP_MMDB_NAME:");
+    // provision.sh hands the three values over, and refuses an image whose cache holds another release than the pin.
+    expect(provision).toContain('"$payload/$GEOIP_ARCHIVE" "$GEOIP_TAG" "$GEOIP_SHA256"');
     expect(provision).toContain("from invisible_core.download import geoip_mmdb_path");
+    expect(provision).toContain('[ "$geoip_database" = "$GEOIP_TAG" ]');
     expect(provision).toContain('component geoip-database "$geoip_database"');
+  });
+
+  it("is unpacked the same way by the browser smoke, from the pin and with the same script", () => {
+    const prepare = text("test/smoke/prepare-engine.sh");
+    expect(prepare).toContain(".geoip | \"\\(.tag) \\(.url) \\(.sha256)\"");
+    expect(prepare).toContain('"$geoip_dir/geoip-aio-all.mmdb.zip" "$GEOIP_TAG" "$GEOIP_SHA"');
   });
 
   it("the lock in this checkout pins every package with hashes, both top-level packages included", () => {

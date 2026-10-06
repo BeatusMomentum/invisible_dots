@@ -15,16 +15,17 @@ image's SHA-256; `invisible-dots doctor` checks an image against it with
 `buildGoldenImage({ qemu, accelerator, runner })`:
 
 1. Downloads the Ubuntu 24.04 cloud image pinned in
-   `virtualization/images/base.json`, and the Node and uv tarballs pinned in
-   `pins.json`, with Node's fetch. Each published checksum list (`SHA256SUMS`,
-   `SHASUMS256.txt`, uv's `.sha256`) must name the pinned hash before the
-   download starts, and the downloaded bytes must hash to it (Node crypto).
+   `virtualization/images/base.json`, the Node and uv tarballs and the GeoIP
+   database pinned in `pins.json`, with Node's fetch. Each published checksum list
+   (`SHA256SUMS`, `SHASUMS256.txt`, uv's `.sha256`) must name the pinned hash
+   before the download starts, and the downloaded bytes must hash to it (Node
+   crypto). The GeoIP archive has no published list, so its pin alone decides.
    Cached copies are re-hashed before every build.
 2. Copies the cloud image and grows it with `qemu-img resize` (default 10G;
    each Dot's overlay is larger and cloud-init grows the filesystem).
 3. Writes the builder seed with `@invisible-dots/iso`: one ISO labelled
    `cidata` holding `user-data`, `meta-data`, `provision.sh`, `pins.env`,
-   `mcp-requirements.lock`, both tarballs, `engine-requirements.lock`,
+   `mcp-requirements.lock`, both tarballs, the GeoIP archive, `engine-requirements.lock`,
    `build-engine-env.sh` and `build-browser-env.sh`. The engine's own source is
    not on it: it is ours, so it travels on the runtime ISO.
 4. Boots it once with the QEMU the host runs Dots with, on the accelerator
@@ -33,24 +34,34 @@ image's SHA-256; `invisible-dots doctor` checks an image against it with
    from the vm-manager's `machineArgs()`). `provision.sh` installs the
    apt packages (Xvfb, a minimal XFCE, the browser's libraries, ImageMagick
    for dot-agentd's screenshots), Node, uv, then builds the Dot's browser with
-   `build-browser-env.sh <lock> ~dot/.local/share/invisible-dots/mcp`, as user
+   `build-browser-env.sh <lock> ~dot/.local/share/invisible-dots/mcp <GeoIP
+   archive> <tag> <sha256>`, as user
    `dot`: a virtual environment filled with
    `uv pip install --require-hashes -r mcp-requirements.lock`, its
    `invisible-playwright-mcp` linked into `~/.local/bin`, and
    `invisible-playwright fetch` run from that environment, so the cached browser
-   engine is the one the MCP server expects. The same script then fetches the
-   GeoIP database that a launch with the timezone left to `auto` needs (the
-   latest build of `daijro/geoip-all-in-one` on the day of the build), so a Dot's
-   first launch downloads nothing; its release is recorded in the manifest as
-   `geoip-database`, and a launch checks for a newer one and keeps this one when
-   GitHub cannot be reached. This one artifact is not pinned and not hashed, on
-   purpose: `daijro/geoip-all-in-one` is rebuilt weekly and keeps only its latest
-   releases, so a pinned tag answers 404 within weeks and would fail every
-   build, and invisible-playwright itself never pins it (it resolves the latest
-   tag on every launch). It is a data file for the timezone lookup, not code,
-   and it is not an input of the golden digest, so two builds from one seed can
-   carry different weeks of it; the manifest records which one each did. The
-   browser smoke runs the same script. The only
+   engine is the one the MCP server expects. The same script then unpacks the
+   GeoIP database that a launch with the timezone left to `auto` needs, so a
+   Dot's first launch downloads nothing. It is one release of
+   `daijro/geoip-all-in-one`, pinned in `pins.json` by its exact URL and the
+   SHA-256 of that file (the `digest` GitHub shows for the release asset): the
+   host checks the hash when it downloads the archive, the script checks it
+   again before it unpacks it into the cache directory the browser reads (and
+   fails when the browser's own lookup would not find that file), and the pin is
+   part of the golden digest, so another release is another image. The release is
+   recorded in the manifest (`pinned.geoip`, and `geoip-database` among the
+   installed components). What is not pinned is what happens later: a launch
+   asks GitHub for the latest release and fetches it when it is newer than the
+   one in the cache (a data file for the timezone lookup, fetched by
+   invisible-playwright itself), and keeps the pinned one when GitHub cannot be
+   reached. The cost of the pin: `daijro/geoip-all-in-one` is rebuilt weekly and
+   keeps only its latest two releases, so a pin that is not refreshed answers
+   404 within weeks. The build then stops and says what to change: put the
+   current tag, URL and `digest` of `geoip-aio-all.mmdb.zip`
+   (`https://api.github.com/repos/daijro/geoip-all-in-one/releases/latest`) into
+   `pins.json`. A host that already built with the pin keeps the verified archive
+   in `images/.cache` and does not need the network for it. The
+   browser smoke runs the same script on the same pinned archive. The only
    browser a Dot has is that server: a test refuses any other browser or browser
    library among the apt packages, the lock and the build scripts. `provision.sh`
    then builds the engine's Python

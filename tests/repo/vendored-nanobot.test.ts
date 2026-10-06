@@ -26,6 +26,7 @@ import {
   OPENROUTER_KEY_PATTERN,
   OPENROUTER_KEY_RULE,
   OUTBOUND_EVENT_TYPES,
+  PREPARE_SLEEP_TIMEOUT_MS,
   TASK_CANCELLED_SYSTEM_EVENT,
   TOOL_TARGET_MAX,
 } from "@invisible-dots/shared";
@@ -150,6 +151,9 @@ describe("the vendored nanobot fork", () => {
     expect(statusMatch, "IDENTITY_ERROR_STATUS").not.toBeNull();
     const engineStatus = Object.fromEntries([...statusMatch![1]!.matchAll(/"(\w+)":\s*(\d+)/g)].map((m) => [m[1]!, Number(m[2])]));
     expect(engineStatus).toEqual({ ...IDENTITY_ERROR_STATUS });
+
+    // How long the host waits for a prepare-sleep, which the engine's steps of one have to fit inside.
+    expect(Number(/^PREPARE_SLEEP_TIMEOUT_S = (\d+)$/m.exec(protocol)?.[1]) * 1000).toBe(PREPARE_SLEEP_TIMEOUT_MS);
 
     expect(/^TASK_CANCELLED_EVENT = "([^"]+)"/m.exec(protocol)?.[1]).toBe(TASK_CANCELLED_SYSTEM_EVENT);
     // The longest `target` of a `tool.called`: the engine cuts to it, the host's schema refuses more.

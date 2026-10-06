@@ -8,7 +8,7 @@ from typing import Any, get_args
 
 import pytest
 
-from nanobot.dots.browser import ErrorCode
+from nanobot.dots.browser import ErrorCode, RouteErrorCode
 from nanobot.dots.protocol import (
     AGENT_ROUTES,
     AGENT_STATES,
@@ -55,10 +55,12 @@ class TestSharedNames:
         assert len(set(AGENT_ROUTES.values())) == len(AGENT_ROUTES)
         assert AGENT_ROUTES["events_stream"] == "/events/stream"
 
-    def test_every_error_code_of_a_browser_identity_has_one_status(self) -> None:
-        assert set(IDENTITY_ERROR_STATUS) == set(get_args(ErrorCode))
+    def test_every_error_code_a_route_answers_has_one_status_and_the_launch_has_none(self) -> None:
+        assert set(IDENTITY_ERROR_STATUS) == set(get_args(RouteErrorCode))
+        # No route launches (only the model's tools do), so `launch_failed` is the one code with no status.
+        assert set(get_args(ErrorCode)) - set(IDENTITY_ERROR_STATUS) == {"launch_failed"}
         assert IDENTITY_ERROR_STATUS["busy"] == 503
-        assert {IDENTITY_ERROR_STATUS[code] for code in ("launch_failed", "crashed", "frame_failed")} == {502}
+        assert {IDENTITY_ERROR_STATUS[code] for code in ("crashed", "frame_failed")} == {502}
 
     def test_the_cancel_event_name(self) -> None:
         assert TASK_CANCELLED_EVENT == "task.cancelled"

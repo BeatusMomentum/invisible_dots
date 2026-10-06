@@ -33,16 +33,20 @@ AGENT_ROUTES = {
 # `browserIdentityFrame(id)` and `browserIdentityClose(id)`.
 BROWSER_IDENTITY_ACTIONS = ("frame", "close")
 
+# How long the host waits for `POST /prepare-sleep` before it stops the guest anyway, in seconds
+# (PREPARE_SLEEP_TIMEOUT_MS in packages/shared protocol.ts; tests/repo/vendored-nanobot.test.ts keeps the two
+# equal, and tests/dots/test_engine.py checks that the engine's steps of a prepare-sleep fit inside it).
+PREPARE_SLEEP_TIMEOUT_S = 60
+
 # The HTTP status of each error code the identity routes answer with. IDENTITY_ERROR_STATUS of
 # packages/shared has the same table; tests/repo/vendored-nanobot.test.ts reads it with a regex, so it is one
-# `"code": status` line each, and test_protocol.py checks that its keys are the codes of `browser.ErrorCode`.
+# `"code": status` line each, and test_protocol.py checks that its keys are the codes of `browser.RouteErrorCode`.
 IDENTITY_ERROR_STATUS = {
     "invalid": 400,
     "not_found": 404,
     "limit": 409,
     "not_open": 409,
     "busy": 503,
-    "launch_failed": 502,
     "crashed": 502,
     "frame_failed": 502,
 }

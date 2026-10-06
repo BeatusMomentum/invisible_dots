@@ -27,6 +27,8 @@ export interface BuilderSeedInput {
   /** Host paths of the verified tarballs, streamed into the image. */
   nodeTarball: string;
   uvTarball: string;
+  /** The verified zip of the GeoIP database (pins.geoip), streamed into the image. */
+  geoipArchive: string;
   /** builder/engine-requirements.lock and builder/build-engine-env.sh, as read. */
   engineLock: Uint8Array;
   engineBuild: Uint8Array;
@@ -46,6 +48,9 @@ export function pinsEnv(pins: GuestPins, python: PythonLock): string {
     ["NODE_TARBALL", downloadFileName(pins.node)],
     ["UV_VERSION", pins.uv.version],
     ["UV_TARBALL", downloadFileName(pins.uv)],
+    ["GEOIP_TAG", pins.geoip.tag],
+    ["GEOIP_ARCHIVE", downloadFileName(pins.geoip)],
+    ["GEOIP_SHA256", pins.geoip.sha256],
     ["MCP_VERSION", python.mcpVersion],
     ["PLAYWRIGHT_VERSION", python.playwrightVersion],
     ["PYTHON_LOCK", SEED_PYTHON_LOCK],
@@ -76,6 +81,7 @@ export function builderSeedEntries(input: BuilderSeedInput): IsoEntry[] {
     { path: SEED_PYTHON_LOCK, data: input.pythonLock },
     { path: downloadFileName(input.pins.node), file: input.nodeTarball },
     { path: downloadFileName(input.pins.uv), file: input.uvTarball },
+    { path: downloadFileName(input.pins.geoip), file: input.geoipArchive },
     { path: SEED_ENGINE_LOCK, data: input.engineLock },
     { path: SEED_ENGINE_BUILD, data: input.engineBuild },
     { path: SEED_BROWSER_BUILD, data: input.browserBuild },

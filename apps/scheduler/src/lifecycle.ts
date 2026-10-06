@@ -15,6 +15,7 @@ import type { Database } from "@invisible-dots/database";
 import type { EventLog } from "@invisible-dots/events";
 import {
   computerResources,
+  PREPARE_SLEEP_TIMEOUT_MS,
   toRuntimeConfig,
   type DotState,
   type HealthAnswer,
@@ -36,7 +37,7 @@ export interface LifecycleOptions {
   /** First retry delay of the event pump after a failure; doubles up to `pumpMaxRetryMs`. */
   pumpRetryMs: number;
   pumpMaxRetryMs: number;
-  /** Time the agent gets to flush its state before a shutdown (section 9.5). */
+  /** Time the agent gets to flush its state before a shutdown (section 9.5). Default PREPARE_SLEEP_TIMEOUT_MS of packages/shared, which the engine's own steps fit inside. */
   prepareSleepTimeoutMs: number;
 }
 
@@ -46,7 +47,7 @@ export const DEFAULT_LIFECYCLE_OPTIONS: LifecycleOptions = {
   healthRequestTimeoutMs: 5_000,
   pumpRetryMs: 1_000,
   pumpMaxRetryMs: 30_000,
-  prepareSleepTimeoutMs: 60_000,
+  prepareSleepTimeoutMs: PREPARE_SLEEP_TIMEOUT_MS,
 };
 
 export interface LifecycleDeps {

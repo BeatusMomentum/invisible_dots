@@ -69,7 +69,7 @@ The real server and a real Firefox are not run by this smoke: they are the brows
 `browser/smoke.sh` runs the Dot's real browser. The golden image's apt packages (`pins.json`:
 the desktop, Firefox's libraries, ImageMagick) are installed, the browser is built by
 `builder/build-browser-env.sh` on the hashed `builder/mcp-requirements.lock` (the MCP server's
-environment, the browser engine, the GeoIP database: the script `provision.sh` runs), the
+environment, the browser engine, the GeoIP release `pins.json` pins and the script checks against its SHA-256: the script `provision.sh` runs), the
 runtime disk's `dot-desktop` script starts Xvfb and an XFCE session on `:0` as dot, and the Dot
 runs as in the engine smoke with no stand-in for the browser: the engine finds
 `invisible-playwright-mcp` on its PATH. Only the model is a stand-in, and the pages the browser

@@ -17,12 +17,14 @@ so a parameter renamed in a call fails here and not only inside a Dot.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import sys
 import uuid
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, unquote, urlparse
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "mcp-tools-0.70.2.json"
 SCRIPT = Path(__file__).resolve()
@@ -30,6 +32,27 @@ SCRIPT = Path(__file__).resolve()
 # A 1x1 transparent PNG, and a JPEG of one pixel.
 PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 JPEG = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgICAgMCAgIDAwMDBAYEBAQEBAgGBgUGCQgKCgkICQkKDA8MCgsOCwkJDRENDg8QEBEQCgwSExIQEw8QEBD/yQALCAABAAEBAREA/8wABgAQEAX/2gAIAQEAAD8A0s8g/9k="
+
+
+def proxy_forms(proxy: str) -> dict[str, str]:
+    """The forms in which the proxy URL's credentials can show up in what a server or Firefox says.
+
+    The real wrapper splits the URL with `urlparse` and unquotes the user and the password
+    (`invisible_playwright_mcp/mcp/proxy.py`), so what it hands on and what a proxy's answer or a log line
+    repeats is the password as written, decoded or encoded again, with the user in front of it, or the
+    Basic credentials of a `Proxy-Authorization` header.
+    """
+    parsed = urlparse(proxy)
+    written_user, written_password = parsed.username or "", parsed.password or ""
+    user, password = unquote(written_user), unquote(written_password)
+    return {
+        "password_as_written": written_password,
+        "password_decoded": password,
+        "password_encoded_again": quote(password, safe=""),
+        "userinfo_as_written": f"{written_user}:{written_password}",
+        "userinfo_decoded": f"{user}:{password}",
+        "basic_credentials": base64.b64encode(f"{user}:{password}".encode()).decode(),
+    }
 
 
 def install_fake_mcp(directory: Path) -> Path:
@@ -55,6 +78,8 @@ def write_control(mcp_home: Path, **control: Any) -> None:
     fail_open: `browser_open` fails the way the real server does when Firefox does not start.
     echo_proxy: the failure of `browser_open` names the proxy it was started with, as a server may.
     echo_proxy_on_pages: `browser_navigate` fails and `browser_read_text` answers naming that proxy too.
+    echo_proxy_as: the name of one of `proxy_forms`: `browser_open` (with `fail_open`), `browser_navigate` and
+        `browser_read_text` say that form of the proxy's credentials instead of the whole URL.
     lose_browser_once: the first page action after opening reports the browser gone, as after a Firefox crash.
     lose_browser_always: every page action does.
     refuse_close: `browser_close` fails.
@@ -96,6 +121,8 @@ async def _serve() -> None:
         "url": "about:blank",
     }
 
+    echoed_form = proxy_forms(os.environ.get("STEALTHFOX_PROXY", ""))[control["echo_proxy_as"]] if control.get("echo_proxy_as") else None
+
     def text(value: str, *, error: bool = False) -> types.CallToolResult:
         return types.CallToolResult(content=[types.TextContent(type="text", text=value)], isError=error)
 
@@ -111,6 +138,8 @@ async def _serve() -> None:
         if name == "browser_open":
             if control.get("fail_open"):
                 proxy = f" ({os.environ.get('STEALTHFOX_PROXY')})" if control.get("echo_proxy") else ""
+                if echoed_form is not None:
+                    proxy = f" (credentials {echoed_form})"
                 return text(f"the {role} browser did NOT start: proxy refused the connection{proxy}", error=True)
             if state["download_left"] > 0:
                 state["download_left"] -= 1
@@ -143,6 +172,8 @@ async def _serve() -> None:
                 os._exit(3)
             if control.get("echo_proxy_on_pages"):
                 return text(f"navigation failed through {os.environ.get('STEALTHFOX_PROXY')}", error=True)
+            if echoed_form is not None:
+                return text(f"navigation failed: the proxy refused the credentials {echoed_form}", error=True)
             state["url"] = str(args["url"])
             return text(f"200 {state['url']}")
         if name == "browser_snapshot":
@@ -150,6 +181,8 @@ async def _serve() -> None:
         if name == "browser_read_text":
             if control.get("echo_proxy_on_pages"):
                 return text(f"page behind {os.environ.get('STEALTHFOX_PROXY')}")
+            if echoed_form is not None:
+                return text(f"page behind the credentials {echoed_form}")
             return text(f"text of {args.get('selector', 'body')}")
         if name == "browser_take_screenshot" or name == "browser_click_at":
             return image(PNG, "image/png")

@@ -1688,11 +1688,27 @@ async def test_a_provider_with_on_terminated_hears_an_idle_servers_end_only_whil
     assert ended == ["srv"]
 
 
-async def test_a_provider_without_on_terminated_ignores_the_end_of_the_transport() -> None:
+async def test_a_provider_without_on_terminated_does_nothing_about_the_end_of_the_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     provider = MCPProvider({"srv": MCPServerConfig(command="fake")}, ToolRegistry())
-    provider._connections["srv"] = SimpleNamespace()  # type: ignore[assignment]
+    connection = SimpleNamespace(aclose=AsyncMock())
+    provider._connections["srv"] = connection  # type: ignore[assignment]
+    reconnect = AsyncMock()
+    provider._refresh_terminated_server = reconnect  # type: ignore[method-assign]
+    connect = AsyncMock()
+    monkeypatch.setattr(mcp_mod, "connect_mcp_servers", connect)
+    tasks_before = asyncio.all_tasks()
 
     provider._transport_ended("srv")
+    await asyncio.sleep(0)
+
+    # No reconnect, no new connection, nothing closed, nothing left running in the background.
+    reconnect.assert_not_awaited()
+    connect.assert_not_awaited()
+    connection.aclose.assert_not_awaited()
+    assert provider._connections == {"srv": connection}
+    assert asyncio.all_tasks() == tasks_before
 
 
 @pytest.mark.parametrize("params, error", [
