@@ -65,11 +65,10 @@ own machine from this repository.
 > invisible_dots is alpha and has not yet run end to end on real hardware: the
 > acceptance run (`tests/e2e/run.ts`) is written but has never been completed
 > on a machine with an accelerated QEMU. Its notes estimate 30 to 90 minutes
-> and about 15 GB of disk for a first run. On Windows there is an open issue:
-> measured with the Windows Hypervisor Platform turned off, QEMU's
-> `-accel whpx -cpu host` pauses the VM with `WHPX: Unexpected VP exit code 4`,
-> and whether it works once `setup` has turned the feature on is not measured
-> yet ([architecture: VM definition](docs/architecture.md#34-vm-definition)).
+> and about 15 GB of disk for a first run. On Windows a Dot's VM boots under
+> the Windows Hypervisor Platform with the CPU model `host,-vmx,-svm` (measured;
+> plain `-cpu host` pauses it), and the rest of the lifecycle there is not
+> measured yet ([architecture: VM definition](docs/architecture.md#34-vm-definition)).
 
 ## Quick start
 
@@ -419,7 +418,9 @@ What protects you:
   holds that token. The API needs a bearer token; the web UI a session.
 - Files the host shows from a Dot come only from `/home/dot`, at most 16 MiB,
   never served as a type a browser would run.
-- The proxy of an identity, when it has one, is a secret and is shown nowhere: an identity says only that it has one, an approval shows it as `***`, and it is in no event or log.
+- The proxy of an identity, when it has one, is not shown by the host: an
+  identity says only that it has one, an approval shows it as `***`, and no
+  event carries it.
 - Secrets on the host (the OpenRouter key, channel tokens, WhatsApp keys) are
   stored encrypted; see [Configuration](#configuration).
 
@@ -427,8 +428,9 @@ What it does not protect against, by design or not yet:
 
 - The model's commands run as `dot`, which can read the proxy of an identity
   that was given one, password included, from the open browser's environment
-  and from the browser server's own session file. An identity with no proxy,
-  the default, has nothing to read.
+  and from the browser server's own session file, and what the browser server
+  says of a proxy it refuses reaches the model and the engine's log as it is.
+  An identity with no proxy, the default, has nothing to read.
 - The split between the three users is the guest operating system's. A flaw in
   the guest's kernel, or a way to become root that this repository does not
   know of, would end it. The VM is what stands between the Dot and your PC
@@ -809,8 +811,8 @@ Alpha. Nothing is released or published yet.
   product, but the machine it was written on has no accelerated QEMU. Until it
   passes on real hardware, the guest is tested by the container smokes, which
   run its daemons without a VM.
-- **Windows is not verified on real hardware**, and has the open WHPX issue
-  named at the top of this page. It runs the same code path as Linux, and
+- **Windows is not verified end to end on real hardware**: the VM boots
+  under WHPX (top of this page), the rest is not measured. It runs the same code path as Linux, and
   every difference between the two is listed in
   [architecture: one mechanism on every host](docs/architecture.md#11-one-mechanism-on-every-host).
 - **The install is one command after the checkout, not before it.** Node, Go

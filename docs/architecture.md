@@ -1056,9 +1056,8 @@ ignores anything else.
 - Secrets in the arguments. The proxy has no place in anything shown:
   `approval.requested` carries `browser_identity_create`'s proxy as `***` and `browser_navigate`'s URL without its user and password
   (the parked call keeps the real ones, so the approved call runs as asked), and
-  no `target` of `tool.called` holds typed text; the `target` of a navigation
-  also has the values of its query masked, because it is logged and not decided
-  on. The query of the URL in an approval is not masked (owner decision): a
+  no `target` of `tool.called` holds typed text. The query of a URL is not
+  masked (owner decision): a
   query string is how a model that was talked into it sends data out, so it is
   what the approver has to see, as with the command of `exec`; a person who does
   not want it in a chat turns `show_arguments` off. The `text` of
