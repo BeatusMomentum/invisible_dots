@@ -110,6 +110,26 @@ describe.each(testAdapters())("the hub with the WhatsApp channel, with the real 
     expect((await hub.list(dot.id))[0]).toMatchObject({ status: "connected", account: NUMBER });
   });
 
+  it("lets two Dots link the same phone: the number is no one's alone, each Dot is a device of its own", async () => {
+    const w = await world();
+    const { hub, connector } = await whatsapp(w);
+    const first = await w.dot();
+    const second = await w.dot();
+    await hub.link(first.id, "whatsapp");
+    await waitFor(() => connector.connections.length === 1, "the first connection");
+    connector.current.open(NUMBER);
+    await waitFor(async () => (await hub.list(first.id))[0]?.status === "connected", "the first Dot connected");
+
+    await hub.link(second.id, "whatsapp");
+    const watching = await watch(hub, second.id);
+    await waitFor(() => connector.connections.length === 2, "the second connection");
+    connector.current.open(NUMBER);
+    await watching.done;
+    expect(watching.frames.at(-1)).toEqual({ state: "linked", account: NUMBER });
+    expect((await hub.list(second.id))[0]).toMatchObject({ status: "connected", account: NUMBER });
+    expect((await hub.list(first.id))[0]).toMatchObject({ status: "connected", account: NUMBER });
+  });
+
   it("gives a watcher that joins late the code on show now, not the history, and a linked channel straight away", async () => {
     const w = await world();
     const { hub, connector } = await whatsapp(w);

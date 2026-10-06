@@ -18,6 +18,11 @@ export interface DotRecord {
   status: DotState;
   /** Why the Dot is in ERROR; null otherwise. */
   error: string | null;
+  /**
+   * The version of the saved config: it grows by one with every save of the config (a PATCH, an "always allow") and
+   * with nothing else, so `expected_config_version` of a PATCH can tell a form that is out of date from one that is not.
+   */
+  config_version: number;
   created_at: string;
   updated_at: string;
 }

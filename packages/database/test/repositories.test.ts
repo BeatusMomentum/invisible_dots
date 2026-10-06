@@ -38,7 +38,7 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect(again.applied).toEqual([]);
     expect(again.alreadyApplied).toContain("0001_initial");
     const { rows } = await db.query<{ version: string }>("SELECT version FROM schema_migrations ORDER BY version");
-    expect(rows.map((r) => r.version)).toEqual(["0001_initial", "0002_inbound_events", "0003_task_spend", "0004_channels", "0005_channel_prompts", "0006_inbound_by_event", "0007_events_task", "0008_channel_account_and_arguments"]);
+    expect(rows.map((r) => r.version)).toEqual(["0001_initial", "0002_inbound_events", "0003_task_spend", "0004_channels", "0005_channel_prompts", "0006_inbound_by_event", "0007_events_task", "0008_channel_account_and_arguments", "0009_dot_config_version", "0010_account_key_telegram_only"]);
   });
 
   it("dots: unique names, resolve by id or name, status with error", async () => {
@@ -71,23 +71,31 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect(await db.dots.setPermission("dot_missing", "automations", "allow")).toBeNull();
   });
 
-  it("dots: updateConfig with the updated_at that was read saves once; an older one is DotChangedError and writes nothing", async () => {
+  it("dots: updateConfig with the config_version that was read saves once; an older one is DotChangedError and writes nothing", async () => {
     const dot = await seedDot(db, "alpha-stale");
-    const read = dot.updated_at;
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(dot.config_version).toBe(1);
     const next = { ...dot.config, instructions: "first" };
-    const saved = await db.dots.updateConfig(dot.id, next, read);
+    const saved = await db.dots.updateConfig(dot.id, next, dot.config_version);
+    expect(saved).toMatchObject({ config_version: 2 });
     expect(saved?.config.instructions).toBe("first");
-    // The row has microseconds, the read has milliseconds: the same read is stale only once something was saved after it.
-    await expect(db.dots.updateConfig(dot.id, { ...dot.config, instructions: "second" }, read)).rejects.toBeInstanceOf(DotChangedError);
-    // The precondition tells instants a millisecond apart or more.
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    await db.dots.setPermission(dot.id, "computer.exec", "allow");
-    await expect(db.dots.updateConfig(dot.id, { ...dot.config, instructions: "third" }, saved!.updated_at)).rejects.toBeInstanceOf(DotChangedError);
+    await expect(db.dots.updateConfig(dot.id, { ...dot.config, instructions: "second" }, dot.config_version)).rejects.toBeInstanceOf(DotChangedError);
+    // An "always allow" is a save of the config too.
+    const allowed = await db.dots.setPermission(dot.id, "computer.exec", "allow");
+    expect(allowed?.config_version).toBe(3);
+    await expect(db.dots.updateConfig(dot.id, { ...dot.config, instructions: "third" }, saved!.config_version)).rejects.toBeInstanceOf(DotChangedError);
     expect((await db.dots.get(dot.id))?.config).toEqual({ ...next, permissions: { ...dot.config.permissions, "computer.exec": "allow" } });
-    expect(await db.dots.updateConfig("dot_missing", dot.config, read)).toBeNull();
+    expect(await db.dots.updateConfig("dot_missing", dot.config, 1)).toBeNull();
     // Without a precondition it replaces, as it always did.
     expect((await db.dots.updateConfig(dot.id, { ...dot.config, instructions: "plain" }))?.config.instructions).toBe("plain");
+  });
+
+  it("dots: a status change moves updated_at but not config_version, so it never makes a save from an old read stale", async () => {
+    const dot = await seedDot(db, "alpha-status");
+    const running = await db.dots.setStatus(dot.id, "RUNNING");
+    expect(running).toMatchObject({ status: "RUNNING", config_version: dot.config_version });
+    expect(Date.parse(running!.updated_at)).toBeGreaterThanOrEqual(Date.parse(dot.updated_at));
+    const saved = await db.dots.updateConfig(dot.id, { ...dot.config, instructions: "after a status change" }, dot.config_version);
+    expect(saved).toMatchObject({ config_version: dot.config_version + 1, status: "RUNNING" });
   });
 
   it("computers: token stored encrypted, process recorded and cleared, cursor only moves forward", async () => {

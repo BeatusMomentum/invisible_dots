@@ -73,7 +73,7 @@ const LABEL_MAX = 64;
 
 const SETTING_KEYS = Object.keys(DEFAULT_CHANNEL_SETTINGS);
 
-/** The unique index that holds the rule "one account serves one Dot" (migration 0008). */
+/** The unique index that holds the rule "one account serves one Dot" (migrations 0008 and 0010: Telegram only). */
 const ACCOUNT_KEY = "channel_bindings_account_key";
 
 function accountInUse(kind: ChannelKind, account: string | null): ControlPlaneError {
@@ -391,7 +391,8 @@ export class ChannelHub {
   /**
    * An account (a bot) serves one Dot: two pollers on one bot take turns failing. This is the early, readable
    * answer; the rule itself is the unique index `channel_bindings_account_key`, which a request that races
-   * past this check meets (`accountInUse`).
+   * past this check meets (`accountInUse`). Only kinds linked with credentials have it: a WhatsApp number is
+   * known after the scan and several Dots may be devices of one phone.
    */
   async #assertAccountFree(kind: ChannelKind, account: string | null, dotId: string): Promise<void> {
     if (account === null) return;

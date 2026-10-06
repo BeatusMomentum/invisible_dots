@@ -27,6 +27,7 @@ const dot = {
   },
   status: "READY",
   error: null,
+  config_version: 1,
   created_at: now,
   updated_at: now,
   computer_state: "RUNNING",

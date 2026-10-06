@@ -547,9 +547,9 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     expect(driver.guestOf(dot.id).config?.instructions).toBe("short answers");
     // A save from an old read is a 409 over the wire, and a malformed read is a 400.
     const body = `${yaml("to-patch")}instructions: from a stale form\n`;
-    await expect(api.updateDot(dot.id, body, dot.updated_at)).rejects.toMatchObject({ status: 409, code: "dot_changed" });
-    expect((await api.updateDot(dot.id, body, updated.updated_at)).config.instructions).toBe("from a stale form");
-    await expect(api.updateDot(dot.id, body, "not a date")).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+    await expect(api.updateDot(dot.id, body, dot.config_version)).rejects.toMatchObject({ status: 409, code: "dot_changed" });
+    expect((await api.updateDot(dot.id, body, updated.config_version)).config.instructions).toBe("from a stale form");
+    await expect(api.updateDot(dot.id, body, 1.5)).rejects.toMatchObject({ status: 400, code: "invalid_request" });
 
     expect(await api.setOpenRouterKey("sk-or-rotated", "to-patch")).toEqual({ pushed: 1 });
     expect(driver.guestOf(dot.id).openrouterKey).toBe("sk-or-rotated");

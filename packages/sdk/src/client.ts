@@ -171,9 +171,9 @@ export class InvisibleDotsClient {
     return this.#json("GET", `/api/dots/${enc(idOrName)}`);
   }
 
-  /** With `expectedUpdatedAt` (the `updated_at` of the Dot as read), a Dot that changed since is a 409 `dot_changed` and nothing is saved. */
-  updateDot(idOrName: string, config: string | Record<string, unknown>, expectedUpdatedAt?: string): Promise<DotRecord> {
-    return this.#json("PATCH", `/api/dots/${enc(idOrName)}`, { body: { config, ...(expectedUpdatedAt !== undefined && { expected_updated_at: expectedUpdatedAt }) } });
+  /** With `expectedConfigVersion` (the `config_version` of the Dot as read), a Dot whose config changed since is a 409 `dot_changed` and nothing is saved. */
+  updateDot(idOrName: string, config: string | Record<string, unknown>, expectedConfigVersion?: number): Promise<DotRecord> {
+    return this.#json("PATCH", `/api/dots/${enc(idOrName)}`, { body: { config, ...(expectedConfigVersion !== undefined && { expected_config_version: expectedConfigVersion }) } });
   }
 
   deleteDot(idOrName: string): Promise<AcceptedAnswer> {

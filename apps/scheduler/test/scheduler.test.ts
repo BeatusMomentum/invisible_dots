@@ -568,17 +568,19 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     const { scheduler, driver } = make();
     const dot = await readyDot(scheduler, "stale-form");
     const guest = driver.guestOf(dot.id);
+    // The approval is asked (the Dot's status moves to WAITING_APPROVAL) BEFORE the form reads the Dot: what makes the
+    // save stale below is the always-allow alone.
+    const approvalId = guest.requestApproval(undefined);
+    await waitFor(async () => (await db.approvals.get(approvalId)) !== null && (await db.dots.get(dot.id))?.status === "WAITING_APPROVAL", "stored");
     const loaded = await scheduler.requireDot(dot.id);
     expect(loaded.config.permissions?.["browser.identity.delete"]).toBeUndefined();
 
     // Another view answers "Always allow" while the form is open.
-    const approvalId = guest.requestApproval(undefined);
-    await waitFor(async () => (await db.approvals.get(approvalId)) !== null, "stored");
     await scheduler.resolveApproval(approvalId, "approve", { always: true });
     expect((await db.dots.get(dot.id))?.config.permissions["browser.identity.delete"]).toBe("allow");
 
     const save = `${yaml("stale-form")}instructions: be brief\n`;
-    await expect(scheduler.updateDot(dot.id, save, loaded.updated_at)).rejects.toMatchObject({ status: 409, code: "dot_changed" });
+    await expect(scheduler.updateDot(dot.id, save, loaded.config_version)).rejects.toMatchObject({ status: 409, code: "dot_changed" });
     const stored = (await db.dots.get(dot.id))!;
     expect(stored.config.permissions["browser.identity.delete"]).toBe("allow");
     expect(stored.config.instructions).toBeUndefined();
@@ -586,12 +588,28 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
 
     // Read again, the save goes through, once; a save with no precondition is as it always was; a malformed one is a 400.
     const fresh = await scheduler.requireDot(dot.id);
-    expect((await scheduler.updateDot(dot.id, save, fresh.updated_at)).config.instructions).toBe("be brief");
-    await expect(scheduler.updateDot(dot.id, save, fresh.updated_at)).rejects.toMatchObject({ status: 409, code: "dot_changed" });
+    expect((await scheduler.updateDot(dot.id, save, fresh.config_version)).config.instructions).toBe("be brief");
+    await expect(scheduler.updateDot(dot.id, save, fresh.config_version)).rejects.toMatchObject({ status: 409, code: "dot_changed" });
     expect((await scheduler.updateDot(dot.id, `${yaml("stale-form")}instructions: no precondition\n`)).config.instructions).toBe("no precondition");
-    await expect(scheduler.updateDot(dot.id, save, "yesterday")).rejects.toMatchObject({ status: 400, code: "invalid_request" });
-    await expect(scheduler.updateDot(dot.id, save, 5)).rejects.toMatchObject({ status: 400, code: "invalid_request" });
-    await expect(scheduler.updateDot("missing-dot", save, fresh.updated_at)).rejects.toMatchObject({ status: 404 });
+    await expect(scheduler.updateDot(dot.id, save, "2")).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+    await expect(scheduler.updateDot(dot.id, save, 0)).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+    await expect(scheduler.updateDot("missing-dot", save, fresh.config_version)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("PATCH made from a read before a status change is saved: only a change of the config makes it a 409", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "status-moves");
+    const loaded = await scheduler.requireDot(dot.id);
+    // A turn of the Dot moves its status (and updated_at) while the form is open; its config is as it was read.
+    driver.guestOf(dot.id).emit("agent.state", { state: "EXECUTING" });
+    await waitFor(async () => (await db.dots.get(dot.id))?.status === "RUNNING", "the status to move");
+    const moved = (await db.dots.get(dot.id))!;
+    expect(Date.parse(moved.updated_at)).toBeGreaterThan(Date.parse(loaded.updated_at));
+    expect(moved.config_version).toBe(loaded.config_version);
+
+    const saved = await scheduler.updateDot(dot.id, `${yaml("status-moves")}instructions: after a turn\n`, loaded.config_version);
+    expect(saved.config.instructions).toBe("after a turn");
+    expect(saved.config_version).toBe(loaded.config_version + 1);
   });
 
   it("reboot waits for the new boot and pushes the key again", async () => {

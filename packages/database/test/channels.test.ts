@@ -55,7 +55,13 @@ describe.each(testAdapters())("channel repository on %s", { timeout: SETUP_TIMEO
     await expect(db.channels.createBinding({ ...second, dotId: one.id })).rejects.toSatisfy((error) => isUniqueViolation(error) && !isUniqueViolation(error, "channel_bindings_account_key"));
     expect(await db.channels.createBinding({ ...second, kind: "whatsapp" })).toMatchObject({ account: "shared_bot", kind: "whatsapp" });
     const { account: _unused, ...unknown } = second;
-    expect(await db.channels.createBinding({ ...unknown, id: newId("chb"), kind: "whatsapp", dotId: one.id })).toMatchObject({ account: null });
+    const phone = await db.channels.createBinding({ ...unknown, id: newId("chb"), kind: "whatsapp", dotId: one.id });
+    expect(phone).toMatchObject({ account: null });
+    // A WhatsApp number is learned at the scan and may be linked on several Dots: the rule is about bots.
+    expect(await db.channels.setStatus(phone.id, "connected", null, "15550001111")).toBe(true);
+    const other = (await db.channels.binding(two.id, "whatsapp"))!;
+    expect(await db.channels.setStatus(other.id, "connected", null, "15550001111")).toBe(true);
+    expect(await db.channels.bindingById(phone.id)).toMatchObject({ account: "15550001111" });
   });
 
   it("settings and enabled are stored; the status reports a change once; the cursor never moves back", async () => {

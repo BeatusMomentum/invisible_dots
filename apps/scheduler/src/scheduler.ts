@@ -263,13 +263,14 @@ export class Scheduler {
   }
 
   /**
-   * Replace the Dot's config. `expectedUpdatedAt` (the `updated_at` of the Dot as the caller read it) makes the save
-   * conditional: when the Dot changed since (the person answered "Always allow" in another view, another save), it is a
-   * 409 `dot_changed` and nothing is written, so a form opened before cannot silently undo what happened after.
+   * Replace the Dot's config. `expectedConfigVersion` (the `config_version` of the Dot as the caller read it) makes the
+   * save conditional: when the config changed since (the person answered "Always allow" in another view, another
+   * save), it is a 409 `dot_changed` and nothing is written, so a form opened before cannot silently undo what
+   * happened after. A change of the Dot's status (a task turn, an approval waiting) is not a change of the config.
    */
-  async updateDot(idOrName: string, configInput: unknown, expectedUpdatedAt?: unknown): Promise<DotRecord> {
-    if (expectedUpdatedAt !== undefined && (typeof expectedUpdatedAt !== "string" || Number.isNaN(Date.parse(expectedUpdatedAt)))) {
-      throw new ControlPlaneError(400, "invalid_request", "expected_updated_at must be the updated_at of the Dot, an ISO timestamp");
+  async updateDot(idOrName: string, configInput: unknown, expectedConfigVersion?: unknown): Promise<DotRecord> {
+    if (expectedConfigVersion !== undefined && (typeof expectedConfigVersion !== "number" || !Number.isInteger(expectedConfigVersion) || expectedConfigVersion < 1)) {
+      throw new ControlPlaneError(400, "invalid_request", "expected_config_version must be the config_version of the Dot, a positive integer");
     }
     const current = await this.requireDot(idOrName);
     const config = this.#parseConfig(configInput);
@@ -282,7 +283,7 @@ export class Scheduler {
     }
     let updated: DotRecord | null;
     try {
-      updated = await this.db.dots.updateConfig(current.id, config, expectedUpdatedAt === undefined ? undefined : new Date(expectedUpdatedAt as string).toISOString());
+      updated = await this.db.dots.updateConfig(current.id, config, expectedConfigVersion);
     } catch (error) {
       if (error instanceof DotChangedError) {
         throw new ControlPlaneError(409, "dot_changed", `Dot ${current.name} changed after you read it: read it again and apply the change to what it is now`);

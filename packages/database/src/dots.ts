@@ -23,6 +23,7 @@ interface DotRow {
   config: DotConfig;
   status: DotState;
   error: string | null;
+  config_version: number;
   created_at: Date;
   updated_at: Date;
   computer_state?: VmState | null;
@@ -35,6 +36,7 @@ function toRecord(row: DotRow): DotRecord {
     config: row.config,
     status: row.status,
     error: row.error,
+    config_version: row.config_version,
     created_at: isoRequired(row.created_at),
     updated_at: isoRequired(row.updated_at),
   };
@@ -82,21 +84,20 @@ export class DotsRepository {
   }
 
   /**
-   * Replace the config. With `expectedUpdatedAt` (the `updated_at` the caller read, a millisecond ISO string) the row
-   * is replaced only while it still has that value, so a save made from an old read cannot overwrite what was
-   * saved since (an "always allow", another PATCH): `DotChangedError` otherwise, and null when there is no such Dot.
+   * Replace the config. With `expectedVersion` (the `config_version` the caller read) the row is replaced only while
+   * it still has that version, so a save made from an old read cannot overwrite what was saved since (an "always
+   * allow", another PATCH): `DotChangedError` otherwise, and null when there is no such Dot. The status of the Dot
+   * moves all the time and is no part of this: only a save of the config changes the version.
    */
-  async updateConfig(id: string, config: DotConfig, expectedUpdatedAt?: string): Promise<DotRecord | null> {
+  async updateConfig(id: string, config: DotConfig, expectedVersion?: number): Promise<DotRecord | null> {
     try {
       const { rows } = await this.q.query<DotRow>(
-        // The column has microseconds and the API says milliseconds (a driver rounds them, a cast truncates): the same
-        // instant is one a millisecond apart at most.
-        `UPDATE dots SET name = $2, config = $3, updated_at = now()
-          WHERE id = $1 AND ($4::timestamptz IS NULL OR abs(extract(epoch FROM (updated_at - $4::timestamptz))) < 0.001) RETURNING *`,
-        [id, config.name, JSON.stringify(config), expectedUpdatedAt ?? null],
+        `UPDATE dots SET name = $2, config = $3, config_version = config_version + 1, updated_at = now()
+          WHERE id = $1 AND ($4::integer IS NULL OR config_version = $4::integer) RETURNING *`,
+        [id, config.name, JSON.stringify(config), expectedVersion ?? null],
       );
       if (rows[0]) return toRecord(rows[0]);
-      if (expectedUpdatedAt !== undefined && (await this.get(id))) throw new DotChangedError(id);
+      if (expectedVersion !== undefined && (await this.get(id))) throw new DotChangedError(id);
       return null;
     } catch (error) {
       if (isUniqueViolation(error, "dots_name_key")) throw new DotNameTakenError(config.name);
@@ -112,6 +113,7 @@ export class DotsRepository {
     const { rows } = await this.q.query<DotRow>(
       `UPDATE dots
           SET config = jsonb_set(config, '{permissions}', COALESCE(config->'permissions', '{}'::jsonb) || jsonb_build_object($2::text, $3::text), true),
+              config_version = config_version + 1,
               updated_at = now()
         WHERE id = $1 RETURNING *`,
       [id, permission, decision],

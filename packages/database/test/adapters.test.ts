@@ -290,7 +290,7 @@ describe.each(testAdapters())("migrate on %s", { timeout: SETUP_TIMEOUT }, (kind
     try {
       const all = await loadMigrations();
       const before = all.filter((m) => m.version < "0008");
-      expect(before.length).toBe(all.length - 1);
+      expect(before.length).toBe(7);
       for (const m of before) await writeFile(join(dir, `${m.version}.sql`), m.sql);
       await migrate(db, { dir });
       await db.query("INSERT INTO dots (id, name, config, status) VALUES ('dot_a', 'a', '{}', 'READY'), ('dot_b', 'b', '{}', 'READY')");
@@ -300,7 +300,7 @@ describe.each(testAdapters())("migrate on %s", { timeout: SETUP_TIMEOUT }, (kind
            ('chb_new', 'dot_b', 'telegram', $2::jsonb, 'connecting', 0)`,
         [old, JSON.stringify({ approvals: true, notify_tasks: false, show_arguments: false })],
       );
-      expect((await migrate(db)).applied).toEqual(all.slice(-1).map((m) => m.version));
+      expect((await migrate(db)).applied).toEqual(all.slice(before.length).map((m) => m.version));
       const { rows } = await db.query<{ id: string; settings: unknown }>("SELECT id, settings FROM channel_bindings ORDER BY id");
       expect(rows).toEqual([
         { id: "chb_new", settings: { approvals: true, notify_tasks: false, show_arguments: false } },
