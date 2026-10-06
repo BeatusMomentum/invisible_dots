@@ -48,6 +48,7 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
       "0007_dot_config_version",
       "0008_orphaned_secrets",
       "0009_removed_config_names",
+      "0010_computer_next_automation",
     ]);
   });
 
@@ -133,6 +134,48 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect((await db.computers.setState(dot.id, "RUNNING", null))?.last_error).toBeNull();
     await db.computers.setImages(dot.id, "golden-1", "runtime-1");
     expect(await db.computers.get(dot.id)).toMatchObject({ golden_image: "golden-1", runtime_image: "runtime-1" });
+  });
+
+  it("computers: the next automation time starts empty, is kept as the guest reports it and is cleared by null", async () => {
+    const dot = await seedDot(db, "next-automation");
+    expect((await db.computers.get(dot.id))?.next_automation_at).toBeNull();
+
+    await db.computers.setNextAutomation(dot.id, Date.parse("2030-03-04T05:06:07.000Z"));
+    expect((await db.computers.get(dot.id))?.next_automation_at).toBe("2030-03-04T05:06:07.000Z");
+    const before = (await db.computers.get(dot.id))!.updated_at;
+    await db.computers.setNextAutomation(dot.id, Date.parse("2030-03-05T00:00:00.000Z"));
+    expect((await db.computers.list()).find((c) => c.dot_id === dot.id)?.next_automation_at).toBe("2030-03-05T00:00:00.000Z");
+    // It is the guest's report, not activity of the computer: nothing else of the row moves.
+    expect((await db.computers.get(dot.id))?.updated_at).toBe(before);
+
+    await db.computers.setNextAutomation(dot.id, null);
+    expect((await db.computers.get(dot.id))?.next_automation_at).toBeNull();
+  });
+
+  it("computers: stoppedWithAutomationBy lists the stopped computers whose automation is due by then, earliest first", async () => {
+    const at = (iso: string) => Date.parse(iso);
+    const seed = async (name: string, state: "STOPPED" | "RUNNING", nextAt: number | null, status: "IDLE" | "ERROR" | "DISABLED" | "CREATING" = "IDLE") => {
+      const dot = await seedDot(db, name);
+      await db.dots.setStatus(dot.id, status);
+      await db.computers.setState(dot.id, state);
+      if (nextAt !== null) await db.computers.setNextAutomation(dot.id, nextAt);
+      return dot.id;
+    };
+    const soon = await seed("due-soon", "STOPPED", at("2030-01-01T10:00:00Z"));
+    const missed = await seed("due-missed", "STOPPED", at("2029-12-31T00:00:00Z"));
+    const later = await seed("due-later", "STOPPED", at("2030-01-01T11:00:00Z"));
+    const none = await seed("due-none", "STOPPED", null);
+    const running = await seed("due-running", "RUNNING", at("2030-01-01T10:00:00Z"));
+    const broken = await seed("due-error", "STOPPED", at("2030-01-01T10:00:00Z"), "ERROR");
+    const disabled = await seed("due-disabled", "STOPPED", at("2030-01-01T10:00:00Z"), "DISABLED");
+    const creating = await seed("due-creating", "STOPPED", at("2030-01-01T10:00:00Z"), "CREATING");
+
+    const ids = [soon, missed, later, none, running, broken, disabled, creating];
+    const listed = (await db.computers.stoppedWithAutomationBy(new Date("2030-01-01T10:30:00Z"))).filter((id) => ids.includes(id));
+    // The run that was missed comes first; the one due after the limit, the one with nothing due, the running
+    // computer and the Dots the person has to look at are left alone.
+    expect(listed).toEqual([missed, soon]);
+    expect((await db.computers.stoppedWithAutomationBy(new Date("2030-01-01T11:00:00Z"))).filter((id) => ids.includes(id))).toEqual([missed, soon, later]);
   });
 
   it("events: guest events are idempotent on (dot_id, guest_seq) and queries filter", async () => {

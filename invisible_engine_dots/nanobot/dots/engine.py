@@ -407,6 +407,17 @@ class Engine:
             logger.info("automation fired id={} name={}", event["id"], job.name)
             self.kick()
 
+    def automations_next_run(self, next_run_at_ms: int | None) -> None:
+        """The cron service armed its timer: tell the host when the earliest job is due, once per change.
+
+        The host wakes a computer that is off for it, and does not put one to sleep that is about to need
+        it (architecture section 9.5).
+        """
+        if self._stopped:
+            return
+        if self._store.write(lambda conn: dots_store.record_next_run(conn, next_run_at_ms)):
+            logger.info("next automation run reported at_ms={}", next_run_at_ms)
+
     async def suspend(self) -> None:
         """`POST /prepare-sleep`: start no new work; cancel a turn with no tool running at once; give
         a turn with a tool running up to the stop grace to record its result and end; cancel what is

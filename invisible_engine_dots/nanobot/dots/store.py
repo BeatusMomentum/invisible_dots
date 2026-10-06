@@ -661,6 +661,7 @@ def finish_task(
 
 KV_RUNTIME_CONFIG = "runtime_config"
 KV_AGENT_STATE = "agent_state"
+KV_NEXT_RUN = "automation_next_run"
 
 
 def read_kv(conn: sqlite3.Connection, key: str, default: Any = None) -> Any:
@@ -690,6 +691,20 @@ def record_agent_state(conn: sqlite3.Connection, state: str, force: bool = False
         return False
     write_kv(conn, KV_AGENT_STATE, state)
     append_outbox(conn, "agent.state", {"state": state})
+    return True
+
+
+def record_next_run(conn: sqlite3.Connection, next_run_at_ms: int | None) -> bool:
+    """Record when the earliest automation is next due (None: none is) and its event, unless the host was told so.
+
+    What the host was last told is kept with the event in the same transaction, so a restart does not say it again
+    and a change is never missed. A computer that never had an automation has told the host nothing, and the host
+    takes that as none being due.
+    """
+    if read_kv(conn, KV_NEXT_RUN) == next_run_at_ms:
+        return False
+    write_kv(conn, KV_NEXT_RUN, next_run_at_ms)
+    append_outbox(conn, "automation.next_run", {"next_run_at_ms": next_run_at_ms})
     return True
 
 

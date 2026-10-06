@@ -32,6 +32,7 @@ export const OUTBOUND_EVENT_TYPES = [
   "browser.identity.launched",
   "browser.identity.closed",
   "memory.written",
+  "automation.next_run",
 ] as const;
 export type OutboundEventType = (typeof OUTBOUND_EVENT_TYPES)[number];
 
@@ -189,6 +190,14 @@ export interface OutboundEventDataMap {
   "browser.identity.launched": BrowserIdentityEventData;
   "browser.identity.closed": BrowserIdentityEventData;
   "memory.written": { key: string };
+  /**
+   * When the earliest enabled automation of the Dot is next due, in milliseconds since the epoch, or null when none is
+   * (no job, all paused, or only one-time jobs that ran). The engine sends it each time that changes, so the last one
+   * is what is true; the host keeps it (`computers.next_automation_at`) to wake a stopped computer shortly before the
+   * run and to not put one to sleep that is about to need it (architecture section 9.5). A value in the past is a
+   * run the engine has not made yet: it makes it when it starts.
+   */
+  "automation.next_run": { next_run_at_ms: number | null };
 }
 
 /**
@@ -342,6 +351,11 @@ export const outboundEventSchema = z.discriminatedUnion("type", [
   z.object({ ...outboundBase, type: z.literal("browser.identity.launched"), data: identityData }),
   z.object({ ...outboundBase, type: z.literal("browser.identity.closed"), data: identityData }),
   z.object({ ...outboundBase, type: z.literal("memory.written"), data: z.object({ key: nonEmpty }) }),
+  z.object({
+    ...outboundBase,
+    type: z.literal("automation.next_run"),
+    data: z.object({ next_run_at_ms: z.number().int().nonnegative().nullable() }),
+  }),
 ]);
 
 /** Validate an outbound event read from the guest stream; throws with every problem listed. */

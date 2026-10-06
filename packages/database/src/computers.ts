@@ -13,6 +13,7 @@ interface ComputerRow {
   token_enc: Uint8Array;
   event_cursor: number;
   last_active_at: Date | null;
+  next_automation_at: Date | null;
   last_error: string | null;
   updated_at: Date;
 }
@@ -28,6 +29,7 @@ function toRecord(row: ComputerRow): ComputerRecord {
     runtime_image: row.runtime_image,
     event_cursor: row.event_cursor,
     last_active_at: iso(row.last_active_at),
+    next_automation_at: iso(row.next_automation_at),
     last_error: row.last_error,
     updated_at: isoRequired(row.updated_at),
   };
@@ -127,5 +129,30 @@ export class ComputersRepository {
 
   async touch(dotId: string, activeAt: Date): Promise<void> {
     await this.q.query("UPDATE computers SET last_active_at = $2 WHERE dot_id = $1", [dotId, activeAt]);
+  }
+
+  /** Record what the guest reported as the time its earliest enabled automation is next due (null: none), in ms since the epoch. */
+  async setNextAutomation(dotId: string, atMs: number | null): Promise<void> {
+    await this.q.query("UPDATE computers SET next_automation_at = $2 WHERE dot_id = $1", [dotId, atMs === null ? null : new Date(atMs)]);
+  }
+
+  /**
+   * The stopped computers whose Dot has an automation due at `by` or before (a time already past counts: the run was
+   * missed and the guest makes it when it starts), so the control plane can start them. A Dot in ERROR, DISABLED or
+   * still being created is left alone, like the one whose work waits behind an unfinished task (`stoppedDotsWithBlockedWork`).
+   */
+  async stoppedWithAutomationBy(by: Date): Promise<string[]> {
+    const { rows } = await this.q.query<{ dot_id: string }>(
+      `SELECT c.dot_id
+         FROM computers c
+         JOIN dots d ON d.id = c.dot_id
+        WHERE c.state = 'STOPPED'
+          AND c.next_automation_at IS NOT NULL
+          AND c.next_automation_at <= $1
+          AND d.status NOT IN ('CREATING', 'DISABLED', 'ERROR')
+        ORDER BY c.next_automation_at, c.dot_id`,
+      [by],
+    );
+    return rows.map((r) => r.dot_id);
   }
 }

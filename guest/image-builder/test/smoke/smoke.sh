@@ -142,6 +142,42 @@ check "the host pushed the key again on agent.started" "wait_key"
 check "the cut call is reported once as interrupted" "wait_event $STREAM2 '.type==\"tool.called\" and .data.task_id==\"t2\" and .data.interrupted==true'"
 check "the task resumes and completes" "wait_event $STREAM2 '.type==\"task.completed\" and .data.task_id==\"t2\"'"
 check "a message after the restart is answered" "[ \"\$(ev msg-2 user.message '{\"text\":\"still there?\"}')\" = 202 ] && wait_event $STREAM2 '.type==\"message.assistant\" and .data.in_reply_to==\"msg-2\"'"
+# --- an automation that came due while the engine was off runs once, and a kill -9 does not repeat it ---
+# The engine is stopped, a one-time job whose time passed an hour ago is written into its cron store (as the cron tool
+# leaves a job), and the engine is started again: it makes the run at start and tells the host the time it was due,
+# then that nothing is due. A kill -9 and another start run nothing a second time.
+AUTO_LAST=$(grep '^id: ' "$STREAM" | tail -1 | sed 's/^id: //')
+kill -TERM "$(pgrep -o -u dotengine -f 'python.*-m nanobot')"
+for _ in $(seq 1 30); do pgrep -u dotengine >/dev/null || break; sleep 1; done
+AUTO_DUE_MS=$(( $(date +%s) * 1000 - 3600000 ))
+cat > /tmp/missed-jobs.json <<JSON
+{"version": 1, "jobs": [{"id": "missed01", "name": "missed reminder", "enabled": true,
+  "schedule": {"kind": "at", "atMs": $AUTO_DUE_MS, "everyMs": null, "expr": null, "tz": null},
+  "payload": {"kind": "agent_turn", "message": "remind me to call the dentist"},
+  "state": {"nextRunAtMs": $AUTO_DUE_MS, "lastRunAtMs": null, "lastStatus": null, "lastError": null, "runHistory": []},
+  "createdAtMs": $AUTO_DUE_MS, "updatedAtMs": $AUTO_DUE_MS, "deleteAfterRun": false}]}
+JSON
+install -D -o dotengine -g dotengine -m 0600 /tmp/missed-jobs.json /home/dotengine/state/cron/jobs.json
+start_engine
+check "the engine answers /health with a job whose time passed in its cron store" "wait_health && wait_key"
+check "the host is told that job's due time, a past one, when the engine starts" "wait_event $STREAM '.type==\"automation.next_run\" and .data.next_run_at_ms==$AUTO_DUE_MS and .seq > $AUTO_LAST'"
+check "the missed job ran at start: its firing is answered in the chat, with no message to reply to" "wait_event $STREAM '.type==\"message.assistant\" and (.data.in_reply_to|not) and .data.text==\"hello from the stand-in\" and .seq > $AUTO_LAST'"
+check "the model was asked with the firing's text" "grep -q 'fired\\] remind me to call the dentist' /tmp/fake-full.jsonl"
+check "the host is then told that nothing is due" "wait_event $STREAM '.type==\"automation.next_run\" and .data.next_run_at_ms==null and .seq > $AUTO_LAST'"
+check "the one-time job is over in the cron store: disabled, with no next run, run once" "jq -e '.jobs[0] | .enabled == false and .state.nextRunAtMs == null and (.state.runHistory | length) == 1' /home/dotengine/state/cron/jobs.json >/dev/null"
+# The firings of an automation answered in the chat since the engine was stopped: no message to reply to.
+auto_answers() {
+  grep '^data: ' "$STREAM" | sed 's/^data: //' | jq -c "select(.type==\"message.assistant\" and (.data.in_reply_to|not) and .seq > $AUTO_LAST)" | wc -l
+}
+AUTO_KILLED_AT=$(grep '^id: ' "$STREAM" | tail -1 | sed 's/^id: //')
+pkill -9 -u dotengine
+sleep 2
+start_engine
+check "the engine started again after a kill -9 answers /health" "wait_health && wait_key"
+check "agent.started after that kill" "wait_event $STREAM '.type==\"agent.started\" and .seq > $AUTO_KILLED_AT'"
+sleep 5
+check "the job did not run again: its firing is answered once in all" "[ \"\$(auto_answers)\" = 1 ]"
+check "the host's route lists that job and removes it (204), so the Dot is left with none" "api $A/automations | jq -e '.automations | length == 1 and .[0].id == \"missed01\"' >/dev/null && [ \"\$(api -o /dev/null -w '%{http_code}' -X DELETE $A/automations/missed01)\" = 204 ]"
 # --- cancel and terminate end the remote command, as dot ---
 # The engine ends a command by killing the relay it started, in the relay's own process group; nothing
 # else tells dot-agentd. On the closed socket dot-agentd must end the remote process group: the shell,
@@ -546,7 +582,7 @@ check "seqs of the full stream are 1..N without a gap" "[ \"\$(seqs $ALL | tr '\
 check "the host received every event exactly once across the crash (no loss, no repeat)" "[ \"\$(seqs $STREAM | tr '\n' ' ')\" = \"\$(seqs $ALL | tr '\n' ' ')\" ]"
 check "event ids are unique" "[ \"\$(grep '^data: ' $ALL | sed 's/^data: //' | jq -r .id | sort | uniq -d | wc -l)\" = 0 ]"
 check "tool.called for t2 appears once as interrupted" "[ \"\$(grep '^data: ' $ALL | sed 's/^data: //' | jq -c 'select(.type==\"tool.called\" and .data.task_id==\"t2\" and .data.interrupted==true)' | wc -l)\" = 1 ]"
-check "agent.started eight times in all (eight starts)" "[ \"\$(grep '^data: ' $ALL | sed 's/^data: //' | jq -c 'select(.type==\"agent.started\")' | wc -l)\" = 8 ]"
+check "agent.started ten times in all (ten starts)" "[ \"\$(grep '^data: ' $ALL | sed 's/^data: //' | jq -c 'select(.type==\"agent.started\")' | wc -l)\" = 10 ]"
 check "the browser identity events are all in the stream, each once: five created, launched nine times, closed six times and deleted twice" "grep '^data: ' $ALL | sed 's/^data: //' | jq -s -e '([.[] | select(.type==\"browser.identity.created\")] | length) == 5 and ([.[] | select(.type==\"browser.identity.deleted\")] | length) == 2 and ([.[] | select(.type==\"browser.identity.launched\")] | length) == 9 and ([.[] | select(.type==\"browser.identity.closed\")] | length) == 6' >/dev/null"
 check "the proxy password is in no event of the whole stream" "no_proxy_password_in $ALL"
 echo "event types: $(grep '^data: ' $ALL | sed 's/^data: //' | jq -r .type | sort | uniq -c | tr '\n' ' ')"

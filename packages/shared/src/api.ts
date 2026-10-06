@@ -45,6 +45,11 @@ export interface ComputerRecord {
   runtime_image: string | null;
   event_cursor: number;
   last_active_at: string | null;
+  /**
+   * When the Dot's earliest enabled automation is next due, as its guest last reported it; null when none is due or
+   * nothing was reported. A computer that is stopped is started shortly before this time (architecture section 9.5).
+   */
+  next_automation_at: string | null;
   /** The last lifecycle failure (start, READY procedure, stop), null after a success. */
   last_error: string | null;
   updated_at: string;

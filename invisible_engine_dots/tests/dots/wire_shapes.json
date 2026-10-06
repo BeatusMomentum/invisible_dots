@@ -50,6 +50,20 @@
       }
     }
   ],
+  "outbound_event_data": [
+    {
+      "data": {
+        "next_run_at_ms": 1790000000000
+      },
+      "type": "automation.next_run"
+    },
+    {
+      "data": {
+        "next_run_at_ms": null
+      },
+      "type": "automation.next_run"
+    }
+  ],
   "tool_offering": [
     {
       "managed_identities": true,

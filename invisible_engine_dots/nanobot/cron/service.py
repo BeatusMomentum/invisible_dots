@@ -97,11 +97,15 @@ class CronService:
         store_path: Path,
         on_job: Callable[[CronJob], Coroutine[Any, Any, str | CronRunResult | None]] | None = None,
         max_sleep_ms: int = 300_000,  # 5 minutes
+        on_next_wake: Callable[[int | None], None] | None = None,
     ):
         self.store_path = store_path
         self._action_path = store_path.parent / "action.jsonl"
         self._lock = FileLock(str(self._action_path.parent) + ".lock")
         self.on_job = on_job
+        # Told the earliest next run of the enabled jobs (None when no job is due ever) each time the timer is
+        # armed, which is after every change of the jobs and after every tick.
+        self.on_next_wake = on_next_wake
         self._store: CronStore | None = None
         self._timer_task: asyncio.Task[None] | None = None
         self._running = False
@@ -363,12 +367,19 @@ class CronService:
             self._timer_task = None
 
     def _recompute_next_runs(self) -> None:
-        """Recompute next run times for all enabled jobs."""
+        """Give the enabled jobs that have no next run one, counted from now.
+
+        A job that has one keeps it, past or not. The time a job was due at is what the process that stopped left
+        in jobs.json, and one that passed while no process ran is a run missed: it stays, the first tick runs the
+        job once (`_on_timer`), and `_execute_job` counts the next run from that moment, so a job that missed
+        a hundred occurrences runs once. Counting it again from now would drop the run, and a one-time job (whose
+        time is then past, so it has no next run at all) would never run.
+        """
         if not self._store:
             return
         now = _now_ms()
         for job in self._store.jobs:
-            if job.enabled:
+            if job.enabled and job.state.next_run_at_ms is None:
                 job.state.next_run_at_ms = _compute_next_run(job.schedule, now)
 
     def _get_next_wake_ms(self) -> int | None:
@@ -393,6 +404,7 @@ class CronService:
             return
 
         next_wake = self._get_next_wake_ms()
+        self._report_next_wake(next_wake)
         if next_wake is None:
             delay_ms = self.max_sleep_ms
         else:
@@ -405,6 +417,15 @@ class CronService:
                 await self._on_timer()
 
         self._timer_task = asyncio.create_task(tick())
+
+    def _report_next_wake(self, next_wake: int | None) -> None:
+        """Tell the owner when the earliest job is next due. The owner's failure is its own: the jobs go on."""
+        if self.on_next_wake is None:
+            return
+        try:
+            self.on_next_wake(next_wake)
+        except Exception:
+            logger.exception("Cron: reporting the next run failed; the next change reports it again")
 
     async def _on_timer(self) -> None:
         """Handle timer tick - run due jobs."""

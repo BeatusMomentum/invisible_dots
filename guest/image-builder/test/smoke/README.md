@@ -20,7 +20,9 @@ disk lay them out. This smoke does, in one Linux container, with no QEMU:
   that run as `dot` and end with the call that started them (cancel, terminate,
   SIGTERM within systemd's 30 s), a program on a pseudo-terminal (`exec` with `tty`) that
   sees an 80x24 terminal and is answered through `exec_session`, its output read as the
-  screen's text with no escape sequence and whose `tool.called` says `tty`, approvals that survive a crash, the cost cap that
+  screen's text with no escape sequence and whose `tool.called` says `tty`, an automation whose time passed while the engine was
+  off (run once at the next start, with the `automation.next_run` the host is told on the way, and not again after a `kill -9`),
+  approvals that survive a crash, the cost cap that
   stops a task and a chat turn and still holds after a crash, the `spent_usd` the
   events of tasks and chat answers carry, the `target` of `tool.called` (the command with
   its credential masked, a token flag and a `curl -U` proxy login alike, the path a file tool wrote and none of the content), the tools offered

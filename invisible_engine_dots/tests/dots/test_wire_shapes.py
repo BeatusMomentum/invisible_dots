@@ -1,4 +1,5 @@
-"""What the engine answers to `GET /automations` and `GET /tools`, pinned in a file the host checks.
+"""What the engine answers to `GET /automations` and `GET /tools`, and the data of the outbound events a part of
+it writes, pinned in a file the host checks.
 
 The host describes these answers with schemas in `packages/shared/src/protocol.ts` (`automationSchema`,
 `toolInfoSchema`). The engine is Python and cannot import them, so this test writes what the engine really answers into
@@ -18,6 +19,7 @@ from typing import Any
 
 from nanobot.cron.types import CronJob, CronJobState, CronPayload, CronSchedule
 from nanobot.dots.automations import automation_json
+from nanobot.dots import store as dots_store
 from nanobot.dots.permissions import TOOL_PERMISSIONS, offered_tools, tool_table
 
 FIXTURE = Path(__file__).with_name("wire_shapes.json")
@@ -72,17 +74,29 @@ _OFFERED_CASES = [
 ]
 
 
-def _shapes() -> dict[str, Any]:
+def _outbound_event_data(directory: Path) -> list[dict[str, Any]]:
+    """The events the engine writes about its automations, as the store writes them (no seq, id or time: those vary)."""
+    store = dots_store.DotStore.open(directory / "engine.sqlite")
+    try:
+        for next_run_at_ms in (1_790_000_000_000, None):
+            store.write(lambda conn, at=next_run_at_ms: dots_store.record_next_run(conn, at))
+        written = store.read(lambda conn: dots_store.read_outbox_after(conn, 0, 100))
+    finally:
+        store.close()
+    return [{"type": event["type"], "data": event["data"]} for event in written]
+
+
+def _shapes(directory: Path) -> dict[str, Any]:
     cases = []
     for case in _OFFERED_CASES:
         case = {"managed_identities": True, **case}
         offered = offered_tools(case["permissions"], memory_enabled=case["memory_enabled"], managed_identities=case["managed_identities"])
         cases.append({**case, "offered": offered, "tools": tool_table(_Registry(), offered)})
-    return {"automations": _automations(), "tool_offering": cases}
+    return {"automations": _automations(), "outbound_event_data": _outbound_event_data(directory), "tool_offering": cases}
 
 
-def test_the_answers_of_the_engine_are_the_ones_the_host_checks() -> None:
-    shapes = _shapes()
+def test_the_answers_of_the_engine_are_the_ones_the_host_checks(tmp_path: Path) -> None:
+    shapes = _shapes(tmp_path)
     text = json.dumps(shapes, indent=2, sort_keys=True) + "\n"
     if os.environ.get("UPDATE_WIRE_SHAPES") == "1":
         FIXTURE.write_bytes(text.encode("utf-8"))
@@ -90,10 +104,11 @@ def test_the_answers_of_the_engine_are_the_ones_the_host_checks() -> None:
     assert json.loads(FIXTURE.read_text(encoding="utf-8")) == shapes
 
 
-def test_the_cases_reach_every_kind_of_schedule_and_every_kind_of_tool() -> None:
-    shapes = _shapes()
+def test_the_cases_reach_every_kind_of_schedule_and_every_kind_of_tool(tmp_path: Path) -> None:
+    shapes = _shapes(tmp_path)
     assert {a["schedule"]["kind"] for a in shapes["automations"]} == {"at", "every", "cron"}
     assert {a["last_status"] for a in shapes["automations"]} == {"ok", "error", "skipped"}
+    assert [event["data"]["next_run_at_ms"] for event in shapes["outbound_event_data"]] == [1_790_000_000_000, None]
     for case in shapes["tool_offering"]:
         assert [row["name"] for row in case["tools"]] == list(TOOL_PERMISSIONS)
     memory_off = next(c for c in shapes["tool_offering"] if not c["memory_enabled"] and c["permissions"].get("memory.read") == "allow")

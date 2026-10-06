@@ -388,6 +388,153 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     expect((await db.tasks.get(task.id))?.status).toBe("RUNNING");
   });
 
+  describe("automations and the computer's sleep (section 9.5)", () => {
+    const LEAD_MS = 60_000;
+    const MIN = 60_000;
+
+    function makeWithLead() {
+      return make(new FakeDriver(), {
+        dispatchIntervalMs: 60_000,
+        idleCheckIntervalMs: 60_000,
+        lifecycle: { healthPollMs: 5, readyTimeoutMs: 3_000, pumpRetryMs: 10, pumpMaxRetryMs: 50, automationWakeLeadMs: LEAD_MS },
+      });
+    }
+
+    /** The Dot's engine reports that its earliest automation is due `inMs` from the clock's now, and the host has stored it. */
+    async function reportDueIn(scheduler: Scheduler, clock: ManualClock, dotId: string, inMs: number, id = "job_1") {
+      const at = clock.now().getTime() + inMs;
+      driverOf(scheduler).guestOf(dotId).putAutomation(automation({ id, next_run_at_ms: at }));
+      await waitFor(async () => (await db.computers.get(dotId))?.next_automation_at === new Date(at).toISOString(), "the report stored");
+      return at;
+    }
+
+    it("stores what the engine reports as the time of its next automation, and clears it when none is due", async () => {
+      const { scheduler, driver, clock } = makeWithLead();
+      const dot = await readyDot(scheduler, "reporter", "0");
+      expect((await db.computers.get(dot.id))?.next_automation_at).toBeNull();
+
+      const at = await reportDueIn(scheduler, clock, dot.id, 3 * 60 * MIN);
+      const logged = await db.events.list({ dotId: dot.id, types: ["automation.next_run"] });
+      expect(logged.map((e) => e.data)).toMatchObject([{ next_run_at_ms: at }]);
+
+      const guest = driver.guestOf(dot.id);
+      guest.putAutomation(automation({ id: "job_2", name: "sooner", next_run_at_ms: at - 60 * MIN }));
+      await waitFor(async () => (await db.computers.get(dot.id))?.next_automation_at === new Date(at - 60 * MIN).toISOString(), "the earlier one");
+      await guest.deleteAutomation("job_2");
+      await guest.deleteAutomation("job_1");
+      await waitFor(async () => (await db.computers.get(dot.id))?.next_automation_at === null, "cleared");
+      expect(await scheduler.listAutomations(dot.id)).toEqual([]);
+    });
+
+    it("does not put a Dot to sleep when a run is due within the wake lead time, and does when it is not", async () => {
+      const { scheduler, clock } = makeWithLead();
+      const soon = await readyDot(scheduler, "run-soon", "10m");
+      const far = await readyDot(scheduler, "run-far", "10m");
+      const none = await readyDot(scheduler, "run-none", "10m");
+      await reportDueIn(scheduler, clock, soon.id, 10 * MIN + LEAD_MS - 1_000);
+      await reportDueIn(scheduler, clock, far.id, 10 * MIN + LEAD_MS + 5 * MIN);
+
+      // Idle for the whole timeout: the one whose run is within the lead stays up.
+      clock.advance(10 * MIN + 1_000);
+      expect((await scheduler.idleCheck()).sort()).toEqual([far.id, none.id].sort());
+      await scheduler.settle();
+      expect((await db.computers.get(soon.id))?.state).toBe("RUNNING");
+      expect((await db.computers.get(far.id))?.state).toBe("STOPPED");
+    });
+
+    it("does not put a Dot to sleep that has a run already due, and does once the engine has moved it far off", async () => {
+      const { scheduler, driver, clock } = makeWithLead();
+      const dot = await readyDot(scheduler, "run-due", "10m");
+      await reportDueIn(scheduler, clock, dot.id, 2 * MIN);
+
+      clock.advance(20 * MIN);
+      expect(await scheduler.idleCheck()).toEqual([]);
+
+      // The engine made the run and tells the host the next one is hours away.
+      const guest = driver.guestOf(dot.id);
+      const next = clock.now().getTime() + 6 * 60 * MIN;
+      guest.putAutomation(automation({ id: "job_next", next_run_at_ms: next }));
+      await guest.deleteAutomation("job_1");
+      await waitFor(async () => (await db.computers.get(dot.id))?.next_automation_at === new Date(next).toISOString(), "the next run stored");
+      // The reports were activity: the idle timeout counts from them.
+      clock.advance(11 * MIN);
+      expect(await scheduler.idleCheck()).toEqual([dot.id]);
+    });
+
+    it("starts a stopped Dot shortly before its automation is due, and not before", async () => {
+      const { scheduler, driver, clock } = makeWithLead();
+      const dot = await readyDot(scheduler, "sleeping-job", "10m");
+      const at = await reportDueIn(scheduler, clock, dot.id, 30 * MIN);
+      await scheduler.lifecycle.stop(dot.id, "user");
+      const boots = driver.guestOf(dot.id).boots;
+
+      await scheduler.pass();
+      clock.advance(28 * MIN);
+      await scheduler.pass();
+      await scheduler.settle();
+      expect((await db.computers.get(dot.id))?.state).toBe("STOPPED");
+      expect(driver.guestOf(dot.id).boots).toBe(boots);
+
+      // 30 s before the run, within the 60 s lead.
+      clock.advance(at - clock.now().getTime() - 30_000);
+      await scheduler.pass();
+      await waitFor(async () => (await db.computers.get(dot.id))?.state === "RUNNING", "started for the automation");
+      await waitFor(async () => (await db.dots.get(dot.id))?.status === "READY", "READY");
+      expect(driver.guestOf(dot.id).boots).toBe(boots + 1);
+      // The key lives in guest memory only: the start pushed it as every start does.
+      expect(driver.guestOf(dot.id).openrouterKey).toBe("sk-or-test");
+    });
+
+    it("starts a stopped Dot whose automation was due while its computer was off, once", async () => {
+      const { scheduler, driver, clock } = makeWithLead();
+      const dot = await readyDot(scheduler, "missed-job", "10m");
+      await reportDueIn(scheduler, clock, dot.id, 5 * MIN);
+      await scheduler.lifecycle.stop(dot.id, "user");
+      clock.advance(3 * 60 * MIN);
+      const boots = driver.guestOf(dot.id).boots;
+
+      await scheduler.pass();
+      await waitFor(async () => (await db.computers.get(dot.id))?.state === "RUNNING", "started for the missed run");
+      await scheduler.settle();
+      await scheduler.pass();
+      await scheduler.settle();
+
+      expect(driver.guestOf(dot.id).boots).toBe(boots + 1);
+    });
+
+    it("leaves a stopped Dot alone that has no automation to run, or whose Dot needs the person", async () => {
+      const { scheduler, driver, clock } = makeWithLead();
+      const nothing = await readyDot(scheduler, "stopped-nothing", "10m");
+      const broken = await readyDot(scheduler, "stopped-broken", "10m");
+      await reportDueIn(scheduler, clock, broken.id, MIN);
+      await scheduler.lifecycle.stop(nothing.id, "user");
+      await scheduler.lifecycle.stop(broken.id, "user");
+      await db.dots.setStatus(broken.id, "ERROR", "the person has to look");
+      const boots = [driver.guestOf(nothing.id).boots, driver.guestOf(broken.id).boots];
+
+      clock.advance(60 * MIN);
+      await scheduler.pass();
+      await scheduler.settle();
+
+      expect([driver.guestOf(nothing.id).boots, driver.guestOf(broken.id).boots]).toEqual(boots);
+      expect((await db.computers.get(nothing.id))?.state).toBe("STOPPED");
+      expect((await db.computers.get(broken.id))?.state).toBe("STOPPED");
+    });
+
+    it("calls an idle sleep off under the Dot's lock when the run came within the lead meanwhile", async () => {
+      const { scheduler, clock } = makeWithLead();
+      const dot = await readyDot(scheduler, "late-report", "10m");
+      clock.advance(11 * MIN);
+      // The idle check saw nothing due; then the engine reported a run within the lead, before the stop took the lock.
+      await reportDueIn(scheduler, clock, dot.id, LEAD_MS - 5_000);
+
+      await scheduler.lifecycle.stop(dot.id, "idle");
+
+      expect((await db.computers.get(dot.id))?.state).toBe("RUNNING");
+      expect(scheduler.lifecycle.isReady(dot.id)).toBe(true);
+    });
+  });
+
   it("a message to a stopped Dot is queued, wakes it and is delivered", async () => {
     const { scheduler, driver } = make();
     const dot = await readyDot(scheduler, "chatty");

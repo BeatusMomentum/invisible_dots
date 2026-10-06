@@ -56,6 +56,15 @@ describe("describeEvent", () => {
     expect(entry).toMatchObject({ title: "Browser identity created", detail: "shop (shop-ab12cd)" });
   });
 
+  it("says when the next automation is due, or that none is", () => {
+    expect(describeEvent(event(20, "automation.next_run", { next_run_at_ms: 1_790_000_000_000 }))).toMatchObject({
+      title: "Next automation",
+      detail: "due 2026-09-21T14:13:20.000Z",
+      tone: "neutral",
+    });
+    expect(describeEvent(event(21, "automation.next_run", { next_run_at_ms: null }))).toMatchObject({ detail: "none due" });
+  });
+
   it("describes host events and resolutions", () => {
     expect(describeEvent(event(7, "computer.state", { state: "ERROR" }, "host"))).toMatchObject({
       title: "Computer state",

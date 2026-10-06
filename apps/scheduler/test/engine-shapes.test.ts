@@ -1,12 +1,21 @@
 /**
- * The engine's answers to `GET /automations` and `GET /tools`, against the host's description of them. The engine's own
+ * The engine's answers to `GET /automations` and `GET /tools` and the data of its automation events, against the host's
+ * description of them. The engine's own
  * test (`invisible_engine_dots/tests/dots/test_wire_shapes.py`) writes what it really answers into `wire_shapes.json`;
  * here that file is parsed with the schemas of `packages/shared` and the host's fake guest is held to the same
  * answers, so neither side can move a key, or a rule of what the model is offered, without a suite failing.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { automationSchema, parseDotConfig, PERMISSIONS, toolInfoSchema, toRuntimeConfig, type DotRuntimeConfig } from "@invisible-dots/shared";
+import {
+  automationSchema,
+  parseDotConfig,
+  parseOutboundEvent,
+  PERMISSIONS,
+  toolInfoSchema,
+  toRuntimeConfig,
+  type DotRuntimeConfig,
+} from "@invisible-dots/shared";
 import { describe, expect, it } from "vitest";
 import { FakeGuest } from "../src/testing.js";
 
@@ -20,7 +29,7 @@ interface OfferingCase {
 
 const shapes = JSON.parse(
   readFileSync(fileURLToPath(new URL("../../../invisible_engine_dots/tests/dots/wire_shapes.json", import.meta.url)), "utf8"),
-) as { automations: unknown[]; tool_offering: OfferingCase[] };
+) as { automations: unknown[]; outbound_event_data: { type: string; data: unknown }[]; tool_offering: OfferingCase[] };
 
 const baseConfig = toRuntimeConfig(parseDotConfig("name: shapes\ngoal: check\nmodel:\n  provider: openrouter\n  id: test/model\n"));
 
@@ -43,6 +52,23 @@ describe("what the engine answers, as the host describes it", () => {
     expect(automationSchema.safeParse(missing).success).toBe(false);
     expect(automationSchema.safeParse({ ...first, renamed_key: 1 }).success).toBe(false);
     expect(automationSchema.safeParse({ ...first, schedule: { kind: "every", every_ms: 1, extra: true } }).success).toBe(false);
+  });
+
+  it("every automation event the engine writes parses as the outbound event it is, with the time or null, and the host's fake guest says the same", async () => {
+    expect(shapes.outbound_event_data.map((event) => event.type)).toEqual(["automation.next_run", "automation.next_run"]);
+    for (const [index, { type, data }] of shapes.outbound_event_data.entries()) {
+      const event = { seq: index + 1, id: `evt_${index}`, type, ts: "2026-10-06T09:00:00.000Z", data };
+      expect(parseOutboundEvent(event).data, JSON.stringify(event)).toEqual(data);
+    }
+    expect(shapes.outbound_event_data.map((event) => (event.data as { next_run_at_ms: number | null }).next_run_at_ms)).toEqual([1_790_000_000_000, null]);
+
+    const guest = new FakeGuest("token-for-shapes");
+    guest.running = true;
+    const row = automationSchema.parse(shapes.automations[0]);
+    guest.putAutomation({ ...row, next_run_at_ms: 1_790_000_000_000 });
+    expect(guest.outbox.map((event) => ({ type: event.type, data: event.data }))).toEqual([shapes.outbound_event_data[0]]);
+    await guest.deleteAutomation(row.id);
+    expect(guest.outbox.map((event) => ({ type: event.type, data: event.data }))).toEqual(shapes.outbound_event_data);
   });
 
   it("every tool row the engine shows parses with the tool schema, in the order of its table, under a permission the host knows", () => {

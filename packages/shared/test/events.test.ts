@@ -31,8 +31,9 @@ describe("event type lists", () => {
 
   it("match section 5.4", () => {
     expect(INBOUND_EVENT_TYPES).toEqual(["user.message", "task.created", "approval.received", "system.event"]);
-    expect(OUTBOUND_EVENT_TYPES).toHaveLength(14);
+    expect(OUTBOUND_EVENT_TYPES).toHaveLength(15);
     expect(OUTBOUND_EVENT_TYPES).toContain("browser.identity.launched");
+    expect(OUTBOUND_EVENT_TYPES).toContain("automation.next_run");
     expect(OUTBOUND_EVENT_TYPES).toContain("agent.started");
     expect(HOST_EVENT_TYPES).toContain("computer.state");
     expect(isInboundEventType("user.message")).toBe(true);
@@ -146,6 +147,17 @@ describe("parseOutboundEvent", () => {
       /data\.state/,
     );
     expect(() => parseOutboundEvent({ seq: 0, id: "e", type: "memory.written", ts, data: { key: "k" } })).toThrow(/seq/);
+  });
+
+  it("carries the time of the next automation run, or null when none is due", () => {
+    const at = (data: unknown) => ({ seq: 7, id: "e", type: "automation.next_run", ts, data });
+    expect(parseOutboundEvent(at({ next_run_at_ms: 1_790_000_000_000 })).data).toEqual({ next_run_at_ms: 1_790_000_000_000 });
+    expect(parseOutboundEvent(at({ next_run_at_ms: null })).data).toEqual({ next_run_at_ms: null });
+    // The key is always there: a report that names no time is not one the host can act on.
+    expect(() => parseOutboundEvent(at({}))).toThrow(/next_run_at_ms/);
+    for (const next_run_at_ms of [-1, 1.5, "1790000000000", Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(() => parseOutboundEvent(at({ next_run_at_ms })), String(next_run_at_ms)).toThrow(/next_run_at_ms/);
+    }
   });
 
   it("checks the permission of an approval request", () => {

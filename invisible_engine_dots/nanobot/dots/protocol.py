@@ -57,6 +57,7 @@ OUTBOUND_EVENT_TYPES = (
     "browser.identity.launched",
     "browser.identity.closed",
     "memory.written",
+    "automation.next_run",
 )
 
 AGENT_STATES = (

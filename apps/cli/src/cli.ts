@@ -338,6 +338,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
             ["computer", `${computer.state}${computer.ready ? ", ready" : ""}${computer.last_error ? ` (last error: ${computer.last_error})` : ""}`],
             ["resources", `${dot.config.computer.cpu} cpu, ${dot.config.computer.memory} memory, ${dot.config.computer.disk} disk, idle_timeout ${dot.config.computer.idle_timeout}`],
             ["last active", computer.last_active_at ?? "never"],
+            ["next automation", computer.next_automation_at ?? "none due"],
           ]) +
           "\n" +
           taskRows(tasks.slice(0, 10));

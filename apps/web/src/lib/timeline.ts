@@ -101,6 +101,12 @@ export function describeEvent(event: StoredEvent): TimelineEntry {
       return entry("Browser closed", identity(d), "neutral");
     case "memory.written":
       return entry("Memory written", str(d.key), "neutral");
+    case "automation.next_run":
+      return entry(
+        "Next automation",
+        typeof d.next_run_at_ms === "number" ? `due ${new Date(d.next_run_at_ms).toISOString()}` : "none due",
+        "neutral",
+      );
     case "channel.status": {
       const status = str(d.status);
       return entry(

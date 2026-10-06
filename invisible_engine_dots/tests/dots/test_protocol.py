@@ -41,6 +41,7 @@ class TestSharedNames:
             "task.failed",
             "approval.requested",
             "tool.called",
+            "automation.next_run",
         ):
             assert name in OUTBOUND_EVENT_TYPES
         assert len(set(OUTBOUND_EVENT_TYPES)) == len(OUTBOUND_EVENT_TYPES)

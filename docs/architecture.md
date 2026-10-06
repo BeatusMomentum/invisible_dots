@@ -725,7 +725,8 @@ text, spent_usd?}`, `task.completed {task_id, summary, spent_usd?}`,
 `approval.requested {approval_id, task_id?, tool, permission, arguments,
 reason}`, `tool.called {task_id?, tool, permission, decision, ok,
 duration_ms, target?, tty?, interrupted?}`, `browser.identity.created|deleted|launched|closed
-{identity_id, name}`, `memory.written {key}`. `interrupted: true` marks a call
+{identity_id, name}`, `memory.written {key}`, `automation.next_run {next_run_at_ms}`.
+`interrupted: true` marks a call
 the engine stopped during: its outcome is unknown and it was not run again, so
 `ok` is false and `duration_ms` is 0. `tty: true` marks a call that started a
 terminal session (`exec` with `tty`, section 8.3), which is not what its target
@@ -794,6 +795,21 @@ one event per note, right after the call's `tool.called`, in the transaction
 that stores the call's result, only when the call ran ok: a call that failed,
 was denied or was interrupted sends none, and a note an `apply_patch` wrote
 twice is one event. A note written through `exec` is not seen.
+
+`automation.next_run {next_run_at_ms}` is when the earliest enabled automation of
+the Dot is next due, in milliseconds since the epoch, or `null` when none is (no
+job, every job paused, or only one-time jobs that already ran). The engine sends
+it each time that value changes, so the last one the host has is the true one: when
+the cron service arms its timer, which it does after every change of the jobs (the
+tool, `PATCH` and `DELETE /automations`) and after every tick, the engine compares
+the value with the one it last reported, kept in its database in the transaction
+that writes the event, and writes the event only when they differ. A restart
+therefore does not say it again, a computer that never had a job has said nothing
+(the host takes that as `null`), and a time already past is reported as it is: it
+is a run the engine has not made yet, which it makes when it starts (section 8.8).
+The host keeps the value in `computers.next_automation_at` and uses it to wake a
+stopped computer shortly before the run and to not put one to sleep that is about
+to need it (section 9.5).
 
 The `arguments` of `approval.requested` are what the person decides on, and
 they leave the guest: a tool argument that carries a secret is redacted there
@@ -1430,6 +1446,23 @@ state.
   `DELETE /automations/:id` (section 5.3), served from the same service object
   the tool uses; the person does not make one. `GET /tools` shows the permission
   table with what the model is offered now.
+- Automations while the computer is off. The jobs live in the guest and the
+  computer powers off when idle, so a job does not fire while it is off: the
+  host starts the computer shortly before the earliest run (section 9.5), told
+  when by `automation.next_run` (section 5.4), which the engine sends whenever
+  the cron service arms its timer and the earliest next run changed. A run that
+  came due while no engine ran is made once, when the engine starts. The next
+  run of a job is stored in `jobs.json` and is what the service starts from: a
+  time in the past is kept (the service counts a next run from now only for an
+  enabled job that has none), the first tick finds the job due, runs it once
+  and counts its next run from that moment. A one-time job (`at`) therefore runs
+  late and is then over, and a recurring one runs once for the occurrences it
+  missed, never once for each of them. A firing is recorded under the id
+  `cron:<job id>:<the time it was due>` before the service saves that the job ran,
+  and the engine ignores an id it already holds, so a `kill -9` between the two
+  finds the job due again and the engine recognizes its firing: it runs once.
+  On a stop the cron timer ends before the engine does, so no firing falls on a
+  stopped engine, which records nothing while the job moves on as if it had run.
 - Prepare-sleep and SIGTERM. The engine stops taking new work; a turn with no
   tool running is cancelled at once; a turn with a tool running gets up to 20
   seconds, in which the tool's result commits and the next iteration abandons
@@ -1505,7 +1538,7 @@ Tables: `dots`, `computers`, `tasks`, `task_runs`, `events`, `approvals`,
 SQL files applied in order at start.
 
 - `dots(id text pk, name text unique, config jsonb, status text, error text null, config_version int default 1, created_at, updated_at)`: `config_version` grows with every save of `config` (`updateConfig`, `setPermission`, and `0009_removed_config_names` once for each Dot it rewrites) and with nothing else, while `updated_at` also moves with every status change; the PATCH precondition is on the version
-- `computers(dot_id pk fk, vm_name, guest_port int null, pid int null, state text, golden_image text, runtime_image text, token_enc bytea, event_cursor bigint default 0, last_active_at, last_error, updated_at)`: `guest_port` and `pid` are null while no QEMU runs, and `guest_port` is not unique (a crashed VM's row may name a port since reused); both are copies of `qemu.json` (section 3.2), which wins on reconciliation
+- `computers(dot_id pk fk, vm_name, guest_port int null, pid int null, state text, golden_image text, runtime_image text, token_enc bytea, event_cursor bigint default 0, last_active_at, next_automation_at timestamptz null, last_error, updated_at)`: `guest_port` and `pid` are null while no QEMU runs, and `guest_port` is not unique (a crashed VM's row may name a port since reused); both are copies of `qemu.json` (section 3.2), which wins on reconciliation; `next_automation_at` is the guest's last `automation.next_run` report (migration `0010_computer_next_automation`), null while none is due or nothing was reported, and it is the guest's report: nothing else of the row moves with it
 - `tasks(id text pk, dot_id fk, description, priority int, status, created_at, scheduled_at, started_at, finished_at, summary, error, spent_usd double precision default 0)`: `spent_usd` is the highest `spent_usd` the guest reported on the task's events (section 5.4), recorded by the host in the transaction that stores each event, so a late or repeated event never lowers it and a cancelled task the guest keeps working on still counts; a task whose guest never reported spend stays 0
 - `task_runs(id pk, task_id fk, started_at, delivered_at, finished_at, outcome)`: `delivered_at` is set when the guest accepted the run's `task.created`
 - `events(id bigserial pk, dot_id, type, data jsonb, source 'host'|'guest', guest_seq bigint, created_at)`, unique `(dot_id, guest_seq)`, and unique `(dot_id, data->origin->>binding_id, data->origin->>external_id)` for a `user.message` with an origin: a channel message is stored once, by the channel's own id, in the transaction that stores it, so a redelivery after any failure finds the first one and the Dot gets it once (section 9.8)
@@ -1597,7 +1630,8 @@ the Dot was READY can only meet a stop that has not begun.
 ### 9.5 Sleep and wake
 
 When a Dot has no PENDING task that is due, no RUNNING or WAITING_APPROVAL
-task and nothing undelivered in its outbox, its agent state is IDLE, and
+task, nothing undelivered in its outbox and no automation due within the wake
+lead time (below), its agent state is IDLE, and
 nothing happened for `idle_timeout`: `POST /v1/agent/prepare-sleep` ->
 `POST /v1/system/poweroff` -> QEMU exits (killed after 60 s, section 3.4) ->
 STOPPED. The idle stop checks all of it again under the Dot's lock, after
@@ -1606,7 +1640,26 @@ Disk, identities and memory stay. A new task or message for a STOPPED Dot
 starts the VM, waits for READY and then delivers it; so does a scheduled task
 when its `scheduled_at` comes. A STOPPED Dot whose due work waits behind a task
 its guest has not finished (it was stopped mid-task) is started too, so its
-guest finishes that task and the next one can be claimed. A VM that stops
+guest finishes that task and the next one can be claimed.
+
+A Dot's automations (section 8.8) run in its guest, which is off while the
+Dot sleeps, so the host starts the computer for them. The guest reports, with
+`automation.next_run` (section 5.4), when its earliest enabled automation is due,
+and the host keeps it in `computers.next_automation_at`. The scheduler's pass
+(every `dispatchIntervalMs`, 5 s) starts every STOPPED computer whose Dot is not
+in ERROR, DISABLED or CREATING and whose next automation is due within the
+wake lead time (`lifecycle.automationWakeLeadMs`, 90 s by default: a start
+reaches READY with some to spare) or is already past, a run missed while the
+host or the computer was down, which the guest makes as it starts. The same
+condition is part of "has work" for the idle sleep, in the idle check and
+again under the Dot's lock, so a computer is not put to sleep when a run is
+due within the lead time, and with an automation every minute it stays up.
+A computer the person stopped is started again by the same rule when a run is
+within the lead time, as it is for a message or a task. The start is the
+ordinary one (the key and the config are pushed), and the run itself is the
+guest's: the host decides only when the computer starts.
+
+A VM that stops
 without being asked (the guest powered itself off, QEMU crashed) is recorded
 as STOPPED, and started again at once when its Dot still has work.
 
@@ -2039,11 +2092,14 @@ then each code as a QR for the terminal until the number is linked, then
 
 ## 10. Out of scope for this version
 
-Snapshots and rollback, scheduled recurring jobs, MCP integrations beyond the
-browser, remote desktop and interactive terminal, artifacts, backups, quotas,
-network policies, multiple hosts, organisations and RBAC, macOS hosts. The
-tables and states above leave room for them; nothing here pretends to
-implement them.
+Snapshots and rollback, MCP integrations beyond the browser, remote desktop
+and interactive terminal, artifacts, backups, quotas, network policies,
+multiple hosts, organisations and RBAC, macOS hosts. The tables and states
+above leave room for them; nothing here pretends to implement them.
+
+Scheduled and recurring jobs are in scope: they are the Dot's automations
+(sections 8.8 and 9.5), which run in its guest and, with the computer off,
+start it.
 
 ## 11. Getting a host ready
 

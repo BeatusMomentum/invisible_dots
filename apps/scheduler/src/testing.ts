@@ -384,7 +384,23 @@ export class FakeGuest implements GuestApi {
   /** Give the Dot an automation (its cron tool made it). */
   putAutomation(automation: Automation): void {
     this.automations.set(automation.id, automation);
+    this.#reportNextRun();
   }
+
+  /**
+   * What the engine does after every change of its jobs: tell the host, with an `automation.next_run` event, when the
+   * earliest enabled one is due (null when none is), once per change (nothing at a boot: the engine has told the
+   * host what it has to).
+   */
+  #reportNextRun(): void {
+    const due = [...this.automations.values()].flatMap((a) => (a.enabled && a.next_run_at_ms !== null ? [a.next_run_at_ms] : []));
+    const next = due.length > 0 ? Math.min(...due) : null;
+    if (next === this.#reportedNextRun) return;
+    this.#reportedNextRun = next;
+    this.emit("automation.next_run", { next_run_at_ms: next });
+  }
+
+  #reportedNextRun: number | null = null;
 
   async listAutomations(): Promise<AutomationListAnswer> {
     this.#reachable("listAutomations");
@@ -398,6 +414,7 @@ export class FakeGuest implements GuestApi {
     if (automation.enabled !== enabled) {
       const next = { ...automation, enabled, next_run_at_ms: enabled ? Date.now() + 60_000 : null };
       this.automations.set(id, next);
+      this.#reportNextRun();
       return next;
     }
     return automation;
@@ -406,6 +423,7 @@ export class FakeGuest implements GuestApi {
   async deleteAutomation(id: string): Promise<void> {
     this.#reachable("deleteAutomation");
     if (!this.automations.delete(id)) throw new FakeGuestError(404, `no automation "${id}"`, "not_found");
+    this.#reportNextRun();
   }
 
   async listTools(): Promise<ToolListAnswer> {

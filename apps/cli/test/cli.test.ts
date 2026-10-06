@@ -42,6 +42,7 @@ const computer = {
   runtime_image: null,
   event_cursor: 3,
   last_active_at: now,
+  next_automation_at: "2030-01-01T09:00:00.000Z",
   last_error: null,
   updated_at: now,
   ready: true,
@@ -304,6 +305,7 @@ describe("commands", () => {
     const status = await cli(["status", "fare-watch"]);
     expect(status.code).toBe(EXIT.ok);
     expect(status.stdout).toMatch(/computer\s+RUNNING, ready/);
+    expect(status.stdout).toMatch(/next automation\s+2030-01-01T09:00:00.000Z/);
     expect(status.stdout).toContain("task_01");
     expect((await cli(["tasks", "fare-watch"])).stdout).toContain("COMPLETED");
   });

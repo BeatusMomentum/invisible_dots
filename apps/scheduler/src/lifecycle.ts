@@ -38,6 +38,13 @@ export interface LifecycleOptions {
   pumpMaxRetryMs: number;
   /** Time the agent gets to flush its state before a shutdown (section 9.5). */
   prepareSleepTimeoutMs: number;
+  /**
+   * How long before an automation is due a stopped computer is started, and how close to one a running computer is
+   * kept awake (section 9.5). It is the time a start takes to reach READY with some to spare; the passes that look
+   * for the Dots to start run every few seconds, so the computer is up between this long and a pass before the run.
+   * Default 90 s.
+   */
+  automationWakeLeadMs: number;
 }
 
 export const DEFAULT_LIFECYCLE_OPTIONS: LifecycleOptions = {
@@ -47,6 +54,7 @@ export const DEFAULT_LIFECYCLE_OPTIONS: LifecycleOptions = {
   pumpRetryMs: 1_000,
   pumpMaxRetryMs: 30_000,
   prepareSleepTimeoutMs: 60_000,
+  automationWakeLeadMs: 90_000,
 };
 
 export interface LifecycleDeps {
@@ -378,7 +386,27 @@ export class Lifecycle {
   async #stillIdle(dotId: string): Promise<boolean> {
     const [dot, computer] = await Promise.all([this.#db.dots.get(dotId), this.#db.computers.get(dotId)]);
     if (dot?.status !== "READY" || computer?.state !== "RUNNING") return false;
-    return !(await this.#db.tasks.hasWork(dotId, this.#clock.now()));
+    return !(await this.keepsAwake(dotId));
+  }
+
+  /**
+   * Whether the Dot has something that makes an idle sleep pointless (section 9.5): work (`tasks.hasWork`), or an
+   * automation due within the wake lead time, past ones included (the guest makes a missed run when it starts, and a
+   * computer put to sleep now would be started again at once).
+   */
+  async keepsAwake(dotId: string): Promise<boolean> {
+    const now = this.#clock.now();
+    if (await this.#db.tasks.hasWork(dotId, now)) return true;
+    const dueAt = (await this.#db.computers.get(dotId))?.next_automation_at;
+    return dueAt != null && Date.parse(dueAt) <= now.getTime() + this.#opts.automationWakeLeadMs;
+  }
+
+  /**
+   * The Dots whose computer is stopped and has an automation due within the wake lead time: the ones to start so
+   * their guest is ready when the run is due (or, for a run already missed, makes it as it starts).
+   */
+  stoppedDotsWithAutomationDue(): Promise<string[]> {
+    return this.#db.computers.stoppedWithAutomationBy(new Date(this.#clock.now().getTime() + this.#opts.automationWakeLeadMs));
   }
 
   /** Put the Dot to sleep, or stop it on the user's request (section 9.5). */

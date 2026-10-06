@@ -164,8 +164,9 @@ export class Scheduler {
 
   /**
    * One round of looking for work (section 9.5): claim due tasks, send the
-   * inbound rows whose retry time came, and wake stopped Dots whose new work
-   * waits behind a task their guest has not finished.
+   * inbound rows whose retry time came, wake stopped Dots whose new work
+   * waits behind a task their guest has not finished, and wake the ones whose
+   * next automation is due within the wake lead time.
    */
   async pass(): Promise<void> {
     await this.dispatcher.dispatch();
@@ -174,6 +175,11 @@ export class Scheduler {
       if (this.lifecycle.isBusy(dotId)) continue;
       this.#log.info("waking a stopped Dot: new work waits behind its unfinished task", { dotId });
       this.#runInBackground("wake for blocked work", dotId, () => this.lifecycle.ensureReady(dotId));
+    }
+    for (const dotId of await this.lifecycle.stoppedDotsWithAutomationDue()) {
+      if (this.lifecycle.isBusy(dotId)) continue;
+      this.#log.info("waking a stopped Dot: an automation is due", { dotId });
+      this.#runInBackground("wake for an automation", dotId, () => this.lifecycle.ensureReady(dotId));
     }
   }
 
@@ -812,10 +818,10 @@ export class Scheduler {
 
   /**
    * Put every Dot to sleep that is READY with an IDLE agent, has no work
-   * (no due or active task, nothing waiting to reach its guest), and was not
-   * active for its `idle_timeout`. Returns the ids of the Dots it started
-   * stopping; the stop checks all of it again under the Dot's lock and is
-   * called off when work arrived meanwhile.
+   * (no due or active task, nothing waiting to reach its guest, no automation
+   * due within the wake lead time), and was not active for its `idle_timeout`.
+   * Returns the ids of the Dots it started stopping; the stop checks all of it
+   * again under the Dot's lock and is called off when work arrived meanwhile.
    */
   async idleCheck(): Promise<string[]> {
     const now = this.#clock.now();
@@ -828,7 +834,7 @@ export class Scheduler {
       if (timeout === null) continue;
       const lastActive = new Date(computer.last_active_at ?? computer.updated_at).getTime();
       if (now.getTime() - lastActive < timeout) continue;
-      if (await this.db.tasks.hasWork(dotId, now)) continue;
+      if (await this.lifecycle.keepsAwake(dotId)) continue;
       this.#log.info("dot idle, going to sleep", { dotId, idleMs: now.getTime() - lastActive });
       sleeping.push(dotId);
       this.#runInBackground("idle sleep", dotId, () => this.lifecycle.stop(dotId, "idle"));
