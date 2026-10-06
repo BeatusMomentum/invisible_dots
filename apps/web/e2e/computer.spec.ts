@@ -72,6 +72,9 @@ test("the Computer page shows the screen, the files and what the computer uses",
   await expect(page.getByRole("button", { name: "Start", exact: true })).toBeDisabled();
   // The Dot's automations are the Dot's own: the page says when the next one is due (none is yet).
   await expect(page.getByRole("region", { name: "Automations" })).toContainText("No automation is due.");
+  // The engine reports a run that is due: that is what the person's stop then holds back (a Dot with no automation has nothing to pause).
+  guest.emit("automation.next_run", { next_run_at_ms: Date.now() + 6 * 60 * 60 * 1000 });
+  await expect(page.getByRole("region", { name: "Automations" })).toContainText("Next automation:");
   // Stopping asks, and says what it costs.
   page.once("dialog", (dialog) => {
     expect(dialog.message()).toContain("Its automations do not run while it is stopped");
