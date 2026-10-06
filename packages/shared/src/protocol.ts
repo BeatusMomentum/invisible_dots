@@ -67,6 +67,8 @@ export const ENV = {
   TOKEN: "INVISIBLE_DOTS_TOKEN",
   /** Where clients (CLI, web server) reach the API. Default http://127.0.0.1:8787. */
   URL: "INVISIBLE_DOTS_URL",
+  /** `1` turns on the opt-in WhatsApp adapter (Baileys, an unofficial client with a risk of account bans; architecture 9.8). */
+  WHATSAPP: "INVISIBLE_DOTS_WHATSAPP",
   DATABASE_URL: "DATABASE_URL",
   /** Read by invisible-playwright-mcp, one value per browser identity (section 6). */
   MCP_HOME: "INVISIBLE_MCP_HOME",

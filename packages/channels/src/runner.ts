@@ -128,7 +128,7 @@ export class BindingRunner {
   /** `text` with the binding's credentials replaced, for anything that is stored, shown or logged. */
   async scrub(text: string): Promise<string> {
     let out = text;
-    for (const name of this.#o.type.secretNames) {
+    for (const name of this.#o.type.scrubNames) {
       const value = await this.#o.db.secrets.get(this.dotId, name).catch(() => null);
       if (value && value.length >= MIN_SECRET_LENGTH) out = out.split(value).join("[redacted]");
     }

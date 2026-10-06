@@ -333,6 +333,24 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect(await db.approvals.resolve(data.approval_id, "rejected", null)).toBeNull();
   });
 
+  it("approvals: found by the end of their id, in lowercase, within one Dot, resolved ones included", async () => {
+    const dot = await seedDot(db, "foxtrot-suffix");
+    const other = await seedDot(db, "foxtrot-other");
+    const data = (id: string) => ({ approval_id: id, tool: "exec", permission: "browser.identity.delete" as const, arguments: {}, reason: "test" });
+    await db.approvals.insertRequested(dot.id, data("apr_aaaaaaaaaaaaaaaaaaaaaaaaaa9bntc"));
+    await db.approvals.insertRequested(dot.id, data("apr_bbbbbbbbbbbbbbbbbbbbbbbbbb9bntc"));
+    await db.approvals.insertRequested(dot.id, data("apr_cccccccccccccccccccccccccccccc"));
+    await db.approvals.insertRequested(other.id, data("apr_dddddddddddddddddddddddddd9bntc"));
+    await db.approvals.resolve("apr_aaaaaaaaaaaaaaaaaaaaaaaaaa9bntc", "approved", null);
+    const found = await db.approvals.endingWith(dot.id, "9BNTC");
+    expect(found.map((a) => [a.id.slice(0, 5), a.status])).toEqual([
+      ["apr_a", "approved"],
+      ["apr_b", "pending"],
+    ]);
+    expect(await db.approvals.endingWith(dot.id, "zzzzz")).toEqual([]);
+    expect((await db.approvals.endingWith(other.id, "9bntc")).map((a) => a.id)).toEqual(["apr_dddddddddddddddddddddddddd9bntc"]);
+  });
+
   it("secrets: encrypted at rest, per-Dot key wins over the global one", async () => {
     const dot = await seedDot(db, "golf");
     expect(await db.secrets.openRouterKey(dot.id)).toBeNull();

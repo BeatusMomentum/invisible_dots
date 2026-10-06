@@ -8,6 +8,7 @@ import type { ChannelKind } from "@invisible-dots/shared";
 import type { ApprovalPrompt, Channel, ChannelCapabilities, ChannelSink, ChannelType, InboundChat } from "./channel.js";
 
 export * from "./telegram/fake-bot-api.js";
+export * from "./whatsapp-baileys/fake.js";
 
 export class FakeChannel implements Channel {
   readonly sent: { chatId: string; text: string }[] = [];
@@ -94,13 +95,14 @@ export class FakeChannel implements Channel {
 
 export class FakeChannelType implements ChannelType {
   readonly secretNames = ["telegram_bot_token"];
+  readonly scrubNames = ["telegram_bot_token"];
   /** Every channel made, oldest first: a restart makes a new one. */
   readonly channels: FakeChannel[] = [];
   /** Each of the next `sendText` calls, on any channel, throws the next of these. */
   readonly sendFailures: Error[] = [];
   /** When set, `create` throws it (once, then it clears). */
   createFailure: Error | null = null;
-  capabilities: ChannelCapabilities = { maxText: 4000, typing: true };
+  capabilities: ChannelCapabilities = { maxText: 4000, typing: true, approvalByText: false };
 
   constructor(readonly kind: ChannelKind = "telegram") {}
 
@@ -113,6 +115,10 @@ export class FakeChannelType implements ChannelType {
     const channel = new FakeChannel(this, binding, this.capabilities);
     this.channels.push(channel);
     return channel;
+  }
+
+  pairingMessage(code: string): string {
+    return `/start ${code}`;
   }
 
   pairingLink(account: string | null, code: string): string | null {

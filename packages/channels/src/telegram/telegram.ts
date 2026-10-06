@@ -72,7 +72,7 @@ function describe(error: unknown, method: string, token: string): string {
 }
 
 class TelegramChannel implements Channel {
-  readonly capabilities: ChannelCapabilities = { maxText: 4000, typing: true };
+  readonly capabilities: ChannelCapabilities = { maxText: 4000, typing: true, approvalByText: false };
   readonly #api: Api;
   readonly #token: string;
   readonly #botId: string;
@@ -247,6 +247,7 @@ function labelOf(message: Message): string | undefined {
 export class TelegramChannelType implements ChannelType {
   readonly kind = "telegram" as const;
   readonly secretNames = [TELEGRAM_TOKEN_SECRET] as const;
+  readonly scrubNames = [TELEGRAM_TOKEN_SECRET] as const;
 
   constructor(private readonly options: TelegramOptions = {}) {}
 
@@ -271,5 +272,9 @@ export class TelegramChannelType implements ChannelType {
 
   pairingLink(account: string | null, code: string): string | null {
     return account === null ? null : `https://t.me/${account}?start=${code}`;
+  }
+
+  pairingMessage(code: string): string {
+    return `/start ${code}`;
   }
 }

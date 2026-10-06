@@ -120,6 +120,34 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     return reply.code(500).send({ error: "internal", message: errorMessage(error) });
   });
 
+  /**
+   * Answer with a server-sent event stream, the one way every stream of this API starts: headers, a heartbeat comment
+   * so proxies and clients see the connection is alive, and an abort when the client goes or the server closes. `body`
+   * writes the frames and returns when there are no more.
+   */
+  const eventStream = async (reply: FastifyReply, controller: AbortController, body: (raw: FastifyReply["raw"]) => Promise<void>): Promise<void> => {
+    reply.hijack();
+    const raw = reply.raw;
+    raw.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-store",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    });
+    raw.write(": connected\n\n");
+    streams.add(controller);
+    const heartbeat = setInterval(() => raw.write(": ping\n\n"), heartbeatMs);
+    heartbeat.unref();
+    raw.on("close", () => controller.abort());
+    try {
+      await body(raw);
+    } finally {
+      clearInterval(heartbeat);
+      streams.delete(controller);
+      raw.end();
+    }
+  };
+
   app.addHook("onClose", async () => {
     for (const controller of streams) controller.abort();
   });
@@ -233,7 +261,7 @@ export function buildServer(options: ServerOptions): FastifyInstance {
 
   app.get<{ Params: Params }>(
     "/api/dots/:id/channels",
-    async (request): Promise<ChannelsAnswer> => ({ channels: await channels.list(request.params.id) }),
+    async (request): Promise<ChannelsAnswer> => ({ channels: await channels.list(request.params.id), available: channels.kinds }),
   );
 
   // Link the Dot to a Telegram bot, or give the linked one a new token (a revoked token is the only way back from needs_relink).
@@ -244,6 +272,20 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     const linked = (await channels.list(request.params.id)).some((channel) => channel.kind === "telegram");
     if (linked) return channels.setCredentials(request.params.id, "telegram", credentials);
     return reply.code(201).send(await channels.add(request.params.id, "telegram", { credentials }));
+  });
+
+  // Link WhatsApp: the channel starts and shows a code; the person scans it (the stream below) with the phone that holds the number.
+  app.post<{ Params: Params }>("/api/dots/:id/channels/whatsapp/link", async (request, reply): Promise<ChannelRecord> => {
+    return reply.code(202).send(await channels.link(request.params.id, "whatsapp"));
+  });
+
+  // The codes to scan and how the link ends, as server-sent events of `ChannelLinkFrame`. The code is a way into the account for as long as it is shown: it is not stored and the reply is never cached.
+  app.get<{ Params: Params }>("/api/dots/:id/channels/whatsapp/qr", async (request, reply) => {
+    const controller = new AbortController();
+    const frames = await channels.watchLink(request.params.id, "whatsapp", controller.signal);
+    await eventStream(reply, controller, async (raw) => {
+      for await (const frame of frames) raw.write(`data: ${JSON.stringify(frame)}\n\n`);
+    });
   });
 
   app.patch<{ Params: Params }>("/api/dots/:id/channels/:kind", async (request): Promise<ChannelRecord> => {
@@ -316,35 +358,19 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     const lastEventId = request.headers["last-event-id"];
     const after = intParam(typeof lastEventId === "string" ? lastEventId : request.query.after, "after");
 
-    reply.hijack();
-    const raw = reply.raw;
-    raw.writeHead(200, {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-store",
-      connection: "keep-alive",
-      "x-accel-buffering": "no",
-    });
-    raw.write(": connected\n\n");
-
     const controller = new AbortController();
-    streams.add(controller);
-    const heartbeat = setInterval(() => raw.write(": ping\n\n"), heartbeatMs);
-    heartbeat.unref();
-    raw.on("close", () => controller.abort());
-    try {
-      for await (const event of scheduler.events.stream(dotId === undefined ? {} : { dotId }, { after, signal: controller.signal })) {
-        raw.write(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`);
+    await eventStream(reply, controller, async (raw) => {
+      try {
+        for await (const event of scheduler.events.stream(dotId === undefined ? {} : { dotId }, { after, signal: controller.signal })) {
+          raw.write(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`);
+        }
+      } catch (error) {
+        // The client reconnects with its last id; tell it why the server hung up.
+        const code = error instanceof StreamOverflowError ? "stream_overflow" : "stream_error";
+        raw.write(`event: ${STREAM_ERROR_EVENT}\ndata: ${JSON.stringify({ error: code, message: errorMessage(error) })}\n\n`);
+        log.warn("event stream closed with an error", { error: errorMessage(error) });
       }
-    } catch (error) {
-      // The client reconnects with its last id; tell it why the server hung up.
-      const code = error instanceof StreamOverflowError ? "stream_overflow" : "stream_error";
-      raw.write(`event: ${STREAM_ERROR_EVENT}\ndata: ${JSON.stringify({ error: code, message: errorMessage(error) })}\n\n`);
-      log.warn("event stream closed with an error", { error: errorMessage(error) });
-    } finally {
-      clearInterval(heartbeat);
-      streams.delete(controller);
-      raw.end();
-    }
+    });
   });
 
   // Secrets

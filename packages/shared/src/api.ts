@@ -146,7 +146,7 @@ export interface ChannelSettings {
 }
 
 export interface ChannelPeerRecord {
-  /** The channel's own id for the person (a Telegram user id). */
+  /** The channel's own id for the person (a Telegram user id, a WhatsApp phone number). */
   peer_id: string;
   role: "owner" | "user";
   label: string;
@@ -160,8 +160,8 @@ export interface ChannelRecord {
   status: ChannelStatus;
   /** Why the status is `error`, or null. */
   status_detail: string | null;
-  /** The bot's public name on Telegram, null for a channel without one. */
-  bot_username: string | null;
+  /** The channel's public name for the account: a Telegram bot's username, the phone number linked to WhatsApp. Null until the channel reports one. */
+  account: string | null;
   settings: ChannelSettings;
   peers: ChannelPeerRecord[];
   created_at: string;
@@ -169,7 +169,20 @@ export interface ChannelRecord {
 
 export interface ChannelsAnswer {
   channels: ChannelRecord[];
+  /** The kinds of channel this server can run: WhatsApp is on only when the server was started with it (opt-in). */
+  available: ChannelKind[];
 }
+
+/**
+ * One frame of `GET /api/dots/:id/channels/whatsapp/qr` while a person links WhatsApp: `waiting` until the first
+ * code, `code` with what the phone scans (replaced every few seconds, never stored), then one last frame,
+ * `linked` or `failed`, and the stream ends. `detail` says why a connection is retried; it never holds a credential.
+ */
+export type ChannelLinkFrame =
+  | { state: "waiting"; detail?: string }
+  | { state: "code"; code: string }
+  | { state: "linked"; account: string | null }
+  | { state: "failed"; detail: string };
 
 export interface PutTelegramChannelRequest {
   /** The bot token from @BotFather; checked with Telegram, stored encrypted, never returned. */
@@ -186,8 +199,10 @@ export interface PatchChannelRequest {
 /** A one-time code that pairs a person's chat to the Dot (valid for ten minutes, stored hashed). */
 export interface ChannelPairingAnswer {
   code: string;
-  /** `https://t.me/<bot>?start=<code>` for Telegram; null where a channel has no link. */
+  /** `https://t.me/<bot>?start=<code>` for Telegram, `https://wa.me/<number>?text=pair%20<code>` for WhatsApp; null where the account is not known yet. */
   deep_link: string | null;
+  /** The words that pair when sent to the channel's account: `/start <code>` on Telegram, `pair <code>` on WhatsApp. */
+  message: string;
   expires_at: string;
 }
 

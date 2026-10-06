@@ -112,7 +112,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
   it("splits a long answer into messages the channel accepts, in order", async () => {
     const w = await world();
     const type = new FakeChannelType();
-    type.capabilities = { maxText: 30, typing: false };
+    type.capabilities = { maxText: 30, typing: false, approvalByText: false };
     const { dot, channel } = await linkedFake(w, ["10"], {}, type);
     const text = Array.from({ length: 20 }, (_, i) => `sentence ${i}.`).join(" ");
     dot.guest.emit("message.assistant", { text });
@@ -162,6 +162,8 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
     const dot = await w.dot();
     await hub.add(dot.id, "telegram");
     const channel = await waitFor(() => type.channels.at(-1)?.sink && type.channels.at(-1), "the channel");
+    // The link names the account the channel reported when it connected.
+    await waitFor(async () => (await hub.list(dot.id))[0]!.account === "fake_bot", "the account to be recorded");
     const { code, deep_link, expires_at } = await hub.pair(dot.id, "telegram");
     expect(code).toMatch(/^[A-HJ-NP-Z2-9]{8}$/);
     expect(deep_link).toBe(`https://chat.test/fake_bot?start=${code}`);
@@ -300,6 +302,27 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
     expect(type.channels.length).toBe(made);
   });
 
+  it("does not start, when the server starts, a channel that needs its person: it starts when they link it again", async () => {
+    const w = await world();
+    const { hub, type } = await w.hub();
+    const dot = await w.dot();
+    await hub.add(dot.id, "telegram");
+    const first = await waitFor(() => type.channels.at(-1)?.sink && type.channels.at(-1), "the channel");
+    first.crash(new ChannelNeedsRelinkError("the token was revoked"));
+    await waitFor(async () => (await hub.list(dot.id))[0]!.status === "needs_relink", "needs_relink");
+    await hub.close();
+
+    // A server that starts now finds the binding as it was left, and does not connect with what is known to be refused.
+    const { hub: restarted, type: again } = await w.hub();
+    await quiet();
+    expect(again.channels).toHaveLength(0);
+    expect((await restarted.list(dot.id))[0]).toMatchObject({ status: "needs_relink", status_detail: "the token was revoked" });
+
+    // Their next step starts it: new credentials, or resuming the channel.
+    await restarted.setCredentials(dot.id, "telegram", { telegram_bot_token: "123456:ANOTHER-TOKEN-VALUE" });
+    await waitFor(() => again.channels.length === 1, "the channel to start with the new credentials");
+  });
+
   it("reports a channel that cannot be made and tries again", async () => {
     const w = await world();
     const type = new FakeChannelType();
@@ -320,14 +343,15 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
     const channel = await waitFor(() => type.channels.at(-1)?.sink && type.channels.at(-1), "the channel");
     channel.sink!.status({ status: "connected", account: "fake_bot" });
     channel.sink!.status({ status: "error", detail: `GET https://api.test/bot${TOKEN}/getMe failed ` + "x".repeat(400) });
-    await waitFor(async () => (await hub.list(dot.id))[0]!.status === "error", "the error");
+    // The row is written before its event: wait for the event too, or the check of the log below proves nothing.
+    await waitFor(async () => (await hub.list(dot.id))[0]!.status === "error" && (await eventsOf(dot.id, "channel.status")).length === 2, "the error and its event");
     const [record] = await hub.list(dot.id);
     expect(record!.status_detail).toContain("[redacted]");
     expect(record!.status_detail!.length).toBeLessThanOrEqual(300);
     const logged = JSON.stringify(await db.events.list({ dotId: dot.id }));
     expect(logged).not.toContain("SECRET-TOKEN-VALUE");
     expect((await eventsOf(dot.id, "channel.status")).map((e) => e.data.status)).toEqual(["connected", "error"]);
-    expect(record!.bot_username).toBe("fake_bot");
+    expect(record!.account).toBe("fake_bot");
   });
 
   it("sends again after a failure that may pass, and drops a message the channel refuses for good", async () => {

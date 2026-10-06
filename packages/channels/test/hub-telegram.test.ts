@@ -73,7 +73,7 @@ describe.each(testAdapters())("the hub with the real Telegram adapter (%s)", { t
     const { hub } = await w.hub(telegram());
     const dot = await w.dot();
     const added = await hub.add(dot.id, "telegram", { credentials: { telegram_bot_token: TOKEN } });
-    expect(added).toMatchObject({ kind: "telegram", enabled: true, bot_username: "dot_helper_bot", peers: [] });
+    expect(added).toMatchObject({ kind: "telegram", enabled: true, account: "dot_helper_bot", peers: [] });
     await waitFor(async () => (await hub.list(dot.id))[0]!.status === "connected", "connected");
 
     const { code, deep_link, expires_at } = await hub.pair(dot.id, "telegram");
@@ -281,7 +281,7 @@ describe.each(testAdapters())("the hub with the real Telegram adapter (%s)", { t
     const other = "654321:OTHER-BOT-TOKEN-VALUE";
     bots.addBot(other, "second_bot");
     const record = await hub.setCredentials(dot.id, "telegram", { telegram_bot_token: other });
-    expect(record.bot_username).toBe("second_bot");
+    expect(record.account).toBe("second_bot");
     await waitFor(() => bots.polling(other), "the second bot to be polled");
     // Update ids start at the same number for both bots: the message must still be taken.
     bots.say(other, "from the second bot", ANN);
@@ -308,7 +308,7 @@ describe.each(testAdapters())("the hub with the real Telegram adapter (%s)", { t
     await expect(hub.setCredentials(two.id, "telegram", { telegram_bot_token: TOKEN })).rejects.toMatchObject({ status: 404 });
 
     // The same Dot may give its own bot again.
-    expect((await hub.setCredentials(one.id, "telegram", { telegram_bot_token: TOKEN })).bot_username).toBe("dot_helper_bot");
+    expect((await hub.setCredentials(one.id, "telegram", { telegram_bot_token: TOKEN })).account).toBe("dot_helper_bot");
 
     bots.addBot("777:ANOTHER-TOKEN-VALUE", "third_bot");
     bots.failNext("777:ANOTHER-TOKEN-VALUE", "getMe", "drop");

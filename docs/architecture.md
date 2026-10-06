@@ -88,7 +88,7 @@ packages/
   database/        PostgreSQL schema (PGlite embedded or an external server), migrations, repositories, durable queue
   iso/             ISO 9660 + Joliet writer in plain TypeScript (seed and runtime disks)
   events/          event types, the host event log and its fan-out to SSE subscribers
-  channels/        the messaging channel hub and the Telegram adapter (section 9.8): pairing, who may talk, the messages between a chat and its Dot; runs inside the control plane process
+  channels/        the messaging channel hub and the Telegram and WhatsApp adapters (section 9.8): pairing, who may talk, the messages between a chat and its Dot; runs inside the control plane process
   sdk/             typed HTTP client for the API (used by cli and web)
 guest/
   dot-agentd/             the computer daemon (Go): the guest endpoint, exec, files, screenshots
@@ -1503,11 +1503,13 @@ POST   /api/dots/:id/browser-identities
 GET    /api/dots/:id/browser-identities/:identityId
 DELETE /api/dots/:id/browser-identities/:identityId
 
-GET    /api/dots/:id/channels        { channels: [{ kind, enabled, status, status_detail, bot_username, settings, peers, created_at }] }; never a token
+GET    /api/dots/:id/channels        { channels: [{ kind, enabled, status, status_detail, account, settings, peers, created_at }], available: [kind] }; never a token; `available` is what this server runs (WhatsApp only when it was started with it, section 9.8)
 PUT    /api/dots/:id/channels/telegram  body: { token }   links the Dot to the bot (201), or gives the linked bot a new token (200); the token is checked with Telegram, stored encrypted, never returned
 PATCH  /api/dots/:id/channels/:kind  body: { settings?: { approvals?, notify_tasks? }, enabled? }   enabled false pauses the channel, its people and token stay
-DELETE /api/dots/:id/channels/:kind  unlink: the channel stops, its token and its people are deleted
-POST   /api/dots/:id/channels/:kind/pairing   201 { code, deep_link, expires_at }: a one-time code, valid ten minutes
+POST   /api/dots/:id/channels/whatsapp/link   202 the channel's record, waiting: starts linking WhatsApp (400 when the server does not run it, 409 `already_linked`)
+GET    /api/dots/:id/channels/whatsapp/qr   server-sent events of `ChannelLinkFrame` (`waiting`, `code`, then `linked` or `failed`, and the stream ends); never cached, never stored
+DELETE /api/dots/:id/channels/:kind  unlink: the channel stops, its token (WhatsApp: the linked device's keys) and its people are deleted
+POST   /api/dots/:id/channels/:kind/pairing   201 { code, deep_link, message, expires_at }: a one-time code, valid ten minutes; `message` is what to send the account to pair
 DELETE /api/dots/:id/channels/:kind/peers/:peer   revoke a paired person
 
 GET    /api/approvals                ?status=pending|approved|rejected|expired
@@ -1578,11 +1580,14 @@ credentials live in it. It uses only what the Scheduler offers: `sendMessage`
 
 An adapter (`Channel`) is transport only: `run(sink, signal)` connects and
 delivers until aborted, `sendText`, `sendApproval` and `editApproval`, optionally `typing`. A `ChannelType` makes the
-adapter for a binding and names the secrets a binding of its kind keeps. The hub
-owns every policy:
+adapter for a binding and names the secrets a binding of its kind keeps (and which
+of them are credentials a log line could hold, `scrubNames`). A kind that is
+linked by scanning a code on a phone (`scanned`: WhatsApp) is linked with `link`
+and never given credentials; the others with `add`. The hub owns every policy:
 
 - **Who may talk.** Only a person paired with a one-time code, by the channel's
-  stable id (a Telegram numeric user id, never a mutable name). The code is eight
+  stable id (a Telegram numeric user id, a WhatsApp phone number, never a mutable
+  name). The code is eight
   symbols (40 bits), valid ten minutes, used once, stored as a SHA-256 hash with
   the binding id, and pairs the sender as an `owner` together with their chat.
   Anyone else, a chat that is not a private one, an empty message: dropped
@@ -1630,6 +1635,17 @@ owns every policy:
   recording it sends it again. An approval over a chat is as strong as the
   person's Telegram account; switching `approvals` off keeps the answer in the
   app.
+- **Answers in words.** A channel without buttons (`approvalByText`: WhatsApp)
+  ends its prompt with `Reply "yes ap-xxxxxx" to approve or "no ap-xxxxxx" to
+  reject`, where the token is the last six characters of the approval's id. The
+  hub, not the adapter, reads a message that is exactly that, from a paired owner
+  only (a stranger's message is dropped before anything is read, so a stranger is
+  never answered), and resolves it with the same checks and the same
+  `Scheduler.resolveApproval` as a button; the person is told "Approved.",
+  "Rejected.", "It was answered already.", "That request does not exist." or that
+  two requests share the code. Anything else, including a bare `yes`, is an
+  ordinary message to the Dot: an answer given by a misread sentence would be an
+  approval nobody meant.
 - **Failure.** An adapter that fails is started again after an exponential backoff
   (1 s up to 60 s, with jitter) on a fresh instance; `ChannelNeedsRelinkError`
   (a revoked token, a logged-out device) stops it until the person relinks.
@@ -1693,8 +1709,110 @@ MIT). It is transport only, like every adapter.
 
 From the CLI, `invisible-dots channel add telegram --dot <dot>` (token asked for in
 a terminal or read from stdin, never from arguments), `channel list [--dot]`,
-`channel pair telegram --dot <dot>` (prints the deep link) and `channel remove
-telegram --dot <dot>`.
+`channel pair <kind> --dot <dot>` (prints the deep link and the words to send) and
+`channel remove <kind> --dot <dot>`.
+
+#### WhatsApp (opt-in, unofficial)
+
+`packages/channels/src/whatsapp-baileys/` is the adapter, on Baileys
+(WhiskeySockets, MIT), a client of the WhatsApp Web protocol. **It is not an
+official way to use WhatsApp.** It links the Dot as a device of a personal account,
+which WhatsApp's terms do not allow for automation, and WhatsApp can answer by
+restricting or banning the account. The library is a release candidate pinned to
+one exact version (`7.0.0-rc14`; a test keeps `package.json` and the lock file at
+the same exact version) because the protocol moves under it: when WhatsApp stops
+accepting that release, WhatsApp stops working until the pin is moved. Use a number
+of its own (a spare SIM or eSIM), never the one a person lives on. The official
+Cloud API (a business account and a public webhook) is a later adapter on the same
+hub.
+
+- **Licenses.** Baileys is MIT, but it depends on `libsignal`, which is GPL-3.0.
+  Neither is in this repository; the command bundle leaves Baileys out
+  (`external` in `apps/cli/scripts/build.mjs`, checked by a test), so no build of
+  ours embeds GPL code, and the server resolves it from `node_modules` when WhatsApp
+  is linked. `THIRD_PARTY_NOTICES.md` says what that means for whoever
+  distributes an installation.
+- **Off by default.** The server runs WhatsApp only when started with
+  `INVISIBLE_DOTS_WHATSAPP=1` (`defaultChannelTypes` in `apps/api/src/start.ts`).
+  Otherwise the type does not exist: `GET .../channels` lists only the kinds it
+  runs (`available`), and linking answers 400 with how to turn it on. Baileys is
+  loaded by a dynamic `import()` when a connection opens, so a server that never
+  links WhatsApp never loads it, and no file but `baileys.ts` and `auth-state.ts`
+  names it (a test reads the sources).
+- **One port.** `port.ts` is what the channel needs of a connection (messages in,
+  text out, a code to scan, why it ended); `baileys.ts` implements it over
+  the network and `FakeWhatsAppConnector` for tests, because WhatsApp cannot be
+  faked. Everything WhatsApp-specific that is a decision is in `whatsapp.ts` and
+  tested against the fake; the glue is tested for what it decides alone (how a
+  message is read, how a close is understood) and for surviving a socket that
+  cannot connect. The real network is not reached by any test.
+- **Linking by a code.** `POST .../whatsapp/link` creates the binding without
+  credentials and starts the adapter, which opens a connection that is not
+  linked; WhatsApp sends a code every few seconds, shown on the phone under
+  Settings, Linked devices, Link a device. `GET .../whatsapp/qr` streams the codes
+  and the end as `ChannelLinkFrame`. The code is a way into the account for as long
+  as it is shown, so it lives in memory only (`LinkSessions`): not in the
+  database, not in an event, not in a log, not in a status, and the stream is
+  `no-store`. A watcher that joins late gets the code on show now. The scan ends
+  with `linked` and the number; a code that ran out before the scan, a device WhatsApp
+  rejects or one removed on the phone ends with `failed` and `needs_relink`
+  (`ChannelNeedsRelinkError`); a connection that is lost is retried by the hub with
+  backoff. Linking again after a failure deletes every key of the old device first.
+  WhatsApp asks for a new connection when a link finishes (status 515); the adapter
+  opens it at once, and gives up after three in a row.
+- **The keys are secrets.** The linked device's identity and Signal keys are an
+  account takeover if they leak, so they are not the plaintext JSON files of
+  Baileys' own helper: `AuthStore` implements Baileys' `AuthenticationState` over
+  the encrypted `secrets` of the Dot, one secret for the credentials and one per
+  group of keys (eleven; a `Record` over the library's own list of groups makes a
+  group added by an upgrade a compile error), under the same AES-256-GCM and the
+  same row-bound associated data as the OpenRouter key. A change is written (only
+  the groups that changed, one write at a time, in order) before it is
+  acknowledged to Baileys; a failed write is kept and tried again with the next. A
+  closed store refuses every write, so a delete by the hub is final. They are
+  never sent to the guest, and deleted with the channel and with the Dot.
+  Credentials and groups are separate rows: a crash between two writes can leave
+  them a step apart, and WhatsApp then asks for a new link, as for a lost file.
+- **Who is who.** WhatsApp addresses a person by phone (`<number>@s.whatsapp.net`)
+  or by LID (`<id>@lid`), and may switch. The peer is the phone number when it is
+  known from the address, from its twin address in the same message, or from what
+  the account learned earlier (a local lookup that sends nothing to WhatsApp), and
+  `lid:<id>` otherwise, so one person is one peer whichever address is used; the
+  chat to answer is the matching address. The one edge: someone paired while only
+  their LID was known, whose number is learned later, appears under the number and
+  pairs again. Device and agent suffixes are dropped.
+- **Reply-only.** Nothing is sent to a chat that did not write first: the hub sends
+  only to paired people, and a person pairs by writing the code. A stranger is never
+  answered, told they are refused, or sent a read receipt (the unread message of a
+  chat is marked read just before the Dot answers that chat, from a bounded memory),
+  so no stranger learns that the number is alive. Each send is preceded by a typing
+  indicator and a pause of 0.4 to 1.5 seconds. The account does not announce itself
+  online. No groups (WhatsApp is told to ignore every address that is not one
+  person's, so those messages are neither decrypted nor seen), no broadcast, no
+  channel posts, no messages the account wrote itself, no attachments (a paired
+  person is told "not supported yet", as on Telegram). There is no way to send to a
+  number that has not written.
+- **Pairing.** `pair <code>` as a whole message; the link
+  `https://wa.me/<number>?text=pair%20<code>` opens the chat with exactly that
+  ready to send. The number is the account the adapter reported when it connected.
+- **Approvals.** In words, as described above: the prompt is a message with the
+  reply to send, and when the approval is settled the prompt is edited to the
+  outcome (WhatsApp limits how long a sent message can be edited, about fifteen
+  minutes, so the prompt of an old approval may keep its question; a late answer is
+  told it was answered already).
+- **At most once on the way in.** WhatsApp confirms a message to its sender when
+  it arrives, not when the hub dealt with it, so unlike Telegram a message the hub
+  could not record cannot be offered again. The adapter then drops the connection,
+  the channel shows `error`, the hub reconnects, and the person writes again.
+  Messages come one at a time, in order.
+- **Not private, and not stable.** WhatsApp and the account's other devices see
+  what the Dot writes; the account's owner sees the Dot as a linked device. Baileys
+  follows a protocol WhatsApp does not publish: a release of it can stop working
+  without notice, and nothing here can prevent a ban.
+
+From the CLI, `invisible-dots channel link whatsapp --dot <dot>` prints the risk,
+then each code as a QR for the terminal until the number is linked, then
+`channel pair whatsapp --dot <dot>` prints the link and the words that pair.
 
 ## 10. Out of scope for this version
 

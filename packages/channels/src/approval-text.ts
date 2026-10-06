@@ -37,3 +37,32 @@ const OUTCOMES: Record<ApprovalRecord["status"], string> = {
 export function approvalOutcomeText(approval: ApprovalRecord): string {
   return `${approvalPromptText(approval)}\n\n${OUTCOMES[approval.status]}`;
 }
+
+/** How many trailing characters of an approval id the words of a text answer carry: the random part of the id, 30 bits. */
+const SHORT_ID_LENGTH = 6;
+
+/** What a person types after `yes` or `no` on a channel without buttons: short, and shaped so that an ordinary message is not taken for it. */
+export function approvalReplyToken(approvalId: string): string {
+  return `ap-${approvalId.slice(-SHORT_ID_LENGTH)}`;
+}
+
+/** The last line of a prompt on a channel without buttons: how to answer it. */
+export function approvalReplyHint(approvalId: string): string {
+  const token = approvalReplyToken(approvalId);
+  return `Reply "yes ${token}" to approve or "no ${token}" to reject.`;
+}
+
+export interface ApprovalReply {
+  decision: "approve" | "reject";
+  /** The end of the approval's id, lowercase. */
+  shortId: string;
+}
+
+const REPLY_SHAPE = new RegExp(`^(yes|no)\\s+ap-([a-z0-9]{${SHORT_ID_LENGTH}})$`, "i");
+
+/** What a message says when it is exactly an answer in the words of `approvalReplyHint`; null for everything else, which is an ordinary message. */
+export function parseApprovalReply(text: string): ApprovalReply | null {
+  const match = REPLY_SHAPE.exec(text.trim());
+  if (!match) return null;
+  return { decision: match[1]!.toLowerCase() === "yes" ? "approve" : "reject", shortId: match[2]!.toLowerCase() };
+}

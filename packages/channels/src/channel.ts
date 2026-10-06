@@ -78,6 +78,11 @@ export interface ChannelSink {
    * keeps the press and offers it again.
    */
   approval(action: ApprovalAction): Promise<string>;
+  /**
+   * The person has to link an account on their phone: `code` is what the phone scans. A new code replaces the last;
+   * it is shown at once and never stored or logged. Only a channel of a `scanned` type calls it.
+   */
+  linkCode(code: string): void;
 }
 
 export interface ChannelCapabilities {
@@ -85,6 +90,11 @@ export interface ChannelCapabilities {
   maxText: number;
   /** `typing` shows a typing indicator. */
   typing: boolean;
+  /**
+   * The channel has no buttons: a prompt tells the person to answer with the words of `approvalReplyHint`, and the hub
+   * reads such a reply, from a paired person only, as the answer (see `parseApprovalReply`).
+   */
+  approvalByText: boolean;
 }
 
 export interface Channel {
@@ -142,6 +152,9 @@ export class ChannelCredentialsError extends Error {
   }
 }
 
+/** The secrets of a binding, as an adapter reaches them: the hub's `SecretsRepository`; the scope of a binding's secrets is its Dot's id. */
+export type ChannelSecrets = Pick<SecretsRepository, "get" | "put" | "delete">;
+
 /** One kind of channel: how to make its adapter for a binding, and what a binding of it owns besides its rows. */
 export interface ChannelType {
   readonly kind: ChannelKind;
@@ -151,13 +164,28 @@ export interface ChannelType {
    */
   readonly secretNames: readonly string[];
   /**
+   * The names among `secretNames` that a person gave or that name a credential in a few characters (a bot token): the
+   * values the hub blanks out of every log line and status. Not the bulk state of a session, which no log line holds.
+   */
+  readonly scrubNames: readonly string[];
+  /**
+   * A person links an account by scanning a code on their phone (`ChannelSink.linkCode`) instead of giving a
+   * credential: the hub links it with `link`, never with `add`, and the adapter makes its own credentials.
+   */
+  readonly scanned?: true;
+  /**
    * Try the credentials a person is giving, before anything is stored: resolves with the account they
    * belong to (a bot's username), rejects with `ChannelCredentialsError` when they do not work and with
    * any other error when the channel cannot be reached. Absent when a channel has nothing to check.
    */
   check?(credentials: Record<string, string>): Promise<{ account: string }>;
-  /** The adapter for `binding`, reading its credentials from `secrets`. Throws when they are missing. */
-  create(binding: ChannelBindingRecord, secrets: Pick<SecretsRepository, "get">): Promise<Channel>;
+  /**
+   * The adapter for `binding`, reading its credentials from `secrets`. Throws when they are missing. A channel that
+   * makes its own credentials (a linked device's keys) also writes and deletes them there.
+   */
+  create(binding: ChannelBindingRecord, secrets: ChannelSecrets): Promise<Channel>;
   /** The link that opens the channel with the code filled in, or null when the channel has none. `account` is what the adapter reported. */
   pairingLink?(account: string | null, code: string): string | null;
+  /** The words that pair when a person sends them to the account: the adapter reads exactly these. */
+  pairingMessage(code: string): string;
 }

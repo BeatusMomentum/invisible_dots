@@ -63,7 +63,7 @@ const channel = {
   enabled: true,
   status: "connected",
   status_detail: null,
-  bot_username: "dot_helper_bot",
+  account: "dot_helper_bot",
   settings: { approvals: true, notify_tasks: true },
   peers: [{ peer_id: "10", role: "owner", label: "Ann (@ann)", created_at: now }],
   created_at: now,
@@ -82,6 +82,10 @@ let server: Server;
 let base: string;
 const requests: Recorded[] = [];
 let stopped = false;
+/** What the fake server answers about WhatsApp. */
+let whatsappLinked = false;
+let whatsappOff = false;
+let linkFrames: { state: string; [key: string]: unknown }[] = [];
 
 function send(res: ServerResponse, status: number, body?: unknown) {
   res.writeHead(status, { "content-type": "application/json" });
@@ -142,17 +146,30 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     case "PUT /api/secrets/openrouter":
       return send(res, 200, { pushed: 2 });
     case `GET /api/dots/${dot.id}/channels`:
-      return send(res, 200, { channels: [channel] });
+      return send(res, 200, { channels: whatsappLinked ? [channel, { ...channel, kind: "whatsapp", account: "15550001111", peers: [] }] : [channel] });
     case `PUT /api/dots/${dot.id}/channels/telegram`:
       if (body?.token === "9:REFUSED-TOKEN-VALUE") {
         return send(res, 400, { error: "invalid_credentials", message: "Telegram refused the bot token: it is wrong, or it was revoked in @BotFather. Paste a current token." });
       }
       return send(res, 201, channel);
     case `POST /api/dots/${dot.id}/channels/telegram/pairing`:
-      return send(res, 201, { code: "ABCD2345", deep_link: "https://t.me/dot_helper_bot?start=ABCD2345", expires_at: "2026-10-02T08:10:00.000Z" });
+      return send(res, 201, { code: "ABCD2345", deep_link: "https://t.me/dot_helper_bot?start=ABCD2345", message: "/start ABCD2345", expires_at: "2026-10-02T08:10:00.000Z" });
     case `POST /api/dots/${dot.id}/channels/whatsapp/pairing`:
-      return send(res, 201, { code: "WXYZ6789", deep_link: null, expires_at: "2026-10-02T08:10:00.000Z" });
+      if (whatsappLinked) {
+        return send(res, 201, { code: "WXYZ6789", deep_link: "https://wa.me/15550001111?text=pair%20WXYZ6789", message: "pair WXYZ6789", expires_at: "2026-10-02T08:10:00.000Z" });
+      }
+      return send(res, 201, { code: "WXYZ6789", deep_link: null, message: "pair WXYZ6789", expires_at: "2026-10-02T08:10:00.000Z" });
+    case `POST /api/dots/${dot.id}/channels/whatsapp/link`:
+      if (whatsappOff) return send(res, 400, { error: "invalid_request", message: 'no "whatsapp" channel: it is off: set INVISIBLE_DOTS_WHATSAPP=1 and restart the server to turn it on' });
+      return send(res, 202, { ...channel, kind: "whatsapp", status: "connecting", account: null, peers: [] });
+    case `GET /api/dots/${dot.id}/channels/whatsapp/qr`:
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(": connected\n\n");
+      for (const frame of linkFrames) res.write(`data: ${JSON.stringify(frame)}\n\n`);
+      if (linkFrames.at(-1)?.state === "linked" || linkFrames.at(-1)?.state === "failed") return res.end();
+      return; // left open, like the real stream
     case `DELETE /api/dots/${dot.id}/channels/telegram`:
+    case `DELETE /api/dots/${dot.id}/channels/whatsapp`:
       return send(res, 204);
     case `GET /api/dots/${dot.id}/events`: {
       const after = Number(url.searchParams.get("after") ?? 0);
@@ -189,6 +206,9 @@ afterAll(async () => {
 beforeEach(() => {
   requests.length = 0;
   stopped = false;
+  whatsappLinked = false;
+  whatsappOff = false;
+  linkFrames = [];
 });
 
 async function cli(
@@ -378,7 +398,7 @@ describe("commands", () => {
     expect((await cli(["channel", "add", "telegram"], { stdin: "123456:SECRET-TOKEN-VALUE" })).stderr).toMatch(/missing --dot <dot>/);
     expect((await cli(["channel", "add", "whatsapp", "--dot", "fare-watch"])).stderr).toMatch(/only telegram is supported/);
     const json = await cli(["channel", "add", "telegram", "--dot", "fare-watch", "--json"], { stdin: "123456:SECRET-TOKEN-VALUE" });
-    expect(JSON.parse(json.stdout)).toMatchObject({ kind: "telegram", bot_username: "dot_helper_bot" });
+    expect(JSON.parse(json.stdout)).toMatchObject({ kind: "telegram", account: "dot_helper_bot" });
   });
 
   it("channel add shows what the server said about a refused token, without the token", async () => {
@@ -415,9 +435,60 @@ describe("commands", () => {
     expect(removed.code).toBe(EXIT.ok);
     expect(removed.stdout).toBe("unlinked telegram from Dot fare-watch: its token and paired people are deleted\n");
     expect(requests.at(-1)).toMatchObject({ method: "DELETE", path: "/api/dots/fare-watch/channels/telegram" });
+    expect((await cli(["channel", "remove", "whatsapp", "--dot", "fare-watch"])).stdout).toBe("unlinked whatsapp from Dot fare-watch: the linked device's keys and paired people are deleted\n");
     expect((await cli(["channel", "remove", "telegram"])).code).toBe(EXIT.usage);
-    expect((await cli(["channel", "mute"])).stderr).toMatch(/unknown channel subcommand "mute": use add, list, pair or remove/);
-    expect((await cli(["channel"])).stderr).toMatch(/missing add\|list\|pair\|remove/);
+    expect((await cli(["channel", "mute"])).stderr).toMatch(/unknown channel subcommand "mute": use add, link, list, pair or remove/);
+    expect((await cli(["channel"])).stderr).toMatch(/missing add\|link\|list\|pair\|remove/);
+  });
+
+  it("channel link whatsapp warns of the risk, shows each code as a QR for the terminal and ends when the number is linked", async () => {
+    linkFrames = [{ state: "waiting" }, { state: "code", code: "2@first-code" }, { state: "code", code: "2@second-code" }, { state: "linked", account: "15550001111" }];
+    const linked = await cli(["channel", "link", "whatsapp", "--dot", "fare-watch"]);
+    expect(linked.code).toBe(EXIT.ok);
+    expect(requests.map((r) => `${r.method} ${r.path}`).slice(-2)).toEqual(["POST /api/dots/fare-watch/channels/whatsapp/link", "GET /api/dots/fare-watch/channels/whatsapp/qr"]);
+    expect(linked.stderr).toContain("can answer by banning the account");
+    expect(linked.stderr).toContain("Linked devices");
+    // Two codes, drawn with the block characters of a terminal QR, and never printed as text.
+    expect(linked.stdout.match(/█|▀|▄/g)?.length ?? 0).toBeGreaterThan(100);
+    expect(linked.stdout).not.toContain("2@first-code");
+    expect(linked.stdout).toContain("linked WhatsApp number +15550001111 to Dot fare-watch\nnext: invisible-dots channel pair whatsapp --dot fare-watch\n");
+  });
+
+  it("channel link whatsapp exits with the reason when the link fails, and says what the server said when WhatsApp is off", async () => {
+    linkFrames = [{ state: "waiting" }, { state: "failed", detail: "The link was not completed: the code expired. Start linking again." }];
+    const failed = await cli(["channel", "link", "whatsapp", "--dot", "fare-watch"]);
+    expect(failed.code).toBe(EXIT.failed);
+    expect(failed.stderr).toContain("invisible-dots: The link was not completed: the code expired. Start linking again.\n");
+
+    whatsappOff = true;
+    const off = await cli(["channel", "link", "whatsapp", "--dot", "fare-watch"]);
+    expect(off.code).toBe(EXIT.failed);
+    expect(off.stderr).toContain("INVISIBLE_DOTS_WHATSAPP=1");
+  });
+
+  it("channel link whatsapp --json prints the frames, code included, as lines of JSON", async () => {
+    linkFrames = [{ state: "code", code: "2@first-code" }, { state: "linked", account: "15550001111" }];
+    const json = await cli(["channel", "link", "whatsapp", "--dot", "fare-watch", "--json"]);
+    expect(json.code).toBe(EXIT.ok);
+    expect(json.stdout.trim().split("\n").map((line) => JSON.parse(line))).toEqual(linkFrames);
+  });
+
+  it("channel link takes only whatsapp and a Dot, and channel add points WhatsApp to link", async () => {
+    expect((await cli(["channel", "link", "telegram", "--dot", "fare-watch"])).stderr).toMatch(/only whatsapp is linked that way/);
+    expect((await cli(["channel", "link", "whatsapp"])).stderr).toMatch(/missing --dot <dot>/);
+    expect((await cli(["channel", "link", "whatsapp", "extra", "--dot", "fare-watch"])).code).toBe(EXIT.usage);
+    expect((await cli(["channel", "add", "whatsapp", "--dot", "fare-watch"])).stderr).toContain('invisible-dots channel link whatsapp --dot <dot>');
+  });
+
+  it("channel pair gives WhatsApp's link and words once the number is known, and list shows the number with a plus", async () => {
+    whatsappLinked = true;
+    const paired = await cli(["channel", "pair", "whatsapp", "--dot", "fare-watch"]);
+    expect(paired.stdout).toBe(
+      "open this link on the device where you use whatsapp, then press Send (valid until 2026-10-02T08:10:00.000Z):\n  https://wa.me/15550001111?text=pair%20WXYZ6789\nor send the number: pair WXYZ6789\n",
+    );
+    const list = await cli(["channel", "list", "--dot", "fare-watch"]);
+    expect(list.stdout).toMatch(/fare-watch\s+telegram\s+connected\s+@dot_helper_bot/);
+    expect(list.stdout).toMatch(/fare-watch\s+whatsapp\s+connected\s+\+15550001111/);
   });
 
   it("logs prints the tail without follow, and follows the stream until interrupted", async () => {

@@ -1,6 +1,6 @@
 import type { ApprovalRecord } from "@invisible-dots/shared";
 import { describe, expect, it } from "vitest";
-import { ARGUMENTS_MAX, approvalOutcomeText, approvalPromptText } from "../src/approval-text.js";
+import { ARGUMENTS_MAX, approvalOutcomeText, approvalPromptText, approvalReplyHint, approvalReplyToken, parseApprovalReply } from "../src/approval-text.js";
 import { CALLBACK_DATA_MAX_BYTES, encodeApprovalCallback, parseApprovalCallback } from "../src/telegram/callback.js";
 
 const ID = "appr_11111111-2222-3333-4444-555555555555";
@@ -85,5 +85,23 @@ describe("what an approval prompt says", () => {
     expect(approvalOutcomeText(approval({ status: "approved" }))).toBe(`${question}\n\nApproved.`);
     expect(approvalOutcomeText(approval({ status: "rejected" }))).toBe(`${question}\n\nRejected.`);
     expect(approvalOutcomeText(approval({ status: "expired" }))).toBe(`${question}\n\nNo longer needed: the task ended before anyone answered.`);
+  });
+});
+
+describe("the words that answer an approval on a channel without buttons", () => {
+  const id = "apr_01k6h3w2ze8m4qv7r1xk9bntc5";
+
+  it("teaches a token from the random end of the id, and reads exactly that back, in any case", () => {
+    expect(approvalReplyToken(id)).toBe("ap-9bntc5");
+    expect(approvalReplyHint(id)).toBe('Reply "yes ap-9bntc5" to approve or "no ap-9bntc5" to reject.');
+    expect(parseApprovalReply("yes ap-9bntc5")).toEqual({ decision: "approve", shortId: "9bntc5" });
+    expect(parseApprovalReply("  No AP-9BNTC5 \n")).toEqual({ decision: "reject", shortId: "9bntc5" });
+    expect(parseApprovalReply("YES   ap-9bntc5")).toEqual({ decision: "approve", shortId: "9bntc5" });
+  });
+
+  it("takes nothing else for an answer: an ordinary message stays one", () => {
+    for (const text of ["yes", "no", "yes 9bntc5", "yes please ap-9bntc5", "ap-9bntc5", "yes ap-9bntc5 thanks", "yes ap-9bntc", "yes ap-9bntc55", "maybe ap-9bntc5", "yes ap-9bn c5", "yes ap_9bntc5", ""]) {
+      expect(parseApprovalReply(text), text).toBeNull();
+    }
   });
 });

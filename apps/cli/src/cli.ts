@@ -11,6 +11,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
+import QRCode from "qrcode";
 import { ApiError, type DotSummary, type InvisibleDotsClient, type TaskRecord } from "@invisible-dots/sdk";
 import { CHANNEL_KINDS, ENV, type ChannelKind, type ChannelRecord, type StoredEvent } from "@invisible-dots/shared";
 import { apiUrl, AuthSetupError, connectApi, DEFAULT_URL } from "./api-client.js";
@@ -83,6 +84,8 @@ Using the server:
                                                 store the OpenRouter key: asked for in a terminal, read from stdin when piped (never from arguments)
   invisible-dots channel add telegram --dot <dot>
                                                 link the Dot to a Telegram bot: the token from @BotFather is asked for in a terminal, read from stdin when piped (never from arguments)
+  invisible-dots channel link whatsapp --dot <dot>
+                                                link a WhatsApp number (opt-in on the server, unofficial, a ban of the account is possible): shows a code to scan in WhatsApp > Linked devices
   invisible-dots channel list [--dot <dot>]     list channels (of every Dot without --dot) with their status and paired people
   invisible-dots channel pair telegram --dot <dot>
                                                 print a one-time link (valid 10 minutes) that pairs your Telegram account to the Dot
@@ -199,6 +202,18 @@ function dotRows(dots: DotSummary[]): string {
   ]);
 }
 
+/** How a person is told to finish a pairing on each channel: Telegram's link opens the bot with a Start button, WhatsApp's opens a chat with the words ready to send. */
+const PAIRING_WORDS: Record<ChannelKind, { action: string; to: string }> = {
+  telegram: { action: "press Start", to: "the bot" },
+  whatsapp: { action: "press Send", to: "the number" },
+};
+
+/** How a channel's account reads: a Telegram bot as @name, the number linked to WhatsApp as +number. */
+function accountLabel(channel: ChannelRecord): string {
+  if (channel.account === null) return "-";
+  return channel.kind === "whatsapp" ? `+${channel.account}` : `@${channel.account}`;
+}
+
 function channelRows(rows: { dot: string; channel: ChannelRecord }[]): string {
   if (rows.length === 0) return "no channels: link one with invisible-dots channel add telegram --dot <dot>\n";
   return pad([
@@ -207,7 +222,7 @@ function channelRows(rows: { dot: string; channel: ChannelRecord }[]): string {
       dot,
       c.kind,
       c.enabled ? c.status : "paused",
-      c.bot_username ? `@${c.bot_username}` : "-",
+      accountLabel(c),
       c.peers.length === 0 ? "-" : c.peers.map((p) => p.label).join(", "),
       c.status_detail ? oneLine(c.status_detail, 80) : "",
     ]),
@@ -427,7 +442,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
         return EXIT.ok;
       }
       case "channel": {
-        const what = need(args, 0, "add|list|pair|remove");
+        const what = need(args, 0, "add|link|list|pair|remove");
         const dotName = () => {
           if (values.dot === undefined || values.dot === "") throw new UsageError("missing --dot <dot>");
           return values.dot;
@@ -435,18 +450,50 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
         switch (what) {
           case "add": {
             const kind = need(args, 1, "telegram");
-            if (kind !== "telegram") throw new UsageError(`cannot link "${kind}" from here: only telegram is supported`);
+            if (kind !== "telegram") {
+              throw new UsageError(`cannot add "${kind}" with a token: only telegram is supported there; WhatsApp is linked with "invisible-dots channel link whatsapp --dot <dot>"`);
+            }
             if (args.length > 2) throw new UsageError("the token is read from stdin, never from arguments (they end up in shell history and ps)");
             const name = dotName();
             const token = await secretFromInput(io, { prompt: "Telegram bot token from @BotFather", noun: "token", command: addTelegramChannel(name) });
             const channel = await (await api()).putTelegramChannel(name, token);
             out(
               channel,
-              `linked Telegram bot @${channel.bot_username ?? "?"} to Dot ${name}\n` +
+              `linked Telegram bot @${channel.account ?? "?"} to Dot ${name}\n` +
                 `next: invisible-dots channel pair telegram --dot ${name}\n` +
                 "note: Telegram chats are not end-to-end encrypted; Telegram can read what you and the Dot write there.\n",
             );
             return EXIT.ok;
+          }
+          case "link": {
+            const kind = need(args, 1, "whatsapp");
+            if (kind !== "whatsapp") throw new UsageError(`cannot link "${kind}" by scanning a code: only whatsapp is linked that way; telegram takes a token ("invisible-dots channel add telegram --dot <dot>")`);
+            if (args.length > 2) throw new UsageError("channel link takes only the channel and --dot <dot>");
+            const name = dotName();
+            const c = await api();
+            await c.linkWhatsApp(name);
+            io.stderr(
+              "WhatsApp: this links the number as a device of a personal account through an unofficial client, which WhatsApp can answer by banning the account. Use a number of its own, not the one you live on.\n" +
+                "On the phone: WhatsApp > Settings > Linked devices > Link a device, then scan the code below (it is replaced every few seconds).\n",
+            );
+            for await (const frame of c.whatsappLink(name, { signal: io.signal })) {
+              if (values.json) io.stdout(`${JSON.stringify(frame)}\n`);
+              if (frame.state === "code") {
+                if (!values.json) io.stdout(`${await QRCode.toString(frame.code, { type: "terminal", small: true })}\n`);
+              } else if (frame.state === "linked") {
+                if (!values.json) {
+                  io.stdout(`linked WhatsApp${frame.account ? ` number +${frame.account}` : ""} to Dot ${name}\nnext: invisible-dots channel pair whatsapp --dot ${name}\n`);
+                }
+                return EXIT.ok;
+              } else if (frame.state === "failed") {
+                io.stderr(`invisible-dots: ${frame.detail}\n`);
+                return EXIT.failed;
+              } else if (frame.detail && !values.json) {
+                io.stderr(`${frame.detail}; trying again\n`);
+              }
+            }
+            io.stderr("invisible-dots: stopped before the link finished\n");
+            return EXIT.failed;
           }
           case "list": {
             noArguments(args.slice(1), "channel list");
@@ -463,7 +510,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
             out(
               pairing,
               pairing.deep_link
-                ? `open this link on the device where you use ${kind}, then press Start (valid until ${pairing.expires_at}):\n  ${pairing.deep_link}\nor send the bot: /start ${pairing.code}\n`
+                ? `open this link on the device where you use ${kind}, then ${PAIRING_WORDS[kind].action} (valid until ${pairing.expires_at}):\n  ${pairing.deep_link}\nor send ${PAIRING_WORDS[kind].to}: ${pairing.message}\n`
                 : `pairing code ${pairing.code}, valid until ${pairing.expires_at}\n`,
             );
             return EXIT.ok;
@@ -472,11 +519,11 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
             const kind = channelKind(need(args, 1, "telegram"));
             const name = dotName();
             await (await api()).removeChannel(name, kind);
-            out({ removed: true }, `unlinked ${kind} from Dot ${name}: its token and paired people are deleted\n`);
+            out({ removed: true }, `unlinked ${kind} from Dot ${name}: ${kind === "whatsapp" ? "the linked device's keys" : "its token"} and paired people are deleted\n`);
             return EXIT.ok;
           }
           default:
-            throw new UsageError(`unknown channel subcommand "${what}": use add, list, pair or remove`);
+            throw new UsageError(`unknown channel subcommand "${what}": use add, link, list, pair or remove`);
         }
       }
       case "logs": {

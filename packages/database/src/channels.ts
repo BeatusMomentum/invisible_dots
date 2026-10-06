@@ -153,13 +153,14 @@ export class ChannelsRepository {
 
   /**
    * Record where the connection stands. True when something changed (status, detail or account), so
-   * the caller announces only a real change. `account` is kept when omitted.
+   * the caller announces only a real change. `account` is kept when omitted and cleared by `null`
+   * (a channel linked again, possibly to another account).
    */
-  async setStatus(id: string, status: ChannelStatus, detail: string | null, account?: string): Promise<boolean> {
+  async setStatus(id: string, status: ChannelStatus, detail: string | null, account?: string | null): Promise<boolean> {
     const { rowCount } = await this.q.query(
-      `UPDATE channel_bindings SET status = $2::text, status_detail = $3::text, account = COALESCE($4::text, account)
-        WHERE id = $1 AND (status <> $2::text OR status_detail IS DISTINCT FROM $3::text OR ($4::text IS NOT NULL AND account IS DISTINCT FROM $4::text))`,
-      [id, status, detail, account ?? null],
+      `UPDATE channel_bindings SET status = $2::text, status_detail = $3::text, account = CASE WHEN $5::boolean THEN $4::text ELSE account END
+        WHERE id = $1 AND (status <> $2::text OR status_detail IS DISTINCT FROM $3::text OR ($5::boolean AND account IS DISTINCT FROM $4::text))`,
+      [id, status, detail, account ?? null, account !== undefined],
     );
     return (rowCount ?? 0) > 0;
   }

@@ -61,6 +61,18 @@ describe.each(testAdapters())("channel repository on %s", { timeout: SETUP_TIMEO
     expect((await db.channels.bindingById(record.id))?.event_cursor).toBe(9);
   });
 
+  it("a status change can clear the account (a channel linked again, maybe to another one), and keeping it is the default", async () => {
+    const dot = await db.dots.insert({ id: newId("dot"), config: parseDotConfig(yaml("chan-clear")), status: "READY" });
+    const record = await db.channels.createBinding({ id: newId("chb"), dotId: dot.id, kind: "whatsapp", settings, eventCursor: 0 });
+    expect(await db.channels.setStatus(record.id, "connected", null, "15550001111")).toBe(true);
+    expect(await db.channels.setStatus(record.id, "connecting", null)).toBe(true);
+    expect((await db.channels.bindingById(record.id))?.account).toBe("15550001111");
+    // Clearing is a change by itself, once.
+    expect(await db.channels.setStatus(record.id, "connecting", null, null)).toBe(true);
+    expect((await db.channels.bindingById(record.id))?.account).toBeNull();
+    expect(await db.channels.setStatus(record.id, "connecting", null, null)).toBe(false);
+  });
+
   it("peers: added, updated in place, found by chat, removed", async () => {
     const { record } = await binding("chan-three");
     const base = { bindingId: record.id, peerId: "42", chatId: "42", role: "owner" as const, label: "Ada" };

@@ -17,6 +17,7 @@
     "@invisible-dots/events": "0.0.0",
     "@invisible-dots/scheduler": "0.0.0",
     "@invisible-dots/shared": "0.0.0",
+    "baileys": "7.0.0-rc14",
     "grammy": "1.46.0"
   }
 }

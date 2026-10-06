@@ -68,6 +68,15 @@ export class ApprovalsRepository {
     return rows[0] ? toRecord(rows[0]) : null;
   }
 
+  /** The Dot's approvals whose id ends with `suffix` (compared in lowercase), oldest first: how a short code typed in a chat finds its approval. */
+  async endingWith(dotId: string, suffix: string): Promise<ApprovalRecord[]> {
+    const { rows } = await this.q.query<ApprovalRow>(
+      "SELECT * FROM approvals WHERE dot_id = $1 AND lower(right(id, char_length($2::text))) = lower($2::text) ORDER BY created_at, id",
+      [dotId, suffix],
+    );
+    return rows.map(toRecord);
+  }
+
   async list(options: { status?: ApprovalStatus; dotId?: string; limit?: number } = {}): Promise<ApprovalRecord[]> {
     const { rows } = await this.q.query<ApprovalRow>(
       `SELECT * FROM approvals

@@ -7,6 +7,7 @@ import type {
   AcceptedAnswer,
   ApprovalRecord,
   ApprovalsAnswer,
+  ChannelLinkFrame,
   ChannelPairingAnswer,
   ChannelRecord,
   ChannelsAnswer,
@@ -231,7 +232,40 @@ export class InvisibleDotsClient {
 
   /** The Dot's messaging channels with the people paired to each. Never a token. */
   async channels(idOrName: string): Promise<ChannelRecord[]> {
-    return (await this.#json<ChannelsAnswer>("GET", `/api/dots/${enc(idOrName)}/channels`)).channels;
+    return (await this.channelsOverview(idOrName)).channels;
+  }
+
+  /** The Dot's channels and the kinds this server can run (WhatsApp is there only when the server was started with it). */
+  channelsOverview(idOrName: string): Promise<ChannelsAnswer> {
+    return this.#json("GET", `/api/dots/${enc(idOrName)}/channels`);
+  }
+
+  /** Start linking WhatsApp (opt-in on the server): read the codes to scan from `whatsappLink`. */
+  linkWhatsApp(idOrName: string): Promise<ChannelRecord> {
+    return this.#json("POST", `/api/dots/${enc(idOrName)}/channels/whatsapp/link`);
+  }
+
+  /**
+   * `GET /api/dots/:id/channels/whatsapp/qr`: the state of the link now, then each new code and how it ends, as
+   * `ChannelLinkFrame`s. The iterator ends after the last frame (`linked` or `failed`) or when `signal` aborts; a
+   * connection that drops is thrown, because a code missed is a code that is gone.
+   */
+  async *whatsappLink(idOrName: string, options: { signal?: AbortSignal } = {}): AsyncGenerator<ChannelLinkFrame, void, undefined> {
+    const response = await this.#openEvents(`/api/dots/${enc(idOrName)}/channels/whatsapp/qr`, {}, options.signal);
+    const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+    const parser = new SseParser();
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        for (const message of parser.feed(value)) yield JSON.parse(message.data) as ChannelLinkFrame;
+      }
+    } catch (error) {
+      if (options.signal?.aborted) return;
+      throw error;
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
   }
 
   /**
@@ -307,7 +341,7 @@ export class InvisibleDotsClient {
       if (options.signal?.aborted) return;
       let failure: Error;
       try {
-        const response = await this.#openStream(options.dotId, after, options.signal);
+        const response = await this.#openEvents("/api/stream", { dot_id: options.dotId, after }, options.signal);
         options.onOpen?.();
         const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
         const parser = new SseParser();
@@ -345,8 +379,8 @@ export class InvisibleDotsClient {
     }
   }
 
-  async #openStream(dotId: string | undefined, after: number | undefined, signal?: AbortSignal): Promise<Response> {
-    const url = this.#url("/api/stream", { dot_id: dotId, after });
+  async #openEvents(path: string, query: Record<string, string | number | undefined>, signal?: AbortSignal): Promise<Response> {
+    const url = this.#url(path, query);
     let response: Response;
     try {
       response = await this.#fetch(url, {
@@ -357,7 +391,7 @@ export class InvisibleDotsClient {
       const reason = error instanceof Error ? (error.cause instanceof Error ? error.cause.message : error.message) : String(error);
       throw new ApiError(0, "unreachable", `cannot reach the invisible_dots API at ${this.baseUrl}: ${reason}`);
     }
-    if (!response.ok) throw await toApiError(response, "GET /api/stream");
+    if (!response.ok) throw await toApiError(response, `GET ${path}`);
     if (!response.body) throw new ApiError(502, "bad_stream", "the event stream answer has no body");
     return response;
   }

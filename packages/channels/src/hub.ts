@@ -12,9 +12,11 @@ import { isUniqueViolation } from "@invisible-dots/database";
 import type { EventLog } from "@invisible-dots/events";
 import {
   CHANNEL_KINDS,
+  ENV,
   type ApprovalRecord,
   newId,
   type ChannelKind,
+  type ChannelLinkFrame,
   type ChannelPairingAnswer,
   type ChannelRecord,
   type ChannelSettings,
@@ -23,7 +25,9 @@ import {
 } from "@invisible-dots/shared";
 import { ControlPlaneError, errorMessage, notFound, silentLogger, systemClock, type Clock, type Logger } from "@invisible-dots/scheduler";
 import { DEFAULT_BACKOFF, type BackoffOptions } from "./backoff.js";
+import { parseApprovalReply } from "./approval-text.js";
 import { ChannelCredentialsError, type ApprovalAction, type ChannelSink, type ChannelStatusReport, type ChannelType, type InboundChat, type PairingAttempt } from "./channel.js";
+import { LinkSessions } from "./link.js";
 import { hashPairingCode, newPairingCode } from "./pairing.js";
 import { RateLimiter } from "./rate.js";
 import { BindingRunner } from "./runner.js";
@@ -72,6 +76,22 @@ const LABEL_MAX = 64;
 
 const SETTING_KEYS = Object.keys(DEFAULT_CHANNEL_SETTINGS);
 
+const NEEDS_RELINK_DETAIL = "The channel has to be linked again.";
+
+/** What a status means to a person who is linking: a connection that failed is tried again by itself, one that needs the person is the end. */
+function linkFrame(report: ChannelStatusReport, detail: string | null): ChannelLinkFrame {
+  switch (report.status) {
+    case "connected":
+      return { state: "linked", account: report.account ?? null };
+    case "needs_relink":
+      return { state: "failed", detail: detail ?? NEEDS_RELINK_DETAIL };
+    case "error":
+      return { state: "waiting", ...(detail !== null && { detail }) };
+    case "connecting":
+      return { state: "waiting" };
+  }
+}
+
 function bad(message: string): ControlPlaneError {
   return new ControlPlaneError(400, "invalid_request", message);
 }
@@ -97,6 +117,7 @@ export class ChannelHub {
   readonly #log: Logger;
   readonly #limits: ChannelLimits;
   readonly #rate: RateLimiter;
+  readonly #links = new LinkSessions();
   /** Peers told they are slowed down, until their bucket has a token again: one notice, not one per message. */
   readonly #slowed = new Set<string>();
   #pruneTimer: NodeJS.Timeout | null = null;
@@ -114,7 +135,17 @@ export class ChannelHub {
     this.#rate = new RateLimiter(this.#limits.burst, this.#limits.perMinute / 60, this.#clock);
   }
 
-  /** Start every enabled binding. A binding that cannot start does not keep the others from it. */
+  /** The kinds of channel this process can run (WhatsApp only when the server was started with it). */
+  get kinds(): ChannelKind[] {
+    return [...this.#types.keys()];
+  }
+
+  /**
+   * Start every enabled binding, except one that needs its person (a revoked token, a device removed on the phone):
+   * connecting with what is known not to work only gets it refused again, which on WhatsApp counts against the
+   * account. It starts when they give new credentials or link again. A binding that cannot start does not keep
+   * the others from it.
+   */
   async start(): Promise<void> {
     if (this.#state !== "new") return;
     this.#state = "started";
@@ -122,7 +153,7 @@ export class ChannelHub {
     this.#pruneTimer = setInterval(() => void this.#prune(), PRUNE_EVERY_MS);
     this.#pruneTimer.unref();
     for (const binding of await this.#o.db.channels.listBindings()) {
-      if (binding.enabled) this.#run(binding);
+      if (binding.enabled && binding.status !== "needs_relink") this.#run(binding);
     }
   }
 
@@ -156,6 +187,7 @@ export class ChannelHub {
   ): Promise<ChannelRecord> {
     this.#assertOpen();
     const type = this.#type(kind);
+    if (type.scanned) throw bad(`a ${kind} channel is linked by scanning a code on the phone, not with credentials`);
     const dot = await this.#o.host.requireDot(dotIdOrName);
     const settings = applySettings(DEFAULT_CHANNEL_SETTINGS, options.settings);
     const credentials = this.#credentials(type, options.credentials);
@@ -178,12 +210,68 @@ export class ChannelHub {
   }
 
   /**
+   * Start linking a channel of a `scanned` kind (WhatsApp): the adapter shows a code for the phone to scan
+   * (`watchLink`) and keeps what the phone gives it as the binding's secrets. A binding that is linked is
+   * refused (unlink it first); one that is waiting for a scan goes on; one that failed or needs the person
+   * again starts over from nothing, so no key of an old device stays.
+   */
+  async link(dotIdOrName: string, kind: ChannelKind): Promise<ChannelRecord> {
+    this.#assertOpen();
+    const type = this.#type(kind);
+    if (!type.scanned) throw bad(`a ${kind} channel is linked with credentials, not by scanning a code`);
+    const dot = await this.#o.host.requireDot(dotIdOrName);
+    const existing = await this.#o.db.channels.binding(dot.id, kind);
+    let binding: ChannelBindingRecord;
+    if (!existing) {
+      const eventCursor = (await this.#o.host.events.tail(dot.id, 1))[0]?.id ?? 0;
+      try {
+        binding = await this.#o.db.channels.createBinding({ id: newId("chb"), dotId: dot.id, kind, settings: DEFAULT_CHANNEL_SETTINGS, eventCursor });
+      } catch (error) {
+        if (isUniqueViolation(error)) throw new ControlPlaneError(409, "channel_exists", `Dot "${dot.name}" already has a ${kind} channel`);
+        throw error;
+      }
+    } else {
+      if (existing.status === "connected") {
+        throw new ControlPlaneError(409, "already_linked", `Dot "${dot.name}" is linked to ${kind} already: remove the channel first to link another account`);
+      }
+      if (existing.enabled && existing.status === "connecting" && this.#runners.has(existing.id)) {
+        return this.#record(existing, await this.#o.db.channels.peers(existing.id));
+      }
+      await this.#stop(existing.id);
+      binding = await this.#o.db.transaction(async (tx) => {
+        for (const name of type.secretNames) await tx.secrets.delete(dot.id, name);
+        await tx.channels.setEnabled(existing.id, true);
+        await tx.channels.setStatus(existing.id, "connecting", null, null);
+        return (await tx.channels.bindingById(existing.id)) ?? existing;
+      });
+    }
+    this.#links.publish(binding.id, { state: "waiting" });
+    if (this.#state === "started") this.#run(binding);
+    return this.#record(binding, await this.#o.db.channels.peers(binding.id));
+  }
+
+  /**
+   * What happens while the person links: the state now, then every change (a new code, linked, failed), ending
+   * with the last. It checks that the channel exists before it returns, so a caller can refuse a request first.
+   */
+  async watchLink(dotIdOrName: string, kind: ChannelKind, signal: AbortSignal): Promise<AsyncGenerator<ChannelLinkFrame>> {
+    if (!this.#type(kind).scanned) throw bad(`a ${kind} channel has no code to scan`);
+    const binding = await this.#binding(dotIdOrName, kind);
+    let initial: ChannelLinkFrame;
+    if (binding.status === "connected") initial = { state: "linked", account: binding.account };
+    else if (binding.status === "needs_relink") initial = { state: "failed", detail: binding.status_detail ?? NEEDS_RELINK_DETAIL };
+    else initial = this.#links.latest(binding.id) ?? { state: "waiting", ...(binding.status_detail !== null && { detail: binding.status_detail }) };
+    return this.#links.watch(binding.id, initial, signal);
+  }
+
+  /**
    * Give an existing channel new credentials (the token was revoked, or the person wants another bot) and
    * start it again with them. The people paired to it stay. A channel the person paused stays paused.
    */
   async setCredentials(dotIdOrName: string, kind: ChannelKind, credentials: Record<string, string>): Promise<ChannelRecord> {
     this.#assertOpen();
     const type = this.#type(kind);
+    if (type.scanned) throw bad(`a ${kind} channel is linked again by scanning a code on the phone, not with credentials`);
     const binding = await this.#binding(dotIdOrName, kind);
     const checked = this.#credentials(type, credentials);
     const account = await this.#check(type, checked);
@@ -215,6 +303,9 @@ export class ChannelHub {
       await tx.channels.deleteBinding(binding.id);
       for (const name of secretNames) await tx.secrets.delete(binding.dot_id, name);
     });
+    // Whoever still watches the link is told it is over.
+    this.#links.publish(binding.id, { state: "failed", detail: "The channel was removed." });
+    this.#links.forget(binding.id);
   }
 
   async setSettings(dotIdOrName: string, kind: ChannelKind, patch: unknown): Promise<ChannelRecord> {
@@ -246,7 +337,7 @@ export class ChannelHub {
     const code = newPairingCode();
     await this.#o.db.channels.createPairing(binding.id, hashPairingCode(binding.id, code), expiresAt, now);
     const deepLink = this.#types.get(kind)?.pairingLink?.(binding.account, code) ?? null;
-    return { code, deep_link: deepLink, expires_at: expiresAt.toISOString() };
+    return { code, deep_link: deepLink, message: this.#type(kind).pairingMessage(code), expires_at: expiresAt.toISOString() };
   }
 
   /** Revoke a paired person: they are strangers again, and nothing more is sent to their chat. */
@@ -264,7 +355,11 @@ export class ChannelHub {
   #type(kind: ChannelKind): ChannelType {
     const type = this.#types.get(kind);
     if (!type) {
-      const known = CHANNEL_KINDS.includes(kind) ? "this server has no adapter for it" : `the channels are ${CHANNEL_KINDS.join(", ")}`;
+      const off =
+        kind === "whatsapp"
+          ? `it is off: set ${ENV.WHATSAPP}=1 and restart the server to turn it on (read its risks in the architecture document first)`
+          : "this server has no adapter for it";
+      const known = CHANNEL_KINDS.includes(kind) ? off : `the channels are ${CHANNEL_KINDS.join(", ")}`;
       throw bad(`no "${String(kind)}" channel: ${known}`);
     }
     return type;
@@ -312,7 +407,7 @@ export class ChannelHub {
       enabled: binding.enabled,
       status: binding.status,
       status_detail: binding.status_detail,
-      bot_username: binding.account,
+      account: binding.account,
       settings: binding.settings,
       peers: peers.map((p) => ({ peer_id: p.peer_id, role: p.role, label: p.label, created_at: p.created_at })),
       created_at: binding.created_at,
@@ -364,6 +459,7 @@ export class ChannelHub {
       pairing: (attempt) => this.#pairing(runner, attempt),
       status: (report) => runner.report(report),
       approval: (action) => this.#approval(runner, action),
+      linkCode: (code) => this.#links.publish(runner.bindingId, { state: "code", code }),
     };
   }
 
@@ -372,6 +468,7 @@ export class ChannelHub {
     const detail = report.detail === undefined ? null : (await runner.scrub(report.detail)).slice(0, STATUS_DETAIL_MAX);
     const changed = await this.#o.db.channels.setStatus(runner.bindingId, report.status, detail, report.account);
     if (!changed) return;
+    if (this.#types.get(runner.kind)?.scanned) this.#links.publish(runner.bindingId, linkFrame(report, detail));
     await this.#o.host.events.appendHost(runner.dotId, "channel.status", {
       kind: runner.kind,
       status: report.status,
@@ -405,6 +502,12 @@ export class ChannelHub {
     }
     if (message.text.length > this.#limits.maxChars) {
       await this.#tell(runner, message.chatId, `That message is too long: the limit is ${this.#limits.maxChars} characters.`);
+      return;
+    }
+    // On a channel without buttons the answer to a prompt is a message in the words the prompt taught: from a paired person it is the answer, not something for the Dot.
+    const reply = runner.channel?.capabilities.approvalByText ? parseApprovalReply(message.text) : null;
+    if (reply) {
+      await this.#tell(runner, message.chatId, await this.#answerApproval(runner, peer, message.chatId, { shortId: reply.shortId }, reply.decision));
       return;
     }
     await runner.serial(async () => {
@@ -460,18 +563,38 @@ export class ChannelHub {
   async #approval(runner: BindingRunner, action: ApprovalAction): Promise<string> {
     if (runner.stopped) throw new Error("the channel is stopped");
     const peer = action.direct ? await this.#o.db.channels.peer(runner.bindingId, action.peerId) : null;
-    if (!peer || peer.role !== "owner" || peer.chat_id !== action.chatId) return "You are not allowed to answer this.";
+    return this.#answerApproval(runner, peer, action.chatId, { approvalId: action.approvalId }, action.decision);
+  }
+
+  /** The one place an approval is answered from a chat, by button or by words; what it returns is the notice for the person. */
+  async #answerApproval(
+    runner: BindingRunner,
+    peer: ChannelPeerRow | null,
+    chatId: string,
+    target: { approvalId: string } | { shortId: string },
+    decision: "approve" | "reject",
+  ): Promise<string> {
+    if (!peer || peer.role !== "owner" || peer.chat_id !== chatId) return "You are not allowed to answer this.";
     const binding = await this.#o.db.channels.bindingById(runner.bindingId);
     if (!binding?.settings.approvals) return "Approvals are not answered in this chat. Open the app to answer.";
-    const approval = await this.#o.db.approvals.get(action.approvalId);
+    let approval: ApprovalRecord | null;
+    if ("approvalId" in target) {
+      approval = await this.#o.db.approvals.get(target.approvalId);
+    } else {
+      const named = await this.#o.db.approvals.endingWith(runner.dotId, target.shortId);
+      const pending = named.filter((a) => a.status === "pending");
+      if (pending.length > 1) return "Two requests have that code. Answer them in the app.";
+      // Nothing pending under that code but something settled: the person is late, and is told so.
+      approval = pending[0] ?? named.at(-1) ?? null;
+    }
     if (!approval || approval.dot_id !== runner.dotId) return "That request does not exist.";
     try {
-      await this.#o.host.resolveApproval(approval.id, action.decision);
+      await this.#o.host.resolveApproval(approval.id, decision);
     } catch (error) {
       if (error instanceof ControlPlaneError && error.code === "already_resolved") return "It was answered already.";
       throw error;
     }
-    return action.decision === "approve" ? "Approved." : "Rejected.";
+    return decision === "approve" ? "Approved." : "Rejected.";
   }
 
   /** A message of the hub's own to a chat; best effort, because nothing depends on it arriving. */

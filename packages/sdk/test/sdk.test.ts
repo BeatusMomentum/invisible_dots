@@ -38,7 +38,7 @@ describe("InvisibleDotsClient", () => {
 
   it("channel methods send the method, path and body the API routes expect, with names and ids encoded", async () => {
     const seen: { method: string; url: string; body: string }[] = [];
-    const record = { kind: "telegram", enabled: true, status: "connected", status_detail: null, bot_username: "b", settings: { approvals: true, notify_tasks: true }, peers: [], created_at: "now" };
+    const record = { kind: "telegram", enabled: true, status: "connected", status_detail: null, account: "b", settings: { approvals: true, notify_tasks: true }, peers: [], created_at: "now" };
     const client = new InvisibleDotsClient({
       baseUrl: "http://api.test",
       token: "t",
@@ -65,6 +65,82 @@ describe("InvisibleDotsClient", () => {
       ["DELETE", "/api/dots/my%20dot/channels/telegram/peers/a%2Fb", ""],
       ["DELETE", "/api/dots/my%20dot/channels/telegram", ""],
     ]);
+  });
+
+  it("links WhatsApp with a POST and reads the codes to scan from a stream of frames that ends with the last one", async () => {
+    const seen: { method: string; url: string }[] = [];
+    const frames = [{ state: "waiting" }, { state: "code", code: "2@abc" }, { state: "linked", account: "15550001111" }];
+    const client = new InvisibleDotsClient({
+      baseUrl: "http://api.test",
+      token: "t",
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        seen.push({ method: request.method, url: request.url.replace("http://api.test", "") });
+        if (request.method === "POST") return new Response(JSON.stringify({ kind: "whatsapp" }), { status: 202 });
+        // Chunks that cut a frame in two: the parser, not the network, decides where a frame ends.
+        const text = `: connected\n\n${frames.map((f) => `data: ${JSON.stringify(f)}\n\n`).join("")}`;
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            for (const part of [text.slice(0, 40), text.slice(40, 77), text.slice(77)]) controller.enqueue(new TextEncoder().encode(part));
+            controller.close();
+          },
+        });
+        return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
+      },
+    });
+    expect(await client.linkWhatsApp("my dot")).toEqual({ kind: "whatsapp" });
+    const got = [];
+    for await (const frame of client.whatsappLink("my dot")) got.push(frame);
+    expect(got).toEqual(frames);
+    expect(seen).toEqual([
+      { method: "POST", url: "/api/dots/my%20dot/channels/whatsapp/link" },
+      { method: "GET", url: "/api/dots/my%20dot/channels/whatsapp/qr" },
+    ]);
+  });
+
+  it("throws what the server said when there is no link to watch, and ends quietly when the caller stops", async () => {
+    const refused = new InvisibleDotsClient({
+      baseUrl: "http://api.test",
+      token: "t",
+      fetch: async () => new Response(JSON.stringify({ error: "invalid_request", message: "it is off" }), { status: 400 }),
+    });
+    await expect(
+      (async () => {
+        for await (const frame of refused.whatsappLink("d")) void frame;
+      })(),
+    ).rejects.toMatchObject({ status: 400, code: "invalid_request", message: "it is off" });
+
+    const controller = new AbortController();
+    const open = new InvisibleDotsClient({
+      baseUrl: "http://api.test",
+      token: "t",
+      fetch: async (_input, init) =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(stream) {
+              init?.signal?.addEventListener("abort", () => stream.error(new DOMException("aborted", "AbortError")));
+            },
+          }),
+          { status: 200 },
+        ),
+    });
+    const got: unknown[] = [];
+    const reading = (async () => {
+      for await (const frame of open.whatsappLink("d", { signal: controller.signal })) got.push(frame);
+    })();
+    controller.abort();
+    await reading;
+    expect(got).toEqual([]);
+  });
+
+  it("reads which kinds of channel the server runs", async () => {
+    const client = new InvisibleDotsClient({
+      baseUrl: "http://api.test",
+      token: "t",
+      fetch: async () => new Response(JSON.stringify({ channels: [], available: ["telegram", "whatsapp"] })),
+    });
+    expect(await client.channelsOverview("d")).toEqual({ channels: [], available: ["telegram", "whatsapp"] });
+    expect(await client.channels("d")).toEqual([]);
   });
 
   it("reports an unreachable server as status 0 / unreachable", async () => {

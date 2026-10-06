@@ -70,6 +70,28 @@ to 300 characters; `PATCH /api/dots/:id/channels/telegram` with
 `{"settings": {"approvals": false}}` keeps the answer in the app).
 Telegram bot chats are not end-to-end encrypted.
 
+WhatsApp is also possible, and it is opt-in because it is **not an official way
+to use WhatsApp**: it links the Dot as a device of a personal account through an
+unofficial client (Baileys, pinned to one release candidate), which WhatsApp's terms
+do not allow for automation and which can get the account restricted or banned.
+Use a number of its own, such as a spare SIM or eSIM, never the one you live on.
+The client depends on `libsignal`, which is GPL-3.0 (see
+`THIRD_PARTY_NOTICES.md`); the command bundle leaves it out and loads it from
+`node_modules` only when you link WhatsApp.
+The server offers it only when started with `INVISIBLE_DOTS_WHATSAPP=1`; then
+
+```text
+node apps/cli/dist/invisible-dots.mjs channel link whatsapp --dot my-first-dot
+node apps/cli/dist/invisible-dots.mjs channel pair whatsapp --dot my-first-dot
+```
+
+`channel link` shows a code to scan under WhatsApp > Settings > Linked devices, and
+the keys of the linked device are stored encrypted like the Telegram token.
+`channel pair` prints a link that opens a chat with the number and the words
+`pair <code>` ready to send. The Dot never writes first, to anyone; it answers
+people who paired and nobody else, in private chats only. Approvals are answered
+in words (`yes ap-xxxxxx` or `no ap-xxxxxx`; there are no buttons).
+
 The web client:
 
 ```text

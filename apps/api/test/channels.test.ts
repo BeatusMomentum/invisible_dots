@@ -112,7 +112,7 @@ describe.each(testAdapters())("channel routes of the control-plane API (%s)", { 
     const dot = await readyDot();
     const created = await raw("PUT", `/api/dots/${dot.name}/channels/telegram`, { token: ` ${BOT_TOKEN} ` });
     expect(created.status).toBe(201);
-    expect(created.json).toMatchObject({ kind: "telegram", enabled: true, bot_username: "dot_helper_bot", peers: [], settings: { approvals: true, notify_tasks: true } });
+    expect(created.json).toMatchObject({ kind: "telegram", enabled: true, account: "dot_helper_bot", peers: [], settings: { approvals: true, notify_tasks: true } });
     expect(created.text).not.toContain("SECRET-TOKEN");
     expect(await db.secrets.get(dot.id, "telegram_bot_token")).toBe(BOT_TOKEN);
 
@@ -121,7 +121,7 @@ describe.each(testAdapters())("channel routes of the control-plane API (%s)", { 
 
     const replaced = await raw("PUT", `/api/dots/${dot.id}/channels/telegram`, { token: OTHER_BOT_TOKEN });
     expect(replaced.status).toBe(200);
-    expect(replaced.json).toMatchObject({ kind: "telegram", bot_username: "second_bot" });
+    expect(replaced.json).toMatchObject({ kind: "telegram", account: "second_bot" });
     expect(replaced.text).not.toContain("SECRET-TOKEN");
     expect(await db.secrets.get(dot.id, "telegram_bot_token")).toBe(OTHER_BOT_TOKEN);
     expect(await api.channels(dot.id)).toHaveLength(1);

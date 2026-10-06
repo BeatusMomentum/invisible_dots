@@ -44,6 +44,7 @@ function recorder(inbound?: (m: InboundChat) => Promise<void>, approval: (a: App
       return true;
     },
     status: (r) => seen.status.push(r),
+    linkCode: () => {},
     approval: async (a) => {
       const notice = await approval(a);
       seen.approvals.push(a);
