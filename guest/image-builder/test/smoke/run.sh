@@ -79,7 +79,7 @@ fi
 if ! privileged=$(docker run --rm --init -v "$run_id":/work "${tree_mount[@]}" \
   -e CGO_ENABLED=0 -e GOCACHE=/work/gocache -e GOTOOLCHAIN=local -e GOFLAGS=-buildvcs=false \
   -w "$tree/guest/dot-agentd" golang:1.26 \
-  go test -count=1 -v -tags privileged ./internal/agentd 2>&1) || printf '%s\n' "$privileged" | grep -q -e '--- SKIP'; then
+  go test -count=1 -v -tags privileged ./... 2>&1) || printf '%s\n' "$privileged" | grep -q -e '--- SKIP'; then
   printf '%s\n' "$privileged" | grep -v -e '^=== ' | tail -40 >&2
   echo "run.sh: dot-agentd's privileged tests did not pass, or one was skipped" >&2
   exit 1

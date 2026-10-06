@@ -489,12 +489,22 @@ relay) and the screenshot run as `dot`:
 
 The privileges that takes are the unit's `AmbientCapabilities=CAP_SETUID
 CAP_SETGID CAP_KILL` (change to dot; end a process group of dot's) and nothing
-else. The daemon refuses to start without them and empties its ambient set
-before it starts anything, so no program it starts holds one: a command of the
-model has `CapPrm`, `CapEff` and `CapAmb` zero, and the smoke asserts it. `--run-as`
-(default `dot`, `INVISIBLE_DOTS_RUN_AS`) names the user; an empty value runs the
-work as the daemon's own user, which is for development and which the daemon
-says in its log.
+else. The daemon empties its ambient set before it starts anything, whatever
+`--run-as` says, so no program it starts holds one: a command of the model has
+`CapPrm`, `CapEff` and `CapAmb` zero, and the smoke asserts it. It refuses to
+start without the three when it is to act as another user. `--run-as` (default
+`dot`, `INVISIBLE_DOTS_RUN_AS`) names the user; an empty value runs the work as
+the daemon's own user, which is for development and which the daemon says in its
+log (the ambient set is emptied then too).
+
+What the daemon runs as itself is found through no directory the model writes.
+The unit gives it a `PATH` of system directories only, and every program it
+starts for itself is named by path (`/usr/bin/sudo -n /usr/bin/systemctl
+poweroff`, `/bin/bash`, `/usr/bin/import`): a `sudo` planted in dot's
+`~/.local/bin` (dot owns its home and can open it) would otherwise be run as
+`dotagentd` by the next poweroff. The `PATH` of the model's commands, dot's
+`~/.local/bin` in front of the system's, is built by the daemon with the rest of
+their environment (`execEnv`), not inherited from its own.
 
 What this closes: no process of the model's shares a uid with a daemon, so the
 model can neither read the Dot's token nor read the memory of dot-agentd or of
@@ -671,7 +681,7 @@ sees the token, the key or the config; the call fails with
 | `PUT /v1/files` | `?path=`, body = bytes | `204` |
 | `GET /v1/files/list` | `?path=` | `{ entries: [{ name, type: "file"\|"dir"\|"other", size, mtime }] }` |
 | `GET /v1/screenshot` | | `image/png` of display `:0` |
-| `POST /v1/system/poweroff` | | `202 { status: "powering_off" }` after starting `sudo -n systemctl poweroff` detached (the seed lets `dotagentd`, the user the daemon runs as, run exactly that without a password, section 4.1); `500 poweroff_failed` when it cannot be started. How the control plane stops a VM (section 3.4) |
+| `POST /v1/system/poweroff` | | `202 { status: "powering_off" }` after starting `/usr/bin/sudo -n /usr/bin/systemctl poweroff` detached (the seed lets `dotagentd`, the user the daemon runs as, run exactly that without a password, section 4.1); `500 poweroff_failed` when it cannot be started. How the control plane stops a VM (section 3.4) |
 | `* /v1/agent/<rest>` | | reverse proxy to `unix:/run/invisible-dots-agent/agent.sock` at `/<rest>` |
 
 The three file routes are limited to home on the TCP port, the host's door:

@@ -169,8 +169,11 @@ enables and starts the units (restarting any whose unit file changed).
 | `dot-agentd.service` | `/opt/invisible-dots/bin/dot-agentd`, as `dotagentd`, on TCP port 1024 of every guest address (QEMU's user-mode NAT delivers the host's forward to 10.0.2.15); it starts the model's commands as `dot`, with `AmbientCapabilities=CAP_SETUID CAP_SETGID CAP_KILL` and no other privilege (architecture 4.1) |
 | `invisible-dots-agent.service` | `/opt/invisible-dots-engine/bin/python -I -B -m nanobot`, as `dotengine`: the Dot's engine (architecture sections 4.1 and 8.8) |
 
-The desktop runs as `dot`, the computer daemon as `dotagentd`, the engine as `dotengine` (the builder seed makes the three users); all with `DISPLAY=:0` and `PATH` starting with
-`/home/dot/.local/bin`, where the provisioner linked `invisible-playwright-mcp`. The guest
+The desktop runs as `dot`, the computer daemon as `dotagentd`, the engine as `dotengine` (the builder seed makes the three users); all with `DISPLAY=:0`; the desktop and the engine with a `PATH` starting with
+`/home/dot/.local/bin`, where the provisioner linked `invisible-playwright-mcp`. The
+daemon's own `PATH` holds system directories only (it starts the poweroff as
+itself, so nothing in a directory dot writes may be found through it); it gives the model's commands the `PATH` with
+`~/.local/bin`. The guest
 enables no firewall: X listens on no TCP port, and port 1024 must stay
 reachable from the NAT; every request to it needs the Dot's token.
 

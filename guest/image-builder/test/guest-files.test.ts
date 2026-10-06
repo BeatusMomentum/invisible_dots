@@ -206,14 +206,36 @@ describe("guest units", () => {
     expect(Object.keys(UNIT_USER).sort()).toEqual([...GUEST_UNITS].sort());
   });
 
-  it.each(GUEST_UNITS)("%s runs with the display and uv's bin dir, as its own user", (name) => {
+  /** The PATH of a unit: its one Environment=PATH= line. */
+  const unitPath = (name: (typeof GUEST_UNITS)[number]): string[] => {
+    const lines = text(unitAsset(name)).split("\n").filter((line) => line.startsWith("Environment=PATH="));
+    expect(lines, name).toHaveLength(1);
+    return lines[0]!.slice("Environment=PATH=".length).split(":");
+  };
+
+  it.each(GUEST_UNITS.filter((name) => name !== "dot-agentd.service"))("%s runs with the display and uv's bin dir, as its own user", (name) => {
     const unit = text(unitAsset(name));
     expect(unit).toMatch(new RegExp(`^User=${UNIT_USER[name]}$`, "m"));
     expect(unit).toMatch(/^Environment=DISPLAY=:0$/m);
-    expect(unit).toMatch(/^Environment=PATH=\/home\/dot\/\.local\/bin:/m);
+    expect(unitPath(name)[0]).toBe("/home/dot/.local/bin");
     expect(unit).toMatch(/^RequiresMountsFor=\/opt\/invisible-dots$/m);
     expect(unit).toMatch(/^Restart=on-failure$/m);
     expect(unit).toMatch(/^WantedBy=multi-user\.target$/m);
+  });
+
+  it("runs dot-agentd with the display, as its own user, and a PATH of system directories only", () => {
+    const unit = text(unitAsset("dot-agentd.service"));
+    expect(unit).toMatch(/^User=dotagentd$/m);
+    expect(unit).toMatch(/^Environment=DISPLAY=:0$/m);
+    expect(unit).toMatch(/^RequiresMountsFor=\/opt\/invisible-dots$/m);
+    expect(unit).toMatch(/^Restart=on-failure$/m);
+    expect(unit).toMatch(/^WantedBy=multi-user\.target$/m);
+    // The daemon starts the poweroff as itself, and may become root through it: nothing it finds may be in a
+    // directory dot (the model) can write, so its PATH has no entry of /home (dot's ~/.local/bin included) and
+    // none that is relative or empty. The PATH of the model's commands is the daemon's to build.
+    const path = unitPath("dot-agentd.service");
+    expect(path.length).toBeGreaterThan(0);
+    for (const dir of path) expect(dir, `PATH entry ${dir}`).toMatch(/^\/(usr\/local\/|usr\/)?s?bin$/);
   });
 
   it("runs dot-agentd as its own user, with the three capabilities that take it to start the model's work as dot and no others", () => {

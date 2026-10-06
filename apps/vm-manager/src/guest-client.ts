@@ -280,7 +280,7 @@ export class GuestClient {
   }
 
   /**
-   * Ask the guest to power itself off (`sudo -n systemctl poweroff`). The 202
+   * Ask the guest to power itself off (`/usr/bin/sudo -n /usr/bin/systemctl poweroff`). The 202
    * comes back before the shutdown begins; QEMU exits when the guest is off,
    * which is what the vm-manager then waits for.
    */

@@ -129,6 +129,24 @@ printf '%s\n' 'id -un' "$MODEL_CAPS" 'stat -c %U "$(readlink /proc/self/fd/0)" 2
 relay_who() { su -s /bin/bash dotengine -c "/opt/invisible-dots/bin/dot-agentd relay --socket /run/invisible-dots/agentd.sock $1 -- /bin/bash /usr/local/lib/smoke-fake/who.sh" </dev/null | tr -d '\r' | tr '\n' ' '; }
 check "the process route starts a program as dot with no capability, and the terminal it gives one is dot's" "[ \"\$(relay_who '')\" = 'dot $ZERO ' ] && [ \"\$(relay_who --tty)\" = 'dot $ZERO dot ' ]"
 check "the model cannot signal dot-agentd, and dot has no sudo rule" "[ \"\$(model_code 'kill -9 $AGENTD_PID')\" = 1 ] && [ \"\$(model_code 'sudo -n true')\" = 1 ] && kill -0 $AGENTD_PID"
+# The poweroff runs as dot-agentd's own user and may become root, so what it starts must not be found in a
+# directory the model writes. The model opens its home (it owns it) and plants a program named like the one
+# the daemon runs in ~/.local/bin, which is where the commands of the model look first; the host then stops
+# the VM (POST /v1/system/poweroff). The planted program must never run, as dotagentd or as anyone.
+poweroff_runs_nothing_of_the_models() {
+  local modes mode path ran=false
+  rm -f /tmp/hijacked
+  su -s /bin/bash dot -c 'mkdir -p /home/dot/.local/bin' || return 1
+  modes=$(stat -c '%a %n' /home/dot /home/dot/.local /home/dot/.local/bin)
+  su -s /bin/bash dot -c 'printf "#!/bin/sh\nid -un > /tmp/hijacked\n" > /home/dot/.local/bin/sudo && chmod 0755 /home/dot/.local/bin/sudo && chmod o+x /home/dot /home/dot/.local /home/dot/.local/bin' || return 1
+  api -o /dev/null -X POST http://127.0.0.1:1024/v1/system/poweroff
+  sleep 3
+  [ -e /tmp/hijacked ] && ran=true
+  rm -f /home/dot/.local/bin/sudo /tmp/hijacked
+  while read -r mode path; do chmod "$mode" "$path"; done <<< "$modes"
+  ! $ran
+}
+check "the poweroff the host asks for runs nothing the model planted in dot's .local/bin, though the model opened its home" "poweroff_runs_nothing_of_the_models"
 # The engine's API: PUT /config would allow everything and remove the 'ask' of every permission, POST /events
 # would approve the model's own parked calls.
 check "the model cannot enter the engine's socket directory or dot-agentd's, so a PUT /config or a POST /events on agent.sock never connects" "[ \"\$(model_code 'ls /run/invisible-dots-agent')\" = 2 ] && [ \"\$(model_code 'ls /run/invisible-dots')\" = 2 ] && [ \"\$(model_code \"curl -sS --unix-socket $AGENT_SOCK -X PUT http://x/config -d '{}'\")\" = 7 ] && [ \"\$(model_code \"curl -sS --unix-socket $AGENT_SOCK -X POST http://x/events -d '{}'\")\" = 7 ] && [ \"\$(model_code 'curl -sS --unix-socket /run/invisible-dots/agentd.sock http://x/v1/health')\" = 7 ]"

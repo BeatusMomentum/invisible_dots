@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -156,12 +157,25 @@ func (s *Server) runCommand(parent context.Context, command, cwd string, timeout
 	return answer, nil
 }
 
+// SystemPath is the directories of the system, which only root writes.
+const SystemPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+// modelPath is the PATH of everything that runs for the model: the Dot's own
+// ~/.local/bin (uv linked invisible-playwright-mcp there) in front of the
+// system's. It is built here, from the Dot's home, and is not the daemon's PATH:
+// that one holds no directory the model can write, because what the daemon starts
+// as itself (the poweroff) is found through it (DefaultPowerOff names paths too).
+func modelPath(home string) string {
+	return path.Join(home, ".local", "bin") + ":" + SystemPath
+}
+
 // execEnv is the environment of what runs for the model: the daemon's, with
 // the account's own HOME, USER, LOGNAME and SHELL in place of the daemon's
-// (the unit gives the daemon's user those), plus DISPLAY, so a GUI program
-// started from a command lands on the Dot's desktop.
+// (the unit gives the daemon's user those) and the PATH of the Dot (modelPath),
+// plus DISPLAY, so a GUI program started from a command lands on the Dot's
+// desktop.
 func (s *Server) execEnv() []string {
-	env := os.Environ()
+	env := withVariables(os.Environ(), "PATH="+modelPath(s.opts.Home))
 	if as := s.opts.RunAs; as != nil {
 		env = withVariables(env, "HOME="+s.opts.Home, "USER="+as.Name, "LOGNAME="+as.Name, "SHELL="+as.Shell)
 	}

@@ -47,8 +47,8 @@ func (a *Account) SharesDaemonUser() bool { return a.isCaller() }
 
 // ResolveRunAs is how the daemon starts to run the model's work as the user
 // name: it reads the account, and unless the daemon already is that user it
-// checks that it holds the capabilities that takes and empties its ambient set,
-// so that nothing it starts inherits them (account_linux.go).
+// checks that it holds the capabilities that takes (account_linux.go). The
+// ambient set is emptied by the caller before this, whatever the user is.
 func ResolveRunAs(name string) (*Account, error) {
 	acct, err := LookupAccount(name)
 	if err != nil {
@@ -58,9 +58,6 @@ func ResolveRunAs(name string) (*Account, error) {
 		return acct, nil
 	}
 	if err := RequireCapabilities(); err != nil {
-		return nil, err
-	}
-	if err := ForgetAmbientCapabilities(); err != nil {
 		return nil, err
 	}
 	return acct, nil

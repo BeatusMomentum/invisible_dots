@@ -30,9 +30,10 @@ type Options struct {
 	AgentSocket string
 	// Display is the X display screenshots capture and exec children inherit.
 	Display string
-	// ImportBin is ImageMagick's `import`, used for screenshots.
+	// ImportBin is ImageMagick's `import`, used for screenshots: a path, never a name
+	// looked up in a PATH (DefaultImportBin).
 	ImportBin string
-	// Bash runs exec commands as `bash -lc <command>`.
+	// Bash runs exec commands as `bash -lc <command>`: a path (DefaultBash).
 	Bash string
 	// ProcDir is normally /proc; tests point it at fake files.
 	ProcDir string
@@ -63,10 +64,10 @@ func New(o Options) *Server {
 		o.Display = DefaultDisplay
 	}
 	if o.ImportBin == "" {
-		o.ImportBin = "import"
+		o.ImportBin = DefaultImportBin
 	}
 	if o.Bash == "" {
-		o.Bash = "bash"
+		o.Bash = DefaultBash
 	}
 	if o.ProcDir == "" {
 		o.ProcDir = "/proc"
@@ -95,6 +96,11 @@ const (
 	// the key the host pushes.
 	DefaultAgentSocket = "/run/invisible-dots-agent/agent.sock"
 	DefaultDisplay     = ":0"
+	// The programs the daemon starts are named by path: a name would be looked up in the
+	// daemon's PATH, and what the daemon finds there it runs with its own privileges
+	// (DefaultPowerOff runs as the daemon's user and may become root).
+	DefaultBash      = "/bin/bash"
+	DefaultImportBin = "/usr/bin/import"
 	// DefaultListenAddr uses port 1024, the one QEMU's forward targets
 	// (architecture sections 3.4 and 5.1), on every interface; ListenTCP
 	// says why every interface.
@@ -108,8 +114,9 @@ const (
 // DefaultPowerOff is how the guest powers itself off when the host stops the
 // VM (architecture 3.4). The daemon's user runs it through sudo, which the
 // seed grants without a password; -n makes a missing grant fail at once
-// instead of waiting for a password nobody will type.
-var DefaultPowerOff = []string{"sudo", "-n", "systemctl", "poweroff"}
+// instead of waiting for a password nobody will type. Every program is a path:
+// this one runs as the daemon's user, which no name looked up in a PATH may reach.
+var DefaultPowerOff = []string{"/usr/bin/sudo", "-n", "/usr/bin/systemctl", "poweroff"}
 
 // routes builds the mux of either listener. The remote one (the TCP port,
 // token required) also carries the agent proxy and the poweroff: the agent

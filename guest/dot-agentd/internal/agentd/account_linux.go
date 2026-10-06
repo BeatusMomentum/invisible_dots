@@ -60,12 +60,39 @@ const (
 // all; left in the set, every program the daemon starts would keep them across
 // exec, and a command of the model could become any user. With the set empty
 // the daemon keeps what it has (they are in its effective set until it ends)
-// and what it starts has none.
+// and what it starts has none. A set that is empty already is left alone, so a
+// build with cgo (the tests) runs where nothing is granted; with something to
+// clear it needs the static build the guest has (AllThreadsSyscall).
 func ForgetAmbientCapabilities() error {
+	ambient, err := capabilitySet("CapAmb")
+	if err != nil {
+		return err
+	}
+	if ambient == 0 {
+		return nil
+	}
 	if _, _, errno := syscall.AllThreadsSyscall(syscall.SYS_PRCTL, prCapAmbient, prCapAmbientClearAll, 0); errno != 0 {
 		return fmt.Errorf("clear the ambient capabilities: %w", errno)
 	}
 	return nil
+}
+
+// capabilitySet reads one capability set of the daemon (CapEff, CapAmb) from /proc/self/status.
+func capabilitySet(field string) (uint64, error) {
+	raw, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if rest, ok := strings.CutPrefix(line, field+":"); ok {
+			var set uint64
+			if _, err := fmt.Sscanf(strings.TrimSpace(rest), "%x", &set); err != nil {
+				return 0, fmt.Errorf("read %s: %w", field, err)
+			}
+			return set, nil
+		}
+	}
+	return 0, fmt.Errorf("/proc/self/status has no %s", field)
 }
 
 // Capabilities of linux/capability.h that the daemon needs to act as another user.
@@ -81,22 +108,9 @@ const (
 // AmbientCapabilities line is the thing to look at, and not at the model's
 // first command.
 func RequireCapabilities() error {
-	raw, err := os.ReadFile("/proc/self/status")
+	effective, err := capabilitySet("CapEff")
 	if err != nil {
 		return err
-	}
-	var effective uint64
-	found := false
-	for _, line := range strings.Split(string(raw), "\n") {
-		if rest, ok := strings.CutPrefix(line, "CapEff:"); ok {
-			if _, err := fmt.Sscanf(strings.TrimSpace(rest), "%x", &effective); err != nil {
-				return fmt.Errorf("read CapEff: %w", err)
-			}
-			found = true
-		}
-	}
-	if !found {
-		return fmt.Errorf("/proc/self/status has no CapEff")
 	}
 	for _, c := range []struct {
 		bit  uint

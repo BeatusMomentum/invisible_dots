@@ -18,9 +18,12 @@ ENGINE_PY=/opt/invisible-dots-engine/bin/python
 # The key has this one owner; the stand-in gets it on its command line (not its environment: a check
 # asserts that no process environment holds it) and refuses to start without it.
 KEY=sk-or-v1-smoke-0123456789abcdef
-# What the units give the daemons: the display and uv's bin dir (invisible-dots-agent.service,
-# dot-agentd.service).
+# What the units give the engine and the desktop: the display and uv's bin dir (invisible-dots-agent.service).
 GUEST_PATH=/home/dot/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# What the unit gives dot-agentd, read from the unit itself so the smoke starts the daemon with the PATH the
+# image has: system directories only, none of them dot's (a program the daemon starts as itself, the poweroff,
+# is found through it).
+DAEMON_PATH=$(sed -n 's/^Environment=PATH=//p' "$SMOKE_DIR/../../units/dot-agentd.service")
 # Every request the stand-in for OpenRouter receives is appended, whole, to this file.
 FULL="${FULL:-/tmp/fake-full.jsonl}"
 
@@ -75,7 +78,7 @@ start_fake_openrouter() {
 }
 
 # dot-agentd as dotagentd, the way its unit starts it: with the capabilities of the unit's AmbientCapabilities
-# (setuid, setgid, kill) and no others, and the environment systemd gives that user plus the unit's; and the
+# (setuid, setgid, kill) and no others, and the environment systemd gives that user plus the unit's (DAEMON_PATH); and the
 # engine as dotengine, restarted by
 # start_engine when it dies as systemd would (KillMode=control-group: every process of the engine goes
 # with it). The engine's environment is its unit's, plus the program it runs for a browser when
@@ -83,7 +86,7 @@ start_fake_openrouter() {
 start_guest_daemons() {
   setpriv --reuid=dotagentd --regid=dotagentd --init-groups \
     --inh-caps=+setuid,+setgid,+kill --ambient-caps=+setuid,+setgid,+kill \
-    env HOME=/nonexistent USER=dotagentd LOGNAME=dotagentd SHELL=/usr/sbin/nologin DISPLAY=:0 PATH=$GUEST_PATH \
+    env HOME=/nonexistent USER=dotagentd LOGNAME=dotagentd SHELL=/usr/sbin/nologin DISPLAY=:0 PATH=$DAEMON_PATH \
     /opt/invisible-dots/bin/dot-agentd --listen 127.0.0.1:1024 > /tmp/agentd.log 2>&1 &
   cat > /tmp/engine.sh <<EOF
 export HOME=/home/dotengine

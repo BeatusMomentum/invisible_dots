@@ -16,11 +16,14 @@ Type=simple
 User=dotagentd
 Group=dotagentd
 AmbientCapabilities=CAP_SETUID CAP_SETGID CAP_KILL
-# Screenshots and exec use the desktop; the PATH is the one the model's
-# commands get (uv installed invisible-playwright-mcp in dot's ~/.local/bin).
-# HOME, USER, LOGNAME and SHELL of those commands are dot's, set by the daemon.
+# Screenshots and exec use the desktop. The daemon's own PATH holds system
+# directories only: it starts the poweroff as its own user, which may become
+# root, and nothing found in a directory dot can write may run as it. The PATH
+# of the model's commands (dot's ~/.local/bin, where uv installed
+# invisible-playwright-mcp, and these) is built by the daemon with the rest of
+# their environment: HOME, USER, LOGNAME and SHELL are dot's too.
 Environment=DISPLAY=:0
-Environment=PATH=/home/dot/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # dot-agentd's default listen address is all guest addresses on TCP 1024: QEMU's
 # user-mode NAT delivers the host's port forward to the guest's 10.0.2.15, not
 # to its loopback. The golden image enables no firewall, so nothing in the

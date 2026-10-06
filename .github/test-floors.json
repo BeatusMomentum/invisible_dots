@@ -8,8 +8,8 @@
     "linux": { "min_passed": 675, "allow_skipped": "", "require": { "\\bpg\\b": 273 } }
   },
   "go": {
-    "linux": { "min_passed": 118, "allow_skipped": "" },
-    "win32": { "min_passed": 68, "allow_skipped": "^agentd (TestSystemRoute|TestPowerOffStartsTheCommandAndAnswers202)$" }
+    "linux": { "min_passed": 120, "allow_skipped": "" },
+    "win32": { "min_passed": 70, "allow_skipped": "^agentd (TestSystemRoute|TestPowerOffStartsTheCommandAndAnswers202)$" }
   },
   "pytest": {
     "linux": { "min_passed": 2786, "allow_skipped": "" }

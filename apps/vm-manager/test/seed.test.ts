@@ -69,7 +69,7 @@ describe("the seed of a Dot", () => {
     expect(builderUser("dotagentd")).not.toHaveProperty("groups");
     // The argv dot-agentd runs (guest/dot-agentd server.go DefaultPowerOff) is the command the rule names.
     const server = await readFile(fileURLToPath(new URL("../../../guest/dot-agentd/internal/agentd/server.go", import.meta.url)), "utf8");
-    expect(server).toContain('var DefaultPowerOff = []string{"sudo", "-n", "systemctl", "poweroff"}');
+    expect(server).toContain('var DefaultPowerOff = []string{"/usr/bin/sudo", "-n", "/usr/bin/systemctl", "poweroff"}');
   });
 
   it("changes the instance-id exactly when the seed content changes", async () => {

@@ -28,17 +28,25 @@ thread that serves a request has dot's file-system user and groups, so what it
 opens or creates is dot's and is checked as dot's; the TCP listener's home
 confinement is decided on top of that), a pseudo-terminal (opened as dot, so dot
 owns it) and the screenshot. The environment of those programs is the daemon's
-with `HOME`, `USER`, `LOGNAME` and `SHELL` of dot's account.
+with `HOME`, `USER`, `LOGNAME` and `SHELL` of dot's account and the Dot's `PATH` (`~/.local/bin` and the system's).
 
 That takes `CAP_SETUID`, `CAP_SETGID` (change to dot) and `CAP_KILL` (end a
 process group of dot's), which the unit gives as `AmbientCapabilities`. At start
-the daemon checks it holds them, and empties its ambient capability set in every
-thread, so no program it starts holds them: with the set left full, a command of
-the model would keep `CAP_SETUID` across exec. That needs a binary built without
-cgo (the build below), and refuses to start otherwise. `--run-as` names the
-user; `--run-as=` (empty; the variable cannot be empty), or the daemon's own user named, leaves the work with the
-daemon's own uid, which is for tests and development: the daemon warns of it in
-its log, because it is the arrangement that let the model read the token.
+the daemon checks it holds them (unless the work runs as its own user), and
+empties its ambient capability set in every thread whatever `--run-as` says, so
+no program it starts holds them: with the set left full, a command of the model
+would keep `CAP_SETUID` across exec. Emptying a set that holds something needs a
+binary built without cgo (the build below), and the daemon refuses to start
+otherwise. `--run-as` names the user; `--run-as=` (empty; the variable cannot be
+empty), or the daemon's own user named, leaves the work with the daemon's own
+uid, which is for tests and development: the daemon warns of it in its log,
+because it is the arrangement that let the model read the token.
+
+The programs the daemon starts as itself are named by path (`/bin/bash`,
+`/usr/bin/import`, `/usr/bin/sudo`), and the unit gives it a `PATH` with no
+directory of dot's: a name looked up in a directory the model can write would run
+the model's program with the daemon's privileges. The `PATH` of the model's
+commands (dot's `~/.local/bin` first) is built by the daemon, not inherited.
 
 `dot-agentd relay [--socket P] [--cwd DIR] [--tty] [--env NAME=VALUE]...
 [--env-from NAME]... -- PROGRAM [ARGS...]` is the client of `POST /v1/proc`: it
@@ -84,7 +92,7 @@ Every flag has an environment variable; a flag on the command line wins.
 | `--agent-socket` | `INVISIBLE_DOTS_AGENT_SOCKET` | `/run/invisible-dots-agent/agent.sock` (the engine's directory) |
 | `--listen` | `INVISIBLE_DOTS_AGENTD_LISTEN` | `0.0.0.0:1024`; an IP literal and a port, e.g. `127.0.0.1:18024` for development outside a VM |
 | `--display` | `INVISIBLE_DOTS_DISPLAY` | `:0` |
-| `--import-bin` | `INVISIBLE_DOTS_IMPORT_BIN` | `import` |
+| `--import-bin` | `INVISIBLE_DOTS_IMPORT_BIN` | `/usr/bin/import` |
 | `--run-as` | `INVISIBLE_DOTS_RUN_AS` | `dot`; `--run-as=` runs the model's work as the daemon's own user |
 | `--log-level` | `INVISIBLE_DOTS_LOG_LEVEL` | `info` |
 
@@ -95,11 +103,11 @@ without it.
 
 - `bash`, for `POST /v1/exec` (`bash -lc <command>`).
 - `sudo` and systemd, for `POST /v1/system/poweroff`: it runs
-  `sudo -n systemctl poweroff`, which the seed allows the user `dotagentd` (the
+  `/usr/bin/sudo -n /usr/bin/systemctl poweroff`, which the seed allows the user `dotagentd` (the
   one the daemon runs as) without a password, and which is the only command that
   user may run as root; `dot`, the model's user, has no sudo rule.
 - `imagemagick`, for `GET /v1/screenshot`: it runs
-  `import -window root -display :0 png:-` against the Xvfb display.
+  `/usr/bin/import -window root -display :0 png:-` against the Xvfb display.
 
 ## Route details beyond the contract
 
