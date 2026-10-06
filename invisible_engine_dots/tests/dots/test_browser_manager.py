@@ -70,6 +70,12 @@ class Env:
     def record(self, identity_id: str) -> list[dict[str, Any]]:
         return read_record(self.mcp_home(identity_id))
 
+    async def until_recorded(self, identity_id: str, kind: str, name: str, timeout_s: float = 30) -> None:
+        """Wait until the fake MCP server has recorded an entry: its process start time is not the test's to guess."""
+        async with asyncio.timeout(timeout_s):
+            while not any(e["kind"] == kind and e.get("name") == name for e in self.record(identity_id)):
+                await asyncio.sleep(0.01)
+
     def calls(self, identity_id: str) -> list[tuple[str, dict[str, Any]]]:
         return [(entry["name"], entry["args"]) for entry in self.record(identity_id) if entry["kind"] == "call"]
 
@@ -712,13 +718,18 @@ async def test_a_launch_that_is_cancelled_leaves_nothing_open_and_the_next_one_w
     write_control(env.mcp_home(identity.id), download_answers=1000)
 
     launching = asyncio.create_task(manager.launch(identity.id))
-    await asyncio.sleep(0.3)
+    await env.until_recorded(identity.id, "call", "browser_open")
     launching.cancel()
     with pytest.raises(asyncio.CancelledError):
         await launching
 
     assert manager.open_count == 0
-    assert env.record(identity.id)[-1]["kind"] == "exit"
+    # Gone, not necessarily gracefully: when the answer to the cancelled request arrives while the
+    # SDK closes its streams, its reader fails and the SDK kills the process before it can record an exit.
+    started = [entry for entry in env.record(identity.id) if entry["kind"] == "start"]
+    assert len(started) == 1
+    with pytest.raises(ProcessLookupError):
+        os.kill(started[0]["pid"], 0)
     write_control(env.mcp_home(identity.id), download_answers=0)
     await asyncio.wait_for(manager.launch(identity.id), 30)
     assert manager.is_open(identity.id)
