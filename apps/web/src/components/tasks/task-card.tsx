@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { formatDate, formatDuration, formatUsd } from "../../lib/format";
-import { progressOf } from "../../lib/task-events";
 import { workedSeconds } from "../../lib/task-view";
 import { relativeTime } from "../../lib/time";
 import type { Task } from "../../lib/types";
@@ -40,8 +39,8 @@ export function Elapsed({ task }: { task: Pick<Task, "started_at" | "finished_at
  * it has run, and the ways to act on it.
  */
 export function RunningCard({ task, onChanged }: { task: Task; onChanged: () => void }) {
-  const { dotId, history } = useTasks();
-  const progress = progressOf(history.events, task.id);
+  const { dotId, progress: reads } = useTasks();
+  const { status, progress } = reads.of(task.id);
   const waiting = task.status === "WAITING_APPROVAL";
 
   return (
@@ -61,9 +60,9 @@ export function RunningCard({ task, onChanged }: { task: Task; onChanged: () => 
               {relativeTime(progress.at)}
             </time>
           </>
-        ) : history.status === "failed" ? (
+        ) : status === "failed" ? (
           "What the task reported could not be read."
-        ) : history.status === "loaded" ? (
+        ) : status === "loaded" ? (
           "Working on it. It has not reported anything yet."
         ) : (
           "Reading what the task reported..."

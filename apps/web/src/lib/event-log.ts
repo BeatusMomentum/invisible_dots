@@ -1,10 +1,11 @@
 /**
  * Reading a Dot's event log through the one route that serves it, `GET /api/dots/:id/events`, which keeps the types
- * a caller names in the database (`types`) so only those cross the wire. This is the one function that pages through
- * it: the Tasks page and the chat each say which types they read and, where a type alone is not enough, what else
- * an event must be. A view that needs only what happened lately reads the newest window of the log instead
- * (`readRecentEvents`), never the whole of it; the Activity page goes on from there, older, a page at a time, with
- * the same function and a `before`.
+ * (and the task) a caller names in the database so only those cross the wire. No view reads the whole log of a Dot:
+ * that costs more with every day it lives. A view reads what it shows, bounded on one side: the events of one task
+ * (`taskId`), the events from a point on (`readEventLog` with `after`), the range between two points
+ * (`readEventRange`), or the newest window (`readRecentEvents`, which the Activity page goes on from, older, a page
+ * at a time, with a `before`). Each says which types it reads and, where a type alone is not enough, what else an
+ * event must be.
  */
 import type { InvisibleDotsClient } from "@invisible-dots/sdk";
 import { MAX_EVENT_PAGE } from "@invisible-dots/shared/browser";
@@ -15,19 +16,40 @@ export interface EventLogQuery {
   types: readonly string[];
   /** Narrows the `tool.called` events to those of these tools (`data.tool`), in the database; other types are not affected. */
   tools?: readonly string[];
+  /** Only the events of this task (`data.task_id`), in the database. */
+  taskId?: string;
   /** For what a type alone cannot say (a `tool.called` of the chat is one that names no task). */
   keep?: (event: StoredEvent) => boolean;
 }
 
-/** Every event of the Dot's log of those types that `keep` accepts, oldest first. The log is read page by page from its start. */
-export async function readEventLog(client: Pick<InvisibleDotsClient, "events">, dotId: string, query: EventLogQuery): Promise<StoredEvent[]> {
+/** Every event of the Dot's log of those types that `keep` accepts, oldest first, with an id above `after` (the whole log when omitted). It is read page by page, from `after` on. */
+export async function readEventLog(client: Pick<InvisibleDotsClient, "events">, dotId: string, query: EventLogQuery & { after?: number }): Promise<StoredEvent[]> {
   const found: StoredEvent[] = [];
-  let after = 0;
+  let after = query.after ?? 0;
   for (;;) {
-    const page = await client.events(dotId, { after, limit: MAX_EVENT_PAGE, types: query.types, tools: query.tools });
+    const page = await client.events(dotId, { after, limit: MAX_EVENT_PAGE, types: query.types, tools: query.tools, taskId: query.taskId });
     for (const event of page) if (query.keep?.(event) ?? true) found.push(event);
     if (page.length < MAX_EVENT_PAGE) return found;
     after = page[page.length - 1]!.id;
+  }
+}
+
+/**
+ * The events of the log that the types and tools keep, and `keep` accepts, with an id above `after` and below `before`,
+ * oldest first: a range of the log read from its end, newest page first, so what is older than `after` is never read.
+ */
+export async function readEventRange(
+  client: Pick<InvisibleDotsClient, "events">,
+  dotId: string,
+  query: EventLogQuery & { after: number; before: number },
+): Promise<StoredEvent[]> {
+  const found: StoredEvent[] = [];
+  let before = query.before;
+  for (;;) {
+    const page = await client.events(dotId, { after: query.after, before, limit: MAX_EVENT_PAGE, types: query.types, tools: query.tools, taskId: query.taskId, order: "desc" });
+    for (const event of page) if (query.keep?.(event) ?? true) found.push(event);
+    if (page.length < MAX_EVENT_PAGE) return found.reverse();
+    before = page[page.length - 1]!.id;
   }
 }
 
@@ -42,7 +64,7 @@ export async function readRecentEvents(
   dotId: string,
   query: EventLogQuery & { count: number; before?: number },
 ): Promise<StoredEvent[]> {
-  const page = await client.events(dotId, { limit: Math.min(query.count, MAX_EVENT_PAGE), types: query.types, tools: query.tools, before: query.before, order: "desc" });
+  const page = await client.events(dotId, { limit: Math.min(query.count, MAX_EVENT_PAGE), types: query.types, tools: query.tools, taskId: query.taskId, before: query.before, order: "desc" });
   return page.filter((event) => query.keep?.(event) ?? true).reverse();
 }
 

@@ -1,7 +1,6 @@
 "use client";
 
 import { TASK_LIST_LIMIT } from "@invisible-dots/shared/browser";
-import { useSelectedLayoutSegment } from "next/navigation";
 import { useMemo, type ReactNode } from "react";
 import { groupTasks } from "../../lib/task-view";
 import { useNow } from "../../lib/use-now";
@@ -19,9 +18,8 @@ import { TasksProvider, useTasks } from "./tasks-data";
  */
 export function TasksView({ children }: { children: ReactNode }) {
   const { dotId } = useDot();
-  const taskOpen = useSelectedLayoutSegment() !== null;
   return (
-    <TasksProvider key={dotId} dotId={dotId} taskOpen={taskOpen}>
+    <TasksProvider key={dotId} dotId={dotId}>
       <Sections />
       {children}
     </TasksProvider>

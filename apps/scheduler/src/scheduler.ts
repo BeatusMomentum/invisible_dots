@@ -378,12 +378,18 @@ export class Scheduler {
     return { message_id: messageId, event_id: logged.id, delivery: await this.#deliver(dotId, messageId) };
   }
 
-  async conversation(idOrName: string, limit = CONVERSATION_LIST_LIMIT): Promise<ConversationMessage[]> {
+  /**
+   * The Dot's one conversation, oldest first; `order: "desc"` the newest first, and `before` (the event id of the
+   * oldest message of the previous page) pages on, older, from there. A page holds at most CONVERSATION_LIST_LIMIT.
+   */
+  async conversation(idOrName: string, page: { limit?: number; order?: ListOrder; before?: number } = {}): Promise<ConversationMessage[]> {
     const dot = await this.requireDot(idOrName);
     const events = await this.events.query({
       dotId: dot.id,
       types: [USER_MESSAGE_EVENT, "message.assistant"],
-      limit,
+      limit: page.limit ?? CONVERSATION_LIST_LIMIT,
+      order: page.order,
+      before: page.before,
     });
     return events.map((e) => {
       // StoredEvent.type lists the contract's event types; the user side is logged as USER_MESSAGE_EVENT.
@@ -725,6 +731,7 @@ export class Scheduler {
         const logged = await this.events.appendHostIn(tx, existing.dot_id, "approval.resolved", {
           approval_id: id,
           decision,
+          ...(existing.task_id !== null ? { task_id: existing.task_id } : {}),
           ...(note !== undefined ? { note } : {}),
           ...(always ? { always } : {}),
         });

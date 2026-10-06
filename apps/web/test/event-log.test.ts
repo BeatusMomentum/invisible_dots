@@ -1,6 +1,6 @@
 import { MAX_EVENT_PAGE, type StoredEvent } from "@invisible-dots/shared/browser";
 import { describe, expect, it } from "vitest";
-import { mergeEvents, readEventLog, readRecentEvents } from "../src/lib/event-log";
+import { mergeEvents, readEventLog, readEventRange, readRecentEvents } from "../src/lib/event-log";
 
 function log(count: number): StoredEvent[] {
   return Array.from({ length: count }, (_, i) => ({ id: i + 1, dot_id: "d1", type: i % 3 === 0 ? "tool.called" : "agent.state", data: {}, source: "guest", guest_seq: i, created_at: "2026-03-10T12:00:00Z" }) as StoredEvent);
@@ -56,6 +56,30 @@ describe("readEventLog", () => {
 
   it("returns an empty log as nothing", async () => {
     expect(await readEventLog(clientOf([]), "d1", { types: ["tool.called"] })).toEqual([]);
+  });
+
+  it("starts after the id it is given, so what is older is never asked for", async () => {
+    const client = clientOf(log(30));
+    const read = await readEventLog(client, "d1", { types: ["tool.called", "agent.state"], after: 20 });
+    expect(read.map((e) => e.id)).toEqual(Array.from({ length: 10 }, (_, i) => 21 + i));
+    expect(client.asked.map((a) => a.after)).toEqual([20]);
+  });
+});
+
+describe("readEventRange", () => {
+  it("reads what lies between two ids, newest page first and given oldest first, and stops at the lower one", async () => {
+    const events = log(5 * MAX_EVENT_PAGE);
+    const client = clientOf(events);
+    const read = await readEventRange(client, "d1", { types: ["tool.called", "agent.state"], after: 100, before: 2 * MAX_EVENT_PAGE + 50 });
+    expect(read.map((e) => e.id)).toEqual(Array.from({ length: 2 * MAX_EVENT_PAGE + 50 - 101 }, (_, i) => 101 + i));
+    // Two pages (a full one and the rest); nothing below `after` was read.
+    expect(client.asked).toHaveLength(2);
+    expect(client.asked.every((a) => a.after === 100 && a.order === "desc")).toBe(true);
+    expect(client.asked.map((a) => a.before)).toEqual([2 * MAX_EVENT_PAGE + 50, MAX_EVENT_PAGE + 50]);
+  });
+
+  it("is empty when nothing lies between", async () => {
+    expect(await readEventRange(clientOf(log(10)), "d1", { types: ["tool.called"], after: 5, before: 6 })).toEqual([]);
   });
 });
 

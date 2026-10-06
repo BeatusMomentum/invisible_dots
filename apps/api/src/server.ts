@@ -26,6 +26,7 @@ import type {
 } from "@invisible-dots/sdk/types";
 import {
   APPROVAL_LIST_LIMIT,
+  CONVERSATION_LIST_LIMIT,
   APPROVAL_STATUSES,
   CHANNEL_KINDS,
   LIST_ORDERS,
@@ -76,6 +77,13 @@ function intParam(value: unknown, name: string, max = Number.MAX_SAFE_INTEGER): 
     throw bad(`${name} must be a non-negative integer${max < Number.MAX_SAFE_INTEGER ? ` up to ${max}` : ""}`);
   }
   return Number(value);
+}
+
+/** The `order` of a list route, which only an `order=desc` list can be paged on (`before`) from. */
+function orderParam(order: unknown, before: unknown): ListOrder | undefined {
+  if (order !== undefined && !(LIST_ORDERS as readonly unknown[]).includes(order)) throw bad(`order must be one of ${LIST_ORDERS.join(", ")}`);
+  if (before !== undefined && order !== "desc") throw bad("before pages a list in order=desc");
+  return order as ListOrder | undefined;
 }
 
 /** An ISO 8601 date-time query parameter, or undefined when absent. */
@@ -217,9 +225,17 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     return reply.code(202).send(await scheduler.sendMessage(request.params.id, text));
   });
 
-  app.get<{ Params: Params }>(
+  // The conversation pages like the event log: oldest first by default, `order=desc` the newest, `before` (the
+  // event id of the oldest message of the previous page) the ones older than that.
+  app.get<{ Params: Params; Querystring: { limit?: string; order?: unknown; before?: string } }>(
     "/api/dots/:id/messages",
-    async (request): Promise<MessagesAnswer> => ({ messages: await scheduler.conversation(request.params.id) }),
+    async (request): Promise<MessagesAnswer> => {
+      const limit = intParam(request.query.limit, "limit", CONVERSATION_LIST_LIMIT);
+      if (limit === 0) throw bad(`limit must be between 1 and ${CONVERSATION_LIST_LIMIT}`);
+      const before = intParam(request.query.before, "before");
+      const order = orderParam(request.query.order, before);
+      return { messages: await scheduler.conversation(request.params.id, { limit, order, before }) };
+    },
   );
 
   app.post<{ Params: Params }>("/api/dots/:id/tasks", async (request, reply) => {
@@ -388,11 +404,9 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     }
     const limit = intParam(request.query.limit, "limit", APPROVAL_LIST_LIMIT);
     if (limit === 0) throw bad(`limit must be between 1 and ${APPROVAL_LIST_LIMIT}`);
-    if (order !== undefined && !(LIST_ORDERS as readonly unknown[]).includes(order)) throw bad(`order must be one of ${LIST_ORDERS.join(", ")}`);
     if (before !== undefined && (typeof before !== "string" || before === "")) throw bad("before must be the id of an approval");
-    if (before !== undefined && order !== "desc") throw bad("before pages a list in order=desc");
     return {
-      approvals: await scheduler.listApprovals(statuses as ApprovalStatus[] | undefined, { limit, order: order as ListOrder | undefined, before }),
+      approvals: await scheduler.listApprovals(statuses as ApprovalStatus[] | undefined, { limit, order: orderParam(order, before), before }),
     };
   });
 
@@ -425,8 +439,7 @@ export function buildServer(options: ServerOptions): FastifyInstance {
       if (types !== undefined && typeof types !== "string") throw bad("types must be one comma-separated list");
       if (tools !== undefined && typeof tools !== "string") throw bad("tools must be one comma-separated list");
       if (taskId !== undefined && typeof taskId !== "string") throw bad("task_id must be a single value");
-      if (order !== undefined && !(LIST_ORDERS as readonly unknown[]).includes(order)) throw bad(`order must be one of ${LIST_ORDERS.join(", ")}`);
-      if (before !== undefined && order !== "desc") throw bad("before pages a list in order=desc");
+      const listOrder = orderParam(order, request.query.before);
       const list = (value: string | undefined) => value?.split(",").map((one) => one.trim()).filter(Boolean);
       return {
         events: await scheduler.listEvents(request.params.id, {
@@ -436,7 +449,7 @@ export function buildServer(options: ServerOptions): FastifyInstance {
           types: list(types),
           tools: list(tools),
           taskId,
-          order: order as ListOrder | undefined,
+          order: listOrder,
         }),
       };
     },

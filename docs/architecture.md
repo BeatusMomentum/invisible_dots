@@ -850,7 +850,9 @@ reused for another event.
 
 The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
 `computer.state {state}`, `computer.started`, `computer.stopped`,
-`task.created`, `task.cancelled`, `approval.resolved`, and the two of a messaging
+`task.created`, `task.cancelled`, `approval.resolved {approval_id, decision,
+task_id?, note?, always?}` (`task_id` is the task the approval was asked in, so
+the events of a task hold the answer beside the request), and the two of a messaging
 channel: `channel.status {kind, status, detail?}` (`kind` is `telegram` or
 `whatsapp`; `status` is `connecting`, `connected`, `needs_relink` or `error`,
 and `detail` never holds a credential), `channel.peer.paired {kind, peer_id,
@@ -1792,7 +1794,7 @@ PATCH  /api/dots/:id                 body: { config, expected_config_version? } 
 DELETE /api/dots/:id                 destroys the VM and its disk, then deletes the Dot, its rows and its own secrets
 
 POST   /api/dots/:id/messages        body: { text }
-GET    /api/dots/:id/messages        conversation, from the event log (the oldest 500; a user message carries `origin` when it came through a channel)
+GET    /api/dots/:id/messages        ?limit=&order=asc|desc&before=<event id>   conversation, from the event log (a user message carries `origin` when it came through a channel); oldest first by default, at most 500 a page; `order=desc` is the newest first and `before` (the `event_id` of the oldest message of the previous page, desc only) goes on, older, from there
 POST   /api/dots/:id/tasks           body: { description, priority?, scheduled_at? }
 GET    /api/dots/:id/tasks
 GET    /api/tasks/:id
@@ -1872,8 +1874,8 @@ total; the task's own `spent_usd` still shows what was heard of it. Like
 list of type names, `tools` a comma-separated list of tool names that narrows the
 `tool.called` events (the other types pass), `task_id` matches `data->>'task_id'` (the one place the
 contract puts the task, so the host's `task.created` and `task.cancelled` and
-the guest's `task.*`, `tool.called` and `approval.requested` of a task all
-match), and all combine with `after` and `limit`; `order=desc` reads from the newest
+the guest's `task.*`, `tool.called` and `approval.requested` of a task, and the
+host's `approval.resolved` of one, all match), and all combine with `after` and `limit`; `order=desc` reads from the newest
 event back (the limit then counts the newest that the filters keep, and the page is
 newest first), and `before` (an event id, desc only) goes on from there: the events
 older than it, which is how the Activity page pages through a long log. A chat turn's events carry

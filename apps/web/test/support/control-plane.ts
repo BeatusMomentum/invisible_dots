@@ -3,7 +3,7 @@
  * sends, answered from memory, and `/api/stream` as a live SSE body the test pushes events into. `install()` puts
  * it behind the global `fetch`, which is where the web client's SDK looks.
  */
-import { COMPUTER_STOPPED, computerIsUp, MAX_EVENT_PAGE, type ApprovalRecord, type Automation, type BrowserIdentity, type ChannelKind, type ChannelLinkFrame, type ChannelRecord, type ChannelSettings, type ComputerAnswer, type DoctorCheck, type DotConfig, type DotSummary, type StoredEvent, type SystemAnswer, type ToolInfo } from "@invisible-dots/shared/browser";
+import { COMPUTER_STOPPED, CONVERSATION_LIST_LIMIT, computerIsUp, MAX_EVENT_PAGE, type ApprovalRecord, type Automation, type BrowserIdentity, type ChannelKind, type ChannelLinkFrame, type ChannelRecord, type ChannelSettings, type ComputerAnswer, type DoctorCheck, type DotConfig, type DotSummary, type StoredEvent, type SystemAnswer, type ToolInfo } from "@invisible-dots/shared/browser";
 import type { TaskRecord } from "@invisible-dots/sdk";
 import { vi } from "vitest";
 
@@ -139,8 +139,8 @@ export class FakeControlPlane {
   delivery: "delivered" | "queued" = "delivered";
   /** While set, `POST /api/dots/:id/messages` waits for it to resolve before it answers. */
   holdSend: Promise<void> | null = null;
-  /** The most messages `GET .../messages` answers with, oldest first (the real route's is CONVERSATION_LIST_LIMIT). */
-  messageLimit = 1000;
+  /** What each `GET .../messages` asked for. */
+  messageQueries: Array<{ limit: number | null; order: string | null; before: number | null }> = [];
   /** The identities `GET .../browser-identities` lists. */
   identities: BrowserIdentity[] = [];
   /** Answer `GET .../computer/screenshot` and `.../frame` with this error instead of a picture. */
@@ -333,7 +333,7 @@ export class FakeControlPlane {
       if (record.status !== "pending") return json({ error: "already_resolved", message: `approval ${id} is already ${record.status}` }, 409);
       Object.assign(record, { status: decision === "approve" ? "approved" : "rejected", note: body.note ?? null, resolved_at: new Date().toISOString() });
       // The host logs the answer and publishes it: the page hears it as it would from the real one.
-      this.push(record.dot_id, "approval.resolved", { approval_id: id, decision, ...(body.note ? { note: body.note } : {}), ...(body.always ? { always: true } : {}) });
+      this.push(record.dot_id, "approval.resolved", { approval_id: id, decision, ...(record.task_id ? { task_id: record.task_id } : {}), ...(body.note ? { note: body.note } : {}), ...(body.always ? { always: true } : {}) });
       return json(record);
     }
     const task = /^\/api\/tasks\/([^/]+)(\/cancel)?$/.exec(pathname);
@@ -412,9 +412,15 @@ export class FakeControlPlane {
       if (rest === "messages" && method === "GET") {
         // The host logs the person's side as `user.message`, which the shared event type list does not hold.
         const type = (e: StoredEvent) => e.type as string;
-        const messages = this.events
-          .filter((e) => e.dot_id === record.id && (type(e) === "user.message" || type(e) === "message.assistant"))
-          .slice(0, this.messageLimit)
+        const limit = searchParams.has("limit") ? Number(searchParams.get("limit")) : null;
+        const order = searchParams.get("order");
+        const before = searchParams.has("before") ? Number(searchParams.get("before")) : null;
+        if (before !== null && order !== "desc") return json({ error: "invalid_request", message: "before pages a list in order=desc" }, 400);
+        this.messageQueries.push({ limit, order, before });
+        // The real route: oldest first, or with order=desc the newest first, a cursor being the event id of the oldest message seen; a page holds at most CONVERSATION_LIST_LIMIT.
+        const kept = this.events.filter((e) => e.dot_id === record.id && (type(e) === "user.message" || type(e) === "message.assistant") && (before === null || e.id < before));
+        const messages = (order === "desc" ? [...kept].reverse() : kept)
+          .slice(0, Math.min(limit ?? CONVERSATION_LIST_LIMIT, CONVERSATION_LIST_LIMIT))
           .map((e) => ({ event_id: e.id, role: type(e) === "user.message" ? "user" : "assistant", text: String(e.data.text ?? ""), in_reply_to: null, ...(type(e) === "user.message" && e.data.origin ? { origin: e.data.origin } : {}), created_at: e.created_at }));
         return json({ messages });
       }

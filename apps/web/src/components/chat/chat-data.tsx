@@ -1,18 +1,22 @@
 "use client";
 
+import { MAX_EVENT_PAGE } from "@invisible-dots/shared/browser";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import { buildThread, CHAT_ACTIVITY_EVENT_TYPES, isChatActivityEvent, mergeChatEvents, unsettled, type PendingMessage, type ThreadItem } from "../../lib/chat-thread";
-import { readEventLog } from "../../lib/event-log";
+import { CHAT_PAGE_SIZE, withEarlierPage, withNewestPage, type ChatWindow } from "../../lib/chat-window";
+import { readEventLog, readEventRange, readRecentEvents } from "../../lib/event-log";
 import { CHAT_EVENT_TYPES } from "../../lib/messages";
 import type { ChatMessage, StoredEvent } from "../../lib/types";
 import { useLiveEvents, useLiveRefresh } from "../events";
-import { useResource, type Resource } from "../ui";
 
 export type ActivityStatus = "loading" | "loaded" | "failed";
 
 export interface Chat {
-  messages: Resource<ChatMessage[]>;
+  /** The newest messages, and the older ones asked for, oldest first; `data` is undefined until the first page is read. */
+  messages: { data: ChatMessage[] | undefined; error: unknown };
+  /** Messages older than those held: whether there may be some, whether they are being read, and why that failed. */
+  earlier: { available: boolean; loading: boolean; error: unknown; load: () => void };
   thread: ThreadItem[];
   /** Messages sent from this page that the log does not hold yet, oldest first. */
   pending: PendingMessage[];
@@ -27,45 +31,94 @@ export interface Chat {
 const WAKES_THE_DOT = ["agent.state", "message.assistant"];
 
 /**
- * Everything the chat shows, kept current by the live stream: the conversation (the messages route), what the Dot did
- * between its messages (the event log, read once and then followed live), and what the person has just sent. A sent
- * message shows at once and is replaced by the logged one, which the API names by its event id.
+ * Everything the chat shows, kept current by the live stream: the conversation (the newest page of the messages
+ * route, and older pages on request), what the Dot did between those messages (the event log from the oldest message
+ * shown on, then followed live), and what the person has just sent. What opening the chat costs is a page of messages
+ * and the activity since, whatever the age of the Dot. A sent message shows at once and is replaced by the logged
+ * one, which the API names by its event id.
  */
 export function useChat(dotId: string): Chat {
-  const messages = useResource(() => api.messages(dotId), `messages:${dotId}`);
-  useLiveRefresh(messages.reload, CHAT_EVENT_TYPES);
+  const [held, setHeld] = useState<ChatWindow | undefined>(undefined);
+  const [error, setError] = useState<unknown>(null);
+  const newestGeneration = useRef(0);
+  const readNewest = useCallback(() => {
+    const mine = ++newestGeneration.current;
+    api
+      .messages(dotId, { order: "desc", limit: CHAT_PAGE_SIZE })
+      .then((page) => {
+        if (mine !== newestGeneration.current) return;
+        setHeld((current) => withNewestPage(current, page.reverse()));
+        setError(null);
+      })
+      .catch((failure: unknown) => {
+        if (mine === newestGeneration.current) setError(failure);
+      });
+  }, [dotId]);
+  useEffect(() => {
+    readNewest();
+    return () => {
+      newestGeneration.current++;
+    };
+  }, [readNewest]);
+  useLiveRefresh(readNewest, CHAT_EVENT_TYPES);
 
+  const [loadingEarlier, setLoadingEarlier] = useState(false);
+  const [earlierError, setEarlierError] = useState<unknown>(null);
+  const loadEarlier = useCallback(() => {
+    const oldest = held?.messages[0]?.event_id;
+    if (oldest === undefined || loadingEarlier) return;
+    setLoadingEarlier(true);
+    setEarlierError(null);
+    api
+      .messages(dotId, { order: "desc", limit: CHAT_PAGE_SIZE, before: oldest })
+      .then((page) => setHeld((current) => (current === undefined ? current : withEarlierPage(current, page.reverse()))))
+      .catch(setEarlierError)
+      .finally(() => setLoadingEarlier(false));
+  }, [dotId, held, loadingEarlier]);
+
+  // The activity is read from the oldest message shown on; going back reads only what lies between.
+  const floor = held === undefined ? undefined : (held.messages[0]?.event_id ?? null);
   const [events, setEvents] = useState<readonly StoredEvent[]>([]);
   const [status, setStatus] = useState<ActivityStatus>("loading");
-  const [error, setError] = useState<unknown>(null);
-  const generation = useRef(0);
+  const [activityError, setActivityError] = useState<unknown>(null);
+  const [attempt, setAttempt] = useState(0);
+  /** The lowest event id the events held reach back to; null until a read ended, 0 once the newest page of the log was read because there was no message. */
+  const covered = useRef<number | null>(null);
 
   useLiveEvents((event) => {
     if (isChatActivityEvent(event)) setEvents((current) => mergeChatEvents(current, [event]));
   });
 
-  const load = useCallback(() => {
-    const mine = ++generation.current;
+  useEffect(() => {
+    if (floor === undefined) return;
+    const have = covered.current;
+    if (have !== null && (floor === null || floor >= have)) return;
+    let current = true;
     setStatus("loading");
-    readEventLog(api, dotId, { types: CHAT_ACTIVITY_EVENT_TYPES })
-      .then((read) => {
-        if (mine !== generation.current) return;
-        setEvents((current) => mergeChatEvents(current, read));
-        setError(null);
+    const query = { types: CHAT_ACTIVITY_EVENT_TYPES };
+    const read =
+      floor === null
+        ? readRecentEvents(api, dotId, { ...query, count: MAX_EVENT_PAGE })
+        : have === null
+          ? readEventLog(api, dotId, { ...query, after: floor })
+          : readEventRange(api, dotId, { ...query, after: floor, before: have });
+    read
+      .then((found) => {
+        if (!current) return;
+        covered.current = floor ?? 0;
+        setEvents((held) => mergeChatEvents(held, found));
+        setActivityError(null);
         setStatus("loaded");
       })
       .catch((failure: unknown) => {
-        if (mine !== generation.current) return;
-        setError(failure);
+        if (!current) return;
+        setActivityError(failure);
         setStatus("failed");
       });
-  }, [dotId]);
-  useEffect(() => {
-    load();
     return () => {
-      generation.current++;
+      current = false;
     };
-  }, [load]);
+  }, [dotId, floor, attempt]);
 
   const [sent, setSent] = useState<PendingMessage[]>([]);
   const [queued, setQueued] = useState<ReadonlySet<number>>(new Set());
@@ -73,7 +126,7 @@ export function useChat(dotId: string): Chat {
   const counter = useRef(0);
   useLiveEvents(() => setQueued((current) => (current.size === 0 ? current : new Set())), WAKES_THE_DOT);
 
-  const logged = messages.data;
+  const logged = held?.messages;
   const pending = useMemo(() => unsettled(sent, logged ?? []), [sent, logged]);
   // What the log holds now is no longer pending: forget it, so the list does not grow for as long as the page is open.
   useEffect(() => {
@@ -89,7 +142,7 @@ export function useChat(dotId: string): Chat {
         const answer = await api.sendMessage(dotId, text);
         setSent((current) => current.map((p) => (p.key === key ? { ...p, eventId: answer.event_id } : p)));
         if (answer.delivery === "queued") setQueued((current) => new Set(current).add(answer.event_id));
-        messages.reload();
+        readNewest();
         return null;
       } catch (failure) {
         setSent((current) => current.filter((p) => p.key !== key));
@@ -98,9 +151,20 @@ export function useChat(dotId: string): Chat {
         setSending(false);
       }
     },
-    [dotId, messages.reload],
+    [dotId, readNewest],
   );
 
-  const thread = useMemo(() => buildThread(logged ?? [], events), [logged, events]);
-  return { messages, thread, pending, queued, activity: { status, error, retry: load }, send, sending };
+  // Steps from before the oldest message shown (left over when a gap in the messages was dropped, see withNewestPage) are not part of what is shown.
+  const shown = useMemo(() => (floor === null || floor === undefined ? events : events.filter((event) => event.id > floor)), [events, floor]);
+  const thread = useMemo(() => buildThread(logged ?? [], shown), [logged, shown]);
+  return {
+    messages: { data: logged, error },
+    earlier: { available: held?.earlier ?? false, loading: loadingEarlier, error: earlierError, load: loadEarlier },
+    thread,
+    pending,
+    queued,
+    activity: { status, error: activityError, retry: () => setAttempt((n) => n + 1) },
+    send,
+    sending,
+  };
 }

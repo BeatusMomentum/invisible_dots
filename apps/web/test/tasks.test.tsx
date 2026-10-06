@@ -142,8 +142,8 @@ describe("the live progress line", () => {
     await waitFor(() => expect(within(card).getByText("Writing the summary")).toBeTruthy());
     expect(within(card).queryByText("Reading the first source")).toBeNull();
     await waitFor(() => expect(within(card).getByText("$0.31")).toBeTruthy());
-    // The log was read once; the second line came from the stream.
-    expect(requested(/GET \/api\/dots\/d1\/events$/)).toHaveLength(1);
+    // One request for the newest report of that task; the second line came from the stream.
+    expect(plane.eventQueries).toEqual([{ after: 0, limit: 1, types: ["task.progress"], tools: null, taskId: "r1", order: "desc" }]);
   });
 
   it("says plainly that a running task has not reported yet", async () => {
@@ -393,7 +393,7 @@ describe("the task drawer", () => {
     plane.store("d1", "task.progress", { task_id: "t1", text: "Collecting the figures" }, minutesAgo(10));
     plane.store("d1", "tool.called", { task_id: "t1", tool: "exec", permission: "computer.exec", decision: "allow", ok: true, duration_ms: 2500, target: "python3 collect.py" }, minutesAgo(9));
     plane.store("d1", "approval.requested", { task_id: "t1", approval_id: "a1", tool: "write_file", permission: "files.write", reason: "to save report.md", arguments: {} }, minutesAgo(5));
-    plane.store("d1", "approval.resolved", { approval_id: "a1", decision: "approve" }, minutesAgo(4));
+    plane.store("d1", "approval.resolved", { task_id: "t1", approval_id: "a1", decision: "approve" }, minutesAgo(4));
     plane.store("d1", "task.completed", { task_id: "t1", summary: "x" }, minutesAgo(2));
     plane.store("d1", "task.progress", { task_id: "elsewhere", text: "Another task's line" }, minutesAgo(1));
 
@@ -417,6 +417,9 @@ describe("the task drawer", () => {
     // A finished task cannot be cancelled.
     expect(within(drawer).queryByRole("button", { name: /^Cancel/ })).toBeNull();
     expect(requested(/GET \/api\/tasks\/t1$/)).toHaveLength(1);
+    // Its story is read by the task: the rest of the Dot's log is not.
+    expect(plane.eventQueries.length).toBeGreaterThan(0);
+    expect(plane.eventQueries.every((q) => q.taskId === "t1")).toBe(true);
   });
 
   it("shows a failed task's reason as it was given, and a running task's story growing live", async () => {

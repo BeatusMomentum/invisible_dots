@@ -1,9 +1,10 @@
 /**
  * What a task did, read from the Dot's event log: the newest line it reported, and its story step by step for the
- * drawer. The log is the one record of both (the task row keeps only its state, result and spend).
+ * drawer. The log is the one record of both (the task row keeps only its state, result and spend). Both are read by
+ * the task (`task_id`, indexed in the database), so what it costs does not grow with the age of the Dot.
  */
 import type { InvisibleDotsClient } from "@invisible-dots/sdk";
-import { mergeEvents, readEventLog } from "./event-log";
+import { mergeEvents, readEventLog, readRecentEvents } from "./event-log";
 import type { StoredEvent } from "./types";
 
 function text(value: unknown): string {
@@ -27,17 +28,14 @@ export const TASK_EVENT_TYPES: readonly string[] = [
   "approval.resolved",
 ];
 
-/**
- * Whether an event can belong to a task's story: it names a task, or it is an approval's answer, which names only
- * the approval (the story links it to its task through the request).
- */
-export function isTaskEvent(event: Pick<StoredEvent, "type" | "data">): boolean {
-  return taskIdOf(event) !== "" || event.type === "approval.resolved";
+/** Whether an event belongs to a task's story: it names the task (an approval's answer does too, see `approval.resolved`). */
+export function isTaskEvent(event: Pick<StoredEvent, "data">): boolean {
+  return taskIdOf(event) !== "";
 }
 
-/** Every event of the Dot's log that can belong to a task, oldest first: the types of a task's story, of which a tool call or an approval of the chat names no task and is left out. */
-export function loadTaskEvents(client: Pick<InvisibleDotsClient, "events">, dotId: string): Promise<StoredEvent[]> {
-  return readEventLog(client, dotId, { types: TASK_EVENT_TYPES, keep: isTaskEvent });
+/** Every event of one task's story, oldest first; a tool call or an approval of the chat names no task and is not among them. */
+export function readTaskStory(client: Pick<InvisibleDotsClient, "events">, dotId: string, taskId: string): Promise<StoredEvent[]> {
+  return readEventLog(client, dotId, { types: TASK_EVENT_TYPES, taskId });
 }
 
 export function mergeTaskEvents(current: readonly StoredEvent[], incoming: readonly StoredEvent[]): StoredEvent[] {
@@ -45,17 +43,20 @@ export function mergeTaskEvents(current: readonly StoredEvent[], incoming: reado
 }
 
 export interface TaskProgress {
+  /** The id of the event it was reported in: a later one is newer, however it came. */
+  id: number;
   text: string;
   at: string;
 }
 
-/** The newest thing the task said while it worked, or null when it has said nothing (yet). */
-export function progressOf(events: readonly StoredEvent[], taskId: string): TaskProgress | null {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const event = events[i]!;
-    if (event.type === "task.progress" && taskIdOf(event) === taskId) return { text: text(event.data.text), at: event.created_at };
-  }
-  return null;
+export function progressOfEvent(event: Pick<StoredEvent, "id" | "data" | "created_at">): TaskProgress {
+  return { id: event.id, text: text(event.data.text), at: event.created_at };
+}
+
+/** The newest thing the task said while it worked, or null when it has said nothing (yet): one request for the newest report. */
+export async function readTaskProgress(client: Pick<InvisibleDotsClient, "events">, dotId: string, taskId: string): Promise<TaskProgress | null> {
+  const [newest] = await readRecentEvents(client, dotId, { types: ["task.progress"], taskId, count: 1 });
+  return newest === undefined ? null : progressOfEvent(newest);
 }
 
 export type ApprovalOutcome = "waiting" | "approved" | "rejected";
@@ -77,15 +78,6 @@ export function storyOf(events: readonly StoredEvent[], taskId: string): StorySt
   for (const event of events) {
     const base = { id: event.id, at: event.created_at };
     const d = event.data ?? {};
-    if (event.type === "approval.resolved") {
-      const step = approvals.get(text(d.approval_id));
-      if (step) {
-        step.outcome = d.decision === "approve" ? "approved" : "rejected";
-        step.note = text(d.note);
-        step.always = d.always === true;
-      }
-      continue;
-    }
     if (taskIdOf(event) !== taskId) continue;
     switch (event.type) {
       case "task.created":
@@ -122,6 +114,15 @@ export function storyOf(events: readonly StoredEvent[], taskId: string): StorySt
         };
         approvals.set(step.approvalId, step);
         steps.push(step);
+        break;
+      }
+      case "approval.resolved": {
+        const step = approvals.get(text(d.approval_id));
+        if (step) {
+          step.outcome = d.decision === "approve" ? "approved" : "rejected";
+          step.note = text(d.note);
+          step.always = d.always === true;
+        }
         break;
       }
       case "task.completed":

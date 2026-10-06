@@ -1,7 +1,6 @@
 "use client";
 
 import { MessageSquareIcon } from "lucide-react";
-import { CONVERSATION_LIST_LIMIT } from "@invisible-dots/shared/browser";
 import { useEffect, useRef, useState } from "react";
 import { isWorking } from "../../lib/agent";
 import { lastStepSinceUser } from "../../lib/chat-thread";
@@ -82,11 +81,14 @@ function ChatInner({ dotId }: { dotId: string }) {
       <Conversation className="min-h-0 flex-1" aria-label="Conversation">
         <ConversationContent>
           <ErrorAlert error={chat.messages.error} title="Could not load the conversation" />
-          {chat.messages.data !== undefined && chat.messages.data.length >= CONVERSATION_LIST_LIMIT ? (
-            <p role="status" className="rounded-md border bg-muted px-3 py-2 text-xs text-muted-foreground">
-              The first {CONVERSATION_LIST_LIMIT} messages of this conversation are listed. The control plane does not list later ones yet, so the newest are not shown here.
-            </p>
+          {chat.earlier.available ? (
+            <div className="flex justify-center">
+              <Button type="button" variant="outline" size="sm" disabled={chat.earlier.loading} onClick={chat.earlier.load}>
+                {chat.earlier.loading ? "Loading earlier messages..." : "Show earlier messages"}
+              </Button>
+            </div>
           ) : null}
+          <ErrorAlert error={chat.earlier.error} title="Could not load earlier messages" />
           {chat.activity.status === "failed" ? (
             <div role="alert" className="flex flex-wrap items-center gap-2 rounded-md border bg-muted px-3 py-2 text-xs text-muted-foreground">
               <span>What the Dot did between its messages could not be read: {chat.activity.error instanceof Error ? chat.activity.error.message : String(chat.activity.error)}</span>

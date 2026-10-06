@@ -189,8 +189,16 @@ export class InvisibleDotsClient {
     return this.#json("POST", `/api/dots/${enc(idOrName)}/messages`, { body: { text } });
   }
 
-  async messages(idOrName: string): Promise<ConversationMessage[]> {
-    return (await this.#json<MessagesAnswer>("GET", `/api/dots/${enc(idOrName)}/messages`)).messages;
+  /**
+   * The Dot's conversation, oldest first. With `order: "desc"` it is the newest first, `limit` keeps the newest, and
+   * `before` (the `event_id` of the oldest message of the previous page) pages on, older, from there.
+   */
+  async messages(idOrName: string, options: { limit?: number; order?: ListOrder; before?: number } = {}): Promise<ConversationMessage[]> {
+    return (
+      await this.#json<MessagesAnswer>("GET", `/api/dots/${enc(idOrName)}/messages`, {
+        query: { limit: options.limit, order: options.order, before: options.before },
+      })
+    ).messages;
   }
 
   createTask(idOrName: string, request: CreateTaskRequest): Promise<TaskRecord> {

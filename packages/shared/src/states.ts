@@ -71,7 +71,10 @@ export const TERMINAL_TASK_STATES: readonly TaskState[] = ["COMPLETED", "FAILED"
 /** How many of a Dot's tasks (the newest) `GET /api/dots/:id/tasks` answers with; older ones are not reachable. */
 export const TASK_LIST_LIMIT = 200;
 
-/** How many messages (the OLDEST) `GET /api/dots/:id/messages` answers with; later ones are not reachable through it. */
+/**
+ * How many messages `GET /api/dots/:id/messages` answers with at most: by default the OLDEST ones; with `order=desc`
+ * the newest, and `before` (the event id of the oldest message of the last page) pages on, older, from there.
+ */
 export const CONVERSATION_LIST_LIMIT = 500;
 
 /**

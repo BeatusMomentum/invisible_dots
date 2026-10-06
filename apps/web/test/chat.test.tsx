@@ -2,6 +2,7 @@
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CONVERSATION_LIST_LIMIT } from "@invisible-dots/shared/browser";
+import { CHAT_PAGE_SIZE } from "../src/lib/chat-window";
 import { CHAT_ACTIVITY_EVENT_TYPES } from "../src/lib/chat-thread";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -149,27 +150,88 @@ describe("the conversation", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
-        String(input).endsWith("/messages") && (init?.method ?? "GET") === "GET" ? Response.json({ error: "down", message: "the control plane said no" }, { status: 500 }) : real(input, init),
+        new URL(String(input), "http://web.test").pathname.endsWith("/messages") && (init?.method ?? "GET") === "GET" ? Response.json({ error: "down", message: "the control plane said no" }, { status: 500 }) : real(input, init),
       ),
     );
     await renderChat();
     expect((await screen.findByText(/Could not load the conversation/)).closest("[role=alert]")?.textContent).toContain("the control plane said no");
   });
 
-  it("says that only the first messages are listed when the host's list is full", async () => {
-    // The route answers with the oldest CONVERSATION_LIST_LIMIT messages: a list that long may be cut.
-    for (let i = 0; i < CONVERSATION_LIST_LIMIT + 5; i++) plane.store("d1", "message.assistant", { text: `m${i}` });
-    plane.messageLimit = CONVERSATION_LIST_LIMIT;
+  it("opens on the newest page of a long conversation, and goes back a page at a time on request", async () => {
+    const stored = Array.from({ length: 2 * CHAT_PAGE_SIZE + 50 }, (_, i) => plane.store("d1", i % 2 === 0 ? "user.message" : "message.assistant", { text: `m${i}` }));
     await renderChat();
-    const notice = await screen.findByText(/The first 500 messages of this conversation are listed/);
-    expect(notice.getAttribute("role")).toBe("status");
+    const newest = stored.length - 1;
+    await screen.findByText(`m${newest}`);
+    // One request, the newest page: the rest of the conversation is not read to open it.
+    expect(plane.messageQueries).toEqual([{ limit: CHAT_PAGE_SIZE, order: "desc", before: null }]);
+    expect(screen.getByText(`m${newest - CHAT_PAGE_SIZE + 1}`)).toBeTruthy();
+    expect(screen.queryByText(`m${newest - CHAT_PAGE_SIZE}`)).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Show earlier messages" }));
+    await screen.findByText(`m${newest - CHAT_PAGE_SIZE}`);
+    expect(plane.messageQueries.at(-1)).toEqual({ limit: CHAT_PAGE_SIZE, order: "desc", before: stored[stored.length - CHAT_PAGE_SIZE]!.id });
+    expect(screen.getByText(`m${newest - 2 * CHAT_PAGE_SIZE + 1}`)).toBeTruthy();
+    expect(screen.queryByText(`m${newest - 2 * CHAT_PAGE_SIZE}`)).toBeNull();
+
+    await userEvent.click(screen.getByRole("button", { name: "Show earlier messages" }));
+    await screen.findByText("m0");
+    // The last page was short: nothing is earlier.
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Show earlier messages" })).toBeNull());
+    expect(screen.getAllByRole("article")).toHaveLength(stored.length);
   });
 
-  it("does not say it for a conversation that fits", async () => {
+  it("does not offer earlier messages for a conversation that fits one page", async () => {
     plane.store("d1", "message.assistant", { text: "hi" });
     await renderChat();
     await screen.findByText("hi");
-    expect(screen.queryByText(/The first 500 messages/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Show earlier messages" })).toBeNull();
+  });
+
+  it("says so when the earlier messages cannot be read, and keeps what is shown", async () => {
+    for (let i = 0; i < CHAT_PAGE_SIZE + 5; i++) plane.store("d1", "message.assistant", { text: `m${i}` });
+    await renderChat();
+    await screen.findByText(`m${CHAT_PAGE_SIZE + 4}`);
+    const real = plane.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+        String(input).includes("/messages?") && String(input).includes("before=") ? Response.json({ error: "down", message: "the control plane said no" }, { status: 500 }) : real(input, init),
+      ),
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Show earlier messages" }));
+    expect((await screen.findByText(/Could not load earlier messages/)).closest("[role=alert]")?.textContent).toContain("the control plane said no");
+    expect(screen.getByText(`m${CHAT_PAGE_SIZE + 4}`)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Show earlier messages" })).toBeTruthy();
+  });
+
+  it("keeps showing what the Dot says after the conversation passed the length the route used to list", async () => {
+    for (let i = 0; i < CONVERSATION_LIST_LIMIT + 20; i++) plane.store("d1", i % 2 === 0 ? "user.message" : "message.assistant", { text: `m${i}` });
+    await renderChat();
+    await screen.findByText(`m${CONVERSATION_LIST_LIMIT + 19}`);
+    act(() => plane.push("d1", "message.assistant", { text: "a reply far past the five hundredth message" }));
+    expect(await screen.findByText("a reply far past the five hundredth message")).toBeTruthy();
+  });
+
+  it("reads the activity from the oldest message shown on, and the stretch between when going back", async () => {
+    // 150 messages with a tool call before each of them: the call before the first message shown is not in this window.
+    const stored = [];
+    for (let i = 0; i < CHAT_PAGE_SIZE + 50; i++) {
+      plane.store("d1", "tool.called", call({ tool: "list_dir", target: `/call-${i}` }));
+      stored.push(plane.store("d1", "message.assistant", { text: `m${i}` }));
+    }
+    await renderChat();
+    await screen.findByText(`m${CHAT_PAGE_SIZE + 49}`);
+    const oldestShown = stored[50]!;
+    await waitFor(() => expect(plane.eventQueries.length).toBeGreaterThan(0));
+    expect(plane.eventQueries.every((q) => q.after >= oldestShown.id)).toBe(true);
+    expect(plane.eventQueries.every((q) => q.after !== 0)).toBe(true);
+
+    plane.eventQueries.length = 0;
+    await userEvent.click(screen.getByRole("button", { name: "Show earlier messages" }));
+    await screen.findByText("m0");
+    await waitFor(() => expect(plane.eventQueries.length).toBeGreaterThan(0));
+    // Only the stretch before what was read: from the new oldest message up to the old one, newest page first.
+    expect(plane.eventQueries).toEqual([expect.objectContaining({ after: stored[0]!.id, before: oldestShown.id, order: "desc" })]);
   });
 });
 
@@ -439,17 +501,16 @@ describe("the composer", () => {
     await waitFor(() => expect(screen.queryByText(/Queued: the computer is waking up/)).toBeNull());
   });
 
-  it("stops saying it is sending once the control plane answered, though the cut list does not show the message", async () => {
-    for (let i = 0; i < CONVERSATION_LIST_LIMIT; i++) plane.store("d1", "message.assistant", { text: `m${i}` });
-    plane.messageLimit = CONVERSATION_LIST_LIMIT;
+  it("shows a message sent into a long conversation once, with the note of the wake-up", async () => {
+    for (let i = 0; i < CONVERSATION_LIST_LIMIT + 20; i++) plane.store("d1", "message.assistant", { text: `m${i}` });
     plane.delivery = "queued";
     await renderChat();
-    await screen.findByText(/The first 500 messages of this conversation are listed/);
+    await screen.findByText(`m${CONVERSATION_LIST_LIMIT + 19}`);
     await userEvent.type(box(), "after the limit{Enter}");
     await waitFor(() => expect(plane.sentMessages).toEqual(["after the limit"]));
     const bubble = await screen.findByText("after the limit");
-    // Accepted and queued: the conversation list never holds it, so the note must not stay at "Sending...".
     await waitFor(() => expect(bubble.closest("article")?.textContent).toContain("Queued: the computer is waking up"));
+    expect(screen.getAllByText("after the limit")).toHaveLength(1);
     expect(screen.queryByText("Sending...")).toBeNull();
   });
 

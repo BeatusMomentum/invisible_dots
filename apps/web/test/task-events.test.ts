@@ -1,6 +1,6 @@
 import { MAX_EVENT_PAGE, type StoredEvent } from "@invisible-dots/shared/browser";
 import { describe, expect, it } from "vitest";
-import { isTaskEvent, loadTaskEvents, TASK_EVENT_TYPES, mergeTaskEvents, progressOf, storyOf, taskIdOf } from "../src/lib/task-events";
+import { isTaskEvent, readTaskProgress, readTaskStory, TASK_EVENT_TYPES, mergeTaskEvents, storyOf, taskIdOf } from "../src/lib/task-events";
 
 let n = 0;
 function event(type: string, data: Record<string, unknown> = {}, at = `2026-03-10T12:00:${String(n).padStart(2, "0")}Z`): StoredEvent {
@@ -8,11 +8,12 @@ function event(type: string, data: Record<string, unknown> = {}, at = `2026-03-1
   return { id: n, dot_id: "d1", type, data, source: "guest", guest_seq: n, created_at: at } as StoredEvent;
 }
 
-describe("which events can belong to a task", () => {
-  it("are the ones that name a task, and approval answers, which name only the approval", () => {
+describe("which events belong to a task", () => {
+  it("are the ones that name it, an approval's answer among them", () => {
     expect(isTaskEvent(event("task.progress", { task_id: "t1", text: "x" }))).toBe(true);
     expect(isTaskEvent(event("tool.called", { task_id: "t1", tool: "exec" }))).toBe(true);
-    expect(isTaskEvent(event("approval.resolved", { approval_id: "a1", decision: "approve" }))).toBe(true);
+    expect(isTaskEvent(event("approval.resolved", { approval_id: "a1", decision: "approve", task_id: "t1" }))).toBe(true);
+    expect(isTaskEvent(event("approval.resolved", { approval_id: "a2", decision: "approve" }))).toBe(false);
     expect(isTaskEvent(event("tool.called", { tool: "exec" }))).toBe(false);
     expect(isTaskEvent(event("message.assistant", { text: "hi" }))).toBe(false);
     expect(taskIdOf(event("task.started", { task_id: "t9" }))).toBe("t9");
@@ -28,78 +29,93 @@ describe("which events can belong to a task", () => {
   });
 });
 
-describe("loadTaskEvents", () => {
-  /** The control plane's `types` filter: the limit counts what is kept. */
+describe("readTaskStory", () => {
+  /** The control plane's `types` and `task_id` filters: the limit counts what is kept. */
   function serving(log: StoredEvent[]) {
-    const asked: Array<{ after?: number; limit?: number; types?: readonly string[] }> = [];
+    const asked: Array<{ after?: number; before?: number; limit?: number; types?: readonly string[]; taskId?: string; order?: string }> = [];
     return {
       asked,
-      async events(_dot: string, options: { after?: number; limit?: number; types?: readonly string[] } = {}) {
+      async events(_dot: string, options: { after?: number; before?: number; limit?: number; types?: readonly string[]; taskId?: string; order?: "asc" | "desc" } = {}) {
         asked.push(options);
-        return log.filter((e) => e.id > (options.after ?? 0) && (!options.types || options.types.includes(e.type))).slice(0, options.limit);
+        const kept = log.filter(
+          (e) => e.id > (options.after ?? 0) && (options.before === undefined || e.id < options.before) && (!options.types || options.types.includes(e.type)) && (options.taskId === undefined || e.data.task_id === options.taskId),
+        );
+        return (options.order === "desc" ? [...kept].reverse() : kept).slice(0, options.limit);
       },
     };
   }
 
-  it("asks for the types of a task's story and reads them page by page to the end", async () => {
+  it("asks for the events of that task and of the types of a story, page by page to the end, and nothing else crosses the wire", async () => {
     const log: StoredEvent[] = [];
-    for (let i = 0; i < 2 * MAX_EVENT_PAGE + 300; i++) log.push(i % 2 === 0 ? event("task.progress", { task_id: "t1", text: `p${i}` }) : event("agent.state", { state: "IDLE" }));
+    for (let i = 0; i < 3 * MAX_EVENT_PAGE + 300; i++) {
+      log.push(i % 3 === 0 ? event("task.progress", { task_id: "t1", text: `p${i}` }) : i % 3 === 1 ? event("task.progress", { task_id: "t2", text: `q${i}` }) : event("agent.state", { state: "IDLE" }));
+    }
     const client = serving(log);
-    const read = await loadTaskEvents(client, "d1");
-    expect(read).toHaveLength(MAX_EVENT_PAGE + 150);
-    expect(read.every((e) => e.type === "task.progress")).toBe(true);
-    // The agent's state never crossed the wire: 1150 kept events are a full page and a short one.
+    const read = await readTaskStory(client, "d1", "t1");
+    expect(read).toHaveLength(MAX_EVENT_PAGE + 100);
+    expect(read.every((e) => e.type === "task.progress" && e.data.task_id === "t1")).toBe(true);
     expect(client.asked.map((a) => a.types)).toEqual([TASK_EVENT_TYPES, TASK_EVENT_TYPES]);
+    expect(client.asked.map((a) => a.taskId)).toEqual(["t1", "t1"]);
     expect(client.asked.map((a) => a.limit)).toEqual([MAX_EVENT_PAGE, MAX_EVENT_PAGE]);
     expect(client.asked[1]!.after).toBe(read[MAX_EVENT_PAGE - 1]!.id);
   });
 
-  it("leaves out the tool calls and approvals of the chat, which name no task", async () => {
+  it("holds the approval and its answer, and no tool call or approval of the chat", async () => {
     const log = [
       event("tool.called", { tool: "exec", task_id: "t1" }),
       event("tool.called", { tool: "exec" }),
       event("approval.requested", { approval_id: "a1", tool: "exec" }),
       event("approval.requested", { approval_id: "a2", tool: "exec", task_id: "t1" }),
-      event("approval.resolved", { approval_id: "a2", decision: "approve" }),
+      event("approval.resolved", { approval_id: "a1", decision: "approve" }),
+      event("approval.resolved", { approval_id: "a2", decision: "approve", task_id: "t1" }),
       event("message.assistant", { text: "hi" }),
     ];
-    const read = await loadTaskEvents(serving(log), "d1");
-    expect(read.map((e) => e.id)).toEqual([log[0]!.id, log[3]!.id, log[4]!.id]);
+    const read = await readTaskStory(serving(log), "d1", "t1");
+    expect(read.map((e) => e.id)).toEqual([log[0]!.id, log[3]!.id, log[5]!.id]);
   });
 
   it("ends on a page that is exactly full only after asking once more", async () => {
     const log = Array.from({ length: MAX_EVENT_PAGE }, (_, i) => event("task.progress", { task_id: "t1", text: String(i) }));
     const client = serving(log);
-    expect(await loadTaskEvents(client, "d1")).toHaveLength(MAX_EVENT_PAGE);
+    expect(await readTaskStory(client, "d1", "t1")).toHaveLength(MAX_EVENT_PAGE);
     expect(client.asked).toHaveLength(2);
   });
 
   it("lets a failure through", async () => {
     await expect(
-      loadTaskEvents(
+      readTaskStory(
         {
           async events() {
             throw new Error("the log is down");
           },
         },
         "d1",
+        "t1",
       ),
     ).rejects.toThrow("the log is down");
   });
 });
 
-describe("progressOf", () => {
-  it("is the newest progress line of that task, or null", () => {
-    const events = [
+describe("readTaskProgress", () => {
+  it("asks once for the newest progress line of that task, and is null for a task that has said nothing", async () => {
+    const log = [
       event("task.progress", { task_id: "t1", text: "first" }),
       event("task.progress", { task_id: "t2", text: "other task" }),
       event("task.progress", { task_id: "t1", text: "second" }),
       event("tool.called", { task_id: "t1", tool: "exec" }),
     ];
-    expect(progressOf(events, "t1")?.text).toBe("second");
-    expect(progressOf(events, "t2")?.text).toBe("other task");
-    expect(progressOf(events, "t3")).toBeNull();
-    expect(progressOf([], "t1")).toBeNull();
+    const asked: unknown[] = [];
+    const client = {
+      async events(_dot: string, options: { limit?: number; types?: readonly string[]; taskId?: string; order?: "asc" | "desc" } = {}) {
+        asked.push(options);
+        const kept = log.filter((e) => options.types?.includes(e.type) && e.data.task_id === options.taskId);
+        return (options.order === "desc" ? [...kept].reverse() : kept).slice(0, options.limit);
+      },
+    };
+    expect(await readTaskProgress(client, "d1", "t1")).toMatchObject({ id: log[2]!.id, text: "second" });
+    expect(asked).toEqual([{ limit: 1, types: ["task.progress"], taskId: "t1", order: "desc" }]);
+    expect((await readTaskProgress(client, "d1", "t2"))?.text).toBe("other task");
+    expect(await readTaskProgress(client, "d1", "t3")).toBeNull();
   });
 });
 
@@ -111,8 +127,8 @@ describe("storyOf", () => {
     event("tool.called", { task_id: "t1", tool: "exec", permission: "computer.exec", decision: "allow", ok: true, duration_ms: 1200, target: "ls -la" }),
     event("tool.called", { task_id: "t2", tool: "exec", decision: "allow", ok: true, duration_ms: 5 }),
     event("approval.requested", { task_id: "t1", approval_id: "a1", tool: "write_file", permission: "files.write", reason: "needs to save the report", arguments: {} }),
-    event("approval.resolved", { approval_id: "a1", decision: "approve", note: "go on" }),
-    event("approval.resolved", { approval_id: "other", decision: "reject" }),
+    event("approval.resolved", { task_id: "t1", approval_id: "a1", decision: "approve", note: "go on" }),
+    event("approval.resolved", { task_id: "t2", approval_id: "other", decision: "reject" }),
     event("tool.called", { task_id: "t1", tool: "browser_navigate", decision: "deny", ok: false, duration_ms: 0 }),
     event("tool.called", { task_id: "t1", tool: "exec", decision: "allow", ok: false, duration_ms: 0, interrupted: true }),
     event("task.completed", { task_id: "t1", summary: "Done: **report.md**" }),

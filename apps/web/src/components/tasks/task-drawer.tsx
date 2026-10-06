@@ -20,7 +20,7 @@ import { Skeleton } from "../ui/skeleton";
 import { CancelTaskButton } from "./cancel-task";
 import { Story } from "./story";
 import { TaskStatus } from "./task-status";
-import { useTasks } from "./tasks-data";
+import { useTaskStory, useTasks } from "./tasks-data";
 
 const TASK_EVENTS = ["task.started", "task.progress", "task.completed", "task.failed", "task.cancelled", "approval.requested", "approval.resolved"];
 
@@ -39,7 +39,7 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
  * alone, so a task of another Dot is as good as missing here: this address is one Dot's.
  */
 export function TaskDrawer({ taskId }: { taskId: string }) {
-  const { dotId, tasks, history } = useTasks();
+  const { dotId, tasks } = useTasks();
   const router = useRouter();
   const task = useResource(() => api.getTask(taskId), `task:${taskId}`);
   useLiveRefresh(task.reload, TASK_EVENTS);
@@ -49,6 +49,7 @@ export function TaskDrawer({ taskId }: { taskId: string }) {
   const record = dot.data !== undefined && !foreign ? task.data : undefined;
   const now = useNow(1000, record !== undefined && !isFinished(record.status));
   const close = () => router.push(`/dots/${encodeURIComponent(dotId)}/tasks`);
+  const history = useTaskStory(dotId, taskId, record !== undefined);
   const missing = foreign || (task.error instanceof ApiError && task.error.status === 404);
 
   return (

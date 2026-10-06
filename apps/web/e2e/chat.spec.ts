@@ -83,6 +83,28 @@ test("the person talks to the Dot: the working row follows the turn, the steps s
   await expect(page.getByRole("log").getByText("trips/lisbon.md", { exact: true })).toBeVisible();
 });
 
+test("a conversation longer than a page opens on its newest messages, and goes back a page at a time", async ({ signedIn: page, harness }) => {
+  const dot = await harness.createDot("chat-long");
+  // 60 questions, each answered by the fake guest's echo: 120 messages, one page and a bit.
+  for (let i = 0; i < 60; i++) await harness.api.sendMessage(dot.id, `question ${i}`);
+  await expect.poll(async () => (await harness.api.messages(dot.id)).length).toBe(120);
+
+  await page.goto(`${harness.webUrl}/dots/${dot.id}/chat`);
+  const log = page.getByRole("log");
+  await expect(log.getByText("echo: question 59", { exact: true })).toBeVisible();
+  await expect(log.getByText("question 0", { exact: true })).toHaveCount(0);
+  await expect(log.getByRole("article")).toHaveCount(100);
+
+  await page.getByRole("button", { name: "Show earlier messages" }).click();
+  await expect(log.getByText("question 0", { exact: true })).toBeVisible();
+  await expect(log.getByRole("article")).toHaveCount(120);
+  await expect(page.getByRole("button", { name: "Show earlier messages" })).toHaveCount(0);
+
+  // What the Dot says next still shows below, after the page that was read.
+  harness.driver.guestOf(dot.id).emit("message.assistant", { text: "one more, live" });
+  await expect(log.getByText("one more, live")).toBeVisible();
+});
+
 test("an approval the Dot asks for in the chat is a card where it was asked, the person answers it there, and its answer is a receipt", async ({ signedIn: page, harness }) => {
   const dot = await harness.createDot("chat-approval");
   const guest = harness.driver.guestOf(dot.id);

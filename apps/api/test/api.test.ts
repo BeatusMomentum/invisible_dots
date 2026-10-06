@@ -530,6 +530,31 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     await expect(api.sendMessage(dot.id, "  ")).rejects.toMatchObject({ status: 400 });
   });
 
+  it("messages: the newest page of a long conversation, and a cursor that goes back through the rest", async () => {
+    const dot = await readyDot("chatty");
+    for (const [index, word] of ["one", "two", "three"].entries()) {
+      await api.sendMessage(dot.id, word);
+      await waitFor(async () => (await api.messages(dot.id)).length === 2 * (index + 1), `reply to ${word}`);
+    }
+    const all = await api.messages(dot.id);
+    expect(all.length).toBe(6);
+    // The default is the oldest first, so a limit keeps the oldest: only `order=desc` reaches the newest.
+    expect((await api.messages(dot.id, { limit: 2 })).map((m) => m.event_id)).toEqual(all.slice(0, 2).map((m) => m.event_id));
+    const newest = await api.messages(dot.id, { order: "desc", limit: 2 });
+    expect(newest.map((m) => m.event_id)).toEqual(all.slice(4).map((m) => m.event_id).reverse());
+    const older = await api.messages(dot.id, { order: "desc", limit: 3, before: newest.at(-1)!.event_id });
+    expect(older.map((m) => m.event_id)).toEqual(all.slice(1, 4).map((m) => m.event_id).reverse());
+    expect(await api.messages(dot.id, { order: "desc", before: all[0]!.event_id })).toEqual([]);
+
+    const get = async (query: string) => (await fetch(`${base}/api/dots/${dot.id}/messages?${query}`, { headers: { authorization: `Bearer ${TOKEN}` } })).status;
+    expect(await get("limit=0")).toBe(400);
+    expect(await get("limit=501")).toBe(400);
+    expect(await get("order=newest")).toBe(400);
+    expect(await get(`before=${all[0]!.event_id}`)).toBe(400);
+    expect(await get("order=desc&before=-1")).toBe(400);
+    expect(await get(`order=desc&before=${all[0]!.event_id}&limit=1`)).toBe(200);
+  });
+
   it("messages: the HTTP route cannot claim a channel origin", async () => {
     const dot = await readyDot("impostor");
     const origin = { channel: "telegram", binding_id: "chb_1", chat_id: "1", external_id: "2" };

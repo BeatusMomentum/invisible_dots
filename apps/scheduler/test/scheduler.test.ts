@@ -256,7 +256,8 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     expect(guest.config?.name).toBe("always-allow");
     const events = await db.events.list({ dotId: dot.id, types: ["approval.resolved", "dot.updated"] });
     expect(events.map((e) => [e.type, e.data])).toEqual([
-      ["approval.resolved", { approval_id: approval.id, decision: "approve", note: "fine", always: true }],
+      // The task the approval was asked in is named, so that the events of the task hold the answer.
+      ["approval.resolved", { approval_id: approval.id, decision: "approve", task_id: task.id, note: "fine", always: true }],
       ["dot.updated", { name: "always-allow", pushed_to_guest: true }],
     ]);
     // The guest is told the plain decision: what the config says is the guest's own business.
