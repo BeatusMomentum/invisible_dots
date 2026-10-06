@@ -179,7 +179,11 @@ async def _serve() -> None:
         if state["lose_browser"]:
             state["lose_browser"] = bool(control.get("lose_browser_always", False))
             state["open"] = False
-            return text(f"the {role} browser is gone: it closed or crashed. Call browser_open to open it again.", error=True)
+            return text(
+                f"the {role} browser is gone: it closed or crashed. Call browser_open to open it again; "
+                "it comes back as the same person.",
+                error=True,
+            )
 
         if name == "browser_status":
             return text(f"the {role} browser is open on {state['url']}")
@@ -226,7 +230,10 @@ async def _serve() -> None:
 
     @server.list_tools()
     async def list_tools() -> list[types.Tool]:
-        return [types.Tool(name=tool["name"], inputSchema=tool["inputSchema"]) for tool in tools.values()]
+        return [
+            types.Tool(name=tool["name"], description=tool["description"], inputSchema=tool["inputSchema"])
+            for tool in tools.values()
+        ]
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> types.CallToolResult:

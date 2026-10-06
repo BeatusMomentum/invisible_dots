@@ -190,11 +190,11 @@
       "case": "an https proxy",
       "input": {
         "name": "Work",
-        "proxy": "https://proxy.example.com"
+        "proxy": "https://proxy.example.com:8443"
       },
       "ok": {
         "name": "Work",
-        "proxy": "https://proxy.example.com"
+        "proxy": "https://proxy.example.com:8443"
       }
     },
     {
@@ -360,6 +360,105 @@
       "error": {
         "code": "invalid",
         "message": "proxy must use http, https, socks4 or socks5 and name a host; got \"localhost:8080\""
+      }
+    },
+    {
+      "case": "a proxy without a port is refused: the browser's server would refuse it at launch, printing the password",
+      "input": {
+        "name": "Work",
+        "proxy": "https://proxy.example.com"
+      },
+      "error": {
+        "code": "invalid",
+        "message": "proxy must name a port, as in http://host:8080; got \"https://proxy.example.com\""
+      }
+    },
+    {
+      "case": "a port-less proxy with credentials is refused and the message never carries the password",
+      "input": {
+        "name": "Work",
+        "proxy": "http://user:hunter2@host"
+      },
+      "error": {
+        "code": "invalid",
+        "message": "proxy must name a port, as in http://host:8080; got \"http://user:***@host\""
+      }
+    },
+    {
+      "case": "a socks5 proxy without a port is refused",
+      "input": {
+        "name": "Work",
+        "proxy": "socks5://10.0.0.1"
+      },
+      "error": {
+        "code": "invalid",
+        "message": "proxy must name a port, as in http://host:8080; got \"socks5://10.0.0.1\""
+      }
+    },
+    {
+      "case": "an empty port is no port",
+      "input": {
+        "name": "Work",
+        "proxy": "http://host:"
+      },
+      "error": {
+        "code": "invalid",
+        "message": "proxy must name a port, as in http://host:8080; got \"http://host\""
+      }
+    },
+    {
+      "case": "an IPv6 host without a port is refused",
+      "input": {
+        "name": "Work",
+        "proxy": "http://[::1]"
+      },
+      "error": {
+        "code": "invalid",
+        "message": "proxy must name a port, as in http://host:8080; got \"http://[::1]\""
+      }
+    },
+    {
+      "case": "a path after a port-less host does not count as a port",
+      "input": {
+        "name": "Work",
+        "proxy": "http://host/a:8080"
+      },
+      "error": {
+        "code": "invalid",
+        "message": "proxy must name a port, as in http://host:8080; got \"http://host/a:8080\""
+      }
+    },
+    {
+      "case": "the default port of the scheme, written, is a port",
+      "input": {
+        "name": "Work",
+        "proxy": "http://host:80"
+      },
+      "ok": {
+        "name": "Work",
+        "proxy": "http://host:80"
+      }
+    },
+    {
+      "case": "the default https port, written, is a port",
+      "input": {
+        "name": "Work",
+        "proxy": "https://u:p@host:443"
+      },
+      "ok": {
+        "name": "Work",
+        "proxy": "https://u:p@host:443"
+      }
+    },
+    {
+      "case": "a port after a password that holds a colon",
+      "input": {
+        "name": "Work",
+        "proxy": "http://user:a:b@host:8080"
+      },
+      "ok": {
+        "name": "Work",
+        "proxy": "http://user:a:b@host:8080"
       }
     },
     {

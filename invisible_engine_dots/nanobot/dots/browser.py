@@ -24,8 +24,12 @@ Three rules shape this module:
   close or a delete of another one. Calls on one identity are serialized by that identity's own lock.
 
 An action on a closed identity does not launch it: it fails with `not_open`, so `browser.identity.launch`
-decides alone whether a browser starts. An identity whose process ended (`crashed`) is closed, the
-`closed` event is emitted once, and the next action says `not_open` like any other.
+decides alone whether a browser starts. An identity whose process ended, or whose browser the server reports
+gone while the process lives on (Firefox crashed, its window was closed), is closed the same way: the `closed`
+event is emitted once, the call that found out fails with `crashed`, and the next action says `not_open` like
+any other. Nothing reopens a browser behind the model's back: the library took that out on purpose (a
+repeated click lands on a blank page), and the model, which cannot call `browser_open`, is told to launch
+the identity again.
 """
 
 from __future__ import annotations
@@ -57,7 +61,7 @@ from nanobot.dots.identity_rules import (
     new_identity_id,
     redact_proxy,
 )
-from nanobot.dots.protocol import BROWSER_ENV, BROWSERS_DIR, GUEST_DISPLAY
+from nanobot.dots.protocol import BROWSER_ENV, BROWSERS_DIR, GEOIP_DATABASE, GUEST_DISPLAY
 from nanobot.dots.store import BrowserIdentityRow, DotStore
 
 # The MCP server's own browser, the one carrying the identity. The server also has a `support` browser;
@@ -69,8 +73,14 @@ SERVER_NAME = "browser"
 # What `browser_open` answers when the browser started. Anything else that is not an error is the
 # engine's download progress, and it is asked again.
 _OPENED = re.compile(r"\bbrowser is open\b", re.IGNORECASE)
-# What the server answers when its browser closed under it while the process lives on (Firefox crashed).
+# What the server answers when its browser closed under it while the process lives on (Firefox crashed): its
+# GONE and NOT_OPEN sentences (invisible_playwright_mcp/mcp/__init__.py, in the MCP's own environment, so there
+# is nothing importable to call).
 _BROWSER_LOST = re.compile(r"\bbrowser is (?:gone|not open)\b", re.IGNORECASE)
+
+# Why a session ended without a close of ours, as the log says it.
+_PROCESS_ENDED = "the MCP server exited unexpectedly"
+_BROWSER_GONE = "the MCP server reports its browser gone (Firefox crashed or its window was closed)"
 
 _DATA_URL = "data:"
 
@@ -384,9 +394,10 @@ class BrowserManager:
         """Call a tool of the identity's MCP server, with `browser: "main"` added to its arguments.
 
         Returns what nanobot's MCP client returns: text, or a list of content blocks when the result has
-        an image, and an error as a `ToolResult` with `is_error`. When the server says its browser is gone
-        while its process lives on, the browser is opened again and the call repeated once. Raises
-        `not_open` for an identity that is not open and `crashed` when its process ended.
+        an image, and an error as a `ToolResult` with `is_error`. Raises `not_open` for an identity that is
+        not open, and `crashed` when its process ended or when the server says its browser is gone: the
+        identity is closed first, so the model launches it again instead of repeating a call on a page
+        that is no longer there.
         """
         session = self._sessions.get(identity_id) if is_valid_identity_id(identity_id) else None
         if session is None or session.state != "open":
@@ -396,22 +407,20 @@ class BrowserManager:
                 raise self._not_open(identity_id)
             self._touch(identity_id)
             result = await self._request(session, tool, arguments or {})
-            if result_is_error(result) and _BROWSER_LOST.search(result_text(result)) and not session.terminated:
-                # The process is alive but its browser closed under it (Firefox crashed, or its window was
-                # closed): open it again and repeat once.
-                logger.warning(
-                    "browser identity {}: the MCP server reports its browser closed; reopening it and repeating {}",
-                    identity_id,
-                    tool,
-                )
-                await self._open_browser(session)
-                result = await self._request(session, tool, arguments or {})
             if session.terminated:
                 await self._process_ended(session)
                 raise BrowserIdentityError(
                     "crashed",
                     f'the browser process of identity "{identity_id}" exited during {tool}; '
                     "the identity is closed, launch it again",
+                )
+            if self._is_browser_lost(result):
+                await self._browser_lost(session)
+                raise BrowserIdentityError(
+                    "crashed",
+                    f'the browser of identity "{identity_id}" is gone: it closed or crashed during {tool}. '
+                    "The identity is closed and keeps its profile: call browser_identity_launch to open it "
+                    "again as the same person, then navigate again, because it comes back on a blank page",
                 )
             return result
 
@@ -447,7 +456,9 @@ class BrowserManager:
             session.calls.release()
         text = result_text(result)
         if result_is_error(result):
-            if _BROWSER_LOST.search(text):
+            if self._is_browser_lost(result):
+                # The same fact a call finds out: the identity is closed now, not "open" with nothing to show.
+                await self._browser_lost(session)
                 raise self._not_open(identity_id)
             raise BrowserIdentityError("frame_failed", f'no frame of identity "{identity_id}": {text}')
         _, images = split_result(result)
@@ -529,6 +540,12 @@ class BrowserManager:
             BROWSER_ENV["PROFILE_DIR"]: profile,
             BROWSER_ENV["HEADLESS"]: "0",
             BROWSER_ENV["DISPLAY"]: self._display,
+            # The library's own knob for the GeoIP file: it uses this one as it is, with no lookup of a newer release
+            # (which would download one, delete the pinned one and contact GitHub at every launch).
+            BROWSER_ENV["GEOIP_MMDB"]: GEOIP_DATABASE,
+            # invisible_core reinstalls itself from the package index when its version drifts; the image installed it
+            # from a hashed lock, and a drift has to fail loudly instead of bringing in files nobody checked.
+            BROWSER_ENV["CORE_AUTOFIX"]: "off",
         }
         # The proxy carries a password: it goes to the relay by its environment, never by its command line,
         # which every user of the VM can read in /proc.
@@ -691,23 +708,38 @@ class BrowserManager:
         A session that is opening or closing is not touched: its launch or its close sees `terminated`.
         """
         if session.state == "open" and self._sessions.get(session.identity_id) is session:
-            self._end_session(session)
+            self._end_session(session, _PROCESS_ENDED)
 
-    def _end_session(self, session: _Session) -> asyncio.Task[None]:
-        """The one task that closes a session whose process is gone, started by whoever finds out first."""
+    def _end_session(self, session: _Session, why: str) -> asyncio.Task[None]:
+        """The one task that closes a session that cannot be used any more, started by whoever finds out first.
+
+        `why` is what the first of them found, for the log: the process is gone, or it lives on without its browser.
+        """
         if session.ended is None:
-            session.ended = self._spawn(self._close_ended(session))
+            session.ended = self._spawn(self._close_ended(session, why))
         return session.ended
 
     async def _process_ended(self, session: _Session) -> None:
         """The MCP process is gone: wait until the identity is closed and `closed` is emitted."""
-        await asyncio.wait({self._end_session(session)})
+        await asyncio.wait({self._end_session(session, _PROCESS_ENDED)})
 
-    async def _close_ended(self, session: _Session) -> None:
-        """Close the identity of a session whose process is gone, and emit `closed` once."""
+    async def _browser_lost(self, session: _Session) -> None:
+        """The server says its browser is gone while its process lives on: close the identity, emit `closed`.
+
+        The process is stopped as well. Its browser is not coming back (the server never opens one by itself,
+        that is the library's rule), and a launch makes a process of its own.
+        """
+        await asyncio.wait({self._end_session(session, _BROWSER_GONE)})
+
+    @staticmethod
+    def _is_browser_lost(result: Any) -> bool:
+        return result_is_error(result) and _BROWSER_LOST.search(result_text(result)) is not None
+
+    async def _close_ended(self, session: _Session, why: str) -> None:
+        """Close the identity of a session that cannot be used any more, and emit `closed` once."""
         if not self._forget(session):
             return
-        logger.warning("browser identity {}: the MCP server exited unexpectedly", session.identity_id)
+        logger.warning("browser identity {}: {}", session.identity_id, why)
         await session.provider.aclose()
         self._emit_closed(session.identity_id)
 

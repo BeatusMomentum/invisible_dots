@@ -31,7 +31,7 @@ from nanobot.dots.browser import (
     result_is_error,
     result_text,
 )
-from nanobot.dots.protocol import BROWSER_ENV
+from nanobot.dots.protocol import BROWSER_ENV, GEOIP_DATABASE
 from nanobot.dots.store import DotStore
 
 FAST = {"open_retry_initial_s": 0.01, "open_retry_max_s": 0.02}
@@ -257,6 +257,10 @@ async def test_starts_the_server_as_dot_through_the_relay_with_the_environment_o
     assert environment[BROWSER_ENV["HEADLESS"]] == "0"
     assert environment[BROWSER_ENV["DISPLAY"]] == ":7"
     assert environment[BROWSER_ENV["PROXY"]] == "http://user:pw@proxy.test:8080"
+    # The library's knobs: the image's GeoIP file as it is (no lookup of a newer release at a launch), and no
+    # self-repair of invisible_core from the package index.
+    assert environment[BROWSER_ENV["GEOIP_MMDB"]] == GEOIP_DATABASE == "/usr/local/share/invisible-dots/geoip-aio-all.mmdb"
+    assert environment[BROWSER_ENV["CORE_AUTOFIX"]] == "off"
     assert "OPENROUTER_API_KEY" not in environment and "SOME_OTHER_SECRET" not in environment
     assert start["cwd"] == str(root)
 
@@ -269,7 +273,8 @@ async def test_starts_the_server_as_dot_through_the_relay_with_the_environment_o
     assert len(mcp_runs) == 1
     assert mcp_runs[0]["cwd"] == str(root)
     assert [pair.partition("=")[0] for pair in mcp_runs[0]["env"]] == [
-        BROWSER_ENV[name] for name in ("MCP_HOME", "MCP_SESSION_ID", "PROFILE_DIR", "HEADLESS", "DISPLAY")
+        BROWSER_ENV[name]
+        for name in ("MCP_HOME", "MCP_SESSION_ID", "PROFILE_DIR", "HEADLESS", "DISPLAY", "GEOIP_MMDB", "CORE_AUTOFIX")
     ]
     assert mcp_runs[0]["env_from"] == [BROWSER_ENV["PROXY"]]
     assert "user:pw" not in json.dumps(mcp_runs[0])
@@ -655,41 +660,80 @@ async def test_a_process_that_dies_while_idle_closes_its_identity_at_once_and_fr
     assert after is not None and after.status == "available"
 
 
-async def test_reopens_the_browser_once_when_the_server_says_it_is_gone(env: Env) -> None:
+def _process_is_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+async def test_a_browser_the_server_says_is_gone_closes_the_identity_and_is_not_reopened_behind_the_model(env: Env) -> None:
     manager = env.manager()
     identity = await manager.create("lost browser")
     write_control(env.mcp_home(identity.id), lose_browser_once=True)
     await manager.launch(identity.id)
+    [start] = [entry for entry in env.record(identity.id) if entry["kind"] == "start"]
 
+    with pytest.raises(BrowserIdentityError) as lost:
+        await manager.call_tool(identity.id, "browser_snapshot")
+
+    # The model is told in its own vocabulary what the library says (the browser is gone, it came back as the
+    # same person) and what to call: it cannot call browser_open, the launch is its way.
+    assert lost.value.code == "crashed"
+    assert lost.value.message == (
+        f'the browser of identity "{identity.id}" is gone: it closed or crashed during browser_snapshot. '
+        "The identity is closed and keeps its profile: call browser_identity_launch to open it again as the same "
+        "person, then navigate again, because it comes back on a blank page"
+    )
+    assert "browser_open" not in lost.value.message
+    # One call, no browser_open and no second snapshot: nothing was repeated and nothing was opened.
+    assert [name for name, _ in env.calls(identity.id)] == ["browser_open", "browser_snapshot"]
+    assert not manager.is_open(identity.id) and manager.open_count == 0
+    after = manager.get(identity.id)
+    assert after is not None and after.status == "available"
+    assert env.event_types() == ["browser.identity.created", "browser.identity.launched", "browser.identity.closed"]
+    # The server's process is stopped with the identity (its browser is not coming back), as a close stops it.
+    await _until(lambda: not _process_is_alive(start["pid"]))
+    with pytest.raises(BrowserIdentityError) as next_action:
+        await manager.call_tool(identity.id, "browser_snapshot")
+    assert next_action.value.code == "not_open"
+    assert [name for name, _ in env.calls(identity.id)] == ["browser_open", "browser_snapshot"]
+
+
+async def test_the_launch_that_follows_a_lost_browser_makes_a_new_server_and_the_identity_works_again(env: Env) -> None:
+    manager = env.manager()
+    identity = await manager.create("lost, then launched")
+    write_control(env.mcp_home(identity.id), lose_browser_once=True)
+    await manager.launch(identity.id)
+    with pytest.raises(BrowserIdentityError):
+        await manager.call_tool(identity.id, "browser_snapshot")
+
+    write_control(env.mcp_home(identity.id))
+    await manager.launch(identity.id)
     result = await manager.call_tool(identity.id, "browser_snapshot")
 
     assert not result_is_error(result)
     assert "selector: #go" in result_text(result)
-    assert [name for name, _ in env.calls(identity.id)] == [
-        "browser_open",
-        "browser_snapshot",
-        "browser_open",
-        "browser_snapshot",
-    ]
-    assert env.event_types().count("browser.identity.launched") == 1
+    starts = [entry for entry in env.record(identity.id) if entry["kind"] == "start"]
+    assert len(starts) == 2 and starts[0]["pid"] != starts[1]["pid"]
+    assert env.event_types().count("browser.identity.launched") == 2
+    assert env.event_types().count("browser.identity.closed") == 1
 
 
-async def test_reopens_only_once_and_then_returns_what_the_server_said(env: Env) -> None:
-    manager = env.manager()
-    identity = await manager.create("lost twice")
-    write_control(env.mcp_home(identity.id), lose_browser_always=True)
-    await manager.launch(identity.id)
+async def test_a_lost_browser_frees_its_slot_of_max_open(env: Env) -> None:
+    manager = env.manager(max_open=1)
+    a, b = [await manager.create(name) for name in ("lost a", "other b")]
+    write_control(env.mcp_home(a.id), lose_browser_always=True)
+    await manager.launch(a.id)
+    with pytest.raises(BrowserIdentityError):
+        await manager.call_tool(a.id, "browser_snapshot")
 
-    result = await manager.call_tool(identity.id, "browser_snapshot")
+    await manager.launch(b.id)
 
-    assert result_is_error(result) and "browser is gone" in result_text(result)
-    assert [name for name, _ in env.calls(identity.id)] == [
-        "browser_open",
-        "browser_snapshot",
-        "browser_open",
-        "browser_snapshot",
-    ]
-    assert manager.is_open(identity.id)
+    # The identity that was lost holds no slot, so b opened without closing anything that lived.
+    assert [manager.is_open(i.id) for i in (a, b)] == [False, True]
+    assert env.event_types().count("browser.identity.closed") == 1
 
 
 async def test_set_limits_closes_only_the_sessions_beyond_a_lower_max_open_and_caps_new_identities(env: Env) -> None:
@@ -1138,7 +1182,7 @@ async def test_a_frame_waits_for_the_call_in_flight_only_so_long_and_then_says_b
     assert names == ["browser_open", "browser_navigate", "browser_watch"]
 
 
-async def test_a_frame_does_not_open_a_browser_the_server_lost(env: Env) -> None:
+async def test_a_frame_does_not_open_a_browser_the_server_lost_and_closes_the_identity_like_a_call(env: Env) -> None:
     manager = env.manager()
     identity = await manager.create("lost for the frame")
     write_control(env.mcp_home(identity.id), lose_browser_always=True)
@@ -1149,7 +1193,13 @@ async def test_a_frame_does_not_open_a_browser_the_server_lost(env: Env) -> None
 
     assert lost.value.code == "not_open"
     assert [name for name, _ in env.calls(identity.id)] == ["browser_open", "browser_watch"]
-    assert manager.is_open(identity.id)
+    # Not "open" with nothing to show: the identity is closed and says so once, as for a call that finds out.
+    assert not manager.is_open(identity.id)
+    assert env.event_types() == ["browser.identity.created", "browser.identity.launched", "browser.identity.closed"]
+    with pytest.raises(BrowserIdentityError) as again:
+        await manager.frame(identity.id)
+    assert again.value.code == "not_open"
+    assert env.event_types().count("browser.identity.closed") == 1
 
 
 async def test_a_frame_the_server_cannot_give_is_a_frame_failure_with_its_reason(env: Env) -> None:

@@ -133,11 +133,19 @@ PAGE_TOOLS: Mapping[str, PageTool] = {
         ),
         PageTool(
             "browser_read_text",
-            "Read the text of the page of an identity, or of the element a selector names." + _OPEN_FIRST,
+            "Read the text of the page of an identity, or of the element a selector names. Long text is cut and the "
+            "cut is marked: raise max_chars, or narrow the selector." + _OPEN_FIRST,
             "browser_read_text",
-            {"selector": {**_SELECTOR, "type": ["string", "null"], "description": "Read only this element; the whole page when left out."}},
+            {
+                "selector": {**_SELECTOR, "type": ["string", "null"], "description": "Read only this element; the whole page when left out."},
+                "max_chars": {
+                    "type": ["integer", "null"],
+                    "minimum": 1,
+                    "description": "The most characters to return; the server's own limit when left out.",
+                },
+            },
             (),
-            _taken("selector"),
+            _taken("selector", "max_chars"),
             read_only=True,
         ),
         PageTool(
@@ -191,9 +199,9 @@ PAGE_TOOLS: Mapping[str, PageTool] = {
         ),
         PageTool(
             "browser_select_option",
-            "Choose an option of a select element by its value." + _OPEN_FIRST,
+            "Choose an option of a select element, by its visible label or by its value." + _OPEN_FIRST,
             "browser_select_option",
-            {"selector": _SELECTOR, "value": _string("The value of the option, not its label.")},
+            {"selector": _SELECTOR, "value": _string("The visible label of the option, or its value.")},
             ("selector", "value"),
             _taken("selector", "value"),
         ),

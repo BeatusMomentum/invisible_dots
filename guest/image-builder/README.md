@@ -35,26 +35,29 @@ image's SHA-256; `invisible-dots doctor` checks an image against it with
    apt packages (Xvfb, a minimal XFCE, the browser's libraries, ImageMagick
    for dot-agentd's screenshots), Node, uv, then builds the Dot's browser with
    `build-browser-env.sh <lock> ~dot/.local/share/invisible-dots/mcp <GeoIP
-   archive> <tag> <sha256>`, as user
+   archive> <sha256>`, as user
    `dot`: a virtual environment filled with
    `uv pip install --require-hashes -r mcp-requirements.lock`, its
    `invisible-playwright-mcp` linked into `~/.local/bin`, and
    `invisible-playwright fetch` run from that environment, so the cached browser
-   engine is the one the MCP server expects. The same script then unpacks the
+   engine is the one the MCP server expects. The same script then installs the
    GeoIP database that a launch with the timezone left to `auto` needs, so a
-   Dot's first launch downloads nothing. It is one release of
+   Dot's launch downloads nothing. It is one release of
    `daijro/geoip-all-in-one`, pinned in `pins.json` by its exact URL and the
    SHA-256 of that file (the `digest` GitHub shows for the release asset): the
    host checks the hash when it downloads the archive, the script checks it
-   again before it unpacks it into the cache directory the browser reads (and
-   fails when the browser's own lookup would not find that file), and the pin is
+   again before it unpacks it, and installs the file at one fixed path,
+   `/usr/local/share/invisible-dots/geoip-aio-all.mmdb`, root's and read-only
+   (`GUEST_PATHS.geoipDatabase`). The engine starts the browser's server with the
+   library's own knob `STEALTHFOX_GEOIP_MMDB` pointing at it, so `invisible_core`
+   uses that file as it is: it does not ask GitHub for a newer release, download
+   one or prune the pinned one, which is what its default does at every launch
+   (it pins nothing on purpose). The script writes nothing into the library's own
+   cache layout and fails when the library, given that knob, does not hand back
+   that file or cannot read it as a database. The pin is
    part of the golden digest, so another release is another image. The release is
    recorded in the manifest (`pinned.geoip`, and `geoip-database` among the
-   installed components). What is not pinned is what happens later: a launch
-   asks GitHub for the latest release and fetches it when it is newer than the
-   one in the cache (a data file for the timezone lookup, fetched by
-   invisible-playwright itself), and keeps the pinned one when GitHub cannot be
-   reached. The cost of the pin: `daijro/geoip-all-in-one` is rebuilt weekly and
+   installed components). The cost of the pin: `daijro/geoip-all-in-one` is rebuilt weekly and
    keeps only its latest two releases, so a pin that is not refreshed answers
    404 within weeks. The build then stops and says what to change: put the
    current tag, URL and `digest` of `geoip-aio-all.mmdb.zip`
@@ -73,7 +76,9 @@ image's SHA-256; `invisible-dots doctor` checks an image against it with
    (`geoip-<tag>-geoip-aio-all.mmdb.zip`: every release has the same file name
    upstream, so a bump leaves the archive of the previous pin where it is),
    and does not need the network for it; an older tree whose pin is gone
-   builds there only with such a cached archive. The database merges free
+   builds there only with such a cached archive. The cache is bounded: after
+   a build has its pin's archive, the two archives downloaded most recently
+   before it stay and older ones are removed (`pruneGeoipArchives`). The database merges free
    editions of third-party databases that ask to be credited: their credits
    are in `src/geoip-notices.ts`, which each golden manifest records as
    `notices` and `THIRD_PARTY_NOTICES.md` repeats. The
@@ -107,8 +112,8 @@ the build. It is the one place the versions of `invisible-playwright-mcp` and
 `invisible-playwright` are written (`pins.env` and the manifest read them from
 it), and its header has the command that regenerates it. The engine holds a
 capture of the pinned version's tool list
-(`invisible_engine_dots/tests/fixtures/mcp-tools-<version>.json`, names and
-input schemas from the real server's `tools/list`), and a test that the
+(`invisible_engine_dots/tests/fixtures/mcp-tools-<version>.json`, names,
+descriptions and input schemas from the real server's `tools/list`), and a test that the
 capture's version equals the one pinned here: a new `invisible-playwright-mcp`
 version needs a new capture, named for it, in the same change.
 

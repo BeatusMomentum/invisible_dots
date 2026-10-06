@@ -332,6 +332,7 @@ mcp_env_ok() { # id, expected STEALTHFOX_PROXY ("" for none)
     and $e.INVISIBLE_MCP_SESSION_ID == $id
     and $e.STEALTHFOX_PROFILE_DIR == ("/home/dot/browsers/" + $id + "/profile")
     and $e.STEALTHFOX_HEADLESS == "0" and $e.DISPLAY == ":0" and $e.HOME == "/home/dot"
+    and $e.STEALTHFOX_GEOIP_MMDB == "/usr/local/share/invisible-dots/geoip-aio-all.mmdb" and $e.INVISIBLE_CORE_AUTOFIX == "off"
     and (if $proxy == "" then ($e | has("STEALTHFOX_PROXY") | not) else $e.STEALTHFOX_PROXY == $proxy end)
     and ([$e | keys[] | select(startswith("INVISIBLE_DOTS_") or . == "TIKTOKEN_CACHE_DIR" or . == "OPENROUTER_API_KEY")] | length == 0)
     and ([$e[] | select(contains($key))] | length == 0)' "$(rec "$1")" >/dev/null
@@ -354,7 +355,7 @@ check "no browser runs for a closed identity, and /health counts one identity, n
 check "the model launches the identity" "tool_turn 1 browser_identity_launch '{\"identity_id\":\"$ID1\"}'"
 check "browser.identity.launched names it" "launched $ID1"
 check "the MCP server runs as dot, one process, and none of it runs as dotengine" "[ \"\$(fakes_running)\" = 1 ] && ! pgrep -u dotengine -f fake_mcp_server.py >/dev/null"
-check "its environment has the profile, the display, the session id and its home, no proxy, none of the engine's variables and no key; its working directory is the identity's" "mcp_env_ok $ID1 ''"
+check "its environment has the profile, the display, the session id and its home, the library's knobs for the GeoIP file and no self-repair, no proxy, none of the engine's variables and no key; its working directory is the identity's" "mcp_env_ok $ID1 ''"
 check "browser_open was called with the browser role main, once" "call_seen $ID1 browser_open '.args.browser==\"main\"' && [ \"\$(jq -s '[.[] | select(.kind==\"call\" and .name==\"browser_open\")] | length' $(rec $ID1))\" = 1 ]"
 check "/health counts one identity, one open" "health_is 1 1"
 check "the browser tool call for the open identity is made" "tool_turn 2 browser_navigate '{\"identity_id\":\"$ID1\",\"url\":\"http://example.test/one\"}'"
@@ -366,7 +367,8 @@ check "the screenshot reached the model's next request as an image part" "jq -s 
 
 ID2=$(new_identity second); ID3=$(new_identity third); ID4=$(new_identity lossy)
 check "three more identities exist; /health counts four, one open" "[ -n '$ID2' ] && [ -n '$ID3' ] && [ -n '$ID4' ] && health_is 4 1"
-# The fourth identity's server reports its browser gone after the first page action, as after a Firefox crash.
+# The fourth identity's server reports its browser gone after the first page action, as after a Firefox crash (the
+# library's own sentence: the browser is gone, call browser_open; the model cannot, so the engine says to launch).
 printf '{"lose_browser_once":true}' > "$BROWSERS/$ID4/mcp/control.json"
 check "the model launches the second and the third identity: three are open (max_open 3), three servers run as dot" "tool_turn 4 browser_identity_launch '{\"identity_id\":\"$ID2\"}' && tool_turn 5 browser_identity_launch '{\"identity_id\":\"$ID3\"}' && wait_fakes 3 && health_is 4 3"
 check "the model launches a fourth identity" "tool_turn 6 browser_identity_launch '{\"identity_id\":\"$ID4\"}'"
@@ -375,7 +377,8 @@ check "it was closed through browser_close, then its server ended; three servers
 check "/browser-identities/:id says closed for the first and open for the fourth" "[ \"\$(api $A/browser-identities/$ID1 | jq -r .status)\" = available ] && [ \"\$(api $A/browser-identities/$ID4 | jq -r .status)\" = open ]"
 check "a browser action on the closed identity fails and says to launch it" "tool_turn 7 browser_navigate '{\"identity_id\":\"$ID1\",\"url\":\"http://example.test/closed\"}' && wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-bt-7\" and (.data.text|test(\"is not open; call browser_identity_launch first\"))'"
 check "that call is reported as tool.called, not ok, and it started no browser" "wait_event $STREAM '.type==\"tool.called\" and .data.tool==\"browser_navigate\" and .data.ok==false and .data.permission==\"browser.navigate\" and (.data.target|startswith(\"$ID1: http://example.test/closed\"))' && [ \"\$(fakes_running)\" = 3 ] && [ \"\$(jq -s '[.[] | select(.kind==\"start\")] | length' $(rec $ID1))\" = 1 ]"
-check "a page action after the browser closed under a live server reopens it once and is repeated: it succeeds" "tool_turn 8 browser_navigate '{\"identity_id\":\"$ID4\",\"url\":\"http://example.test/lossy\"}' && wait_event $STREAM '.type==\"tool.called\" and .data.tool==\"browser_navigate\" and .data.ok==true and (.data.target|startswith(\"$ID4: http://example.test/lossy\"))' && [ \"\$(jq -s '[.[] | select(.kind==\"call\" and .name==\"browser_open\")] | length' $(rec $ID4))\" = 2 ]"
+check "a page action after the browser closed under a live server is not repeated and the browser is not reopened: the model is told it is gone and to launch the identity again" "tool_turn 8 browser_navigate '{\"identity_id\":\"$ID4\",\"url\":\"http://example.test/lossy\"}' && wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-bt-8\" and (.data.text|test(\"is gone: it closed or crashed\")) and (.data.text|test(\"call browser_identity_launch to open it again\"))' && wait_event $STREAM '.type==\"tool.called\" and .data.tool==\"browser_navigate\" and .data.ok==false and (.data.target|startswith(\"$ID4: http://example.test/lossy\"))' && [ \"\$(jq -s '[.[] | select(.kind==\"call\" and .name==\"browser_open\")] | length' $(rec $ID4))\" = 1 ] && [ \"\$(jq -s '[.[] | select(.kind==\"call\" and .name==\"browser_navigate\")] | length' $(rec $ID4))\" = 1 ]"
+check "the identity whose browser was lost is closed (browser.identity.closed), its server ended, and it holds no slot: two servers run, two identities are open" "closed $ID4 && wait_fakes 2 && health_is 4 2 && [ \"\$(api $A/browser-identities/$ID4 | jq -r .status)\" = available ]"
 
 # An identity the model creates with a proxy: the approval shows the proxy without its password, and so does everything else.
 PROXY="http://smoke-user:$PROXY_PASSWORD@127.0.0.1:9"
@@ -387,7 +390,7 @@ check "approval.received approve accepted (202)" "[ \"\$(ev ap-proxy approval.re
 check "tool.called browser_identity_create: ok, decision ask, permission browser.identity.create, naming the identity and not its proxy" "wait_event $STREAM '.type==\"tool.called\" and .data.tool==\"browser_identity_create\" and .data.ok==true and .data.decision==\"ask\" and .data.permission==\"browser.identity.create\" and .data.target==\"shopping\"'"
 ID5=$(identity_named shopping)
 check "the identity is listed with its proxy redacted, and browser.identity.created names it" "[ \"\$(api $A/browser-identities/$ID5 | jq -r .proxy)\" = 'http://smoke-user:***@127.0.0.1:9' ] && wait_event $STREAM '.type==\"browser.identity.created\" and .data.identity_id==\"$ID5\" and .data.name==\"shopping\"'"
-check "the model launches it: the least recently used of the three open (the second) is closed" "tool_turn 9 browser_identity_launch '{\"identity_id\":\"$ID5\"}' && launched $ID5 && closed $ID2 && wait_fakes 3"
+check "the model launches it: nothing is closed, because the identity whose browser was lost holds no slot (the second, the third and this one are open)" "tool_turn 9 browser_identity_launch '{\"identity_id\":\"$ID5\"}' && launched $ID5 && wait_fakes 3 && health_is 5 3 && [ \"\$(grep '^data: ' $STREAM | sed 's/^data: //' | jq -s '[.[] | select(.type==\"browser.identity.closed\" and .data.identity_id==\"$ID2\")] | length')\" = 0 ]"
 check "its server got the proxy in STEALTHFOX_PROXY (dot's process, not the engine's), with the rest of the environment as before" "mcp_env_ok $ID5 '$PROXY'"
 check "the proxy password is in no event, no engine log and no dot-agentd log after the launch either" "no_proxy_password_in $STREAM /tmp/engine.log /tmp/agentd.log"
 check "the proxy password is on no process's command line, which every user can read (the relay of the open browser names the variable and nothing else)" "cmdline_holds '--env-from STEALTHFOX_PROXY' && ! cmdline_holds \$PROXY_PASSWORD"

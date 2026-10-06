@@ -124,8 +124,9 @@ its own license. The runtime disk carries the fork's own source with its
 
 The browser of a Dot looks up the time zone and the coordinates of its proxy's
 address in a GeoIP database when a launch leaves the time zone to `auto`. The
-golden image carries one release of it, so a first launch downloads nothing:
-the file `geoip-aio-all.mmdb.zip` of one release of
+golden image carries one release of it, at a fixed read-only path that the
+engine hands the browser through the library's own `STEALTHFOX_GEOIP_MMDB`, so a
+launch downloads nothing and asks for no newer release: the file `geoip-aio-all.mmdb.zip` of one release of
 `daijro/geoip-all-in-one` (https://github.com/daijro/geoip-all-in-one),
 pinned in `guest/image-builder/pins.json` by its URL and SHA-256 and recorded
 in each golden manifest as `pinned.geoip`. That project merges the free
@@ -136,8 +137,12 @@ of whoever runs Dots and this repository does not distribute it or the data;
 the credits are kept here, and in each golden manifest as `notices`
 (`guest/image-builder/src/geoip-notices.ts` holds the one list, and a test
 keeps this section equal to it). Each source's license governs its own data;
-the license of the merged file is the one `daijro/geoip-all-in-one` publishes.
+the merged file is published by `daijro/geoip-all-in-one` under the GPL-3.0, the
+first entry below (its repository declares that license, and the pinned release
+is the file it publishes).
 
+- daijro/geoip-all-in-one (https://github.com/daijro/geoip-all-in-one), which merges the databases below and publishes the file the image carries, GPL-3.0
+  (https://www.gnu.org/licenses/gpl-3.0.html): The file geoip-aio-all.mmdb is published by daijro/geoip-all-in-one (https://github.com/daijro/geoip-all-in-one) under the GPL-3.0.
 - IP2Location LITE (https://lite.ip2location.com), CC BY-SA 4.0
   (https://creativecommons.org/licenses/by-sa/4.0/): This site or product includes IP2Location LITE data available from https://lite.ip2location.com.
 - MaxMind GeoLite2 (https://www.maxmind.com), GeoLite2 End User License Agreement

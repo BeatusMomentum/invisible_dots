@@ -6,6 +6,9 @@
  * data sources publish (their own pages, and the READMEs of daijro/geoip-all-in-one, tdulcet/ip-geolocation-dbs and
  * sapics/ip-location-db that list them). They are the one place the wording lives: every golden manifest records
  * them (`notices`), and THIRD_PARTY_NOTICES.md must carry the same text (tests/repo/third-party-notices.test.ts).
+ * The first entry is the project that merges them and publishes the file the image carries, daijro/geoip-all-in-one:
+ * its repository declares the GPL-3.0 (GitHub's license field, and invisible_core says the same where it explains why
+ * it downloads the file instead of bundling it); it asks for no credit line, so the attribution names the project.
  * The last two entries have no publisher's line to copy: CC0 asks for no credit, and the ODbL's own is
  * "(c) OpenStreetMap contributors" (the time zone of an address is computed from its coordinates by tzfpy).
  * The image is built on the host of whoever uses it and is not distributed by this project, so these notices are
@@ -24,6 +27,13 @@ export interface DataNotice {
 }
 
 export const GEOIP_NOTICES: readonly DataNotice[] = [
+  {
+    component: "geoip",
+    source: "daijro/geoip-all-in-one (https://github.com/daijro/geoip-all-in-one), which merges the databases below and publishes the file the image carries",
+    license: "GPL-3.0",
+    license_url: "https://www.gnu.org/licenses/gpl-3.0.html",
+    attribution: "The file geoip-aio-all.mmdb is published by daijro/geoip-all-in-one (https://github.com/daijro/geoip-all-in-one) under the GPL-3.0.",
+  },
   {
     component: "geoip",
     source: "IP2Location LITE (https://lite.ip2location.com)",

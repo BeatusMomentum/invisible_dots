@@ -33,9 +33,21 @@ export function redactProxy(proxy: string): string {
 }
 
 /**
+ * Whether a proxy URL names a port as written. `URL.port` is "" for a scheme's own default (`http://host:80`), so it
+ * cannot tell that from none: the end of the host part is read instead. The URL parser drops tabs and line breaks
+ * first, and so does this.
+ */
+function namesAPort(proxy: string): boolean {
+  const authority = /^[a-z][a-z0-9+.-]*:[/\\]*([^/\\?#]*)/i.exec(proxy.replace(/[\t\n\r]/g, ""))?.[1] ?? "";
+  return /:\d+$/.test(authority.slice(authority.lastIndexOf("@") + 1));
+}
+
+/**
  * Check a create request against the rules and the identities that exist:
  * a non-empty name of at most IDENTITY_NAME_MAX characters, an optional proxy
- * URL with an http, https, socks4 or socks5 scheme and a host, and fewer
+ * URL with an http, https, socks4 or socks5 scheme, a host and a port (the
+ * browser's server refuses one without, with a message that prints the
+ * password), and fewer
  * than `maxIdentities` existing identities. Returns the trimmed values.
  */
 export function checkIdentityRequest(
@@ -57,6 +69,9 @@ export function checkIdentityRequest(
     }
     if (!PROXY_SCHEMES.has(url.protocol) || !url.hostname) {
       throw new IdentityRequestError("invalid", `proxy must use http, https, socks4 or socks5 and name a host; got "${redactProxy(proxy)}"`);
+    }
+    if (!namesAPort(proxy)) {
+      throw new IdentityRequestError("invalid", `proxy must name a port, as in http://host:8080; got "${redactProxy(proxy)}"`);
     }
   }
   if (existingCount >= maxIdentities) {

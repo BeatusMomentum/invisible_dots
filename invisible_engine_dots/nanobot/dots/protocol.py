@@ -98,6 +98,11 @@ TOOL_TARGET_MAX = 160
 BROWSERS_DIR = "/home/dot/browsers"
 GUEST_DISPLAY = ":0"
 
+# The GeoIP database the golden image carries, the one its build checked against the pin: root's and read-only, so
+# neither the model nor a launch can replace it (GUEST_PATHS.geoipDatabase in packages/shared protocol.ts;
+# tests/repo/vendored-nanobot.test.ts keeps them equal).
+GEOIP_DATABASE = "/usr/local/share/invisible-dots/geoip-aio-all.mmdb"
+
 # The environment of one identity's invisible-playwright-mcp process: each key is the name in ENV of
 # packages/shared protocol.ts and its value the variable (tests/repo/vendored-nanobot.test.ts keeps them equal).
 BROWSER_ENV = {
@@ -107,6 +112,8 @@ BROWSER_ENV = {
     "HEADLESS": "STEALTHFOX_HEADLESS",
     "PROXY": "STEALTHFOX_PROXY",
     "DISPLAY": "DISPLAY",
+    "GEOIP_MMDB": "STEALTHFOX_GEOIP_MMDB",
+    "CORE_AUTOFIX": "INVISIBLE_CORE_AUTOFIX",
 }
 
 # The `system.event` name of a cancelled task; its data is `{"task_id": ...}`.

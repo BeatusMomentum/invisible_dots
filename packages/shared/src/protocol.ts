@@ -75,6 +75,10 @@ export const ENV = {
   HEADLESS: "STEALTHFOX_HEADLESS",
   PROXY: "STEALTHFOX_PROXY",
   DISPLAY: "DISPLAY",
+  /** The GeoIP database file the browser layer uses as it is, with no lookup of a newer release (GUEST_PATHS.geoipDatabase). */
+  GEOIP_MMDB: "STEALTHFOX_GEOIP_MMDB",
+  /** `off` stops invisible_core from reinstalling itself from the package index at a launch when its version drifts. */
+  CORE_AUTOFIX: "INVISIBLE_CORE_AUTOFIX",
 } as const;
 
 /** The X display the guest desktop runs on. */
@@ -90,6 +94,8 @@ export const GUEST_PATHS = {
   documents: "/home/dot/documents",
   memory: "/home/dot/memory",
   browsers: "/home/dot/browsers",
+  /** The GeoIP database of the golden image (daijro/geoip-all-in-one, the release pins.json names), root's and read-only. */
+  geoipDatabase: "/usr/local/share/invisible-dots/geoip-aio-all.mmdb",
   runDir: "/run/invisible-dots",
   agentdSocket: "/run/invisible-dots/agentd.sock",
   /** The engine's API, in a directory of the engine's user dot cannot write (architecture 4.2). */

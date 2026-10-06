@@ -126,6 +126,8 @@ PAGE_CALLS: list[tuple[str, dict[str, Any], str, dict[str, Any]]] = [
     ("browser_snapshot", {}, "browser_snapshot", {}),
     ("browser_read_text", {}, "browser_read_text", {}),
     ("browser_read_text", {"selector": "h1"}, "browser_read_text", {"selector": "h1"}),
+    ("browser_read_text", {"max_chars": 20000}, "browser_read_text", {"max_chars": 20000}),
+    ("browser_read_text", {"selector": "h1", "max_chars": 50}, "browser_read_text", {"selector": "h1", "max_chars": 50}),
     ("browser_screenshot", {}, "browser_take_screenshot", {}),
     ("browser_click", {"selector": "#go"}, "browser_click", {"selector": "#go"}),
     ("browser_click_at", {"x": 10, "y": 20}, "browser_click_at", {"x": 10, "y": 20}),
@@ -326,6 +328,37 @@ async def test_what_the_server_answers_in_text_is_the_result(env: Env) -> None:
     assert key == "pressed Enter"
 
 
+async def test_a_max_chars_given_as_null_is_left_out_and_one_below_one_is_refused(env: Env) -> None:
+    identity_id = await env.open_identity()
+
+    await env.run("browser_read_text", identity_id=identity_id, max_chars=None)
+    refused = await env.run("browser_read_text", identity_id=identity_id, max_chars=0)
+
+    assert env.page_calls(identity_id) == [("browser_read_text", {"browser": "main"})]
+    assert isinstance(refused, ToolResult) and refused.is_error
+
+
+def _words(text: str) -> str:
+    return " ".join(text.split())
+
+
+def test_the_page_tools_say_what_the_pinned_server_says_of_the_arguments_they_pass_on() -> None:
+    """One fact, one owner: what an argument means is the server's, captured in the fixture, and ours repeats no more."""
+    served = _fixture_tools()
+    select = PAGE_TOOLS["browser_select_option"]
+    # The server picks an option by its visible label or by its value; the Dot's tool says the same, in that order.
+    assert "by its visible label or by its value" in _words(served["browser_select_option"]["description"])
+    assert "by its visible label or by its value" in select.description
+    assert "visible label" in select.properties["value"]["description"]
+    assert "not its label" not in select.description + select.properties["value"]["description"]
+    # The server cuts a long text at max_chars, marks the cut and has a default of its own: the Dot passes the
+    # argument on and states no number of its own.
+    read = PAGE_TOOLS["browser_read_text"]
+    assert served["browser_read_text"]["inputSchema"]["properties"]["max_chars"]["type"] == "integer"
+    assert set(read.properties) == {"selector", "max_chars"}
+    assert str(served["browser_read_text"]["inputSchema"]["properties"]["max_chars"]["default"]) not in read.description
+
+
 async def test_a_selector_given_as_null_is_left_out_and_the_server_reads_the_page(env: Env) -> None:
     identity_id = await env.open_identity()
 
@@ -334,7 +367,7 @@ async def test_a_selector_given_as_null_is_left_out_and_the_server_reads_the_pag
     assert env.page_calls(identity_id) == [("browser_read_text", {"browser": "main"})]
 
 
-async def test_an_error_of_the_server_is_an_error_result(env: Env) -> None:
+async def test_a_browser_the_server_lost_is_an_error_result_that_says_to_launch_the_identity_again(env: Env) -> None:
     identity_id = await env.open_identity()
     write_control(env.tmp_path / "browsers" / identity_id / "mcp", lose_browser_always=True)
     await env.manager.close(identity_id)
@@ -343,7 +376,12 @@ async def test_an_error_of_the_server_is_an_error_result(env: Env) -> None:
     result = await env.run("browser_snapshot", identity_id=identity_id)
 
     assert isinstance(result, ToolResult) and result.is_error
-    assert "gone" in result
+    assert "is gone: it closed or crashed" in result
+    assert "call browser_identity_launch to open it again" in result
+    assert not env.manager.is_open(identity_id)
+    # Asked once, not repeated on a reopened browser.
+    assert [name for name, _ in env.page_calls(identity_id)].count("browser_snapshot") == 1
+    assert [name for name, _ in env.calls(identity_id)].count("browser_open") == 2
 
 
 @pytest.mark.parametrize(

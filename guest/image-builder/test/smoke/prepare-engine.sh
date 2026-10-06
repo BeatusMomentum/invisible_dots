@@ -17,7 +17,7 @@
 # The browser suite builds one more thing, as the golden image does it: the apt packages of
 # pins.json (the desktop, Firefox's libraries, ImageMagick) and the Dot's browser
 # (builder/build-browser-env.sh on the hashed mcp-requirements.lock: the MCP server's
-# environment, the engine of the browser, the GeoIP database).
+# environment, the engine of the browser, the GeoIP database at its fixed path).
 set -euo pipefail
 : "${TREE:?run.sh sets TREE}" "${AGENTD_BIN:?run.sh sets AGENTD_BIN}"
 suite=${SMOKE_SUITE:-engine}
@@ -76,9 +76,9 @@ if [ "$suite" = browser ]; then
   # The GeoIP release pins.json names, fetched here (the image builder fetches it on the host) and checked
   # against its SHA-256 by the script itself.
   geoip_dir=$(mktemp -d)
-  read -r GEOIP_TAG GEOIP_URL GEOIP_SHA < <(jq -r '.geoip | "\(.tag) \(.url) \(.sha256)"' "$TREE/guest/image-builder/pins.json")
+  read -r GEOIP_URL GEOIP_SHA < <(jq -r '.geoip | "\(.url) \(.sha256)"' "$TREE/guest/image-builder/pins.json")
   curl -fsSL "$GEOIP_URL" -o "$geoip_dir/geoip-aio-all.mmdb.zip"
-  bash "$builder/build-browser-env.sh" "$builder/mcp-requirements.lock" /home/dot/.local/share/invisible-dots/mcp "$geoip_dir/geoip-aio-all.mmdb.zip" "$GEOIP_TAG" "$GEOIP_SHA"
+  bash "$builder/build-browser-env.sh" "$builder/mcp-requirements.lock" /home/dot/.local/share/invisible-dots/mcp "$geoip_dir/geoip-aio-all.mmdb.zip" "$GEOIP_SHA"
 fi
 
 exec bash "$checks"

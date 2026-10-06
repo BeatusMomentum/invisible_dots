@@ -25,7 +25,7 @@ export interface PinnedDownload {
  * Upstream keeps only its latest releases, so a pin that is not refreshed answers 404 within weeks (see the README).
  */
 export interface GeoipPin {
-  /** The release tag, a date; it names the directory the database is cached in. */
+  /** The release tag, a date; it is the prefix of the cached archive's name (`geoipCacheName`). */
   tag: string;
   url: string;
   sha256: string;
@@ -128,6 +128,11 @@ export function downloadFileName(pin: { url: string }): string {
  */
 export function geoipCacheName(pin: GeoipPin): string {
   return `geoip-${pin.tag}-${downloadFileName(pin)}`;
+}
+
+/** Whether a file name of the cache is the archive of some GeoIP release, whatever its tag (see `geoipCacheName`). */
+export function isGeoipCacheName(name: string): boolean {
+  return name.startsWith("geoip-") && name.endsWith(`-${GEOIP_ASSET}`) && name.length > `geoip--${GEOIP_ASSET}`.length;
 }
 
 export function parseBaseImagePin(value: unknown): BaseImagePin {

@@ -92,6 +92,13 @@ sleep 3
 start_host_stream
 
 BROWSERS=/home/dot/browsers
+# The GeoIP file the image build installed (GUEST_PATHS.geoipDatabase), as it is before any launch.
+GEOIP=/usr/local/share/invisible-dots/geoip-aio-all.mmdb
+GEOIP_SHA=$(sha256sum "$GEOIP" | cut -d' ' -f1)
+geoip_untouched() { # the file is still the one the build installed, root's and read-only, and the library made no cache of its own
+  [ "$(sha256sum "$GEOIP" | cut -d' ' -f1)" = "$GEOIP_SHA" ] && [ "$(stat -c '%U %a' "$GEOIP")" = 'root 644' ] \
+    && ! su -s /bin/bash dot -c "test -w $GEOIP" && [ ! -e /home/dot/.cache/invisible-playwright/geoip ]
+}
 FIREFOX='\.cache/invisible-playwright/firefox-'   # what the cached engine's processes are called
 firefox_running() { pgrep -u dot -f "$FIREFOX" | wc -l; }
 # A process's environment is read by its own user only (the container's root has no CAP_SYS_PTRACE), so what runs
@@ -150,11 +157,14 @@ mcp_env_ok() {
     && grep -qx "STEALTHFOX_PROFILE_DIR=$BROWSERS/$ID/profile" <<< "$env" \
     && grep -qx "INVISIBLE_MCP_HOME=$BROWSERS/$ID/mcp" <<< "$env" \
     && grep -qx 'STEALTHFOX_HEADLESS=0' <<< "$env" && grep -qx 'DISPLAY=:0' <<< "$env" && grep -qx 'HOME=/home/dot' <<< "$env" \
+    && grep -qx "STEALTHFOX_GEOIP_MMDB=$GEOIP" <<< "$env" \
+    && grep -qx 'INVISIBLE_CORE_AUTOFIX=off' <<< "$env" \
     && ! grep -q '^INVISIBLE_DOTS_\|^TIKTOKEN_CACHE_DIR=\|^OPENROUTER_API_KEY=' <<< "$env" \
     && ! grep -qF "$KEY" <<< "$env"
 }
 check "the server's process is dot's, with the profile, its home, a real window on :0 and none of the engine's variables nor the key" "[ -n '$MCP_PID' ] && mcp_env_ok"
 check "the profile has its seed file after the first open" "[ -s $BROWSERS/$ID/profile/.stealth-identity.json ]"
+check "the launch used the image's GeoIP file as it is (the library's STEALTHFOX_GEOIP_MMDB): the file is unchanged, root's and read-only, and no geoip directory of the library's own was made in dot's cache" "geoip_untouched"
 SEED1=$(seed_of "$ID" 2>/dev/null)
 echo "seed file: $SEED1"
 check "/health counts one identity, one open" "health_is 1 1"
@@ -226,13 +236,65 @@ check "the restarted engine answers /health" "wait_health && wait_key"
 check "the model launches the identity again after SIGTERM" "tool_turn 26 browser_identity_launch '{\"identity_id\":\"$ID\"}' && launched_times $ID 4"
 check "what the page stored before SIGTERM is in the profile after it (SIGTERM made the browser close, so Firefox flushed)" "tool_turn 27 browser_navigate '{\"identity_id\":\"$ID\",\"url\":\"$PAGES/store.html?k=term\"}' && tool_turn 28 browser_read_text '{\"identity_id\":\"$ID\"}' && sent_to_model 'stored before: kept-term'"
 
+# --- Firefox dies under a live server: the model is told, and nothing is reopened or repeated behind its back ---
+closed_times() { # id, n: the identity has been closed n times by now
+  for _ in $(seq 1 "$WAIT_EVENT_S"); do
+    [ "$(grep '^data: ' $STREAM | sed 's/^data: //' | jq -s "[.[] | select(.type==\"browser.identity.closed\" and .data.identity_id==\"$1\")] | length")" = "$2" ] && return 0
+    sleep 1
+  done
+  return 1
+}
+no_server_within() { for _ in $(seq 1 "$(($1*5))"); do [ -z "$(session_pids "$2")" ] && return 0; sleep 0.2; done; return 1; } # seconds, id
+tool_ok_count() { grep '^data: ' $STREAM | sed 's/^data: //' | jq -s "[.[] | select(.type==\"tool.called\" and .data.tool==\"$1\" and .data.ok==true)] | length"; } # tool
+check "the model has the identity on a page" "tool_turn 30 browser_navigate '{\"identity_id\":\"$ID\",\"url\":\"$PAGES/index.html\"}'"
+pkill -9 -u dot -f "$FIREFOX"
+check "Firefox was killed under the identity, and the server's process lives on (the browser is gone, the server is not)" "gone_within 20 \"$FIREFOX\" && [ -n \"\$(session_pids $ID)\" ]"
+check "the model's next page action is answered with the library's meaning in the Dot's words: the browser is gone, launch the identity again" "tool_turn 31 browser_read_text '{\"identity_id\":\"$ID\"}' && sent_to_model 'is gone: it closed or crashed' && sent_to_model 'call browser_identity_launch to open it again'"
+check "that call is a failed tool.called, and nothing was reopened for it (no Firefox)" "wait_event $STREAM '.type==\"tool.called\" and .data.tool==\"browser_read_text\" and .data.ok==false' && [ \"\$(firefox_running)\" = 0 ]"
+check "the identity is closed: browser.identity.closed again, its server ended, /health counts none open" "closed_times $ID 3 && no_server_within 30 $ID && health_is 1 0 && [ \"\$(api $A/browser-identities/$ID | jq -r .status)\" = available ]"
+check "the model launches it again: the same person (the seed file is unchanged) and its browser works" "tool_turn 32 browser_identity_launch '{\"identity_id\":\"$ID\"}' && launched_times $ID 5 && [ \"\$(seed_of $ID)\" = '$SEED1' ] && tool_turn 33 browser_navigate '{\"identity_id\":\"$ID\",\"url\":\"$PAGES/index.html\"}' && tool_turn 34 browser_read_text '{\"identity_id\":\"$ID\"}' && tool_ok_times browser_read_text $(($(tool_ok_count browser_read_text) + 1))"
+
+# --- an identity with a proxy: a port-less proxy is refused, and where does the password of one that works end up? ---
+PROXY_USER=smoke-user
+PROXY_PASSWORD=Pw7c1dSmokeReal
+install -m 0644 "$HERE/proxy.py" /tmp/proxy.py
+PROXY_USER=$PROXY_USER PROXY_PASSWORD=$PROXY_PASSWORD su -p -s /bin/bash nobody -c "python3 /tmp/proxy.py 8099" > /tmp/proxy.log 2>&1 &
+proxy_up() { for _ in $(seq 1 20); do (exec 3<>/dev/tcp/127.0.0.1/8099) 2>/dev/null && return 0; sleep 0.5; done; return 1; }
+check "the authenticating proxy of the smoke is up" "proxy_up"
+check "a proxy without a port is refused at create (400 invalid, the password redacted in the answer), so the server's own refusal, which prints the URL, cannot happen at a launch" "[ \"\$(api -o /tmp/bid-noport.json -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{\"name\":\"noport\",\"proxy\":\"http://$PROXY_USER:$PROXY_PASSWORD@127.0.0.1\"}' $A/browser-identities)\" = 400 ] && jq -e '.error == \"invalid\" and (.message | contains(\"must name a port\"))' /tmp/bid-noport.json >/dev/null && ! grep -qF $PROXY_PASSWORD /tmp/bid-noport.json && [ \"\$(api $A/browser-identities | jq '.identities | length')\" = 1 ]"
+CODE2=$(api -o /tmp/bid-2.json -w '%{http_code}' -X POST -H 'content-type: application/json' -d "{\"name\":\"proxied\",\"proxy\":\"http://$PROXY_USER:$PROXY_PASSWORD@127.0.0.1:8099\"}" "$A/browser-identities")
+ID2=$(jq -r .id /tmp/bid-2.json)
+check "POST /browser-identities with a proxy answers 201 and shows the proxy without its password" "[ '$CODE2' = 201 ] && jq -e '.proxy == \"http://$PROXY_USER:***@127.0.0.1:8099\"' /tmp/bid-2.json >/dev/null"
+check "the model launches it: the real server opens a browser behind the proxy" "tool_turn 40 browser_identity_launch '{\"identity_id\":\"$ID2\"}' && launched_times $ID2 1"
+check "the launch's egress lookup (the browser's timezone) went through the proxy, with its credentials" "grep -qE '^CONNECT (api.ipify.org|icanhazip.com|checkip.amazonaws.com):443' /tmp/proxy.log"
+check "the browser behind the proxy works: the model opens a page of the container" "tool_turn 41 browser_navigate '{\"identity_id\":\"$ID2\",\"url\":\"$PAGES/index.html\"}' && tool_ok browser_navigate '$ID2: $PAGES/index.html'"
+MCP_PID2=$(mcp_pid_of "$ID2")
+environ_of() { su -s /bin/bash dot -c "tr '\\0' '\\n' < /proc/$1/environ"; } # pid
+check "the server's process is dot's, with the proxy in its environment (by design: the engine passes it there, readable while the browser is open) and the same knobs as the first identity's" "[ -n '$MCP_PID2' ] && environ_of $MCP_PID2 | grep -qx 'STEALTHFOX_PROXY=http://$PROXY_USER:$PROXY_PASSWORD@127.0.0.1:8099' && environ_of $MCP_PID2 | grep -qx 'INVISIBLE_CORE_AUTOFIX=off' && environ_of $MCP_PID2 | grep -qx 'STEALTHFOX_GEOIP_MMDB=$GEOIP'"
+check "the password is on no process's command line, which every user can read" "! cmdline_holds $PROXY_PASSWORD"
+PROXY_HOLDERS=$(grep -rla -F "$PROXY_PASSWORD" /home/dot 2>/dev/null | sort)
+echo "files under /home/dot that hold the proxy password:"; echo "${PROXY_HOLDERS:-  (none)}"
+# KNOWN FINDING, upstream (invisible-playwright-mcp work.py remember(), not ours to patch here): the server writes the
+# proxy it was launched with, password included, into its session file under INVISIBLE_MCP_HOME, readable by the model's
+# exec as dot at rest. docs/architecture.md section 6 says so. This check accepts exactly that one file and nothing else:
+# not the profile, not a cache, not a log, not the workspace.
+check "KNOWN FINDING (upstream): under /home/dot the proxy password is held by the MCP server's session file and by no other file (the profile, caches and logs are clean)" "[ -z \"\$(grep -v '^$BROWSERS/$ID2/mcp/sessions/' <<< \"\$PROXY_HOLDERS\")\" ]"
+if [ -n "$PROXY_HOLDERS" ]; then
+  echo "KNOWN FINDING STILL OPEN: the MCP server's session file holds the proxy password in plain text (fix upstream in work.py remember())."
+else
+  echo "KNOWN FINDING FIXED UPSTREAM: no file of /home/dot holds the proxy password; remove the exception from this check and from architecture section 6."
+fi
+check "the model closes the proxied identity: its Firefox and server end" "tool_turn 42 browser_identity_close '{\"identity_id\":\"$ID2\"}' && closed_times $ID2 1 && no_server_within 30 $ID2"
+
 # --- what the real browser must not have leaked ---
 sleep 3
 stop_host_stream
 ALL=/tmp/stream-all.txt
 timeout 5 curl "${H[@]}" -N "$A/events/stream?after=0" > "$ALL" 2>/dev/null
 check "seqs of the full stream are 1..N without a gap" "[ \"\$(seqs $ALL | tr '\n' ' ')\" = \"\$(seq 1 \$(seqs $ALL | wc -l) | tr '\n' ' ')\" ]"
-check "the identity's events are all there: created once, launched four times, closed twice (the model's close and SIGTERM; kill -9 reports nothing)" "grep '^data: ' $ALL | sed 's/^data: //' | jq -s -e '([.[] | select(.type==\"browser.identity.created\")] | length) == 1 and ([.[] | select(.type==\"browser.identity.launched\")] | length) == 4 and ([.[] | select(.type==\"browser.identity.closed\")] | length) == 2' >/dev/null"
+check "the identity's events are all there: created twice, launched six times, closed four times (the model's close, SIGTERM, the browser that was lost and the proxied identity's close; kill -9 reports nothing)" "grep '^data: ' $ALL | sed 's/^data: //' | jq -s -e '([.[] | select(.type==\"browser.identity.created\")] | length) == 2 and ([.[] | select(.type==\"browser.identity.launched\")] | length) == 6 and ([.[] | select(.type==\"browser.identity.closed\")] | length) == 4' >/dev/null"
+check "the proxy password is in no event of the whole stream, no engine log and no dot-agentd log" "! grep -qF $PROXY_PASSWORD $ALL /tmp/engine.log /tmp/agentd.log"
+check "the GeoIP file is as the build left it after every launch: unchanged, root's, read-only, and the library made no cache of its own" "geoip_untouched"
 check "the key is in no file of the engine, the config or the Dot (the browser's profile and cache included)" "! grep -rIl \"$KEY\" /home/dotengine /etc/invisible-dots /home/dot /run/invisible-dots /run/invisible-dots-agent 2>/dev/null | grep -q ."
 check "the key is not in the environment of any process, Firefox's included" "! environ_holds \"$KEY\""
 check "the key is in no engine log and no dot-agentd log" "! grep -q \"$KEY\" /tmp/engine.log /tmp/agentd.log"

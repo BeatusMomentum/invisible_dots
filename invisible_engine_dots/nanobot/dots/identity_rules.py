@@ -84,6 +84,9 @@ class _Url:
     # None when the URL has no authority (`localhost:8080` is the scheme `localhost` and an opaque path).
     host: str | None
     port: str
+    # Whether the URL as written names a port. `port` is empty for a scheme's own default (`http://host:80`), as
+    # `URL.port` is in JavaScript, so it cannot tell that from no port at all.
+    port_written: bool
     user: str
     password: str
     # The path, query and fragment as written (an opaque URL keeps everything after the scheme here).
@@ -107,7 +110,7 @@ def _split_authority(rest: str, special: bool) -> tuple[str, str]:
     return rest[:end], rest[end:]
 
 
-def _host_and_port(hostport: str, scheme: str, special: bool) -> tuple[str, str] | None:
+def _host_and_port(hostport: str, scheme: str, special: bool) -> tuple[str, str, bool] | None:
     if hostport.startswith("["):
         close = hostport.find("]")
         if close < 0:
@@ -133,13 +136,14 @@ def _host_and_port(hostport: str, scheme: str, special: bool) -> tuple[str, str]
                 return None
         elif _FORBIDDEN_HOST.search(host):
             return None
+    written = bool(port)
     if port:
         if not _DIGITS.fullmatch(port) or int(port) > 65535:
             return None
         port = str(int(port))
         if port == _SPECIAL_PORTS.get(scheme):
             port = ""
-    return host, port
+    return host, port, written
 
 
 def _parse_url(text: str) -> _Url | None:
@@ -156,7 +160,7 @@ def _parse_url(text: str) -> _Url | None:
     elif rest.startswith("//"):
         rest = rest[2:]
     else:
-        return _Url(scheme, None, "", "", "", rest)
+        return _Url(scheme, None, "", False, "", "", rest)
     authority, tail = _split_authority(rest, special)
     userinfo, at, hostport = authority.rpartition("@")
     if special and not hostport:
@@ -164,7 +168,7 @@ def _parse_url(text: str) -> _Url | None:
     parsed = _host_and_port(hostport, scheme, special)
     if parsed is None:
         return None
-    host, port = parsed
+    host, port, port_written = parsed
     user, _, password = userinfo.partition(":") if at else ("", "", "")
     if special:
         end = next((i for i, c in enumerate(tail) if c in "?#"), len(tail))
@@ -172,7 +176,13 @@ def _parse_url(text: str) -> _Url | None:
         if not tail.startswith("/"):
             tail = "/" + tail
     return _Url(
-        scheme, host, port, quote(user, safe=_USERINFO_SAFE + "%"), quote(password, safe=_USERINFO_SAFE + "%"), tail
+        scheme,
+        host,
+        port,
+        port_written,
+        quote(user, safe=_USERINFO_SAFE + "%"),
+        quote(password, safe=_USERINFO_SAFE + "%"),
+        tail,
     )
 
 
@@ -195,7 +205,7 @@ def check_identity_request(
     """Check a create request against the rules and the identities that exist.
 
     A non-empty name of at most IDENTITY_NAME_MAX characters, an optional proxy URL with an http,
-    https, socks4 or socks5 scheme and a host, and fewer than `max_identities` existing identities,
+    https, socks4 or socks5 scheme, a host and a port, and fewer than `max_identities` existing identities,
     in that order. A proxy that is absent or blank means none. Returns the trimmed values.
     """
     raw_name = body.get("name")
@@ -219,6 +229,14 @@ def check_identity_request(
                 "invalid",
                 "proxy must use http, https, socks4 or socks5 and name a host; "
                 f'got "{redact_proxy(proxy)}"',
+            )
+        if not url.port_written:
+            # The browser's server (invisible-playwright-mcp) refuses a URL without a port when the identity
+            # launches, and its refusal prints the URL with its password: so it is refused here, where the
+            # password is redacted, and the launch can no longer fail that way.
+            raise IdentityRequestError(
+                "invalid",
+                f'proxy must name a port, as in http://host:8080; got "{redact_proxy(proxy)}"',
             )
     if existing_count >= max_identities:
         raise IdentityRequestError(

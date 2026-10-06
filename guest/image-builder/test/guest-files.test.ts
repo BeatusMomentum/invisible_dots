@@ -2,8 +2,10 @@
 // only inside a booted VM, minutes into a build or on every Dot's boot, so
 // the cheap ones are caught here.
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { GUEST_PATHS } from "@invisible-dots/shared";
 import { describe, expect, it } from "vitest";
 import { BUILDER_PYTHON_LOCK, defaultAssetRoot, GUEST_ASSETS, GUEST_UNITS, unitAsset } from "../src/assets.js";
 import { GUEST_PINS } from "../src/pins.js";
@@ -50,39 +52,54 @@ describe("guest files", () => {
     execFileSync("bash", ["-n", join(root, path)], { stdio: "pipe" });
   });
 
-  it("provision.sh records the engine line of `invisible-playwright version` as browser-engine", () => {
-    // The first line of that command is the wrapper's own version, which the
-    // manifest already has as invisible-playwright; the end-to-end run found
-    // the manifest recording it a second time as the browser engine.
+  it("provision.sh records the engine the library names, as browser-engine, and not a line it parsed out of prose", () => {
     const content = text("builder/provision.sh");
-    expect(content).not.toMatch(/version \| sed -n 1p/);
     expect(content).toContain('component browser-engine "$engine_version"');
+    expect(content).toContain("from invisible_core import BINARY_VERSION, FIREFOX_UPSTREAM_VERSION");
+    expect(content).toContain("from invisible_core.constants import BUILD_ID");
+    // The old way: sed over the text `invisible-playwright version` prints, which changes with its wording.
+    expect(content).not.toMatch(/version \| sed\b/);
+    expect(content).not.toContain('invisible-playwright" version');
   });
 
   /**
-   * The sed program of provision.sh's engine line, run as the guest runs it
-   * against the output of `invisible-playwright version` (the format of
-   * invisible_playwright's cli.py), so a change on either side shows here
-   * and not minutes into an image build.
+   * The Python program of provision.sh's engine line, run as the guest runs it against a stand-in for invisible_core
+   * (the three names it reads there), and compared with the engine line of `invisible-playwright version` (the format
+   * of invisible_playwright's cli.py, which printed the line the manifest has always recorded): the manifest keeps its
+   * wording, and a change of the names the program reads shows here and not minutes into an image build.
    */
-  const engineSed = (() => {
-    const match = /engine_version="\$\(as_dot "[^"]+" version \| sed -n '([^']+)'\)"/.exec(text("builder/provision.sh"));
-    if (!match) throw new Error("provision.sh no longer reads the engine with `version | sed -n '...'`");
+  const engineProgram = (() => {
+    const match = /engine_version="\$\(as_dot "[^"]+" -c '([^']+)'\)"/.exec(text("builder/provision.sh"));
+    if (!match) throw new Error("provision.sh no longer reads the engine with `python -c '...'`");
     return match[1]!;
   })();
-  const runSed = (input: string) => execFileSync("bash", ["-c", `sed -n '${engineSed}'`], { input, encoding: "utf8" });
+  const python = (() => {
+    for (const command of ["python3", "python"]) {
+      try {
+        execFileSync(command, ["-c", "import sys; assert sys.version_info >= (3, 8)"], { stdio: "pipe", timeout: 20_000 });
+        return command;
+      } catch {
+        // the next name
+      }
+    }
+    return null;
+  })();
 
-  it.skipIf(!bashUsable)("the engine sed picks the engine line of the real `version` output, and nothing from output without one", () => {
-    const sample = [
-      "invisible_playwright 0.25.7",
-      "invisible_core       34.31.0   (declared: ==34.31.0)",
-      "engine               firefox-34  Firefox 151.0  build 20260920230044",
-      "seal                 0123456789ab  [package]",
-      "cache                /home/dot/.cache/invisible-playwright",
-      "",
-    ].join("\n");
-    expect(runSed(sample)).toBe("firefox-34  Firefox 151.0  build 20260920230044\n");
-    expect(runSed("invisible_playwright 0.25.7\nseal                 0123456789ab  [package]\n")).toBe("");
+  it.skipIf(python === null)("the engine program prints what the engine line of `invisible-playwright version` printed", () => {
+    const stand = mkdtempSync(join(tmpdir(), "idots-core-"));
+    try {
+      mkdirSync(join(stand, "invisible_core"));
+      writeFileSync(join(stand, "invisible_core", "__init__.py"), "from .constants import BINARY_VERSION, FIREFOX_UPSTREAM_VERSION\n");
+      writeFileSync(
+        join(stand, "invisible_core", "constants.py"),
+        'BINARY_VERSION = "firefox-34"\nFIREFOX_UPSTREAM_VERSION = "151.0"\nBUILD_ID = "20260920230044"\n',
+      );
+      const printed = execFileSync(python!, ["-c", engineProgram], { env: { ...process.env, PYTHONPATH: stand }, encoding: "utf8" });
+      // cli.py: print(f"engine               {s.tag}  Firefox {s.upstream_version}  build {s.build_id}"), minus its label.
+      expect(printed.trim()).toBe("firefox-34  Firefox 151.0  build 20260920230044");
+    } finally {
+      rmSync(stand, { recursive: true, force: true });
+    }
   });
 });
 
@@ -111,29 +128,38 @@ describe("the Dot's browser", () => {
     expect(build).toContain('as_dot "$env_dir/bin/invisible-playwright" fetch');
   });
 
-  it("has the pinned GeoIP database unpacked beside the engine, so a first launch downloads nothing, and records its release", () => {
-    // The script takes the archive, its tag and its hash from the seed, and checks the hash before it unpacks anything.
-    expect(build).toContain('geoip_sha256="${5:?$usage}"');
+  it("has the pinned GeoIP database installed at the fixed path of GUEST_PATHS, root's and read-only, and records its release", () => {
+    // The script takes the archive and its hash from the seed, and checks the hash before it unpacks anything.
+    expect(build).toContain('geoip_sha256="${4:?$usage}"');
     expect(build).toContain('echo "$geoip_sha256  $geoip_zip" | sha256sum --check --status -');
     expect(build.indexOf("sha256sum --check")).toBeLessThan(build.indexOf("uv venv"));
-    // Nothing is resolved from the network by the script: the browser's own "latest release" fetch is not used.
-    expect(build).not.toContain("ensure_geoip_mmdb");
-    // The unpacking comes after the engine's fetch, from the same environment, as dot (the cache is dot's), and it
-    // fails when the browser's own lookup would not find the file it wrote.
+    // One fixed path, the one the engine hands the browser through the library's own knob, installed by root.
+    expect(build).toContain(`geoip_database=${GUEST_PATHS.geoipDatabase}\n`);
+    expect(build).toContain('install -D -m 0644 -o root -g root "$dot_unpacked/geoip-aio-all.mmdb" "$geoip_database"');
+    expect(build).toContain('! as_dot test -w "$geoip_database"');
+    // The unpacking comes after the engine's fetch, from the same environment, as dot, and the library has to accept the
+    // file through the knob the engine uses: a name or a knob that moved fails here, not at a launch.
     expect(build.indexOf("bundle.extract")).toBeGreaterThan(build.indexOf('"$env_dir/bin/invisible-playwright" fetch'));
-    expect(build).toMatch(/as_dot "\$env_dir\/bin\/python" - "\$dot_geoip" "\$geoip_tag" <<'PYTHON'/);
-    expect(build).toContain("if geoip_mmdb_path() != target / GEOIP_MMDB_NAME:");
-    // provision.sh hands the three values over, and refuses an image whose cache holds another release than the pin.
-    expect(provision).toContain('"$payload/$GEOIP_ARCHIVE" "$GEOIP_TAG" "$GEOIP_SHA256"');
-    expect(provision).toContain("from invisible_core.download import geoip_mmdb_path");
-    expect(provision).toContain('[ "$geoip_database" = "$GEOIP_TAG" ]');
-    expect(provision).toContain('component geoip-database "$geoip_database"');
+    expect(build).toMatch(/as_dot "\$env_dir\/bin\/python" - "\$dot_geoip" "\$dot_unpacked" <<'PYTHON'/);
+    expect(build).toContain('as_dot env STEALTHFOX_GEOIP_MMDB="$geoip_database" "$env_dir/bin/python"');
+    // Nothing is written into the library's private cache layout, and no release tag is checked in the guest.
+    for (const word of ["cache_root", "geoip_mmdb_path", "invisible_core.download", "GEOIP_TAG", "geoip_tag"]) {
+      expect(build, word).not.toContain(word);
+    }
+    for (const word of ["cache_root", "geoip_mmdb_path", "invisible_core.download", "geoip_database"]) {
+      expect(provision, word).not.toContain(word);
+    }
+    // The only call of the library's lookup is the one made under the knob (its import and the call).
+    expect(build.match(/ensure_geoip_mmdb/g)).toHaveLength(2);
+    // provision.sh hands over the archive and the hash, and records the pinned release that hash belongs to.
+    expect(provision).toContain('"$payload/$GEOIP_ARCHIVE" "$GEOIP_SHA256"');
+    expect(provision).toContain('component geoip-database "$GEOIP_TAG"');
   });
 
-  it("is unpacked the same way by the browser smoke, from the pin and with the same script", () => {
+  it("is installed the same way by the browser smoke, from the pin and with the same script", () => {
     const prepare = text("test/smoke/prepare-engine.sh");
-    expect(prepare).toContain(".geoip | \"\\(.tag) \\(.url) \\(.sha256)\"");
-    expect(prepare).toContain('"$geoip_dir/geoip-aio-all.mmdb.zip" "$GEOIP_TAG" "$GEOIP_SHA"');
+    expect(prepare).toContain('.geoip | "\\(.url) \\(.sha256)"');
+    expect(prepare).toContain('"$geoip_dir/geoip-aio-all.mmdb.zip" "$GEOIP_SHA"');
   });
 
   it("the lock in this checkout pins every package with hashes, both top-level packages included", () => {

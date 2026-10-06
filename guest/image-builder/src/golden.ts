@@ -5,7 +5,7 @@
  * image once to provision it.
  */
 import { createHash } from "node:crypto";
-import { chmod, copyFile, mkdir, readFile, rm, stat } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { writeIso } from "@invisible-dots/iso";
 import { hostPaths, replaceFile, type HostPaths } from "@invisible-dots/shared";
@@ -14,7 +14,7 @@ import { DownloadError, fetchVerified, sha256File, type Fetch, type FetchVerifie
 import { GEOIP_NOTICES } from "./geoip-notices.js";
 import { acquireLock, type Lock } from "./lock.js";
 import { manifestPathFor, writeManifest, type GoldenManifest } from "./manifest.js";
-import { BASE_IMAGE, downloadFileName, geoipCacheName, GUEST_PINS, type BaseImagePin, type GeoipPin, type GuestPins, type PinnedDownload } from "./pins.js";
+import { BASE_IMAGE, downloadFileName, geoipCacheName, GUEST_PINS, isGeoipCacheName, type BaseImagePin, type GeoipPin, type GuestPins, type PinnedDownload } from "./pins.js";
 import { waitForExit, type ProcessRunner } from "./process.js";
 import { parseHashedLock, parsePythonLock, type PythonLock } from "./python-lock.js";
 import { builderQemuArgs, type Accelerator, type QemuPrograms } from "./qemu.js";
@@ -181,6 +181,7 @@ async function buildLocked(options: GoldenBuildOptions & Resolved, target: Targe
   const nodeTarball = await fetchPinned(pins.node);
   const uvTarball = await fetchPinned(pins.uv);
   const geoipArchive = await fetchGeoip(pins.geoip, join(cacheDir, geoipCacheName(pins.geoip)), downloads);
+  for (const name of await pruneGeoipArchives(cacheDir, pins.geoip)) log(`removed the cached GeoIP archive ${name} (the pin's and the newest ${GEOIP_ARCHIVES_KEPT} others stay)`);
 
   // Next to the images, not in the system temp directory: the disk grows to
   // several GiB and the final rename stays on one filesystem.
@@ -287,6 +288,27 @@ async function fetchGeoip(pin: GeoipPin, dest: string, options: FetchVerifiedOpt
     throw error;
   }
   return dest;
+}
+
+/** How many archives of GeoIP releases the cache keeps besides the one the pin names. */
+export const GEOIP_ARCHIVES_KEPT = 2;
+
+/**
+ * Removes the cached GeoIP archives beyond the pin's and the `GEOIP_ARCHIVES_KEPT` most recently downloaded others
+ * (each pin bump leaves one more behind, and upstream publishes weekly), and returns the names it removed. Run after the
+ * pin's own archive is in place and verified, so a failed download never costs the archives an older tree builds from.
+ */
+export async function pruneGeoipArchives(cacheDir: string, pin: GeoipPin): Promise<string[]> {
+  const current = geoipCacheName(pin);
+  const others: { name: string; downloaded: number }[] = [];
+  for (const name of await readdir(cacheDir)) {
+    if (name === current || !isGeoipCacheName(name)) continue;
+    others.push({ name, downloaded: (await stat(join(cacheDir, name))).mtimeMs });
+  }
+  others.sort((a, b) => b.downloaded - a.downloaded || (a.name < b.name ? 1 : -1));
+  const removed = others.slice(GEOIP_ARCHIVES_KEPT).map((entry) => entry.name);
+  for (const name of removed) await rm(join(cacheDir, name), { force: true });
+  return removed;
 }
 
 /** Boots the builder VM, reports its progress, and returns the whole serial console once it has stopped. */

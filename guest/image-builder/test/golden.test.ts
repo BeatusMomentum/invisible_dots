@@ -1,4 +1,4 @@
-import { copyFile, readdir, readFile, rm, stat, writeFile, mkdir } from "node:fs/promises";
+import { copyFile, readdir, readFile, rm, stat, utimes, writeFile, mkdir } from "node:fs/promises";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -194,7 +194,7 @@ describe("buildGoldenImage", () => {
     expect(((await readManifest(second.manifest)) as GoldenManifest).pinned.geoip).toEqual(geoip);
   });
 
-  it("keeps the verified archive of every GeoIP release it built with, so an older tree still builds offline", async () => {
+  it("keeps the verified archive of the GeoIP releases it built with (within the bound below), so an older tree still builds offline", async () => {
     await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }).opts);
     const geoip = { tag: "2026.10.07", url: http.url(`/geoip/2026.10.07/${GEOIP_FILE}`), sha256: sha256(GEOIP_NEXT) };
     await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }, { pins: { ...pins, geoip } }).opts);
@@ -208,6 +208,37 @@ describe("buildGoldenImage", () => {
 
     expect(again.created).toBe(true);
     expect(http.requests.slice(requests).filter((path) => path.startsWith("/geoip/"))).toEqual([]);
+  });
+
+  it("keeps the pin's GeoIP archive and the two downloaded most recently before it, so the cache does not grow with every weekly bump", async () => {
+    const cache = join(paths.imagesDir, ".cache");
+    const tags = ["2026.09.30", "2026.10.07", "2026.10.14", "2026.10.21"];
+    for (const [index, tag] of tags.entries()) {
+      const body = Buffer.from(`the geoip release of ${tag} `.repeat(500));
+      http.set(`/geoip/${tag}/${GEOIP_FILE}`, { body });
+      const geoip = { tag, url: http.url(`/geoip/${tag}/${GEOIP_FILE}`), sha256: sha256(body) };
+      await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }, { pins: { ...pins, geoip } }).opts);
+      // A day apart, so that "most recently downloaded" does not depend on the clock's resolution.
+      const when = new Date(Date.UTC(2026, 9, 1 + index));
+      await utimes(join(cache, `geoip-${tag}-${GEOIP_FILE}`), when, when);
+    }
+
+    const archives = (await readdir(cache)).filter((name) => name.startsWith("geoip-")).sort();
+    expect(archives).toEqual(["2026.10.07", "2026.10.14", "2026.10.21"].map((tag) => `geoip-${tag}-${GEOIP_FILE}`));
+    expect(logs).toContain(`removed the cached GeoIP archive geoip-2026.09.30-${GEOIP_FILE} (the pin's and the newest 2 others stay)`);
+    // What is not a GeoIP archive is never touched.
+    expect((await readdir(cache)).filter((name) => !name.startsWith("geoip-")).sort()).toEqual([NODE_FILE, UV_FILE]);
+  });
+
+  it("removes no archive when the pin's own cannot be fetched", async () => {
+    await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }).opts);
+    const cache = join(paths.imagesDir, ".cache");
+    for (const tag of ["2026.01.01", "2026.01.08", "2026.01.15"]) await writeFile(join(cache, `geoip-${tag}-${GEOIP_FILE}`), tag);
+    const swapped = { ...pins.geoip, tag: "2026.10.07", url: http.url(`/geoip/swapped/${GEOIP_FILE}`) };
+
+    await expect(buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }, { pins: { ...pins, geoip: swapped } }).opts)).rejects.toThrow(/hashes to/);
+
+    expect((await readdir(cache)).filter((name) => name.startsWith("geoip-")).length).toBe(4);
   });
 
   it("refuses a GeoIP file that does not hash to its pin, before booting anything", async () => {

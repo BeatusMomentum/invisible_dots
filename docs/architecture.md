@@ -240,8 +240,11 @@ QEMU on the same disk would corrupt it.
   the browser needs, Node 24, `uv`, `invisible-playwright-mcp` in its own
   Python environment, the browser engine already downloaded together with the
   GeoIP database a launch with the timezone left to `auto` needs (one pinned
-  release, unpacked where the browser reads it, so a first launch downloads
-  nothing; a later launch may fetch a newer one and use that), and the Python
+  release at `/usr/local/share/invisible-dots/geoip-aio-all.mmdb`, root's and
+  read-only, which the engine hands the browser's server through the library's
+  own `STEALTHFOX_GEOIP_MMDB`: a launch uses that file as it is, asks GitHub for
+  no newer release, downloads nothing and deletes nothing, where the library's
+  default looks up the latest release at every launch and prunes the others), and the Python
   environment of the Dot's engine (`/opt/invisible-dots-engine`). It changes
   rarely. It is never modified once a VM uses it: a new one gets a new version
   in its name.
@@ -274,9 +277,11 @@ QEMU on the same disk would corrupt it.
   `guest/image-builder/pins.json`), the GeoIP database as one release of
   `daijro/geoip-all-in-one` by URL and SHA-256 (`geoip` in `pins.json`: the host
   checks the hash when it downloads the archive, the guest checks it again
-  before it unpacks it, the manifest records it as `pinned.geoip`, and each
-  verified archive stays in the cache under its tag, so a tree whose pinned
-  release the project has since deleted still builds from a host that has it;
+  before it unpacks it, the manifest records it as `pinned.geoip`, and the
+  verified archive stays in the cache under its tag, with the two downloaded
+  most recently before it (older ones are removed after a build), so a tree
+  whose pinned release the project has since deleted still builds from a host
+  that has it, and the cache does not grow with every weekly pin;
   the data's credits are in the manifest's `notices` and in
   `THIRD_PARTY_NOTICES.md`), and the whole Python environment of
   `invisible-playwright-mcp`, transitive packages included, by
@@ -647,7 +652,7 @@ command detached into another session outlives it.
 | `GET /events/stream` | `?after=<seq>` | `text/event-stream`, one SSE message per outbound event, `id: <seq>` |
 | `GET /state` | | `{ state, current_task_id, pending_approval }` |
 | `GET /browser-identities` | | `{ identities: BrowserIdentity[] }`, oldest first, the proxy with its password replaced |
-| `POST /browser-identities` | `{ name, proxy? }` | `201 BrowserIdentity`; `400 invalid` (name or proxy), `409 limit` (`max_identities`) |
+| `POST /browser-identities` | `{ name, proxy? }` | `201 BrowserIdentity`; `400 invalid` (name, or a proxy that is not an `http`, `https`, `socks4` or `socks5` URL with a host and a written port: the browser's server refuses one without a port at a launch, with a message that prints the URL and its password), `409 limit` (`max_identities`) |
 | `GET /browser-identities/:id` | | `BrowserIdentity`; `404 not_found` |
 | `DELETE /browser-identities/:id` | | `204` after the identity's browser is closed and its directory removed; `404 not_found` |
 | `GET /browser-identities/:id/frame` | | `200 image/jpeg` (`Cache-Control: no-store`), one frame of the identity's window, taken with the server's `browser_watch`; `404 not_found`; `409 not_open` when the identity is closed; `503 busy` when a call of the Dot held the identity for longer than 5 seconds; `502 frame_failed` (the server has no page to show) or `crashed` |
@@ -665,7 +670,7 @@ never of a route. The host may look at an open identity (the
 frame) and close it (or delete it); these are the owner's actions, not the Dot's, so
 no permission of the Dot applies to them. A frame is no use of the identity: it does
 not move it in the least-recently-used order, does not touch `last_used_at`,
-and never reopens a browser the server lost (that is `not_open`); it waits for
+and never reopens a browser the server lost (that is `not_open`, and the identity is closed, as for a call that finds it out); it waits for
 the call in flight on the identity at most 5 seconds, so a page that asks for a
 frame every two seconds cannot hold a browser open or starve the model.
 
@@ -811,7 +816,17 @@ The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
   the password replaced. The browser's own process is the one exception, by
   decision: it runs as `dot` with the proxy in its environment, so the `dot`
   user, and the model through `exec`, can read the proxy of an identity whose
-  browser is open from that process's `/proc/<pid>/environ`. The proxy is never
+  browser is open from that process's `/proc/<pid>/environ`. It is not the only
+  copy the model can read: `invisible-playwright-mcp` writes the proxy it was
+  launched with, password included, into its own session file
+  (`/home/dot/browsers/<id>/mcp/sessions/<id>.json`, owned by `dot`), which stays
+  there while the browser is closed. That is a defect of the library (its
+  `Work.remember()` saves the whole proxy; its own identity file keeps only a
+  digest), not something this repository can undo without patching it: the fix
+  belongs upstream (save the server and the user, or a digest, and read the
+  proxy from `STEALTHFOX_PROXY` at a reopen), and until it is pinned the browser
+  smoke records it as a known finding while it checks that no other file of
+  `/home/dot` (the profile, a cache, a log) holds the password. The proxy is never
   on a command line, which every user of the VM can read: the engine tells the
   relay the variable's name (`--env-from`) and the relay reads the value from
   its own environment, which only `dotengine` can read.
@@ -824,15 +839,37 @@ The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
   server's documented settings: its home (`INVISIBLE_MCP_HOME=<identity>/mcp`)
   and session id (`INVISIBLE_MCP_SESSION_ID=<identity_id>`), the identity's
   profile directory (`<identity>/profile`), headed mode, `DISPLAY=:0`, and the
-  identity's proxy when it has one. The names of the browser layer's own
+  identity's proxy when it has one, and two settings of the libraries it
+  uses: `STEALTHFOX_GEOIP_MMDB`, the image's pinned GeoIP file (section 3.3),
+  and `INVISIBLE_CORE_AUTOFIX=off`, which stops `invisible_core` from
+  reinstalling itself from the package index at a launch when its version
+  drifts, so a drift fails loudly instead of installing files outside the
+  hashed lock. The names of the browser layer's own
   settings are written in one place, `packages/shared/src/protocol.ts`
-  (`ENV.PROFILE_DIR`, `ENV.HEADLESS`, `ENV.PROXY`). The browser therefore runs
+  (`ENV.PROFILE_DIR`, `ENV.HEADLESS`, `ENV.PROXY`, `ENV.GEOIP_MMDB`,
+  `ENV.CORE_AUTOFIX`). The browser therefore runs
   on the Dot's desktop and shows up in its screenshots.
+- A launch also connects out, which no setting here turns off: to the
+  address-echo services of the library (`api.ipify.org`, `icanhazip.com`,
+  `checkip.amazonaws.com`, through the identity's proxy when it has one) to learn
+  the exit address for the timezone and locale; to the library's launch counter
+  (a download of a file of `feder-cr/firefox_antidetect_patch`'s releases,
+  switched off only by a preference the MCP server gives no way to pass); and
+  it probes the exit's capabilities and caches the answer in
+  `/tmp/exit_capability.json`. The GeoIP lookup is not one of these any more:
+  the pinned file is used as it is.
 - The model never calls `browser_open` directly and never sees the MCP tools
   by their own names. It calls invisible_dots tools that take an
   `identity_id`; the browser manager opens the identity's `main` browser with
-  no `profile`, `proxy` or `seed` argument, so the environment above is the
-  only source of those values.
+  no `profile`, `proxy` or `seed` argument, so for a first launch the
+  environment above is the only source of those values. A later `browser_open`
+  with no argument is a reopen, and the library then takes who the browser is
+  from its session file (`<identity>/mcp/sessions/<id>.json`: seed, proxy and
+  profile directory, written at the first open) and does not read
+  `STEALTHFOX_PROXY` or `STEALTHFOX_PROFILE_DIR` again: the file wins. An
+  identity's proxy never changes after it is created (there is no route that
+  edits it), so the two agree, but a proxy edited in the engine's database would
+  not reach a browser whose session file already exists.
 - At most `browser.identities.max_open` identities are open at once (default
   3, roughly 0.8 GB of memory each). Launching one more closes the least
   recently used. At most `browser.identities.max_identities` exist.
@@ -1017,13 +1054,13 @@ does not know.
 | `browser_identity_close` | `browser.identity.close` | closes the browser of an identity, keeping its profile: `identity_id` |
 | `browser_navigate` | `browser.navigate` | loads an `http://` or `https://` URL and no other (`file:`, `about:`, `view-source:`, `data:` and `javascript:` are refused, so the permission to navigate is not a permission to read files): `identity_id, url` |
 | `browser_snapshot` | `browser.read` | lists the interactive elements of the page with selectors and coordinates: `identity_id` |
-| `browser_read_text` | `browser.read` | reads the text of the page or of one element: `identity_id, selector?` |
+| `browser_read_text` | `browser.read` | reads the text of the page or of one element, cut (and marked as cut) at the server's own limit unless `max_chars` raises it: `identity_id, selector?, max_chars?` |
 | `browser_screenshot` | `browser.read` | takes a screenshot of the page and shows it to the model: `identity_id` |
 | `browser_click` | `browser.act` | clicks the element a selector names: `identity_id, selector` |
 | `browser_click_at` | `browser.act` | clicks a point of the viewport: `identity_id, x, y` |
 | `browser_type` | `browser.act` | fills a field, replacing what it held: `identity_id, selector, text` |
 | `browser_press_key` | `browser.act` | presses a key or a shortcut: `identity_id, key` |
-| `browser_select_option` | `browser.act` | chooses an option of a select element by value: `identity_id, selector, value` |
+| `browser_select_option` | `browser.act` | chooses an option of a select element by its visible label or its value, as the server does: `identity_id, selector, value` |
 | `browser_scroll` | `browser.act` | scrolls one screen: `identity_id, direction` (`up` is PageUp, `down` is PageDown) |
 | `browser_back` | `browser.act` | goes back in the history (Alt+Left): `identity_id` |
 | `browser_forward` | `browser.act` | goes forward in the history (Alt+Right): `identity_id` |
@@ -1323,10 +1360,17 @@ state.
   recently used identity first; a lower `max_identities` deletes nothing. A
   browser action on an identity that is not open fails with `not_open` and
   never launches it. A browser that the server reports gone while its process
-  lives is opened again once and the call repeated; a process that ended (the
-  client reports it instead of reconnecting, because a restarted process has
-  lost its browser) is a crash: the identity is closed, `browser.identity.closed`
-  is emitted once and the call fails with `crashed`. The manager hears of the end
+  lives (Firefox crashed, its window was closed) is not reopened and the call is
+  not repeated, as the library itself took out on purpose: a repeated click lands
+  on the blank page of a restarted browser, and the model is never told. It is
+  a crash like a process that ended (the client reports that instead of
+  reconnecting, because a restarted process has lost its browser): the identity
+  is closed and its server stopped, `browser.identity.closed` is emitted once and
+  the call fails with `crashed`, whose message says the browser is gone and that
+  `browser_identity_launch` opens it again as the same person, on a blank page
+  (the model cannot call `browser_open`; the launch is its way, and the one
+  decision of whether a browser starts). A frame that finds the browser gone
+  closes the identity the same way. The manager hears of the end
   when it happens, from the client's transport, so a process that dies while idle
   is closed at once, frees its slot of `max_open`, and the next action says
   `not_open`; a file never claims an open browser for a process that is gone. Text

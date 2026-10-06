@@ -695,6 +695,8 @@ class TestBrowserIdentityActions:
         assert answer.json["error"] == "internal"
         assert answer.json["message"] == f"the launch of {identity['id']} failed under a route"
         assert any("launch_failed" in line for line in lines)
+        # The log shows where it came from, not only what it said: the traceback names the route's own call.
+        assert any("Traceback" in line and "failing_close" in line for line in lines)
 
     async def test_an_action_names_the_one_method_it_takes_and_nothing_else_is_a_route(
         self, make_api: Callable[..., Any]

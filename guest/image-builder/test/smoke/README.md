@@ -47,7 +47,9 @@ and the checks read that file. What they pin:
   its permission and its target; a screenshot reaches the model's next request as an image part;
 - the fourth launch with `max_open` 3 closes the least recently used identity through `browser_close`;
   an action on a closed identity fails with the launch message and starts nothing; a server whose
-  browser closed under it is reopened once and the call repeated;
+  browser closed under it is not reopened and the call is not repeated: the call fails saying the browser
+  is gone and to launch the identity again, the identity is closed (one `closed` event, its server ended,
+  no slot held, so the next launch closes nothing);
 - `managed_by_dot` false drops the tools that create and delete identities from the offered list, whatever
   the permissions say;
 - `browser.identity.delete: ask` parks the call and the approval survives `kill -9`, which also ends every
@@ -93,6 +95,19 @@ engine, the GeoIP file) and at a launch (the egress address, for the timezone). 
   the server and Firefox and leaves the profile locked: the next launch works with that stale
   lock; what a page stored in the profile (localStorage) before the model's close, and before
   SIGTERM, which asks the browser to close, is still there after the next launch;
+- the GeoIP file the image build installed (`/usr/local/share/invisible-dots/geoip-aio-all.mmdb`) is what the
+  browser's server is pointed at (`STEALTHFOX_GEOIP_MMDB`, with `INVISIBLE_CORE_AUTOFIX=off`, in the server's
+  environment) and is unchanged, root's and read-only after every launch, with no cache of the library's own made
+  in dot's home;
+- Firefox killed under a live server: the model's next page action is answered that the browser is gone and to
+  launch the identity again, nothing is reopened (no Firefox), the identity is closed with its server ended, and
+  a launch brings back the same person (the seed file is unchanged);
+- a proxy without a port is refused at create (400), and an identity with a proxy (a small authenticating proxy
+  of the smoke, `browser/proxy.py`) launches: its egress lookup went through the proxy with the credentials, and
+  `/home/dot` is searched for the password. The one file that holds it is the MCP server's own session file
+  (`<identity>/mcp/sessions/<id>.json`): a KNOWN FINDING of `invisible-playwright-mcp` (it saves the whole proxy),
+  marked in the check and printed on every run, until it is fixed upstream; the check fails for any other file
+  (the profile, a cache, a log);
 - the key is in no file, process environment or log, the browser's included, and the identity's
   events are all in the stream.
 
@@ -131,6 +146,7 @@ removes the volume and the container on exit.
 | `lib.sh` | what both suites share: the guest laid out as `install.sh` lays it out, `dot-agentd` and the engine started and restarted, the key and config push, the event stream and the helpers that read it |
 | `smoke.sh` | the engine smoke's checks; prints `PASS:` or `FAIL:` per check and the summary line |
 | `browser/smoke.sh` | the browser smoke's checks, same output |
+| `browser/proxy.py` | the small forward proxy with Basic authentication that the browser smoke's identity with a proxy goes through |
 | `fake_openrouter.py` | the stand-in for OpenRouter's chat completions: answers by the last message (`RUN-EXEC <cmd>` makes it call the engine's `exec` tool, `SAY-RUN-EXEC <text> :: <cmd>` the same with `<text>` written beside the call, `WRITE-NOTE <path> :: <text>` a `write_file` into `/home/dot/memory/<path>`, `FIND-NOTE <word>` a `memory_search`, `REPEAT-EXEC <cmd>` an `exec` after every result too, a `COST <usd>` line the cost every response reports in its usage, `RUN-TOOL <name> <json>` a call of any tool with those arguments) and logs every request whole |
 | `host-stream.sh` | the fake host's event reader: reads `/v1/agent/events/stream` from its last `seq`, reconnects after a drop, pushes the key and the config on every `agent.started` |
 

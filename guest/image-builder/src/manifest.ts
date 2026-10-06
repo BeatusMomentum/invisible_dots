@@ -43,8 +43,11 @@ export interface GoldenManifest {
     "mcp-requirements.lock": string;
     apt_packages: string[];
   };
-  /** The credits that the data inside the image asks for (the GeoIP database): what a person who runs Dots may read about it. */
-  notices: DataNotice[];
+  /**
+   * The credits that the data inside the image asks for (the GeoIP database): what a person who runs Dots may read about it.
+   * Absent from the manifest of an image built before they were recorded, which `readManifest` still reads as it is.
+   */
+  notices?: DataNotice[];
   /** The engine's Python environment (builder/engine-requirements.lock): the lock the runtime disk's copy must equal. */
   engine: { lock_sha256: string };
   /** What the provisioner reported it installed (node, uv, browser-engine, ubuntu, kernel, ...). */

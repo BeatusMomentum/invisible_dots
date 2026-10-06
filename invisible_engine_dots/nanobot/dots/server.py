@@ -64,10 +64,13 @@ def _identity_error(error: BrowserIdentityError) -> HttpError:
     action on a closed identity: the Dot's tools make it, and so does a frame of one).
 
     `launch_failed` has no status because no route launches. If one ever raises it, the engine has a defect
-    and answers as one: a logged 500 `internal` that keeps the reason, not a failure inside this table."""
+    and answers as one: a logged 500 `internal` that keeps the reason, not a failure inside this table. The log
+    carries the traceback, as the middleware's own 500 does, so it shows where the defect is."""
     status = IDENTITY_ERROR_STATUS.get(error.code)
     if status is None:
-        logger.error("a browser identity route raised {} which no route answers with: {}", error.code, error.message)
+        logger.opt(exception=error).error(
+            "a browser identity route raised {} which no route answers with: {}", error.code, error.message
+        )
         return HttpError(500, "internal", error.message)
     return HttpError(status, error.code, error.message)
 
