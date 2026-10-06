@@ -113,6 +113,52 @@ func TestRemoteFilesFollowDanglingLinksInsideHome(t *testing.T) {
 	}
 }
 
+// A relative target of a dangling link starts at the real directory of the
+// link, not at the directory as written: the kernel follows the links of that
+// directory before it applies a "..".
+func TestRemoteFilesResolveARelativeDanglingLinkFromItsRealDirectory(t *testing.T) {
+	f := newFixture(t)
+
+	// A link out of home, in a directory reached through a link, whose "..",
+	// written from home, would land on a file in home: that file is not the one
+	// the link names, and nothing of home is served for it.
+	outside := t.TempDir()
+	symlinkMust(t, outside, filepath.Join(f.home, "out"))
+	symlinkMust(t, "../stolen", filepath.Join(outside, "d"))
+	if err := os.WriteFile(filepath.Join(f.home, "stolen"), []byte("HOME-FILE"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	resp := f.do(http.MethodGet, filesURL("/v1/files", "out/d"), nil)
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusForbidden || bytes.Contains(raw, []byte("HOME-FILE")) {
+		t.Errorf("GET out/d: status %d, body %q; want 403 and no file of home", resp.StatusCode, raw)
+	}
+	wantRefused(t, f.do(http.MethodPut, filesURL("/v1/files", "out/d"), bytes.NewReader([]byte("planted"))))
+	if raw, _ := os.ReadFile(filepath.Join(f.home, "stolen")); string(raw) != "HOME-FILE" {
+		t.Errorf("the file of home holds %q after the refused write", raw)
+	}
+	if _, err := os.Stat(filepath.Join(filepath.Dir(outside), "stolen")); err == nil {
+		t.Errorf("a write through the link created a file outside home")
+	}
+
+	// A link to a place inside home, in a directory reached through a link: its
+	// real location is in home, so it is a missing file, not a way out.
+	deep := filepath.Join(f.home, "s1", "s2", "s3")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	symlinkMust(t, deep, filepath.Join(f.home, "a"))
+	symlinkMust(t, "../../y", filepath.Join(deep, "l"))
+	wantStatus(t, f.do(http.MethodGet, filesURL("/v1/files", "a/l"), nil), http.StatusNotFound)
+	wantStatus(t, f.do(http.MethodGet, filesURL("/v1/files", "s1/s2/s3/l"), nil), http.StatusNotFound)
+	// A write replaces the entry, as it does for every file (a link included),
+	// in the real directory: it is accepted, and lands in home.
+	wantStatus(t, f.do(http.MethodPut, filesURL("/v1/files", "a/l"), bytes.NewReader([]byte("Y"))), http.StatusNoContent)
+	if raw, _ := os.ReadFile(filepath.Join(deep, "l")); string(raw) != "Y" {
+		t.Errorf("a write to a/l wrote %q at home/s1/s2/s3/l", raw)
+	}
+}
+
 func TestRemoteFilesRefuseProc(t *testing.T) {
 	if _, err := os.Stat("/proc/self/environ"); err != nil {
 		t.Fatalf("the guest is linux and has /proc: %v", err)

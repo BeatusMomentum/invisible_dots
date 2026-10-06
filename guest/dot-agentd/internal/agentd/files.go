@@ -115,7 +115,15 @@ func resolveLinks(p string) (string, error) {
 				return "", &fs.PathError{Op: "resolve", Path: p, Err: syscall.ELOOP}
 			}
 			if !filepath.IsAbs(target) {
-				target = filepath.Join(filepath.Dir(cur), target)
+				// A relative target starts at the real directory of the link: the
+				// kernel follows the links of that directory before it applies a
+				// "..", and Join would clean the ".." first. The directory exists,
+				// Readlink just went through it.
+				dir, err := filepath.EvalSymlinks(filepath.Dir(cur))
+				if err != nil {
+					return "", err
+				}
+				target = filepath.Join(dir, target)
 			}
 			cur = target
 			continue
