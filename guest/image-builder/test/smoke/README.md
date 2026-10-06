@@ -90,12 +90,12 @@ The real server and a real Firefox are not run by this smoke: they are the brows
 `browser/smoke.sh` runs the Dot's real browser. The golden image's apt packages (`pins.json`:
 the desktop, Firefox's libraries, ImageMagick) are installed, the browser is built by
 `builder/build-browser-env.sh` on the hashed `builder/mcp-requirements.lock` (the MCP server's
-environment, the browser engine, the GeoIP release `pins.json` pins and the script checks against its SHA-256: the script `provision.sh` runs), the
+environment and the browser engine: the script `provision.sh` runs), the
 runtime disk's `dot-desktop` script starts Xvfb and an XFCE session on `:0` as dot, and the Dot
 runs as in the engine smoke with no stand-in for the browser: the engine finds
 `invisible-playwright-mcp` on its PATH. Only the model is a stand-in, and the pages the browser
 opens are served from the container. The browser needs the network twice, at the build (the
-engine, the GeoIP file) and at a launch (the egress address, for the timezone). What it pins:
+engine) and at a launch (the egress address, for the timezone, and the library's GeoIP database). What it pins:
 
 - the model launches an identity and the real server answers that its browser is open; Firefox
   and the server run as `dot`, the server with the profile, its home, a real window on `:0`, no
@@ -115,10 +115,6 @@ engine, the GeoIP file) and at a launch (the egress address, for the timezone). 
   the server and Firefox and leaves the profile locked: the next launch works with that stale
   lock; what a page stored in the profile (localStorage) before the model's close, and before
   SIGTERM, which asks the browser to close, is still there after the next launch;
-- the GeoIP file the image build installed (`/usr/local/share/invisible-dots/geoip-aio-all.mmdb`) is what the
-  browser's server is pointed at (`STEALTHFOX_GEOIP_MMDB`, with `INVISIBLE_CORE_AUTOFIX=off`, in the server's
-  environment) and is unchanged, root's and read-only after every launch, with no cache of the library's own made
-  in dot's home;
 - Firefox killed under a live server: the model's next page action is answered that the browser is gone and to
   launch the identity again, nothing is reopened (no Firefox), the identity is closed with its server ended, and
   a launch brings back the same person (the seed file is unchanged);

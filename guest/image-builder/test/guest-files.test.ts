@@ -129,40 +129,6 @@ describe("the Dot's browser", () => {
     expect(build).toContain('as_dot "$env_dir/bin/invisible-playwright" fetch');
   });
 
-  it("has the pinned GeoIP database installed at the fixed path of GUEST_PATHS, root's and read-only, and records its release", () => {
-    // The script takes the archive and its hash from the seed, and checks the hash before it unpacks anything.
-    expect(build).toContain('geoip_sha256="${4:?$usage}"');
-    expect(build).toContain('echo "$geoip_sha256  $geoip_zip" | sha256sum --check --status -');
-    expect(build.indexOf("sha256sum --check")).toBeLessThan(build.indexOf("uv venv"));
-    // One fixed path, the one the engine hands the browser through the library's own knob, installed by root.
-    expect(build).toContain(`geoip_database=${GUEST_PATHS.geoipDatabase}\n`);
-    expect(build).toContain('install -D -m 0644 -o root -g root "$dot_unpacked/geoip-aio-all.mmdb" "$geoip_database"');
-    expect(build).toContain('! as_dot test -w "$geoip_database"');
-    // The unpacking comes after the engine's fetch, from the same environment, as dot, and the library has to accept the
-    // file through the knob the engine uses: a name or a knob that moved fails here, not at a launch.
-    expect(build.indexOf("bundle.extract")).toBeGreaterThan(build.indexOf('"$env_dir/bin/invisible-playwright" fetch'));
-    expect(build).toMatch(/as_dot "\$env_dir\/bin\/python" - "\$dot_geoip" "\$dot_unpacked" <<'PYTHON'/);
-    expect(build).toContain('as_dot env STEALTHFOX_GEOIP_MMDB="$geoip_database" "$env_dir/bin/python"');
-    // Nothing is written into the library's private cache layout, and no release tag is checked in the guest.
-    for (const word of ["cache_root", "geoip_mmdb_path", "invisible_core.download", "GEOIP_TAG", "geoip_tag"]) {
-      expect(build, word).not.toContain(word);
-    }
-    for (const word of ["cache_root", "geoip_mmdb_path", "invisible_core.download", "geoip_database"]) {
-      expect(provision, word).not.toContain(word);
-    }
-    // The only call of the library's lookup is the one made under the knob (its import and the call).
-    expect(build.match(/ensure_geoip_mmdb/g)).toHaveLength(2);
-    // provision.sh hands over the archive and the hash, and records the pinned release that hash belongs to.
-    expect(provision).toContain('"$payload/$GEOIP_ARCHIVE" "$GEOIP_SHA256"');
-    expect(provision).toContain('component geoip-database "$GEOIP_TAG"');
-  });
-
-  it("is installed the same way by the browser smoke, from the pin and with the same script", () => {
-    const prepare = text("test/smoke/prepare-engine.sh");
-    expect(prepare).toContain('.geoip | "\\(.url) \\(.sha256)"');
-    expect(prepare).toContain('"$geoip_dir/geoip-aio-all.mmdb.zip" "$GEOIP_SHA"');
-  });
-
   it("the lock in this checkout pins every package with hashes, both top-level packages included", () => {
     const lock = parsePythonLock(text(BUILDER_PYTHON_LOCK));
     expect(lock.mcpVersion).toMatch(/^\d+\.\d+\.\d+$/);

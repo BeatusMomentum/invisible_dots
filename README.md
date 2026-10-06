@@ -716,7 +716,7 @@ it, and to whom:
 - **The sites a Dot visits** see its browser, coming from the egress of the Dot's
   VM, or from the identity's proxy when you gave that one identity a proxy.
 - **Publishers of what the images are made of** (Ubuntu, Node, uv, the Python
-  packages, the browser engine, a GeoIP database on GitHub) serve the downloads
+  packages, the browser engine) serve the downloads
   when you build them; on Windows, `setup` downloads the official QEMU
   installer.
 - **The browser layer.**
@@ -726,8 +726,8 @@ it, and to whom:
 - **Address-echo services** (`api.ipify.org`, `icanhazip.com`,
   `checkip.amazonaws.com`) are asked by the browser library at each launch for
   the public address the browser exits from (the VM's egress, or through the
-  identity's proxy when it has one), to set the time zone and locale. The GeoIP lookup itself is local: the
-  database is part of the golden image.
+  identity's proxy when it has one), to set the time zone and locale, and it
+  keeps its GeoIP database current from its GitHub release.
 - **The web UI** loads nothing from other sites: its pages, scripts and styles
   come from the server on your PC and its fonts are your system's. A link you
   press (to @BotFather, to an OpenRouter page) opens that site.
@@ -839,12 +839,8 @@ parts of this repository's history come from Open Multi-Agent, also MIT. Their
 notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). QEMU (GPL-2.0)
 is installed from its official installer or your distribution and only run as
 a separate program, never bundled. The guest operating system, the browser
-engine and the packages a host downloads keep their own licenses, and so does
-the GeoIP data in the golden image: it is built on your machine from the
-sources' free databases (CC BY-SA 4.0, the GeoLite2 EULA, CC BY 4.0 and others,
-listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)), and invisible_dots
-does not redistribute it. Whoever copies a golden image to another machine takes
-on those licenses
+engine and the packages a host downloads keep their own licenses; whoever
+copies a golden image to another machine takes on those licenses
 ([architecture: licensing](docs/architecture.md#113-licensing)). Nothing under
 the GPL is installed by the default `npm install`; the WhatsApp client, which
 brings a GPL-3.0 dependency, is an opt-in install. The Dot's computer is

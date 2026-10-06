@@ -18,19 +18,6 @@ export interface PinnedDownload {
   sha256: string;
 }
 
-/**
- * The GeoIP database a launch with the timezone left to "auto" needs: one release of daijro/geoip-all-in-one, by its
- * exact URL and the SHA-256 of that file. The project publishes no checksum list, so the pin is the only record: it
- * is the `digest` GitHub shows for the release asset (api.github.com/repos/daijro/geoip-all-in-one/releases/latest).
- * Upstream keeps only its latest releases, so a pin that is not refreshed answers 404 within weeks (see the README).
- */
-export interface GeoipPin {
-  /** The release tag, a date; it is the prefix of the cached archive's name (`geoipCacheName`). */
-  tag: string;
-  url: string;
-  sha256: string;
-}
-
 export interface BaseImagePin {
   name: string;
   release: string;
@@ -52,7 +39,6 @@ export interface GuestPins {
   uv: PinnedDownload;
   /** hev-socks5-tunnel, the static binary the guest routes the whole VM through when the Dot has a VM proxy. */
   tunnel: PinnedDownload;
-  geoip: GeoipPin;
   apt_packages: string[];
 }
 
@@ -106,36 +92,9 @@ function parseDownload(value: unknown, where: string): PinnedDownload {
   return pin;
 }
 
-/** The release asset that holds the database, and where a release of the project lives. */
-const GEOIP_ASSET = "geoip-aio-all.mmdb.zip";
-const GEOIP_RELEASES = "https://github.com/daijro/geoip-all-in-one/releases/download";
-
-function parseGeoip(value: unknown, where: string): GeoipPin {
-  const o = asObject(value, where);
-  const tag = plainWord(field(o, "tag", where), `${where}.tag`);
-  const url = https(field(o, "url", where), `${where}.url`);
-  const expected = `${GEOIP_RELEASES}/${tag}/${GEOIP_ASSET}`;
-  if (url !== expected) throw new Error(`${where}.url must be ${expected}`);
-  return { tag, url, sha256: sha256(field(o, "sha256", where), `${where}.sha256`) };
-}
-
 /** The name a pinned download is stored under in the cache and on the builder seed. */
 export function downloadFileName(pin: { url: string }): string {
   return new URL(pin.url).pathname.split("/").pop() ?? "";
-}
-
-/**
- * The name the GeoIP archive is cached under: its tag first, because every release has the same file name upstream
- * and a pin bump would otherwise delete the only verified copy of the release the previous pin names, which the
- * project has deleted by then. (The seed keeps `downloadFileName`: the guest finds the archive by it.)
- */
-export function geoipCacheName(pin: GeoipPin): string {
-  return `geoip-${pin.tag}-${downloadFileName(pin)}`;
-}
-
-/** Whether a file name of the cache is the archive of some GeoIP release, whatever its tag (see `geoipCacheName`). */
-export function isGeoipCacheName(name: string): boolean {
-  return name.startsWith("geoip-") && name.endsWith(`-${GEOIP_ASSET}`) && name.length > `geoip--${GEOIP_ASSET}`.length;
 }
 
 export function parseBaseImagePin(value: unknown): BaseImagePin {
@@ -165,7 +124,6 @@ export function parseGuestPins(value: unknown): GuestPins {
     node: parseDownload(o.node, `${where} node`),
     uv: parseDownload(o.uv, `${where} uv`),
     tunnel: parseDownload(o.tunnel, `${where} tunnel`),
-    geoip: parseGeoip(o.geoip, `${where} geoip`),
     apt_packages: apt.map((name, i) => plainWord(typeof name === "string" ? name : "", `${where} apt_packages[${i}]`)),
   };
 }

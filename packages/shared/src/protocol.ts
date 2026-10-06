@@ -87,8 +87,6 @@ export const ENV = {
   /** Set only for an identity that was given a proxy of its own; otherwise the browser inherits the egress of the VM (section 6). */
   PROXY: "STEALTHFOX_PROXY",
   DISPLAY: "DISPLAY",
-  /** The GeoIP database file the browser layer uses as it is, with no lookup of a newer release (GUEST_PATHS.geoipDatabase). */
-  GEOIP_MMDB: "STEALTHFOX_GEOIP_MMDB",
   /** `off` stops invisible_core from reinstalling itself from the package index at a launch when its version drifts. */
   CORE_AUTOFIX: "INVISIBLE_CORE_AUTOFIX",
 } as const;
@@ -106,8 +104,6 @@ export const GUEST_PATHS = {
   documents: "/home/dot/documents",
   memory: "/home/dot/memory",
   browsers: "/home/dot/browsers",
-  /** The GeoIP database of the golden image (daijro/geoip-all-in-one, the release pins.json names), root's and read-only. */
-  geoipDatabase: "/usr/local/share/invisible-dots/geoip-aio-all.mmdb",
   /**
    * The home of each browser identity's MCP server (`<mcpHomes>/<identity_id>`). Outside `/home/dot` on purpose: the
    * server saves the proxy of the browser it opened, password included, in a session file under its home, and the

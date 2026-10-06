@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Runs as root inside the builder VM, from the builder's seed disk (label
-# cidata), which also carries pins.env, the Node and uv tarballs and the GeoIP archive. Installs
+# cidata), which also carries pins.env and the pinned downloads. Installs
 # everything the golden image carries (architecture section 3.3), then wipes
 # the instance state so every Dot boots as a fresh cloud-init instance, and
 # powers off.
@@ -63,18 +63,15 @@ id dot >/dev/null 2>&1 || useradd --create-home --shell /bin/bash dot
 # image without it would fail at every boot, so it fails the build.
 id dotagentd >/dev/null 2>&1 || { console "the builder seed made no user dotagentd"; false; }
 
-step "installing invisible-playwright-mcp $MCP_VERSION, fetching the browser engine and installing the GeoIP database"
+step "installing invisible-playwright-mcp $MCP_VERSION, fetching the browser engine"
 # The whole environment comes from the hashed lock on the seed and is built as dot by the script the
 # seed carries, the one the browser smoke runs too (section 3.3): every package at the version the
 # lock names and with a file whose SHA-256 it lists, nothing resolved from the index. The engine is
 # fetched with the invisible-playwright of that environment, so the cached engine is the one the
-# server's seal expects, in ~dot/.cache/invisible-playwright. The GeoIP database that a launch with the
-# timezone left to "auto" needs is installed from the pinned release the seed carries (hash-checked on the
-# host and again by the script) at one fixed path, root's and read-only, which the engine hands the browser's
-# server through the library's STEALTHFOX_GEOIP_MMDB: a Dot's launch downloads nothing and the pin holds.
+# server's seal expects, in ~dot/.cache/invisible-playwright.
 as_dot() { sudo -u dot -H env PATH="/home/dot/.local/bin:/usr/local/bin:/usr/bin:/bin" "$@"; }
 mcp_env=/home/dot/.local/share/invisible-dots/mcp
-bash "$payload/$BROWSER_BUILD" "$payload/$PYTHON_LOCK" "$mcp_env" "$payload/$GEOIP_ARCHIVE" "$GEOIP_SHA256"
+bash "$payload/$BROWSER_BUILD" "$payload/$PYTHON_LOCK" "$mcp_env"
 # The engine the image carries is read from the library that decides it (the seal of invisible_core: tag,
 # Firefox version, BuildID), the same facts `invisible-playwright version` prints in its engine line.
 engine_version="$(as_dot "$mcp_env/bin/python" -c 'from invisible_core import BINARY_VERSION, FIREFOX_UPSTREAM_VERSION; from invisible_core.constants import BUILD_ID; print(f"{BINARY_VERSION}  Firefox {FIREFOX_UPSTREAM_VERSION}  build {BUILD_ID}")')"
@@ -112,7 +109,6 @@ component hev-socks5-tunnel "$TUNNEL_VERSION"
 component invisible-playwright-mcp "$MCP_VERSION"
 component invisible-playwright "$PLAYWRIGHT_VERSION"
 component browser-engine "$engine_version"
-component geoip-database "$GEOIP_TAG"
 component engine-python "$engine_python"
 
 step "cleaning up"

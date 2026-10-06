@@ -1,11 +1,10 @@
-import { copyFile, readdir, readFile, rm, stat, utimes, writeFile, mkdir } from "node:fs/promises";
+import { copyFile, readdir, readFile, rm, stat, writeFile, mkdir } from "node:fs/promises";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { hostPaths, type HostPaths } from "@invisible-dots/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { BUILDER_BROWSER_BUILD, BUILDER_ENGINE_BUILD, BUILDER_ENGINE_LOCK, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_USER_DATA, defaultAssetRoot } from "../src/assets.js";
-import { GEOIP_NOTICES, GEOIP_STATEMENT } from "../src/geoip-notices.js";
 import { buildGoldenImage, GOLDEN_DEFAULTS, GoldenBuildError, type GoldenBuildOptions } from "../src/golden.js";
 import { readManifest, verifyImage, type GoldenManifest } from "../src/manifest.js";
 import type { BaseImagePin, GuestPins } from "../src/pins.js";
@@ -16,17 +15,10 @@ import { sha256, startFakeHttp, type FakeHttp } from "./http-fixture.js";
 const BASE = Buffer.from("QFI\xfb pretend qcow2 cloud image ".repeat(4000), "latin1");
 const NODE = Buffer.from("node tarball ".repeat(1000));
 const UV = Buffer.from("uv tarball ".repeat(1000));
-const GEOIP = Buffer.from("geoip archive ".repeat(1000));
 const TUNNEL = Buffer.from("tunnel binary ".repeat(1000));
-/** The next weekly release of the database, which the server also has. */
-const GEOIP_NEXT = Buffer.from("the next week of geoip ".repeat(1000));
 const NODE_FILE = "node-v24.21.0-linux-x64.tar.xz";
 const UV_FILE = "uv-x86_64-unknown-linux-gnu.tar.gz";
-const GEOIP_FILE = "geoip-aio-all.mmdb.zip";
 const TUNNEL_FILE = "hev-socks5-tunnel-linux-x86_64";
-/** The cache keeps each release under its tag: every release has the same file name upstream. */
-const GEOIP_CACHED = `geoip-2026.09.30-${GEOIP_FILE}`;
-const GEOIP_NEXT_CACHED = `geoip-2026.10.07-${GEOIP_FILE}`;
 
 const OK_CONSOLE = [
   "[    0.000000] Linux version 6.8.0",
@@ -54,10 +46,6 @@ beforeEach(async () => {
     [`/uv/${UV_FILE}`]: { body: UV },
     [`/tunnel/${TUNNEL_FILE}`]: { body: TUNNEL },
     [`/uv/${UV_FILE}.sha256`]: { body: `${sha256(UV)} *${UV_FILE}\n` },
-    [`/geoip/2026.09.30/${GEOIP_FILE}`]: { body: GEOIP },
-    [`/geoip/2026.10.07/${GEOIP_FILE}`]: { body: GEOIP_NEXT },
-    // A release whose bytes are not the ones its pin names.
-    [`/geoip/swapped/${GEOIP_FILE}`]: { body: Buffer.from("not the release that was pinned") },
   });
   home = mkdtempSync(join(tmpdir(), "idots-golden-"));
   paths = hostPaths({ INVISIBLE_DOTS_HOME: home });
@@ -75,7 +63,6 @@ beforeEach(async () => {
     node: { version: "24.21.0", url: http.url(`/node/${NODE_FILE}`), shasums_url: http.url("/node/SHASUMS256.txt"), shasums_entry: NODE_FILE, sha256: sha256(NODE) },
     uv: { version: "0.12.22", url: http.url(`/uv/${UV_FILE}`), shasums_url: http.url(`/uv/${UV_FILE}.sha256`), shasums_entry: UV_FILE, sha256: sha256(UV) },
     tunnel: { version: "2.18.0", url: http.url(`/tunnel/${TUNNEL_FILE}`), sha256: sha256(TUNNEL) },
-    geoip: { tag: "2026.09.30", url: http.url(`/geoip/2026.09.30/${GEOIP_FILE}`), sha256: sha256(GEOIP) },
     apt_packages: ["xvfb", "imagemagick"],
   };
   logs = [];
@@ -129,8 +116,8 @@ describe("buildGoldenImage", () => {
     expect(runner.spawns[0]!.args).toEqual(
       expect.arrayContaining(["-accel", "kvm", "-cpu", "host,-vmx,-svm", "-m", String(GOLDEN_DEFAULTS.memoryMib), "-smp", String(GOLDEN_DEFAULTS.cpus)]),
     );
-    // The seed carried both tarballs and the GeoIP archive.
-    expect(seedSize).toBeGreaterThan(NODE.length + UV.length + GEOIP.length);
+    // The seed carried the pinned downloads.
+    expect(seedSize).toBeGreaterThan(NODE.length + UV.length + TUNNEL.length);
 
     expect(await readFile(result.image)).toEqual(BASE);
     expect((await stat(result.image)).mode & 0o222).toBe(0);
@@ -147,14 +134,10 @@ describe("buildGoldenImage", () => {
       pinned: {
         node: { version: "24.21.0", sha256: sha256(NODE) },
         uv: { version: "0.12.22", sha256: sha256(UV) },
-        geoip: { tag: "2026.09.30", sha256: sha256(GEOIP), url: http.url(`/geoip/2026.09.30/${GEOIP_FILE}`) },
         "invisible-playwright-mcp": "0.70.2",
         "invisible-playwright": "0.25.7",
         apt_packages: ["xvfb", "imagemagick"],
       },
-      // What the GeoIP data asks to be credited with, and what that means together, travel with the image.
-      notices: [...GEOIP_NOTICES],
-      notices_statement: GEOIP_STATEMENT,
       // The engine's lock, which the runtime disk's copy must equal.
       engine: { lock_sha256: sha256(await readFile(join(defaultAssetRoot(), BUILDER_ENGINE_LOCK))) },
       installed: { node: "v24.21.0", "browser-engine": "151.0" },
@@ -168,7 +151,7 @@ describe("buildGoldenImage", () => {
     expect((await readdir(paths.imagesDir)).sort()).toEqual(
       [".cache", "noble-server-cloudimg-amd64.img", `golden-${result.version}.json`, `golden-${result.version}.qcow2`].sort(),
     );
-    expect((await readdir(join(paths.imagesDir, ".cache"))).sort()).toEqual([GEOIP_CACHED, NODE_FILE, UV_FILE]);
+    expect((await readdir(join(paths.imagesDir, ".cache"))).sort()).toEqual([NODE_FILE, TUNNEL_FILE, UV_FILE].sort());
   });
 
   it("does nothing when an image for the same inputs exists", async () => {
@@ -186,84 +169,6 @@ describe("buildGoldenImage", () => {
     const second = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }, { diskSize: "12G" }).opts);
     expect(second.created).toBe(true);
     expect(second.version).not.toBe(first.version);
-  });
-
-  it("builds a new version when only the GeoIP release changes, and records the release", async () => {
-    const first = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }).opts);
-    const geoip = { tag: "2026.10.07", url: http.url(`/geoip/2026.10.07/${GEOIP_FILE}`), sha256: sha256(GEOIP_NEXT) };
-
-    const second = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }, { pins: { ...pins, geoip } }).opts);
-
-    expect(second.created).toBe(true);
-    expect(second.version).not.toBe(first.version);
-    expect(((await readManifest(second.manifest)) as GoldenManifest).pinned.geoip).toEqual(geoip);
-  });
-
-  it("keeps the verified archive of the GeoIP releases it built with (within the bound below), so an older tree still builds offline", async () => {
-    await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }).opts);
-    const geoip = { tag: "2026.10.07", url: http.url(`/geoip/2026.10.07/${GEOIP_FILE}`), sha256: sha256(GEOIP_NEXT) };
-    await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }, { pins: { ...pins, geoip } }).opts);
-    const cache = join(paths.imagesDir, ".cache");
-    expect((await readdir(cache)).sort()).toEqual([GEOIP_CACHED, GEOIP_NEXT_CACHED, NODE_FILE, UV_FILE].sort());
-
-    // The pin goes back to the first release, which upstream has deleted by now: its cached copy is enough.
-    http.set(`/geoip/2026.09.30/${GEOIP_FILE}`, { body: "gone", status: 404 });
-    const requests = http.requests.length;
-    const again = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }, { diskSize: "12G" }).opts);
-
-    expect(again.created).toBe(true);
-    expect(http.requests.slice(requests).filter((path) => path.startsWith("/geoip/"))).toEqual([]);
-  });
-
-  it("keeps the pin's GeoIP archive and the two downloaded most recently before it, so the cache does not grow with every weekly bump", async () => {
-    const cache = join(paths.imagesDir, ".cache");
-    const tags = ["2026.09.30", "2026.10.07", "2026.10.14", "2026.10.21"];
-    for (const [index, tag] of tags.entries()) {
-      const body = Buffer.from(`the geoip release of ${tag} `.repeat(500));
-      http.set(`/geoip/${tag}/${GEOIP_FILE}`, { body });
-      const geoip = { tag, url: http.url(`/geoip/${tag}/${GEOIP_FILE}`), sha256: sha256(body) };
-      await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }, { pins: { ...pins, geoip } }).opts);
-      // A day apart, so that "most recently downloaded" does not depend on the clock's resolution.
-      const when = new Date(Date.UTC(2026, 9, 1 + index));
-      await utimes(join(cache, `geoip-${tag}-${GEOIP_FILE}`), when, when);
-    }
-
-    const archives = (await readdir(cache)).filter((name) => name.startsWith("geoip-")).sort();
-    expect(archives).toEqual(["2026.10.07", "2026.10.14", "2026.10.21"].map((tag) => `geoip-${tag}-${GEOIP_FILE}`));
-    expect(logs).toContain(`removed the cached GeoIP archive geoip-2026.09.30-${GEOIP_FILE} (the pin's and the newest 2 others stay)`);
-    // What is not a GeoIP archive is never touched.
-    expect((await readdir(cache)).filter((name) => !name.startsWith("geoip-")).sort()).toEqual([NODE_FILE, UV_FILE]);
-  });
-
-  it("removes no archive when the pin's own cannot be fetched", async () => {
-    await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }).opts);
-    const cache = join(paths.imagesDir, ".cache");
-    for (const tag of ["2026.01.01", "2026.01.08", "2026.01.15"]) await writeFile(join(cache, `geoip-${tag}-${GEOIP_FILE}`), tag);
-    const swapped = { ...pins.geoip, tag: "2026.10.07", url: http.url(`/geoip/swapped/${GEOIP_FILE}`) };
-
-    await expect(buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }, { pins: { ...pins, geoip: swapped } }).opts)).rejects.toThrow(/hashes to/);
-
-    expect((await readdir(cache)).filter((name) => name.startsWith("geoip-")).length).toBe(4);
-  });
-
-  it("refuses a GeoIP file that does not hash to its pin, before booting anything", async () => {
-    const swapped = { ...pins.geoip, url: http.url(`/geoip/swapped/${GEOIP_FILE}`) };
-    const { runner, opts } = options({ console: OK_CONSOLE, exit: 0 }, { pins: { ...pins, geoip: swapped } });
-
-    await expect(buildGoldenImage(opts)).rejects.toThrow(/geoip-aio-all\.mmdb\.zip hashes to [0-9a-f]{64}, but the pin is/);
-
-    expect(runner.spawns).toHaveLength(0);
-    expect((await readdir(paths.imagesDir)).filter((name) => name.startsWith("golden-"))).toEqual([]);
-  });
-
-  it("says what to do when the pinned GeoIP release is gone from GitHub", async () => {
-    // Upstream keeps only its latest releases: the answer for a release it deleted is a 404.
-    const gone = { ...pins.geoip, url: http.url(`/geoip/2026.01.01/${GEOIP_FILE}`) };
-    const { runner, opts } = options({ console: OK_CONSOLE, exit: 0 }, { pins: { ...pins, geoip: gone } });
-
-    await expect(buildGoldenImage(opts)).rejects.toThrow(/HTTP 404.*pinned GeoIP release 2026.09.30 is gone.*guest\/image-builder\/pins\.json.*releases\/latest/s);
-
-    expect(runner.spawns).toHaveLength(0);
   });
 
   /** A copy of the guest files the digest reads, for a test that changes one of them. */

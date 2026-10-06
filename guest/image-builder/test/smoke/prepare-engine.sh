@@ -14,11 +14,10 @@
 #   runtime disk: the engine's source at /opt/invisible-dots/engine, the files
 #                 runtime.ts stages (every .py, the .md templates, the lock,
 #                 LICENSE, UPSTREAM.md), world-readable as on the ISO
-# The engine suite adds an empty GeoIP file at its fixed path (the engine refuses a golden image without it).
 # The browser suite builds one more thing, as the golden image does it: the apt packages of
 # pins.json (the desktop, Firefox's libraries, ImageMagick) and the Dot's browser
 # (builder/build-browser-env.sh on the hashed mcp-requirements.lock: the MCP server's
-# environment, the engine of the browser, the GeoIP database at its fixed path).
+# environment and the engine of the browser).
 set -euo pipefail
 : "${TREE:?run.sh sets TREE}" "${AGENTD_BIN:?run.sh sets AGENTD_BIN}"
 suite=${SMOKE_SUITE:-engine}
@@ -72,23 +71,11 @@ for name in names:
 print('imported', len(names), 'modules from', nanobot.__file__)
 "
 
-if [ "$suite" = engine ]; then
-  # The engine refuses to start on a golden image without the GeoIP database (GUEST_PATHS.geoipDatabase): this
-  # suite's browser is a stand-in that never reads it, so an empty file, root's and read-only as the build leaves
-  # the real one, meets the contract. The browser suite installs the real database below.
-  install -D -m 0444 -o root -g root /dev/null /usr/local/share/invisible-dots/geoip-aio-all.mmdb
-fi
-
 if [ "$suite" = browser ]; then
   # The packages of the golden image (pins.json), as provision.sh installs them.
   apt-get install -y -qq --no-install-recommends $(jq -r '.apt_packages[]' "$TREE/guest/image-builder/pins.json") >/dev/null
   # The Dot's browser, with the script provision.sh runs on the same lock. dot reaches its home, not the tree.
-  # The GeoIP release pins.json names, fetched here (the image builder fetches it on the host) and checked
-  # against its SHA-256 by the script itself.
-  geoip_dir=$(mktemp -d)
-  read -r GEOIP_URL GEOIP_SHA < <(jq -r '.geoip | "\(.url) \(.sha256)"' "$TREE/guest/image-builder/pins.json")
-  curl -fsSL "$GEOIP_URL" -o "$geoip_dir/geoip-aio-all.mmdb.zip"
-  bash "$builder/build-browser-env.sh" "$builder/mcp-requirements.lock" /home/dot/.local/share/invisible-dots/mcp "$geoip_dir/geoip-aio-all.mmdb.zip" "$GEOIP_SHA"
+  bash "$builder/build-browser-env.sh" "$builder/mcp-requirements.lock" /home/dot/.local/share/invisible-dots/mcp
 fi
 
 exec bash "$checks"

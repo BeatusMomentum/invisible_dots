@@ -15,17 +15,17 @@ image's SHA-256; `invisible-dots doctor` checks an image against it with
 `buildGoldenImage({ qemu, accelerator, runner })`:
 
 1. Downloads the Ubuntu 24.04 cloud image pinned in
-   `virtualization/images/base.json`, the Node and uv tarballs and the GeoIP
-   database pinned in `pins.json`, with Node's fetch. Each published checksum list
+   `virtualization/images/base.json` and the Node, uv and hev-socks5-tunnel
+   downloads pinned in `pins.json`, with Node's fetch. Each published checksum list
    (`SHA256SUMS`, `SHASUMS256.txt`, uv's `.sha256`) must name the pinned hash
    before the download starts, and the downloaded bytes must hash to it (Node
-   crypto). The GeoIP archive has no published list, so its pin alone decides.
+   crypto). hev-socks5-tunnel has no published list, so its pin alone decides.
    Cached copies are re-hashed before every build.
 2. Copies the cloud image and grows it with `qemu-img resize` (default 10G;
    each Dot's overlay is larger and cloud-init grows the filesystem).
 3. Writes the builder seed with `@invisible-dots/iso`: one ISO labelled
    `cidata` holding `user-data`, `meta-data`, `provision.sh`, `pins.env`,
-   `mcp-requirements.lock`, both tarballs, the GeoIP archive, `engine-requirements.lock`,
+   `mcp-requirements.lock`, the pinned downloads, `engine-requirements.lock`,
    `build-engine-env.sh` and `build-browser-env.sh`. The engine's own source is
    not on it: it is ours, so it travels on the runtime ISO.
 4. Boots it once with the QEMU the host runs Dots with, on the accelerator
@@ -34,57 +34,14 @@ image's SHA-256; `invisible-dots doctor` checks an image against it with
    from the vm-manager's `machineArgs()`). `provision.sh` installs the
    apt packages (Xvfb, a minimal XFCE, the browser's libraries, ImageMagick
    for dot-agentd's screenshots), Node, uv, then builds the Dot's browser with
-   `build-browser-env.sh <lock> ~dot/.local/share/invisible-dots/mcp <GeoIP
-   archive> <sha256>`, as user
+   `build-browser-env.sh <lock> ~dot/.local/share/invisible-dots/mcp`, as user
    `dot`: a virtual environment filled with
    `uv pip install --require-hashes -r mcp-requirements.lock`, its
    `invisible-playwright-mcp` linked into `~/.local/bin`, and
    `invisible-playwright fetch` run from that environment, so the cached browser
-   engine is the one the MCP server expects. The same script then installs the
-   GeoIP database that a launch with the timezone left to `auto` needs, so a
-   Dot's launch downloads nothing. It is one release of
-   `daijro/geoip-all-in-one`, pinned in `pins.json` by its exact URL and the
-   SHA-256 of that file (the `digest` GitHub shows for the release asset): the
-   host checks the hash when it downloads the archive, the script checks it
-   again before it unpacks it, and installs the file at one fixed path,
-   `/usr/local/share/invisible-dots/geoip-aio-all.mmdb`, root's and read-only
-   (`GUEST_PATHS.geoipDatabase`). The engine starts the browser's server with the
-   library's own knob `STEALTHFOX_GEOIP_MMDB` pointing at it, so `invisible_core`
-   uses that file as it is: it does not ask GitHub for a newer release, download
-   one or prune the pinned one, which is what its default does at every launch
-   (it pins nothing on purpose). The script writes nothing into the library's own
-   cache layout and fails when the library, given that knob, does not hand back
-   that file or cannot read it as a database. The pin is
-   part of the golden digest, so another release is another image. The release is
-   recorded in the manifest (`pinned.geoip`, and `geoip-database` among the
-   installed components). The cost of the pin: `daijro/geoip-all-in-one` is rebuilt weekly and
-   keeps only its latest two releases, so a pin that is not refreshed answers
-   404 within weeks. The build then stops and says what to change: put the
-   current tag, URL and `digest` of `geoip-aio-all.mmdb.zip`
-   (`https://api.github.com/repos/daijro/geoip-all-in-one/releases/latest`) into
-   `pins.json`. The decision, written down: the pin is bumped by hand, about
-   weekly, and the project owns no mirror of the archive (a mirror needs a
-   release store of its own, which is the owner's to create; the SHA-256 pin
-   and the digest input would stay as they are). So the bump never comes as a
-   surprise, `.github/workflows/geoip-pin.yml` runs
-   `.github/scripts/geoip-pin.mjs` every day and goes red as soon as the pinned
-   release is no longer the newest one on GitHub (while it still downloads,
-   about a week before it is deleted), when it is gone, or when the digest of
-   the pinned asset changed; its message names the tag, URL and SHA-256 to put
-   into `pins.json`. A host that already built with the pin keeps the verified
-   archive in `images/.cache`, under a name that starts with the release tag
-   (`geoip-<tag>-geoip-aio-all.mmdb.zip`: every release has the same file name
-   upstream, so a bump leaves the archive of the previous pin where it is),
-   and does not need the network for it; an older tree whose pin is gone
-   builds there only with such a cached archive. The cache is bounded: after
-   a build has its pin's archive, the two archives downloaded most recently
-   before it stay and older ones are removed (`pruneGeoipArchives`). The database merges free
-   editions of third-party databases, each under its own data license and most
-   asking to be credited: the licenses and credits are in `src/geoip-notices.ts`,
-   which each golden manifest records as `notices` (with `notices_statement`:
-   the image is built on your machine and invisible_dots does not redistribute
-   the data) and `THIRD_PARTY_NOTICES.md` repeats. The
-   browser smoke runs the same script on the same pinned archive. The only
+   engine is the one the MCP server expects (the library keeps its own GeoIP
+   database, fetched from its release at a launch). The
+   browser smoke runs the same script. The only
    browser a Dot has is that server: a test refuses any other browser or browser
    library among the apt packages, the lock and the build scripts. `provision.sh`
    then builds the engine's Python

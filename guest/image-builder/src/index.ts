@@ -11,7 +11,6 @@
  */
 export { defaultAssetRoot, GUEST_ASSETS, GUEST_UNITS } from "./assets.js";
 export { checksumFromSums, DownloadError, fetchVerified, sha256File, type Fetch, type FetchVerifiedOptions, type VerifiedFile } from "./download.js";
-export { GEOIP_NOTICES, GEOIP_STATEMENT, type DataNotice } from "./geoip-notices.js";
 export { buildGoldenImage, GOLDEN_DEFAULTS, GoldenBuildError, type GoldenBuildOptions, type GoldenBuildResult } from "./golden.js";
 export {
   manifestPathFor,
@@ -22,7 +21,7 @@ export {
   type ImageManifest,
   type RuntimeManifest,
 } from "./manifest.js";
-export { BASE_IMAGE, GUEST_PINS, type BaseImagePin, type GeoipPin, type GuestPins, type PinnedDownload } from "./pins.js";
+export { BASE_IMAGE, GUEST_PINS, type BaseImagePin, type GuestPins, type PinnedDownload } from "./pins.js";
 export { normalizePackageName, parseHashedLock, parsePythonLock, type PythonLock } from "./python-lock.js";
 export type { ProcessRunner, RunningProcess } from "./process.js";
 export { builderQemuArgs, type Accelerator, type QemuPrograms } from "./qemu.js";

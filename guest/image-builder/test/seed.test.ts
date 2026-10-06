@@ -27,10 +27,6 @@ describe("pins.env", () => {
     expect(text).toContain(`NODE_TARBALL='node-v${GUEST_PINS.node.version}-linux-x64.tar.xz'\n`);
     expect(text).toContain(`UV_VERSION='${GUEST_PINS.uv.version}'\n`);
     expect(text).toContain("UV_TARBALL='uv-x86_64-unknown-linux-gnu.tar.gz'\n");
-    // The GeoIP release the image carries, and the hash the guest checks it against again before it unpacks it.
-    expect(text).toContain(`GEOIP_TAG='${GUEST_PINS.geoip.tag}'\n`);
-    expect(text).toContain("GEOIP_ARCHIVE='geoip-aio-all.mmdb.zip'\n");
-    expect(text).toContain(`GEOIP_SHA256='${GUEST_PINS.geoip.sha256}'\n`);
     // The two Python versions come from the lock, the one place they are written.
     expect(text).toContain(`MCP_VERSION='${python.mcpVersion}'\n`);
     expect(text).toContain(`PLAYWRIGHT_VERSION='${python.playwrightVersion}'\n`);
@@ -52,15 +48,13 @@ describe("pins.env", () => {
 });
 
 describe("the builder seed", () => {
-  it("holds the NoCloud files, the provisioner, its pins, the Python lock, both tarballs, the GeoIP archive, the engine's lock with the script that builds its environment, and the script that builds the browser", async () => {
+  it("holds the NoCloud files, the provisioner, its pins, the Python lock, the pinned downloads, the engine's lock with the script that builds its environment, and the script that builds the browser", async () => {
     const nodeTarball = join(dir, "node.tar.xz");
     const uvTarball = join(dir, "uv.tar.gz");
     await writeFile(nodeTarball, "node bytes");
     await writeFile(uvTarball, "uv bytes");
     const tunnelBinary = join(dir, "hev");
     await writeFile(tunnelBinary, "hev bytes");
-    const geoipArchive = join(dir, "geoip.zip");
-    await writeFile(geoipArchive, "geoip bytes");
     const engineLock = await readGuestAsset(defaultAssetRoot(), BUILDER_ENGINE_LOCK);
     const engineBuild = await readGuestAsset(defaultAssetRoot(), BUILDER_ENGINE_BUILD);
     const browserBuild = await readGuestAsset(defaultAssetRoot(), BUILDER_BROWSER_BUILD);
@@ -76,7 +70,6 @@ describe("the builder seed", () => {
       nodeTarball,
       uvTarball,
       tunnelBinary,
-      geoipArchive,
       engineLock,
       engineBuild,
       browserBuild,
@@ -90,7 +83,7 @@ describe("the builder seed", () => {
       "mcp-requirements.lock",
       `node-v${GUEST_PINS.node.version}-linux-x64.tar.xz`,
       "uv-x86_64-unknown-linux-gnu.tar.gz",
-      "geoip-aio-all.mmdb.zip",
+      "hev-socks5-tunnel-linux-x86_64",
       "engine-requirements.lock",
       "build-engine-env.sh",
       "build-browser-env.sh",
@@ -98,7 +91,7 @@ describe("the builder seed", () => {
     expect(entries[0]).toEqual({ path: "user-data", data: userData });
     expect(entries[4]).toEqual({ path: "mcp-requirements.lock", data: pythonLock });
     expect(entries[5]).toEqual({ path: entries[5]!.path, file: nodeTarball });
-    expect(entries[7]).toEqual({ path: "geoip-aio-all.mmdb.zip", file: geoipArchive });
+    expect(entries[7]).toEqual({ path: "hev-socks5-tunnel-linux-x86_64", file: tunnelBinary });
     expect(entries[8]).toEqual({ path: "engine-requirements.lock", data: engineLock });
     expect(entries[9]).toEqual({ path: "build-engine-env.sh", data: engineBuild });
     expect(entries[10]).toEqual({ path: "build-browser-env.sh", data: browserBuild });

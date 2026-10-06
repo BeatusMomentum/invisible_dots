@@ -60,7 +60,7 @@ from nanobot.dots.identity_rules import (
     is_valid_identity_id,
     new_identity_id,
 )
-from nanobot.dots.protocol import BROWSER_ENV, BROWSERS_DIR, GEOIP_DATABASE, GUEST_DISPLAY, MCP_HOMES_DIR
+from nanobot.dots.protocol import BROWSER_ENV, BROWSERS_DIR, GUEST_DISPLAY, MCP_HOMES_DIR
 from nanobot.dots.store import BrowserIdentityRow, DotStore
 
 # The MCP server's own browser, the one carrying the identity. The server also has a `support` browser;
@@ -571,9 +571,6 @@ class BrowserManager:
             BROWSER_ENV["PROFILE_DIR"]: profile,
             BROWSER_ENV["HEADLESS"]: "0",
             BROWSER_ENV["DISPLAY"]: self._display,
-            # The library's own knob for the GeoIP file: it uses this one as it is, with no lookup of a newer release
-            # (which would download one, delete the pinned one and contact GitHub at every launch).
-            BROWSER_ENV["GEOIP_MMDB"]: GEOIP_DATABASE,
             # invisible_core reinstalls itself from the package index when its version drifts; the image installed it
             # from a hashed lock, and a drift has to fail loudly instead of bringing in files nobody checked.
             BROWSER_ENV["CORE_AUTOFIX"]: "off",

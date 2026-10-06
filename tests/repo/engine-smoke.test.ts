@@ -8,7 +8,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { GUEST_PATHS } from "@invisible-dots/shared";
 import { describe, expect, it } from "vitest";
 
 const repo = resolve(fileURLToPath(new URL(".", import.meta.url)), "../..");
@@ -71,12 +70,6 @@ describe("the engine smoke", () => {
     const provision = read(join(repo, "guest/image-builder/builder/provision.sh"));
     expect(provision).toContain("ENGINE_BUILD");
     expect(provision).toContain("ENGINE_LOCK");
-  });
-
-  it("gives the engine suite's golden image the GeoIP file the engine refuses to start without, at the fixed path", () => {
-    const prepare = read(join(smoke, "prepare-engine.sh"));
-    expect(prepare).toContain(`install -D -m 0444 -o root -g root /dev/null ${GUEST_PATHS.geoipDatabase}`);
-    expect(prepare.indexOf(GUEST_PATHS.geoipDatabase)).toBeLessThan(prepare.indexOf('exec bash "$checks"'));
   });
 
   it("is run by the smoke job of the workflow, and the gate needs that job", () => {

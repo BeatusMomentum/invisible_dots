@@ -33,7 +33,6 @@ from nanobot.dots.computer import (
 from nanobot.dots.credentials import CredentialOnDiskError, assert_no_credentials_on_disk
 from nanobot.dots.engine import Engine
 from nanobot.dots.permissions import ToolDeps, build_registry
-from nanobot.dots.protocol import GEOIP_DATABASE
 from nanobot.dots.provider import OpenRouterProviders
 from nanobot.dots.secrets import KeyHolder
 from nanobot.dots.server import AgentServer
@@ -59,12 +58,6 @@ REFUSAL = "invisible-dots-engine runs only the Dot's engine; it takes no command
 LOCK_FILE = "requirements.lock"
 LOCK_MISMATCH = (
     "the golden image's Python environment was built from another requirements lock: "
-    "build a new golden image"
-)
-# The browser layer is told to use this file as it is (BrowserManager._server_config), and the library raises
-# when it is missing instead of looking for another: only a golden image built by the current builder has it.
-GEOIP_MISSING = (
-    "the golden image has no GeoIP database at {path}, which the browser layer needs: "
     "build a new golden image"
 )
 
@@ -142,20 +135,6 @@ def check_golden_lock(source_root: Path, prefix: Path) -> None:
         return
     if not (source_lock.is_file() and venv_lock.is_file()) or source_lock.read_bytes() != venv_lock.read_bytes():
         raise GoldenImageError(LOCK_MISMATCH)
-
-
-def check_golden_geoip(source_root: Path, geoip_database: str) -> None:
-    """Refuse a golden image built before the GeoIP database became part of its contract.
-
-    The engine's code ships on the runtime disk and each Dot keeps the golden image it was created on, so
-    a new runtime disk can start on an image that lacks a file the new code relies on, and the lock alone
-    does not say so. Like the lock check, this one applies to a runtime disk only: it carries the lock, and a
-    development checkout does not.
-    """
-    if not (source_root / LOCK_FILE).exists():
-        return
-    if not Path(geoip_database).is_file():
-        raise GoldenImageError(GEOIP_MISSING.format(path=geoip_database))
 
 
 def configure_logging() -> int:
@@ -265,7 +244,6 @@ def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] | None = 
     try:
         source_root = Path(nanobot.__file__).resolve().parent.parent
         check_golden_lock(source_root, Path(sys.prefix))
-        check_golden_geoip(source_root, GEOIP_DATABASE)
         assert_no_credentials_on_disk(
             environment.state_dir, environment.home, os.environ if environ is None else environ
         )

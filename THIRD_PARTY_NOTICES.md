@@ -9,10 +9,8 @@ The MIT license in `LICENSE` covers this repository, except:
 That fork, the text this repository's history holds through the earlier
 TypeScript engine, and the web client's files that derive from other projects
 (each starts with a `Derived from` comment naming its source, and the project
-has a section below) come with the notices below. The golden image that
-`invisible-dots image build` makes on a host also holds data that is not part
-of this repository, the GeoIP database: its credits are in the section "GeoIP
-data in the golden image". The default `npm install` holds nothing under the GPL
+has a section below) come with the notices below. The default `npm install`
+holds nothing under the GPL
 (the golden image's guest operating system is Ubuntu, which carries GPL software
 under its own licenses, downloaded from Ubuntu's archive by whoever builds the
 image: docs/architecture.md section 11.3); the
@@ -160,59 +158,6 @@ routes a Dot's VM through its VM proxy. It is MIT-licensed:
 > LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 > OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 > SOFTWARE.
-
-## GeoIP data in the golden image
-
-The browser of a Dot looks up the time zone and the coordinates of the address
-it exits from (the Dot's VM egress, or its identity's proxy when it has one)
-in a GeoIP database when a launch leaves the time zone to `auto`. The
-golden image carries one release of it, at a fixed read-only path that the
-engine hands the browser through the library's own `STEALTHFOX_GEOIP_MMDB`, so a
-launch downloads nothing and asks for no newer release: the file `geoip-aio-all.mmdb.zip` of one release of
-`daijro/geoip-all-in-one` (https://github.com/daijro/geoip-all-in-one),
-pinned in `guest/image-builder/pins.json` by its URL and SHA-256 and recorded
-in each golden manifest as `pinned.geoip`. That project merges the free
-editions of the databases below into one file (country codes, coordinates and
-a time zone computed from them).
-
-The golden image is built by the person who runs Dots, on their own machine
-(`invisible-dots image build` downloads the pinned file to that machine), and
-invisible_dots publishes no image and no copy of the data: it does not
-redistribute them. What the person holds is governed by the licenses of the
-data sources, which are the ones listed below. The merged file has no license
-of its own to name: its project declares the GPL-3.0 on its repository, which
-is the license of its scripts, and its README states no license for the data it
-publishes, only the credits three of its sources ask for. So each source's own
-license applies to what it contributed, and the image must not be taken for
-GPL-licensed data because GitHub shows a GPL on that repository. Whoever
-shares an image or the file with others has to meet the terms below, among them
-the share-alike of CC BY-SA 4.0 and the GeoLite2 End User License Agreement.
-
-The credits, source by source, are kept here and in each golden manifest as
-`notices`, with the statement above as `notices_statement`
-(`guest/image-builder/src/geoip-notices.ts` holds the one list and the one
-statement, and a test keeps this section equal to them).
-
-Statement, as the manifest records it:
-
-The GeoIP database in the golden image is the file geoip-aio-all.mmdb of one pinned release of daijro/geoip-all-in-one. It is downloaded and built into the image by the person who runs the build, on their own machine; invisible_dots does not publish or redistribute the image or the data. The file merges the databases listed here, and its project states no license for the merged file (the GPL-3.0 in its repository is the license of its scripts), so each source's own license applies to what it contributed: CC BY-SA 4.0 for IP2Location LITE, IPinfo and IPLocate.io (adaptations must be shared under the same license, with credit), the MaxMind GeoLite2 End User License Agreement, CC BY 4.0 for DB-IP Lite, CC0 1.0, and the ODbL 1.0 for the OpenStreetMap-derived time zone boundaries. Whoever shares the image or the file has to meet all of those terms.
-
-Sources, each under its own data license:
-
-- IP2Location LITE (https://lite.ip2location.com), CC BY-SA 4.0
-  (https://creativecommons.org/licenses/by-sa/4.0/): This site or product includes IP2Location LITE data available from https://lite.ip2location.com.
-- MaxMind GeoLite2 (https://www.maxmind.com), GeoLite2 End User License Agreement
-  (https://www.maxmind.com/en/geolite2/eula): This product includes GeoLite2 Data created by MaxMind, available from https://www.maxmind.com/.
-- DB-IP Lite (https://db-ip.com), CC BY 4.0
-  (https://creativecommons.org/licenses/by/4.0/): IP Geolocation by DB-IP (https://db-ip.com)
-- IPinfo free country database (https://ipinfo.io), CC BY-SA 4.0
-  (https://creativecommons.org/licenses/by-sa/4.0/): IP address data powered by IPinfo (https://ipinfo.io)
-- IPLocate.io free IP to Country database (https://www.iplocate.io), CC BY-SA 4.0
-  (https://creativecommons.org/licenses/by-sa/4.0/): IP address data powered by IPLocate.io (https://www.iplocate.io)
-- GeoFeed + Whois + ASN country database of tdulcet/ip-geolocation-dbs, built from sapics/ip-location-db, which lists the same data under PDDL 1.0, CC0 1.0
-  (https://creativecommons.org/publicdomain/zero/1.0/): No credit is required; the data comes from tdulcet/ip-geolocation-dbs (https://github.com/tdulcet/ip-geolocation-dbs).
-- OpenStreetMap contributors, through the time zone boundaries of timezone-boundary-builder that tzfpy carries, ODbL 1.0
-  (https://opendatacommons.org/licenses/odbl/1-0/): Contains time zone data derived from OpenStreetMap, (c) OpenStreetMap contributors (https://www.openstreetmap.org/copyright).
 
 ## shadcn/ui
 

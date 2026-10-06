@@ -26,20 +26,6 @@ function runtimeManifest(file: string, bytes: Buffer): RuntimeManifest {
   };
 }
 
-describe("readManifest", () => {
-  it("reads the manifest of a golden image built before notices were recorded: the field is absent, not wrong", async () => {
-    const path = join(dir, "golden-old.json");
-    const old = { kind: "golden", version: "old", file: "golden-old.qcow2", sha256: sha256(Buffer.from("x")), size_bytes: 1 };
-    await writeFile(path, JSON.stringify(old));
-
-    const manifest = await readManifest(path);
-
-    expect(manifest.kind).toBe("golden");
-    expect(manifest.kind === "golden" ? manifest.notices : "not golden").toBeUndefined();
-    expect(manifest.kind === "golden" ? manifest.notices_statement : "not golden").toBeUndefined();
-  });
-});
-
 describe("manifestPathFor", () => {
   it("puts the manifest next to the image with a .json extension", () => {
     expect(manifestPathFor(join("images", "golden-2026-abc.qcow2"))).toBe(join("images", "golden-2026-abc.json"));

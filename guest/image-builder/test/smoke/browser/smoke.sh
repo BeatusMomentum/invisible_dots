@@ -92,13 +92,6 @@ sleep 3
 start_host_stream
 
 BROWSERS=/home/dot/browsers
-# The GeoIP file the image build installed (GUEST_PATHS.geoipDatabase), as it is before any launch.
-GEOIP=/usr/local/share/invisible-dots/geoip-aio-all.mmdb
-GEOIP_SHA=$(sha256sum "$GEOIP" | cut -d' ' -f1)
-geoip_untouched() { # the file is still the one the build installed, root's and read-only, and the library made no cache of its own
-  [ "$(sha256sum "$GEOIP" | cut -d' ' -f1)" = "$GEOIP_SHA" ] && [ "$(stat -c '%U %a' "$GEOIP")" = 'root 644' ] \
-    && ! su -s /bin/bash dot -c "test -w $GEOIP" && [ ! -e /home/dot/.cache/invisible-playwright/geoip ]
-}
 MCP_HOMES=/var/lib/invisible-dots/mcp   # the servers' homes, outside /home/dot (architecture 4.2)
 FIREFOX='\.cache/invisible-playwright/firefox-'   # what the cached engine's processes are called
 firefox_running() { pgrep -u dot -f "$FIREFOX" | wc -l; }
@@ -158,7 +151,6 @@ mcp_env_ok() {
     && grep -qx "STEALTHFOX_PROFILE_DIR=$BROWSERS/$ID/profile" <<< "$env" \
     && grep -qx "INVISIBLE_MCP_HOME=$MCP_HOMES/$ID" <<< "$env" \
     && grep -qx 'STEALTHFOX_HEADLESS=0' <<< "$env" && grep -qx 'DISPLAY=:0' <<< "$env" && grep -qx 'HOME=/home/dot' <<< "$env" \
-    && grep -qx "STEALTHFOX_GEOIP_MMDB=$GEOIP" <<< "$env" \
     && grep -qx 'INVISIBLE_CORE_AUTOFIX=off' <<< "$env" \
     && ! grep -q '^STEALTHFOX_PROXY=' <<< "$env" \
     && ! grep -q '^INVISIBLE_DOTS_\|^TIKTOKEN_CACHE_DIR=\|^OPENROUTER_API_KEY=' <<< "$env" \
@@ -166,7 +158,6 @@ mcp_env_ok() {
 }
 check "the server's process is dot's, with the profile, its home, a real window on :0, no proxy of its own (an identity with none, the default, inherits the VM's egress) and none of the engine's variables nor the key" "[ -n '$MCP_PID' ] && mcp_env_ok"
 check "the profile has its seed file after the first open" "[ -s $BROWSERS/$ID/profile/.stealth-identity.json ]"
-check "the launch used the image's GeoIP file as it is (the library's STEALTHFOX_GEOIP_MMDB): the file is unchanged, root's and read-only, and no geoip directory of the library's own was made in dot's cache" "geoip_untouched"
 SEED1=$(seed_of "$ID" 2>/dev/null)
 echo "seed file: $SEED1"
 check "/health counts one identity, one open" "health_is 1 1"
@@ -275,7 +266,7 @@ check "the launch's egress lookup (the browser's timezone) went through the prox
 check "the browser behind the proxy works: the model opens a page of the container" "tool_turn 41 browser_navigate '{\"identity_id\":\"$ID2\",\"url\":\"$PAGES/index.html\"}' && tool_ok browser_navigate '$ID2: $PAGES/index.html'"
 MCP_PID2=$(mcp_pid_of "$ID2")
 environ_of() { su -s /bin/bash dot -c "tr '\\0' '\\n' < /proc/$1/environ"; } # pid
-check "the server's process is dot's, with the proxy in its environment (by design: the engine passes it there, readable while the browser is open) and the same knobs as the first identity's" "[ -n '$MCP_PID2' ] && environ_of $MCP_PID2 | grep -qx 'STEALTHFOX_PROXY=http://$PROXY_USER:$PROXY_PASSWORD@127.0.0.1:8099' && environ_of $MCP_PID2 | grep -qx 'INVISIBLE_CORE_AUTOFIX=off' && environ_of $MCP_PID2 | grep -qx 'STEALTHFOX_GEOIP_MMDB=$GEOIP'"
+check "the server's process is dot's, with the proxy in its environment (by design: the engine passes it there, readable while the browser is open) and the same knobs as the first identity's" "[ -n '$MCP_PID2' ] && environ_of $MCP_PID2 | grep -qx 'STEALTHFOX_PROXY=http://$PROXY_USER:$PROXY_PASSWORD@127.0.0.1:8099' && environ_of $MCP_PID2 | grep -qx 'INVISIBLE_CORE_AUTOFIX=off'"
 check "the password is on no process's command line, which every user can read" "! cmdline_holds $PROXY_PASSWORD"
 SESSION_FILE=$MCP_HOMES/$ID2/sessions/$ID2.json
 check "the real server saved the proxy with its password in its session file, dot's, in its home outside /home/dot" "[ \"\$(stat -c %U $SESSION_FILE)\" = dot ] && grep -qF $PROXY_PASSWORD $SESSION_FILE && [ ! -e $BROWSERS/$ID2/mcp ]"
@@ -297,7 +288,6 @@ timeout 5 curl "${H[@]}" -N "$A/events/stream?after=0" > "$ALL" 2>/dev/null
 check "seqs of the full stream are 1..N without a gap" "[ \"\$(seqs $ALL | tr '\n' ' ')\" = \"\$(seq 1 \$(seqs $ALL | wc -l) | tr '\n' ' ')\" ]"
 check "the identity's events are all there: created three times, launched six times, closed four times (the model's close, SIGTERM, the browser that was lost and the proxied identity's close; kill -9 reports nothing), deleted twice" "grep '^data: ' $ALL | sed 's/^data: //' | jq -s -e '([.[] | select(.type==\"browser.identity.created\")] | length) == 3 and ([.[] | select(.type==\"browser.identity.launched\")] | length) == 6 and ([.[] | select(.type==\"browser.identity.closed\")] | length) == 4 and ([.[] | select(.type==\"browser.identity.deleted\")] | length) == 2' >/dev/null"
 check "the proxy password is in no event of the whole stream, no engine log and no dot-agentd log" "! grep -qF $PROXY_PASSWORD $ALL /tmp/engine.log /tmp/agentd.log"
-check "the GeoIP file is as the build left it after every launch: unchanged, root's, read-only, and the library made no cache of its own" "geoip_untouched"
 check "the key is in no file of the engine, the config or the Dot (the browser's profile and cache included)" "! grep -rIl \"$KEY\" /home/dotengine /etc/invisible-dots /home/dot /run/invisible-dots /run/invisible-dots-agent 2>/dev/null | grep -q ."
 check "the key is not in the environment of any process, Firefox's included" "! environ_holds \"$KEY\""
 check "the key is in no engine log and no dot-agentd log" "! grep -q \"$KEY\" /tmp/engine.log /tmp/agentd.log"

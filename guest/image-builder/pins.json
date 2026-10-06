@@ -18,11 +18,6 @@
     "url": "https://github.com/heiher/hev-socks5-tunnel/releases/download/2.18.0/hev-socks5-tunnel-linux-x86_64",
     "sha256": "1903b23869cbd12b7b57045ca161c0f90314d9c4ef2835e7a9e4a3179bf7d925"
   },
-  "geoip": {
-    "tag": "2026.09.30",
-    "url": "https://github.com/daijro/geoip-all-in-one/releases/download/2026.09.30/geoip-aio-all.mmdb.zip",
-    "sha256": "09af448e51e2f012c87e4ade1b39f93f999c32ba6205e73e25b98e3033cf95ee"
-  },
   "apt_packages": [
     "xvfb",
     "xfce4-session",

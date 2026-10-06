@@ -32,7 +32,7 @@ from nanobot.dots.browser import (
     result_is_error,
     result_text,
 )
-from nanobot.dots.protocol import BROWSER_ENV, BROWSERS_DIR, GEOIP_DATABASE, MCP_HOMES_DIR
+from nanobot.dots.protocol import BROWSER_ENV, BROWSERS_DIR, MCP_HOMES_DIR
 from nanobot.dots.store import DotStore
 
 FAST = {"open_retry_initial_s": 0.01, "open_retry_max_s": 0.02}
@@ -279,9 +279,7 @@ async def test_starts_the_server_as_dot_through_the_relay_with_the_environment_o
     assert environment[BROWSER_ENV["HEADLESS"]] == "0"
     assert environment[BROWSER_ENV["DISPLAY"]] == ":7"
     assert environment[BROWSER_ENV["PROXY"]] == "http://user:pw@proxy.test:8080"
-    # The library's knobs: the image's GeoIP file as it is (no lookup of a newer release at a launch), and no
-    # self-repair of invisible_core from the package index.
-    assert environment[BROWSER_ENV["GEOIP_MMDB"]] == GEOIP_DATABASE == "/usr/local/share/invisible-dots/geoip-aio-all.mmdb"
+    # No self-repair of invisible_core from the package index.
     assert environment[BROWSER_ENV["CORE_AUTOFIX"]] == "off"
     assert "OPENROUTER_API_KEY" not in environment and "SOME_OTHER_SECRET" not in environment
     assert start["cwd"] == str(root)
@@ -296,7 +294,7 @@ async def test_starts_the_server_as_dot_through_the_relay_with_the_environment_o
     assert mcp_runs[0]["cwd"] == str(root)
     assert [pair.partition("=")[0] for pair in mcp_runs[0]["env"]] == [
         BROWSER_ENV[name]
-        for name in ("MCP_HOME", "MCP_SESSION_ID", "PROFILE_DIR", "HEADLESS", "DISPLAY", "GEOIP_MMDB", "CORE_AUTOFIX")
+        for name in ("MCP_HOME", "MCP_SESSION_ID", "PROFILE_DIR", "HEADLESS", "DISPLAY", "CORE_AUTOFIX")
     ]
     assert mcp_runs[0]["env_from"] == [BROWSER_ENV["PROXY"]]
     assert "user:pw" not in json.dumps(mcp_runs[0])

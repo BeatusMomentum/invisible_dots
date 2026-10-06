@@ -249,13 +249,8 @@ QEMU on the same disk would corrupt it.
 - The **golden image** carries the operating system and third-party software:
   Ubuntu 24.04, Xvfb and a minimal XFCE session, the libraries
   the browser needs, Node 24, `uv`, `invisible-playwright-mcp` in its own
-  Python environment, the browser engine already downloaded together with the
-  GeoIP database a launch with the timezone left to `auto` needs (one pinned
-  release at `/usr/local/share/invisible-dots/geoip-aio-all.mmdb`, root's and
-  read-only, which the engine hands the browser's server through the library's
-  own `STEALTHFOX_GEOIP_MMDB`: a launch uses that file as it is, asks GitHub for
-  no newer release, downloads nothing and deletes nothing, where the library's
-  default looks up the latest release at every launch and prunes the others), and the Python
+  Python environment, the browser engine already downloaded (the library
+  keeps its own GeoIP database, fetched from its release at a launch), and the Python
   environment of the Dot's engine (`/opt/invisible-dots-engine`). It changes
   rarely. It is never modified once a VM uses it: a new one gets a new version
   in its name.
@@ -282,26 +277,10 @@ QEMU on the same disk would corrupt it.
   when the lock on the runtime disk differs from the venv's copy ("the golden
   image's Python environment was built from another requirements lock: build a
   new golden image"), so a runtime disk that needs another dependency never
-  runs on an older golden image. The start checks one more fact of the golden
-  image the same way: the GeoIP database at `GUEST_PATHS.geoipDatabase`, which
-  the browser layer is told to use as it is and which an image built before it
-  was part of the contract lacks. A runtime disk (the one that carries the lock)
-  refuses to start on such an image with "build a new golden image", instead of
-  a launch that fails or takes the VM's own timezone.
+  runs on an older golden image.
 - Every input of the golden image is pinned by content: the cloud image, Node
   and `uv` by SHA-256 (`virtualization/images/base.json`,
-  `guest/image-builder/pins.json`), the GeoIP database as one release of
-  `daijro/geoip-all-in-one` by URL and SHA-256 (`geoip` in `pins.json`: the host
-  checks the hash when it downloads the archive, the guest checks it again
-  before it unpacks it, the manifest records it as `pinned.geoip`, and the
-  verified archive stays in the cache under its tag, with the two downloaded
-  most recently before it (older ones are removed after a build), so a tree
-  whose pinned release the project has since deleted still builds from a host
-  that has it, and the cache does not grow with every weekly pin;
-  the data's licenses and credits, source by source, are in the manifest's
-  `notices` and `notices_statement` and in `THIRD_PARTY_NOTICES.md`: they are the
-  sources' own data licenses, and since the person who runs the build makes the
-  image on their own machine, this project does not redistribute the data), and the whole Python environment of
+  `guest/image-builder/pins.json`), and the whole Python environment of
   `invisible-playwright-mcp`, transitive packages included, by
   `guest/image-builder/builder/mcp-requirements.lock`, every package at an
   exact version with the SHA-256 of its files. The builder installs it with
@@ -1043,14 +1022,13 @@ ignores anything else.
   and session id (`INVISIBLE_MCP_SESSION_ID=<identity_id>`), the identity's
   profile directory (`<identity>/profile`), headed mode, `DISPLAY=:0`, and the
   identity's proxy only when it has one (otherwise no proxy variable is set at
-  all), and two settings of the libraries it
-  uses: `STEALTHFOX_GEOIP_MMDB`, the image's pinned GeoIP file (section 3.3),
-  and `INVISIBLE_CORE_AUTOFIX=off`, which stops `invisible_core` from
+  all), and one setting of the libraries it
+  uses: `INVISIBLE_CORE_AUTOFIX=off`, which stops `invisible_core` from
   reinstalling itself from the package index at a launch when its version
   drifts, so a drift fails loudly instead of installing files outside the
   hashed lock. The names of the browser layer's own
   settings are written in one place, `packages/shared/src/protocol.ts`
-  (`ENV.PROFILE_DIR`, `ENV.HEADLESS`, `ENV.PROXY`, `ENV.GEOIP_MMDB`,
+  (`ENV.PROFILE_DIR`, `ENV.HEADLESS`, `ENV.PROXY`,
   `ENV.CORE_AUTOFIX`). The browser therefore runs
   on the Dot's desktop and shows up in its screenshots.
 - A launch also connects out, which no setting here turns off: to the
@@ -1060,8 +1038,8 @@ ignores anything else.
   (a download of a file of `feder-cr/firefox_antidetect_patch`'s releases,
   switched off only by a preference the MCP server gives no way to pass); and
   it probes the exit's capabilities and caches the answer in
-  `/tmp/exit_capability.json`. The GeoIP lookup is not one of these any more:
-  the pinned file is used as it is.
+  `/tmp/exit_capability.json`; and it keeps its GeoIP database current from
+  its GitHub release.
 - The model never calls `browser_open` directly and never sees the MCP tools
   by their own names. It calls invisible_dots tools that take an
   `identity_id`; the browser manager opens the identity's `main` browser with
@@ -2820,20 +2798,6 @@ downloaded from their publishers when a host builds its golden image, each
 under its own license, as the wheels the publishers released. This project publishes no image (section
 3.3); whoever copies a golden image to another machine takes on the license
 terms of the components inside it.
-
-The GeoIP database in the golden image is data, and its licenses are the data
-sources', not the code license of the project that merges them:
-`daijro/geoip-all-in-one` carries a GPL-3.0 `LICENSE` file for its scripts and
-states no license for the file it publishes, which merges IP2Location LITE and
-IPinfo and IPLocate.io (CC BY-SA 4.0), MaxMind GeoLite2 (its End User License
-Agreement), DB-IP Lite (CC BY 4.0), the GeoFeed + Whois + ASN country database of
-`tdulcet/ip-geolocation-dbs` (CC0 1.0) and, for the time zone computed from the
-coordinates, OpenStreetMap-derived boundaries (ODbL 1.0). The golden image is built
-by the person who runs Dots, on their own machine, from the pinned release, so
-this project does not redistribute the data. The sources, licenses and credit
-lines are `guest/image-builder/src/geoip-notices.ts`, which each golden manifest
-records as `notices` together with `notices_statement`, and
-`THIRD_PARTY_NOTICES.md` repeats; a test keeps the three equal.
 
 The default `npm install` holds nothing under the GPL (section 9.8, WhatsApp); that is a
 statement about the npm lock file and no more. The few LGPL packages of the lock file

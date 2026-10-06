@@ -25,7 +25,7 @@ export const BUILDER_PYTHON_LOCK = "builder/mcp-requirements.lock";
 export const BUILDER_ENGINE_LOCK = "builder/engine-requirements.lock";
 /** Builds the engine's Python environment inside the builder VM; the same script builds it in a Linux container. */
 export const BUILDER_ENGINE_BUILD = "builder/build-engine-env.sh";
-/** Builds the Dot's browser (the MCP server's environment, the engine, the GeoIP file) inside the builder VM; the browser smoke runs the same script. */
+/** Builds the Dot's browser (the MCP server's environment and the engine) inside the builder VM; the browser smoke runs the same script. */
 export const BUILDER_BROWSER_BUILD = "builder/build-browser-env.sh";
 export const RUNTIME_INSTALL = "runtime/install.sh";
 export const RUNTIME_DESKTOP = "runtime/dot-desktop.sh";
