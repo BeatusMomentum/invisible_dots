@@ -1557,6 +1557,19 @@ scoped to `.legacy`. The browser tests (`apps/web/e2e`, Playwright) start the
 real control plane in-process over the fake VM layer and the built web client
 against it (`e2e/harness.ts`), so a test drives what a Dot's computer does.
 
+The Tasks page (`/dots/<id>/tasks`) shows a Dot's tasks in four sections:
+Running (the newest `task.progress` line of each task, what it has spent from
+the task row's `spent_usd`, how long it has run, Cancel after a question),
+Scheduled and Queue (in the order the dispatcher takes them: priority, then
+age), and History (filtered by how the task ended, twenty at a time). A task
+has its own address, `/dots/<id>/tasks/<taskId>`, which opens a drawer over the
+list with its state, its result as markdown or the reason it failed, and its
+story. The story and the progress lines come from the Dot's event log, which
+the page reads from its start (`lib/task-events.ts`, the one place that knows
+how) only once a task is running or open, and then keeps current from the live
+stream. The newest progress line of a running task is also under the goal in
+the Dot header. A task that waits for an answer links to the Dot's approvals.
+
 ## 10. Out of scope for this version
 
 Snapshots and rollback, scheduled recurring jobs, MCP integrations beyond the

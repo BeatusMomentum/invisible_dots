@@ -45,8 +45,7 @@ test("the rail lists the Dots and a Dot's page shows its header and its tabs", a
   await tabs.getByRole("link", { name: "Tasks" }).click();
   await expect(page).toHaveURL(new RegExp(`/dots/${dot.id}/tasks$`));
   await expect(tabs.getByRole("link", { name: "Tasks" })).toHaveAttribute("aria-current", "page");
-  // The tab body is the one the Dot already had.
-  await expect(page.getByRole("heading", { name: "New task" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "New task" })).toBeVisible();
 });
 
 test("a Dot that waits for an approval shows it everywhere at once, live, and clears it when it is answered", async ({ signedIn: page, harness }) => {

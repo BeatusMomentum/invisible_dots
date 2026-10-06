@@ -68,6 +68,17 @@ export function DotHeader({ dotId, dot }: { dotId: string; dot: Resource<Dot> })
               {goal}
             </button>
           ) : null}
+          {live.progress ? (
+            <Link
+              href={`/dots/${encodeURIComponent(dotId)}/tasks/${encodeURIComponent(live.progress.taskId)}`}
+              aria-live="polite"
+              title={live.progress.text}
+              className="mt-0.5 block max-w-full truncate text-xs text-muted-foreground hover:underline"
+            >
+              <span className="sr-only">Task progress: </span>
+              {live.progress.text}
+            </Link>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {pill.label === "Waiting for you" ? (

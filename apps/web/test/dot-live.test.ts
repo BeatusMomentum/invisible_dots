@@ -61,6 +61,32 @@ describe("what the live stream says about a Dot", () => {
   });
 });
 
+describe("what a running task last reported", () => {
+  it("is the newest progress line of the Dot, until that task ends", () => {
+    let live = fold([event("a", "task.progress", { task_id: "t1", text: "reading" }), event("a", "task.progress", { task_id: "t1", text: "writing" })]);
+    expect(liveOf(live, "a").progress).toEqual({ taskId: "t1", text: "writing" });
+    expect(liveOf(live, "b").progress).toBeNull();
+    // Another task finishing says nothing about this one.
+    live = fold([event("a", "task.completed", { task_id: "other", summary: "ok" })], null, live);
+    expect(liveOf(live, "a").progress).not.toBeNull();
+    for (const type of ["task.completed", "task.failed", "task.cancelled"]) {
+      const ended = fold([event("a", type, { task_id: "t1" })], null, live);
+      expect(liveOf(ended, "a").progress).toBeNull();
+    }
+  });
+
+  it("is forgotten when the agent starts again: the run it belonged to is gone", () => {
+    const live = fold([event("a", "task.progress", { task_id: "t1", text: "reading" }), event("a", "agent.started")]);
+    expect(liveOf(live, "a").progress).toBeNull();
+  });
+
+  it("ignores a progress event that is not a line of a task", () => {
+    const live = fold([event("a", "agent.state", { state: "THINKING" })]);
+    expect(applyLiveEvent(live, event("a", "task.progress", { text: "no task" }), null)).toBe(live);
+    expect(applyLiveEvent(live, event("a", "task.progress", { task_id: "t1" }), null)).toBe(live);
+  });
+});
+
 describe("the Dot a path belongs to", () => {
   it("reads it from the /dots/<id>/ prefix, decoded, and from nothing else", () => {
     expect(dotIdFromPath("/dots/dot_abc/chat")).toBe("dot_abc");
