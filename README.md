@@ -1,135 +1,680 @@
 <h1 align="center">invisible_dots</h1>
 
-<p align="center"><b>Every Dot is an AI agent with a computer of its own:<br>a virtual machine, a desktop, browser identities and a memory that outlast every task.</b></p>
+<p align="center"><b>Every Dot is an AI agent with a computer of its own:<br>a virtual machine, a desktop and browsers that outlast every task, on your PC,<br>with permissions you set (allow, ask or deny for each one).</b></p>
+
+<p align="center">
+<a href="https://github.com/feder-cr/dots/actions/workflows/tests.yml"><img alt="tests" src="https://github.com/feder-cr/dots/actions/workflows/tests.yml/badge.svg"></a>
+<a href="LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+<img alt="status: alpha" src="https://img.shields.io/badge/status-alpha-orange">
+</p>
+
+<p align="center">
+<a href="#quick-start">Quick start</a>&nbsp;&nbsp;&nbsp;
+<a href="#using-a-dot-day-to-day">Day to day</a>&nbsp;&nbsp;&nbsp;
+<a href="#what-a-dot-can-do">What a Dot can do</a>&nbsp;&nbsp;&nbsp;
+<a href="#approvals">Approvals</a>&nbsp;&nbsp;&nbsp;
+<a href="#security-model-and-known-limits">Security</a>&nbsp;&nbsp;&nbsp;
+<a href="#talk-to-it-from-your-phone">Channels</a>&nbsp;&nbsp;&nbsp;
+<a href="#how-it-works">How it works</a>&nbsp;&nbsp;&nbsp;
+<a href="#configuration">Configuration</a>&nbsp;&nbsp;&nbsp;
+<a href="#privacy">Privacy</a>&nbsp;&nbsp;&nbsp;
+<a href="#status-and-what-is-not-done-yet">Status</a>
+</p>
 
 ---
 
-Windows, in PowerShell:
+A Dot is a persistent agent that owns a computer. You give it a goal, a model
+and a set of permissions. invisible_dots gives it a QEMU virtual machine on
+your own PC, with a disk that persists, a Linux desktop, a shell, its own files
+and notes, and browser identities that keep their cookies and logins from one
+task to the next. You talk to it from a web UI, the command line, an HTTP API,
+Telegram, or (opt-in) WhatsApp.
+
+The reasoning happens inside the Dot's VM. The control plane on your PC runs
+the infrastructure only: the VMs, the task queue, events, approvals and
+channels. The model is any model on OpenRouter, paid with your key.
+
+What sets it apart:
+
+- **A computer, not a sandbox for one command.** Each Dot has a
+  hardware-accelerated VM (KVM on Linux, Windows Hypervisor Platform on
+  Windows) with a persistent disk. It powers off after a quiet spell
+  (`idle_timeout`, 15 minutes in the sample) and starts again for the next
+  message, the next task or one of its own automations; disk, identities and
+  memory stay.
+- **A browser built not to look automated.** The only browser of a Dot is
+  [invisible-playwright-mcp](https://github.com/feder-cr/invisible_playwright_mcp),
+  on [invisible_playwright](https://github.com/feder-cr/invisible_playwright): a
+  Firefox patched in C++, with the fingerprint set inside the engine instead of
+  injected into the page. Each identity keeps its own profile, fingerprint and
+  optional proxy.
+- **You set what it may do.** Every tool belongs to a permission, and each
+  permission is allow, ask or deny. An ask waits for your answer, survives a
+  restart, and lets that one call run once.
+- **A crash loses nothing you saw accepted.** A restart of the server, a crash
+  of the Dot's engine or a `kill -9` keeps every message and task you were told
+  was accepted, and a tool call cut short is never run twice: the model is told
+  its outcome is unknown and checks before trying again.
+
+No image, package or hosted service is published: you build everything on your
+own machine from this repository.
+
+> [!IMPORTANT]
+> invisible_dots is alpha and has not yet run end to end on real hardware: the
+> acceptance run (`tests/e2e/run.ts`) is written but has never been completed
+> on a machine with an accelerated QEMU. Its notes estimate 30 to 90 minutes
+> and about 15 GB of disk for a first run. On Windows there is an open issue:
+> measured with the Windows Hypervisor Platform turned off, QEMU's
+> `-accel whpx -cpu host` pauses the VM with `WHPX: Unexpected VP exit code 4`,
+> and whether it works once `setup` has turned the feature on is not measured
+> yet ([architecture: VM definition](docs/architecture.md#34-vm-definition)).
+
+## Quick start
+
+### Requirements
+
+- Linux or Windows, on x86-64, with hardware virtualization on. macOS is not
+  supported.
+- Node 24 or newer, Git, and Go 1.25 or newer (to build the guest daemon).
+- QEMU 8.2 or newer; `setup` installs it and enables the accelerator.
+- At least 20 GiB free for the data directory (`doctor` checks it). Each Dot's
+  disk is a copy-on-write overlay that grows as it writes, up to its
+  `computer.disk` (40 GB in the sample).
+- Memory: `image build` boots a builder VM with 2 vCPUs and 4 GiB, and each
+  running Dot takes its `computer.memory` (4 GB in the sample). Inside a Dot,
+  each open browser takes roughly 0.8 GB, and at most `max_open` (default 3)
+  are open at once.
+- A data directory path in plain ASCII with no comma. The default is
+  `~/.invisible-dots`, under your account name, so an account named `José`
+  fails at `doctor`; set `INVISIBLE_DOTS_HOME` to a path such as
+  `C:\invisible-dots` before every command, the server included.
+- An [OpenRouter](https://openrouter.ai) key.
+
+### 1. Install the tools and build
+
+**Windows**, in PowerShell:
 
 ```powershell
 winget install -e --id OpenJS.NodeJS.LTS; winget install -e --id GoLang.Go; winget install -e --id Git.Git
 $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
-git clone https://github.com/feder-cr/dots; cd dots
+git clone https://github.com/feder-cr/dots
+cd dots
 npm ci
 npm run build --workspace @invisible-dots/cli
+$env:NEXT_TELEMETRY_DISABLED = "1"
 npm run build --workspace @invisible-dots/web
 $env:CGO_ENABLED = "0"; $env:GOOS = "linux"; $env:GOARCH = "amd64"
 go -C guest/dot-agentd build -trimpath -o bin/dot-agentd ./cmd/dot-agentd
 Remove-Item Env:CGO_ENABLED, Env:GOOS, Env:GOARCH
-node apps/cli/dist/invisible-dots.mjs setup
 ```
 
-If `setup` asks for a restart, restart, then in the same folder:
-
-```powershell
-node apps/cli/dist/invisible-dots.mjs image build
-node apps/cli/dist/invisible-dots.mjs server
-```
-
-Linux (Ubuntu 24.04):
+**Linux** (Ubuntu 24.04), in bash:
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt-get install -y nodejs git
 sudo snap install go --classic
-git clone https://github.com/feder-cr/dots && cd dots
+git clone https://github.com/feder-cr/dots
+cd dots
 npm ci
 npm run build --workspace @invisible-dots/cli
-npm run build --workspace @invisible-dots/web
+NEXT_TELEMETRY_DISABLED=1 npm run build --workspace @invisible-dots/web
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C guest/dot-agentd build -trimpath -o bin/dot-agentd ./cmd/dot-agentd
+```
+
+`NEXT_TELEMETRY_DISABLED` keeps Next.js from sending its anonymous build
+telemetry while the web client is built.
+
+### 2. Get the host ready
+
+The same commands in PowerShell and bash, from the repository folder:
+
+```sh
 node apps/cli/dist/invisible-dots.mjs setup
+```
+
+`setup` checks the host and fixes only what is missing. Run it as yourself,
+not as root or administrator: it asks for the rights it needs once.
+
+- On **Windows** it enables the Windows Hypervisor Platform and installs QEMU
+  in one elevated step. If it says to restart (exit code 5), restart and come
+  back to this folder.
+- On **Linux** it installs QEMU with `sudo apt-get`. If it prints
+  `sudo usermod -aG kvm $USER`, log out and in again before going on.
+
+Then:
+
+```sh
+node apps/cli/dist/invisible-dots.mjs doctor
 node apps/cli/dist/invisible-dots.mjs image build
 node apps/cli/dist/invisible-dots.mjs server
 ```
 
-Then, in a second terminal in the same folder:
+`doctor` prints one line per check and the command that fixes each failure. Go
+on to `image build` when only the images, the server and the OpenRouter key
+are left. `image build` builds the two guest images on your machine (Ubuntu
+24.04, the desktop, the browser, the engine); it is the longest step, and a
+second run with unchanged inputs does nothing. `server` runs in the foreground
+until Ctrl+C.
 
-```text
+### 3. Your first Dot
+
+In a second terminal, in the same folder:
+
+```sh
 node apps/cli/dist/invisible-dots.mjs secret openrouter
 node apps/cli/dist/invisible-dots.mjs init
 node apps/cli/dist/invisible-dots.mjs create dot.yaml
-node apps/cli/dist/invisible-dots.mjs message my-first-dot "What is on your desktop right now?"
+node apps/cli/dist/invisible-dots.mjs message my-first-dot "List the files in your home folder and say how much disk is free."
+node apps/cli/dist/invisible-dots.mjs logs my-first-dot
 ```
 
-`secret openrouter` asks for your OpenRouter key and stores it. `init` writes
-`dot.yaml`, the Dot's name, goal, model and permissions, to edit before
-`create`. `invisible-dots doctor` checks the host and names the command that
-fixes anything missing.
+`secret openrouter` asks for the key (it is never a command-line argument).
+`init` writes `dot.yaml`, the Dot's name, goal, model, resources and
+permissions, to edit before `create`. The first Dot takes a while to boot; the
+message waits in the queue until it is ready. `logs` prints the Dot's events
+and keeps following new ones until Ctrl+C (`--no-follow` prints and exits). It
+worked when `logs` shows a `message.assistant` event with the answer and what
+it cost (`spent_usd`).
 
-To talk to a Dot from Telegram, make a bot with @BotFather (one bot per Dot),
-then:
+### A shorter command
 
-```text
-node apps/cli/dist/invisible-dots.mjs channel add telegram --dot my-first-dot
-node apps/cli/dist/invisible-dots.mjs channel pair telegram --dot my-first-dot
+In the rest of this page, `invisible-dots` stands for
+`node apps/cli/dist/invisible-dots.mjs`, and `invisible-dots --help` lists every
+command. To type it that way:
+
+- in **bash**, run this once in the repository folder (again in each new
+  terminal):
+
+  ```bash
+  alias invisible-dots="node '$PWD/apps/cli/dist/invisible-dots.mjs'"
+  ```
+
+- in **PowerShell**, type `npx invisible-dots` from the repository folder.
+
+### The web UI
+
+`invisible-dots server` also serves the web client. Open
+http://127.0.0.1:3000 and sign in with the first line of the API token file,
+which these print:
+
+```bash
+head -1 ~/.invisible-dots/config/api.token
 ```
 
-`channel add` asks for the bot's token and stores it encrypted; `channel pair`
-prints a link: open it in Telegram and press Start, and that chat is the Dot's
-from then on. Nobody else can talk to it. When the Dot needs a permission it
-asks in that chat, with Approve and Reject buttons (the arguments shown are cut
-to 300 characters; `PATCH /api/dots/:id/channels/telegram` with
-`{"settings": {"approvals": false}}` keeps the answer in the app).
-Telegram bot chats are not end-to-end encrypted.
-
-WhatsApp is also possible, and it is opt-in because it is **not an official way
-to use WhatsApp**: it links the Dot as a device of a personal account through an
-unofficial client (Baileys, pinned to one release candidate), which WhatsApp's terms
-do not allow for automation and which can get the account restricted or banned.
-Use a number of its own, such as a spare SIM or eSIM, never the one you live on.
-The client depends on `libsignal`, which is GPL-3.0 (see
-`THIRD_PARTY_NOTICES.md`); the command bundle leaves it out and loads it from
-`node_modules` only when you link WhatsApp.
-The server offers it only when started with `INVISIBLE_DOTS_WHATSAPP=1`; then
-
-```text
-node apps/cli/dist/invisible-dots.mjs channel link whatsapp --dot my-first-dot
-node apps/cli/dist/invisible-dots.mjs channel pair whatsapp --dot my-first-dot
+```powershell
+Get-Content $HOME\.invisible-dots\config\api.token -TotalCount 1
 ```
 
-`channel link` shows a code to scan under WhatsApp > Settings > Linked devices, and
-the keys of the linked device are stored encrypted like the Telegram token.
-`channel pair` prints a link that opens a chat with the number and the words
-`pair <code>` ready to send. The Dot never writes first, to anyone; it answers
-people who paired and nobody else, in private chats only. Approvals are answered
-in words (`yes ap-xxxxxx` or `no ap-xxxxxx`; there are no buttons).
+After that the browser holds only an HttpOnly session cookie derived from the
+token, and the web server adds the token to each API call itself.
 
-The web client: `invisible-dots server` serves it too, built by the
-`npm run build --workspace @invisible-dots/web` line above. Open
-http://127.0.0.1:3000 and sign in with the first line of `config/api.token` in
-`~/.invisible-dots`. `server --no-web` runs the control plane alone, and
-`INVISIBLE_DOTS_WEB_LISTEN` moves the web client to another `host:port`.
+From there you create a Dot by pasting its YAML, and follow each Dot in its
+tabs: the chat, the tasks (queue new ones, cancel), the timeline of its events,
+the computer (the resources it was given, live memory and disk use, and a
+screenshot of the desktop on demand), its browser identities, its pending
+approvals, and its settings, where you edit the YAML or delete the Dot. An
+Approvals page lists what waits for you across every Dot.
 
-## What a Dot is
+## Using a Dot day to day
 
-- **A computer.** Its own QEMU virtual machine with a persistent disk. It
-  sleeps when it has nothing to do and wakes for the next task or message.
-- **An agent inside it.** Its engine is a fork of nanobot, in Python. It
-  reasons with any model on OpenRouter and works through tools: a shell with
-  background jobs, files, memory notes and scheduled automations. The shell and
-  the files are the Dot's own, run as the Dot's user through its computer's
-  daemon.
-- **Browser identities.** Each one is a separate browser profile with its own
-  cookies, logins and fingerprint, kept from one task to the next. The control
-  plane and the browser layer have them; the new engine does not offer them to
-  the model yet.
-- **Rules you set.** Every tool runs as allow, ask or deny; an ask waits for
-  `invisible-dots approve`, and a pending approval survives a restart.
+| command | what it does |
+|---|---|
+| `invisible-dots list` | every Dot, with its state |
+| `invisible-dots status <dot>` | a Dot, its computer and its recent tasks |
+| `invisible-dots message <dot> <text>` | a message in its one persistent conversation |
+| `invisible-dots task <dot> <text> [--priority N] [--at ISO-8601]` | a queued task; a higher priority runs first, `--at` sets the earliest start |
+| `invisible-dots tasks <dot>` | its tasks and their status |
+| `invisible-dots logs <dot> [--tail N] [--no-follow]` | its events, then new ones as they come |
+| `invisible-dots approvals [--all]` | pending approvals (all of them with `--all`) |
+| `invisible-dots approve <id> [--always] [--note text]` | let that one call run; `--always` also allows its permission for the Dot from now on |
+| `invisible-dots reject <id> [--note text]` | refuse it; the model is told no |
+| `invisible-dots computer <dot> start\|stop\|reboot` | power its computer on or off by hand |
+| `invisible-dots browser <dot> identities` | its browser identities |
+| `invisible-dots channel list [--dot <dot>]` | linked chats and who is paired |
+| `invisible-dots channel remove telegram\|whatsapp --dot <dot>` | unlink a chat; its token or keys and paired people are deleted |
+| `invisible-dots secret openrouter --dot <dot>` | a key for one Dot instead of the global one |
 
-The same code runs on Linux (KVM) and Windows (Windows Hypervisor Platform).
-The Windows path is not verified on real hardware yet. The engine's own tests
-(`invisible_engine_dots`, pytest) run on Linux, in CI's `engine` job. There is
-no end-to-end run against real VMs right now: the one that drove the earlier
-engine is gone, and the browser phase of the new one brings its replacement.
+`<dot>` is a Dot's name or id, and `--json` gives machine-readable output.
+Editing a Dot's configuration and deleting a Dot are done in the web UI (its
+settings tab) or through the API (`PATCH` and `DELETE /api/dots/:id`); the
+command line has no command for either yet.
 
-How it works, and the contract every part is written against:
+## What a Dot can do
+
+Its tools, each behind a permission
+([architecture: tools](docs/architecture.md#83-tools)):
+
+- **Run commands** on its own computer: a shell with a timeout, background
+  jobs, and programs on a pseudo-terminal that it reads as a screen of text.
+- **Read and write files**: read, list, find, grep, write, edit, apply a patch.
+- **Keep notes**: one file per note in `/home/dot/memory`, found again with a
+  keyword search; the newest ones are named in its prompt.
+- **Schedule itself**: add, list and remove its own automations (at a time,
+  every interval, or a cron expression). This one asks you first by default.
+- **Use its browsers**: create, launch and close identities; navigate (http
+  and https only), read the page, take screenshots, click, type, select,
+  scroll, go back and forward.
+- **Look at its desktop** with a screenshot.
+
+Work reaches it three ways: a message in its one persistent conversation, a
+queued task (with a priority and an optional start time), or one of its own
+automations firing. Each task has limits on steps, on context and on cost
+(`max_cost_per_task_usd`). Long threads are summarized, by the Dot's model or
+by another model you name (`models.summary`).
+
+> [!NOTE]
+> Automations run inside the Dot's computer, and the control plane starts the
+> computer for them. A Dot that is asleep is started shortly before an
+> automation is due (90 seconds ahead by default), and it is not put to sleep
+> while one is due, so a job every minute keeps it up. A run whose time passed
+> while the computer or the server was down is made once, late, when the
+> computer starts, never once for each occurrence it missed. A computer you
+> stopped yourself (`invisible-dots computer <dot> stop`, or Stop in the web UI)
+> stays off, and its automations are paused until you start it again; a message
+> or a task still starts it.
+
+For example, the configuration in
+[architecture: Dot configuration](docs/architecture.md#7-dot-configuration)
+describes a Dot whose goal is:
+
+> Check one-way fares from Milan to Lisbon every morning and report the
+> cheapest day. Write findings to ~/workspace/fares.csv.
+
+Once the Dot has set that automation up (it asks you first), its computer is
+started each morning for it, and sleeps again afterwards.
+
+A Dot has no web search or fetch tool, no sub-agents and no tool to message
+anyone: it reads the web through its own browser, and only the control plane
+talks to chats.
+
+## Approvals
+
+- Every tool call goes through one policy gate. `allow` runs it, `deny` tells
+  the model no, `ask` stops the turn and records the call with its arguments
+  ([architecture: policy](docs/architecture.md#84-policy)).
+- The defaults are permissive for the Dot's own computer: running commands,
+  files, the browser and memory are allowed, except deleting a browser
+  identity, which asks; automations ask; anything unknown is denied. Set any
+  permission to `ask` or `deny` in the YAML to be asked first or to forbid it.
+- An approval can be answered in the web UI, the command line, a Telegram
+  button or a WhatsApp reply. The first answer wins, a second is ignored, and
+  the approved call runs at most once. `approve --always` turns that ask into
+  an allow for the Dot.
+- Pending approvals survive a restart of the server or of the Dot.
+
+## Security model and known limits
+
+What protects you:
+
+- The OpenRouter key is never written to the image, the disk or the seed. It
+  is pushed to the Dot after every start and held in the engine's memory only;
+  the engine refuses to start if it finds a credential on disk
+  ([architecture: secrets](docs/architecture.md#43-secrets)).
+- The engine runs as its own user. Everything the model runs goes through the
+  computer daemon as another user, `dot`, which cannot read the engine's state
+  or become root.
+- The channel between host and guest goes one way: the host calls the guest
+  on a loopback port, with the Dot's token, and only after the guest proves it
+  holds that token. The API needs a bearer token; the web UI a session.
+- Files the host shows from a Dot come only from `/home/dot`, at most 16 MiB,
+  never served as a type a browser would run.
+- Proxy passwords are replaced in everything shown: approvals, events, logs.
+- Secrets on the host (the OpenRouter key, channel tokens, WhatsApp keys) are
+  stored encrypted; see [Configuration](#configuration).
+
+What it does not protect against, by design or not yet:
+
+- The model's commands run as `dot`, which can read an identity's proxy,
+  password included, from the open browser's environment and from the browser
+  server's own session file.
+- `dot` could replace the computer daemon on its port, and the replacement
+  would then receive the key.
+- When typing in the browser is set to `ask`, the approval shows the text being
+  typed, password or not.
+- Each Dot can reach services on your PC's loopback through `10.0.2.2`.
+  Everything invisible_dots listens on there needs a credential the Dot lacks,
+  but nothing else should listen there unauthenticated
+  ([architecture: networking](docs/architecture.md#36-networking-and-its-limits),
+  [architecture: browser identities](docs/architecture.md#6-browser-identities)).
+
+## The browser
+
+Each browser identity is a separate Firefox profile under
+`/home/dot/browsers/<id>/`, with its own cookies, storage, logins and
+fingerprint, the same fingerprint at every launch, and an optional proxy. It
+runs on the Dot's desktop, so it appears in screenshots of the desktop.
+
+Launching is explicit: a page action on an identity that is not open fails, so
+denying `browser.identity.launch` cannot be undone by navigating. At most
+`max_open` identities are open at once (default 3, roughly 0.8 GB each), the
+least recently used one closing first, and at most `max_identities` exist
+(default 20). Screenshots go to the model and are never stored.
+
+How well the browser holds up against bot checks is measured in
+[invisible_playwright's README](https://github.com/feder-cr/invisible_playwright),
+on the suites it names. invisible_dots adds no claim of its own: a site can
+still refuse a Dot for what it does, and the terms of the sites you point it at
+still apply.
+
+## Talk to it from your phone
+
+**Telegram.** Make a bot with @BotFather (one bot per Dot), then:
+
+```sh
+invisible-dots channel add telegram --dot my-first-dot
+invisible-dots channel pair telegram --dot my-first-dot
+```
+
+`channel add` asks for the bot's token and stores it encrypted. `channel pair`
+prints a one-time link, valid ten minutes: open it in Telegram and press Start,
+and that account is the Dot's owner from then on. Messages from anyone else are
+dropped before they cost anything. Approvals arrive with Approve and Reject
+buttons, the arguments cut to 300 characters. Telegram bot chats are not
+end-to-end encrypted. Text only.
+
+A channel has three settings, all on by default: `approvals` (ask approvals in
+the chat), `show_arguments` (show the tool's arguments in them) and
+`notify_tasks` (what the Dot says on its own: finished and failed tasks, and
+the answers to its automations). There is no command or web control for them
+yet; the API sets them:
+
+```bash
+curl -X PATCH http://127.0.0.1:8787/api/dots/my-first-dot/channels/telegram \
+  -H "Authorization: Bearer $(head -1 ~/.invisible-dots/config/api.token)" \
+  -H "Content-Type: application/json" \
+  -d '{"settings": {"show_arguments": false}}'
+```
+
+**WhatsApp** is opt-in, and it needs a warning first.
+
+> [!WARNING]
+> This is not an official way to use WhatsApp. It links the Dot as a device of
+> a personal account through an unofficial client (Baileys, pinned to one
+> release candidate), which WhatsApp's terms do not allow for automation and
+> which can get the account restricted or banned. Use a number of its own, such
+> as a spare SIM or eSIM, never the one you live on.
+
+Start the server with `INVISIBLE_DOTS_WHATSAPP=1`, then:
+
+```sh
+invisible-dots channel link whatsapp --dot my-first-dot
+invisible-dots channel pair whatsapp --dot my-first-dot
+```
+
+`channel link` shows a QR code to scan under WhatsApp > Settings > Linked
+devices; the linked device's keys are stored encrypted. `channel pair` prints a
+link that opens a chat with the number and `pair <code>` ready to send. The Dot
+never writes first, to anyone, answers only people who paired, in private
+chats, and takes text only. Approvals are answered in words
+(`yes ap-xxxxxx` or `no ap-xxxxxx`); a bare `yes` is an ordinary message.
+
+Baileys depends on `libsignal`, which is GPL-3.0. `npm ci` installs both into
+`node_modules` for everyone; neither is in this repository or in the bundled
+command, and the server loads them only when WhatsApp is linked
+([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
+
+The details of both:
+[architecture: messaging channels](docs/architecture.md#98-messaging-channels).
+
+## How it works
+
+In short: the web UI and the command line call the HTTP API; the scheduler
+behind it keeps the queue in a database and starts and stops one QEMU VM per
+Dot; inside the VM, the engine reasons with OpenRouter, runs the model's
+commands through the computer daemon and drives its browsers on the VM's
+desktop; Telegram and WhatsApp reach the scheduler through the channel hub.
+
+```mermaid
+flowchart LR
+  subgraph PC["Your PC: one invisible-dots server process"]
+    WEB["Web UI<br/>127.0.0.1:3000"]
+    CLI["CLI"]
+    API["HTTP API and SSE<br/>127.0.0.1:8787"]
+    SCH["Scheduler<br/>queue, outbox, approvals, sleep and wake"]
+    HUB["Channel hub"]
+    VMM["vm-manager<br/>the QEMU driver"]
+    DB[("PostgreSQL<br/>embedded PGlite by default")]
+  end
+  subgraph VM["One QEMU VM per Dot"]
+    AGD["dot-agentd<br/>the computer daemon, user dot"]
+    ENG["Engine, a nanobot fork<br/>user dotengine, key in memory"]
+    DESK["Xvfb and XFCE desktop"]
+    BR["invisible-playwright-mcp<br/>one per open identity"]
+  end
+  WEB -->|"API calls with the token"| API
+  CLI -->|"API calls with the token"| API
+  API -->|"messages, tasks, answers"| SCH
+  HUB -->|"chat messages and approvals"| SCH
+  SCH -->|"queue, events, approvals"| DB
+  SCH -->|"start, stop, reboot"| VMM
+  VMM -->|"starts and stops"| VM
+  SCH -->|"loopback port forward<br/>token after an HMAC proof"| AGD
+  AGD <-->|"proxy, and the model's commands"| ENG
+  ENG -->|"browser tools over MCP"| BR
+  BR -->|"windows on"| DESK
+  ENG -->|"model requests"| OR["OpenRouter"]
+  HUB <-->|"bot messages"| TG["Telegram"]
+  HUB <-->|"linked device"| WA["WhatsApp, opt-in"]
+  BR -->|"pages, through the proxy if any"| SITES["The web"]
+```
+
+- **One process on the host.** `invisible-dots server` runs the API, the
+  scheduler, the VM driver and the channel hub, and starts the web client as a
+  child (`--no-web` leaves it out). The database is an embedded PostgreSQL
+  (PGlite) in the data directory, or an external PostgreSQL 16 or newer through
+  `DATABASE_URL`.
+- **One VM per Dot.** QEMU with KVM or the Windows Hypervisor Platform; never
+  software emulation. A copy-on-write disk over a golden image, plus a
+  read-only runtime disk with our code. Both images are built on your machine
+  from pinned, hashed inputs
+  ([architecture: two images](docs/architecture.md#33-two-images-two-lifetimes)).
+- **The engine** is a hard fork of [nanobot](https://github.com/HKUDS/nanobot)
+  in Python, cut down to its core: the turn runner, OpenRouter, the tools above,
+  automations, and an MCP client that serves only the browser
+  ([invisible_engine_dots/UPSTREAM.md](invisible_engine_dots/UPSTREAM.md)).
+- **Durable on both sides.** The host writes what it tells a guest in the
+  same transaction as the decision, so a restart loses nothing you saw
+  accepted ([architecture: durable queue](docs/architecture.md#92-durable-queue)).
+  The engine keeps its state in one SQLite file and commits each step with the
+  events that describe it; its event stream keeps its order across a
+  `kill -9`. A task cut short by a crash is started again with a note that the
+  last attempt was interrupted, and fails once it has been started three times
+  ([architecture: crash recovery](docs/architecture.md#87-crash-recovery)).
+- **The server can restart without stopping Dots.** QEMU runs detached, and a
+  new server adopts the VMs it finds running. A VM that dies while its Dot has
+  work is started again.
+
+The full contract every part is written against:
 [docs/architecture.md](docs/architecture.md).
 
----
+## Configuration
 
-Not affiliated with OpenAI. MIT licensed. The agent engine is a fork of
-nanobot, also MIT, and parts of this repository's history come from Open
-Multi-Agent, also MIT, with their notices in
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). QEMU, the guest operating
-system, the browser engine and the packages a host downloads keep their own
-licenses (docs/architecture.md, section 11.3).
+A Dot is one YAML file, checked by one schema: name, goal, instructions,
+model, computer (cpu, memory, disk, idle timeout), browser identities,
+permissions, memory and limits. Every field and its range is in
+[architecture: Dot configuration](docs/architecture.md#7-dot-configuration);
+`invisible-dots init` writes a sample.
+
+One server runs per data directory. Secrets (the OpenRouter key, channel
+tokens, WhatsApp keys) are stored with AES-256-GCM under
+`config/master.key`; anyone who can read the data directory can decrypt them,
+so it is kept private to your user.
+
+<details>
+<summary>The environment variables the host reads</summary>
+
+| variable | default | what |
+|---|---|---|
+| `INVISIBLE_DOTS_HOME` | `~/.invisible-dots` | the data directory: keys, database, images, VM disks, logs. Plain ASCII, no comma |
+| `INVISIBLE_DOTS_LISTEN` | `127.0.0.1:8787` | where the server's API listens |
+| `INVISIBLE_DOTS_URL` | `http://127.0.0.1:8787` | where the CLI finds the server |
+| `INVISIBLE_DOTS_TOKEN` | first line of `config/api.token` | the API token, instead of the file |
+| `INVISIBLE_DOTS_WEB_LISTEN` | `127.0.0.1:3000` | where the web client listens |
+| `INVISIBLE_DOTS_WEB_ALLOWED_HOSTS` | loopback only | other host names the web client answers to |
+| `INVISIBLE_DOTS_QEMU_DIR` | official installer's folder, then `PATH` | the one folder QEMU is looked for in |
+| `INVISIBLE_DOTS_WHATSAPP` | off | `1` offers the WhatsApp channel |
+| `DATABASE_URL` | embedded PGlite | an external PostgreSQL 16 or newer |
+| `INVISIBLE_DOTS_DEBUG` | off | `1` adds debug lines to the server's log |
+
+</details>
+
+## Troubleshooting
+
+- `invisible-dots doctor` first: one line per check, and the command that fixes
+  a failure.
+- The server logs to the terminal it runs in; `INVISIBLE_DOTS_DEBUG=1` adds
+  debug lines.
+- A Dot that does not start: QEMU's own output is in
+  `~/.invisible-dots/logs/qemu-<dot_id>.log`, and the guest's serial console in
+  `~/.invisible-dots/vms/<dot_id>/serial.log` (rewritten at each start).
+  `invisible-dots list` shows each Dot's id.
+- What a Dot did and why it stopped: `invisible-dots logs <dot>` and
+  `invisible-dots tasks <dot>`.
+
+## Updating and uninstalling
+
+**Updating.** Stop the server (Ctrl+C), then in the repository folder:
+`git pull`, `npm ci`, the three builds of step 1 (the command, the web client
+and dot-agentd), `invisible-dots image build`, and `invisible-dots server`
+again. Running Dots keep running meanwhile: QEMU is not a child of the server.
+Each VM start takes the newest runtime image (our code), so
+`invisible-dots computer <dot> reboot` moves a Dot to it. A Dot keeps the
+golden image it was created on, and new Dots get the newest one. When an update
+changes the engine's dependencies, the engine of a Dot on an older golden image
+refuses to start and says so; this version has no way to move a Dot to a new
+golden image.
+
+**Uninstalling.** Stop each Dot's computer (`invisible-dots computer <dot>
+stop`) while the server runs, since a VM outlives the server, then stop the
+server and delete the data directory (`~/.invisible-dots`, or your
+`INVISIBLE_DOTS_HOME`) and the repository folder. What `setup` installed stays
+until you remove it yourself: QEMU, the Windows Hypervisor Platform feature on
+Windows, and your membership of the `kvm` group on Linux.
+
+## Privacy
+
+invisible_dots runs on your machine and has no server of its own. What leaves
+it, and to whom:
+
+- **OpenRouter** gets the conversation, the tool results and what the Dot
+  reads, under your key. Requests carry the headers
+  `HTTP-Referer: https://github.com/feder-cr/dots` and `X-Title: invisible_dots`.
+- **Telegram and WhatsApp** carry the messages and approval prompts of a
+  linked channel, and can read them.
+- **The sites a Dot visits** see its browser, through the identity's proxy
+  when it has one.
+- **Publishers of what the images are made of** (Ubuntu, Node, uv, the Python
+  packages, the browser engine, a GeoIP database on GitHub) serve the downloads
+  when you build them; on Windows, `setup` downloads the official QEMU
+  installer.
+- **The browser layer.**
+  [invisible-playwright-mcp's privacy policy](https://github.com/feder-cr/invisible_playwright_mcp#privacy-policy)
+  says each browser launch fetches a one-line counter file from a GitHub
+  release, carrying no identifier.
+- **Address-echo services** (`api.ipify.org`, `icanhazip.com`,
+  `checkip.amazonaws.com`) are asked by the browser library at each launch for
+  the public address the identity exits from, through its proxy when it has
+  one, to set the time zone and locale. The GeoIP lookup itself is local: the
+  database is part of the golden image.
+- **Next.js** may send its anonymous build telemetry when the web client is
+  built, unless `NEXT_TELEMETRY_DISABLED=1` is set as in the quick start.
+
+Your Dots' disks, memory and conversations stay in the data directory and
+inside their VMs.
+
+## Development and tests
+
+Besides the quick start's tools, development needs Python 3.11 or newer for the
+engine, and Docker for the smokes.
+
+```sh
+npm ci
+npm run typecheck
+npm test                                   # vitest over the TypeScript workspace and tests/repo
+git config core.hooksPath .githooks        # the pre-push gate: typecheck, vitest, go test, prose checks
+```
+
+The pre-push gate's prose checks need Python with the pinned invisible-core.
+The hook looks for it in `tmp/gates-venv` first:
+
+```sh
+python -m venv tmp/gates-venv
+tmp/gates-venv/bin/python -m pip install -r .github/gates-requirements.txt
+```
+
+(on Windows the interpreter is `tmp\gates-venv\Scripts\python.exe`).
+
+- The engine: `pip install -e ".[dev]"` and `pytest` in
+  `invisible_engine_dots/` (Linux only: it uses unix sockets).
+- dot-agentd: `go test ./...` in `guest/dot-agentd/`.
+- The engine smoke and the browser smoke run the guest's two daemons, and the
+  real invisible-playwright-mcp with its Firefox, in Linux containers:
+  `bash guest/image-builder/test/smoke/run.sh` (add `--suite browser`); only
+  Docker is needed
+  ([the smoke tests README](guest/image-builder/test/smoke/README.md)).
+- The acceptance run on a real VM, `node tests/e2e/run.ts`, needs a Linux host
+  with KVM and an OpenRouter key, and is not part of CI
+  ([the acceptance run README](tests/e2e/README.md)).
+
+<details>
+<summary>What CI runs, and where the code lives</summary>
+
+CI runs on pushes to main and on pull requests: typecheck and vitest on Linux
+and Windows, the database layer against a real PostgreSQL, dot-agentd's Go
+tests and static build, the engine's pytest, the ISO images read by the Linux
+kernel, both smokes, the web build, and two prose gates (English only, and a
+README that promises nothing it cannot support). The vitest, Go and pytest
+runs are counted against the floors in `.github/test-floors.json`, and the
+smokes fail on a skipped check, so a test that stops running fails the build.
+
+| folder | what |
+|---|---|
+| `apps/` | `api`, `scheduler`, `vm-manager`, `web`, `cli` |
+| `packages/` | shared types and schemas, database, events, channels, the ISO writer, the SDK |
+| `guest/` | `dot-agentd` (Go) and the image builder |
+| `invisible_engine_dots/` | the Dot's engine (Python) |
+| `virtualization/` | the pinned QEMU, cloud-init templates, base image metadata |
+| `tests/` | checks over the whole repository, and the real-VM run |
+
+</details>
+
+## Status and what is not done yet
+
+Alpha. Nothing is released or published yet.
+
+- **The real-VM acceptance run has not been run yet.** It exists
+  (`tests/e2e/run.ts`: build, create, browse, approve, kill the VM, restart,
+  scan the disk for the key) and CI keeps its contract in step with the
+  product, but the machine it was written on has no accelerated QEMU. Until it
+  passes on real hardware, the guest is tested by the container smokes, which
+  run its daemons without a VM.
+- **Windows is not verified on real hardware**, and has the open WHPX issue
+  named at the top of this page. It runs the same code path as Linux, and
+  every difference between the two is listed in
+  [architecture: one mechanism on every host](docs/architecture.md#11-one-mechanism-on-every-host).
+- **No one-command install.** The quick start above is the install.
+- **A computer you stopped by hand does not wake for its automations** until
+  you start it again.
+- **Channels carry text only**, one Telegram bot per Dot; the official
+  WhatsApp Cloud API is a later adapter on the same hub.
+- **Not in this version**: snapshots and rollback, backups, quotas, network
+  policies, MCP integrations beyond the browser, a remote desktop or an
+  interactive terminal for you, artifacts, several hosts, organisations and
+  roles, macOS hosts
+  ([architecture: out of scope](docs/architecture.md#10-out-of-scope-for-this-version)).
+
+## License
+
+MIT ([LICENSE](LICENSE)). The engine under `invisible_engine_dots/` is a fork
+of nanobot, also MIT, under its own [LICENSE](invisible_engine_dots/LICENSE);
+parts of this repository's history come from Open Multi-Agent, also MIT. Their
+notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). QEMU (GPL-2.0)
+is installed from its official installer or your distribution and only run as
+a separate program, never bundled. The guest operating system, the browser
+engine and the packages a host downloads keep their own licenses; whoever
+copies a golden image to another machine takes on theirs
+([architecture: licensing](docs/architecture.md#113-licensing)).
+
+invisible_dots is an independent project, not affiliated with OpenRouter,
+Telegram, WhatsApp or Meta.
