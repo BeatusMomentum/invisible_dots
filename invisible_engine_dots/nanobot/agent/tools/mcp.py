@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from nanobot.agent.tools.base import Tool, ToolResult
 from nanobot.agent.tools.context import tool_log_content_allowed
-from nanobot.agent.tools.mcp_stderr import FilteredStderr
+from nanobot.agent.tools.mcp_stderr import FilteredStderr, StderrFilter
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.utils.cancellation import task_is_cancelling
 
@@ -43,8 +43,8 @@ class MCPServerConfig(BaseModel):
     # is reported by its MIME type and its bytes are dropped.
     images: bool = False
     # Stdio: what the server writes to its stderr (the engine's journal) goes through this first. A server that
-    # is handed a secret sets it to a function that hides the secret; without one the stderr is inherited.
-    stderr_filter: Callable[[str], str] | None = Field(default=None, exclude=True)
+    # is handed a secret sets it to a filter that hides the secret; without one the stderr is inherited.
+    stderr_filter: StderrFilter | None = Field(default=None, exclude=True)
     # Only register these tools; accepts raw MCP names or wrapped mcp_<server>_<tool> names.
     # ["*"] = all capabilities (tools, resources, prompts); any restriction = only the
     # listed tools, no resources or prompts.

@@ -26,6 +26,7 @@ from nanobot.dots import store as dots_store
 from nanobot.dots.browser import (
     BrowserIdentityError,
     BrowserManager,
+    _proxy_stderr_filter,
     _scrub,
     result_is_error,
     result_text,
@@ -472,6 +473,18 @@ def test_a_password_with_a_backslash_and_both_quotes_is_hidden_in_a_traceback_an
         assert scrubbed != text
         for piece in ("w'rd", "w\\'rd", "w\\\\'rd", "ss\\\\w", "pa\\\"ss", "pa\"ss"):
             assert piece not in scrubbed, (piece, scrubbed)
+
+
+def test_the_stderr_filter_of_a_proxy_knows_the_longest_text_it_hides() -> None:
+    # No rule bounds the length of a proxy, and an escaped form is up to 12 times longer than the password.
+    password = "\U0001f98a" * 3000
+    proxy = f"http://user:{password}@proxy.test:8080"
+
+    found = _proxy_stderr_filter(proxy)
+
+    assert found.longest_match >= len(json.dumps(f"user:{password}")[1:-1])
+    assert found.longest_match >= len(proxy)
+    assert found.scrub(f"log {json.dumps(password)[1:-1]} end") == "log *** end"
 
 
 async def test_a_proxy_without_a_password_leaves_what_the_server_says_as_it_is(env: Env) -> None:

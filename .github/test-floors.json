@@ -12,6 +12,6 @@
     "win32": { "min_passed": 62, "allow_skipped": "^agentd (TestSystemRoute|TestPowerOffStartsTheCommandAndAnswers202)$" }
   },
   "pytest": {
-    "linux": { "min_passed": 2645, "allow_skipped": "" }
+    "linux": { "min_passed": 2674, "allow_skipped": "" }
   }
 }

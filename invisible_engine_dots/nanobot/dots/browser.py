@@ -46,6 +46,7 @@ from loguru import logger
 
 from nanobot.agent.tools.base import ToolResult
 from nanobot.agent.tools.mcp import MCPProvider, MCPServerConfig
+from nanobot.agent.tools.mcp_stderr import StderrFilter
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.dots import store as dots_store
 from nanobot.dots.computer import Computer
@@ -540,7 +541,7 @@ class BrowserManager:
             tool_timeout=self._request_timeout_s,
             images=True,
             # The server's stderr is the engine's journal: what it writes there goes through the same scrub.
-            stderr_filter=(lambda text: _scrub(text, proxy)) if proxy else None,
+            stderr_filter=_proxy_stderr_filter(proxy) if proxy else None,
         )
 
     def _live_sessions(self) -> list[_Session]:
@@ -811,6 +812,12 @@ def _proxy_scrubber(proxy: str) -> tuple[re.Pattern[str], dict[str, str]]:
                 replacements.setdefault(found, "***")
     pattern = re.compile("|".join(re.escape(found) for found in sorted(replacements, key=len, reverse=True)))
     return pattern, replacements
+
+
+def _proxy_stderr_filter(proxy: str) -> StderrFilter:
+    """The scrub of one proxy as a filter for the server's stderr, with the length of the longest text it finds."""
+    _, replacements = _proxy_scrubber(proxy)
+    return StderrFilter(lambda text: _scrub(text, proxy), max(len(found) for found in replacements))
 
 
 def _scrub(text: str, proxy: str | None) -> str:

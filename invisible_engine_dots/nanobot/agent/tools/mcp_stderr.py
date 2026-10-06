@@ -13,16 +13,31 @@ import os
 import sys
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import TextIO
 
 # A line longer than this is cut: the journal keeps lines of a few KiB at most, and a server that never ends a
-# line must not grow the buffer without bound.
+# line must not grow the buffer without bound (a filter that looks for longer texts raises it).
 LINE_CAP = 64 * 1024
-# What stays behind when a long line is cut, so that a secret straddling the cut is still whole in the next
-# piece. It must be longer than any text the filter looks for; a proxy URL is a few hundred characters.
-HOLDBACK = 4096
 CHUNK_SIZE = 64 * 1024
 WITHHELD = "[a line of the server's stderr was withheld: its filter failed]\n"
+
+
+@dataclass(frozen=True)
+class StderrFilter:
+    """What a server's stderr is passed through, and how long a text it looks for can be.
+
+    `scrub` hides what must not reach the journal. `longest_match` is the length of the longest text it can
+    find: when a long line is cut, that many characters stay behind, so a text that straddles the cut is whole
+    in the next piece. The filter owns the number because it owns the texts; nothing else bounds them.
+    """
+
+    scrub: Callable[[str], str]
+    longest_match: int
+
+    def __post_init__(self) -> None:
+        if self.longest_match < 1:
+            raise ValueError("longest_match must be at least 1")
 
 
 def _to_engine_stderr(text: str) -> None:
@@ -41,16 +56,18 @@ class FilteredStderr:
 
     def __init__(
         self,
-        scrub: Callable[[str], str],
+        stderr_filter: StderrFilter,
         *,
         sink: Callable[[str], None] = _to_engine_stderr,
-        line_cap: int = LINE_CAP,
-        holdback: int = HOLDBACK,
+        line_cap: int | None = None,
         chunk_size: int = CHUNK_SIZE,
     ) -> None:
+        holdback = stderr_filter.longest_match
+        # A line is cut only once it is longer than the text held back, with room to spare.
+        line_cap = max(LINE_CAP, 2 * holdback) if line_cap is None else line_cap
         if holdback >= line_cap:
-            raise ValueError("holdback must be smaller than line_cap")
-        self._scrub = scrub
+            raise ValueError("the longest match must be shorter than line_cap")
+        self._scrub = stderr_filter.scrub
         self._sink = sink
         self._line_cap = line_cap
         self._holdback = holdback
@@ -73,7 +90,8 @@ class FilteredStderr:
                     self._emit(line + "\n")
                 if len(pending) > self._line_cap:
                     # Filter the whole buffer first, then hold back its end: a secret that lies in it is
-                    # replaced, one that starts in the last `holdback` characters is completed by the next read.
+                    # replaced, one that starts in the last `holdback` (the filter's longest match) characters is
+                    # completed by the next read.
                     filtered = self._filtered(pending)
                     if filtered is None:
                         self._write(WITHHELD)

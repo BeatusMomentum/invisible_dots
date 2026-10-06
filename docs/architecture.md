@@ -1340,7 +1340,9 @@ state.
   journal, goes through the same scrub: `connect_mcp_servers` gives a server whose
   config has a `stderr_filter` a pipe instead of the inherited stderr, and a thread
   writes each line, filtered, to the engine's stderr (a line the filter fails on is
-  withheld, never written raw). A close calls
+  withheld, never written raw; a line too long for one piece is cut keeping back the
+  length of the longest text the filter finds, so a password of any length is whole
+  in the next piece). A close calls
   `browser_close` first, so Firefox flushes its profile, then ends the process.
   Every `browser.identity.*` event commits with the row change it describes.
   The model's identity and page tools (`browser_tools.py`) and the routes of
