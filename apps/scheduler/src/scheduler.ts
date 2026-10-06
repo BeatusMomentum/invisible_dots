@@ -4,7 +4,7 @@
  * database, the VM layer or a guest happens here.
  */
 import { randomBytes } from "node:crypto";
-import { DotChangedError, DotNameTakenError, GLOBAL_SCOPE, OPENROUTER_KEY_NAME, type Database } from "@invisible-dots/database";
+import { DotChangedError, DotNameTakenError, GLOBAL_SCOPE, OPENROUTER_KEY_NAME, VM_PROXY_NAME, type Database } from "@invisible-dots/database";
 import { EventLog, USER_MESSAGE_EVENT } from "@invisible-dots/events";
 import type {
   AcceptedAnswer,
@@ -795,6 +795,29 @@ export class Scheduler {
   async usage(idOrName: string, since?: Date): Promise<UsageAnswer> {
     const dotId = await this.#historyDotId(idOrName);
     return { dot_id: dotId, since: since?.toISOString() ?? null, spent_usd: await this.db.events.spentUsd(dotId, since) };
+  }
+
+  /**
+   * Set or clear a Dot's VM proxy (`socks5://[user:password@]host:port`; null or blank clears it). The VM uses it from
+   * its next start: the seed is written at every start. The answer never carries the value.
+   */
+  async setVmProxy(idOrName: string, value: unknown): Promise<{ dot_id: string; proxy: boolean }> {
+    const dot = await this.requireDot(idOrName);
+    if (value === null || value === undefined || (typeof value === "string" && value.trim() === "")) {
+      await this.db.secrets.delete(dot.id, VM_PROXY_NAME);
+      return { dot_id: dot.id, proxy: false };
+    }
+    if (typeof value !== "string" || !/^socks5:\/\/\S+$/.test(value.trim())) {
+      throw new ControlPlaneError(400, "invalid_request", "proxy must be a socks5:// URL");
+    }
+    await this.db.secrets.put(dot.id, VM_PROXY_NAME, value.trim());
+    return { dot_id: dot.id, proxy: true };
+  }
+
+  /** Whether a Dot has a VM proxy; never its value. */
+  async vmProxy(idOrName: string): Promise<{ dot_id: string; proxy: boolean }> {
+    const dot = await this.requireDot(idOrName);
+    return { dot_id: dot.id, proxy: (await this.db.secrets.get(dot.id, VM_PROXY_NAME)) !== null };
   }
 
   /** Store the OpenRouter key (global or per Dot) and push it to the READY guests it applies to. */

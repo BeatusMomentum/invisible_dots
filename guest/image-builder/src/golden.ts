@@ -180,6 +180,7 @@ async function buildLocked(options: GoldenBuildOptions & Resolved, target: Targe
   };
   const nodeTarball = await fetchPinned(pins.node);
   const uvTarball = await fetchPinned(pins.uv);
+  const tunnelBinary = await fetchPinned(pins.tunnel);
   const geoipArchive = await fetchGeoip(pins.geoip, join(cacheDir, geoipCacheName(pins.geoip)), downloads);
   for (const name of await pruneGeoipArchives(cacheDir, pins.geoip)) log(`removed the cached GeoIP archive ${name} (the pin's and the newest ${GEOIP_ARCHIVES_KEPT} others stay)`);
 
@@ -210,6 +211,7 @@ async function buildLocked(options: GoldenBuildOptions & Resolved, target: Targe
         python: target.python,
         nodeTarball,
         uvTarball,
+        tunnelBinary,
         geoipArchive,
         engineLock: target.engineLock,
         engineBuild: target.engineBuild,
@@ -243,6 +245,7 @@ async function buildLocked(options: GoldenBuildOptions & Resolved, target: Targe
       pinned: {
         node: { version: pins.node.version, sha256: pins.node.sha256, url: pins.node.url },
         uv: { version: pins.uv.version, sha256: pins.uv.sha256, url: pins.uv.url },
+        tunnel: { version: pins.tunnel.version, sha256: pins.tunnel.sha256, url: pins.tunnel.url },
         geoip: { ...pins.geoip },
         "invisible-playwright-mcp": target.python.mcpVersion,
         "invisible-playwright": target.python.playwrightVersion,

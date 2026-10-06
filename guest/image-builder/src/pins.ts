@@ -11,10 +11,10 @@ import pinsJson from "../pins.json" with { type: "json" };
 export interface PinnedDownload {
   version: string;
   url: string;
-  /** The checksum list the project publishes next to the file. */
-  shasums_url: string;
+  /** The checksum list the project publishes next to the file; absent when it publishes none (the pinned sha256 is then the only record). */
+  shasums_url?: string;
   /** The file's name in that list. */
-  shasums_entry: string;
+  shasums_entry?: string;
   sha256: string;
 }
 
@@ -50,6 +50,8 @@ export interface BaseImagePin {
 export interface GuestPins {
   node: PinnedDownload;
   uv: PinnedDownload;
+  /** hev-socks5-tunnel, the static binary the guest routes the whole VM through when the Dot has a VM proxy. */
+  tunnel: PinnedDownload;
   geoip: GeoipPin;
   apt_packages: string[];
 }
@@ -94,9 +96,10 @@ function parseDownload(value: unknown, where: string): PinnedDownload {
   const pin: PinnedDownload = {
     version: plainWord(field(o, "version", where), `${where}.version`),
     url: https(field(o, "url", where), `${where}.url`),
-    shasums_url: https(field(o, "shasums_url", where), `${where}.shasums_url`),
-    shasums_entry: field(o, "shasums_entry", where),
     sha256: sha256(field(o, "sha256", where), `${where}.sha256`),
+    ...("shasums_url" in o
+      ? { shasums_url: https(field(o, "shasums_url", where), `${where}.shasums_url`), shasums_entry: field(o, "shasums_entry", where) }
+      : {}),
   };
   // The guest provisioner finds the tarball by its file name, which is the last URL segment.
   if (!FILE_NAME.test(downloadFileName(pin))) throw new Error(`${where}.url must end in a plain file name`);
@@ -161,6 +164,7 @@ export function parseGuestPins(value: unknown): GuestPins {
   return {
     node: parseDownload(o.node, `${where} node`),
     uv: parseDownload(o.uv, `${where} uv`),
+    tunnel: parseDownload(o.tunnel, `${where} tunnel`),
     geoip: parseGeoip(o.geoip, `${where} geoip`),
     apt_packages: apt.map((name, i) => plainWord(typeof name === "string" ? name : "", `${where} apt_packages[${i}]`)),
   };

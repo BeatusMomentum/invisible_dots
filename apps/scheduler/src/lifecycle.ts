@@ -11,7 +11,7 @@
  * lock because the Dot is READY (a delivery, a push) can only meet a stop
  * that has not started yet: every stop takes the Dot out of `#ready` first.
  */
-import type { Database, Repositories } from "@invisible-dots/database";
+import { VM_PROXY_NAME, type Database, type Repositories } from "@invisible-dots/database";
 import type { EventLog } from "@invisible-dots/events";
 import {
   COMPUTER_STOPPED,
@@ -259,9 +259,11 @@ export class Lifecycle {
   async #spec(dotId: string): Promise<ComputerSpecInput & { goldenImage: string | null; state: VmState }> {
     const [dot, computer] = await Promise.all([this.#db.dots.get(dotId), this.#db.computers.get(dotId)]);
     if (!dot || !computer) throw new ControlPlaneError(404, "not_found", `Dot ${dotId} has no computer`);
+    const proxy = await this.#db.secrets.get(dotId, VM_PROXY_NAME);
     return {
       dotId,
       token: await this.#db.computers.token(dotId),
+      ...(proxy ? { proxy } : {}),
       resources: computerResources(dot.config),
       goldenImage: computer.golden_image,
       state: computer.state,

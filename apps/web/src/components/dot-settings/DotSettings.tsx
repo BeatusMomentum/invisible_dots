@@ -20,6 +20,7 @@ import { BrowserPanel, ComputerPanel, GeneralPanel, LimitsPanel, MemoryPanel, Mo
 import type { PanelProps } from "./panel";
 import { PermissionsPanel } from "./permissions-panel";
 import { ReviewDialog } from "./review-dialog";
+import { VmProxy } from "./vm-proxy";
 
 type Mode = "form" | "yaml";
 
@@ -189,6 +190,8 @@ function Editor({
       </div>
 
       <ReviewDialog open={reviewing} onOpenChange={(open) => { setReviewing(open); if (!open) save.setError(null); }} dotName={name} changes={changes} pending={save.pending} error={save.error} onConfirm={() => void confirm()} />
+
+      <VmProxy dotId={dotId} />
 
       <DeleteDot dotId={dotId} name={name} />
     </div>

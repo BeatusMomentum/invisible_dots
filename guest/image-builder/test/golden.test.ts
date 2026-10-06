@@ -17,11 +17,13 @@ const BASE = Buffer.from("QFI\xfb pretend qcow2 cloud image ".repeat(4000), "lat
 const NODE = Buffer.from("node tarball ".repeat(1000));
 const UV = Buffer.from("uv tarball ".repeat(1000));
 const GEOIP = Buffer.from("geoip archive ".repeat(1000));
+const TUNNEL = Buffer.from("tunnel binary ".repeat(1000));
 /** The next weekly release of the database, which the server also has. */
 const GEOIP_NEXT = Buffer.from("the next week of geoip ".repeat(1000));
 const NODE_FILE = "node-v24.21.0-linux-x64.tar.xz";
 const UV_FILE = "uv-x86_64-unknown-linux-gnu.tar.gz";
 const GEOIP_FILE = "geoip-aio-all.mmdb.zip";
+const TUNNEL_FILE = "hev-socks5-tunnel-linux-x86_64";
 /** The cache keeps each release under its tag: every release has the same file name upstream. */
 const GEOIP_CACHED = `geoip-2026.09.30-${GEOIP_FILE}`;
 const GEOIP_NEXT_CACHED = `geoip-2026.10.07-${GEOIP_FILE}`;
@@ -50,6 +52,7 @@ beforeEach(async () => {
     [`/node/${NODE_FILE}`]: { body: NODE },
     "/node/SHASUMS256.txt": { body: `${sha256(NODE)}  ${NODE_FILE}\n` },
     [`/uv/${UV_FILE}`]: { body: UV },
+    [`/tunnel/${TUNNEL_FILE}`]: { body: TUNNEL },
     [`/uv/${UV_FILE}.sha256`]: { body: `${sha256(UV)} *${UV_FILE}\n` },
     [`/geoip/2026.09.30/${GEOIP_FILE}`]: { body: GEOIP },
     [`/geoip/2026.10.07/${GEOIP_FILE}`]: { body: GEOIP_NEXT },
@@ -71,6 +74,7 @@ beforeEach(async () => {
   pins = {
     node: { version: "24.21.0", url: http.url(`/node/${NODE_FILE}`), shasums_url: http.url("/node/SHASUMS256.txt"), shasums_entry: NODE_FILE, sha256: sha256(NODE) },
     uv: { version: "0.12.22", url: http.url(`/uv/${UV_FILE}`), shasums_url: http.url(`/uv/${UV_FILE}.sha256`), shasums_entry: UV_FILE, sha256: sha256(UV) },
+    tunnel: { version: "2.18.0", url: http.url(`/tunnel/${TUNNEL_FILE}`), sha256: sha256(TUNNEL) },
     geoip: { tag: "2026.09.30", url: http.url(`/geoip/2026.09.30/${GEOIP_FILE}`), sha256: sha256(GEOIP) },
     apt_packages: ["xvfb", "imagemagick"],
   };

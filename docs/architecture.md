@@ -980,9 +980,14 @@ ignores anything else.
   unless the person gave it one: that is the default everywhere (the API, the
   SDK, the CLI and the engine accept a create with a name only, and nothing
   asks for or fills in a proxy). The browser then inherits the egress of the
-  Dot's VM: through the VM proxy when the Dot has one, directly otherwise (the
-  VM proxy is a per-Dot setting that is designed and not built yet, so today
-  the VM's egress is the host's own address). Its time zone, locale and
+  Dot's VM: through the VM proxy when the Dot has one, directly otherwise. The
+  VM proxy is a per-Dot secret (`vm_proxy` in `secrets`, set by
+  `PUT /api/dots/:id/proxy` or `invisible-dots secret proxy`), a
+  `socks5://[user:password@]host:port` URL that goes into the seed's root-only
+  `config.json` at every start; the runtime's `install.sh` then routes the whole
+  VM through `hev-socks5-tunnel` (TCP, UDP and DNS over `tun0`) and an
+  nftables table drops every other way out, so nothing leaves when the proxy is
+  down. Nothing tracks or compares the exit. Its time zone, locale and
   geography follow the exit the browser actually uses, which the browser layer
   learns from the address-echo services at each launch. A per-identity proxy
   stays an explicit option for one identity. It is one optional string, stored as

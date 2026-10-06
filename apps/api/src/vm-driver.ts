@@ -72,6 +72,7 @@ export class VmManagerDriver implements ComputerDriver {
     return {
       dotId: input.dotId,
       token: input.token,
+      ...(input.proxy ? { proxy: input.proxy } : {}),
       goldenImage,
       runtimeImage,
       cpus: input.resources.cpus,

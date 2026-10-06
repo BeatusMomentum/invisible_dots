@@ -84,6 +84,8 @@ Using the server:
   invisible-dots reject <approval-id> [--note text]
   invisible-dots secret openrouter [--dot <dot>]
                                                 store the OpenRouter key: asked for in a terminal, read from stdin when piped (never from arguments)
+  invisible-dots secret proxy --dot <dot> [--clear]
+                                                set the Dot's VM proxy (socks5://user:pass@host:port), used from its next start; asked for like the key; --clear removes it
   invisible-dots channel add telegram --dot <dot>
                                                 link the Dot to a Telegram bot: the token from @BotFather is asked for in a terminal, read from stdin when piped (never from arguments)
   invisible-dots channel link whatsapp --dot <dot>
@@ -151,6 +153,7 @@ const OPTIONS = {
   "no-follow": { type: "boolean" },
   "no-web": { type: "boolean" },
   all: { type: "boolean" },
+  clear: { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
 } as const;
@@ -446,8 +449,16 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
         return EXIT.ok;
       }
       case "secret": {
-        const kind = need(args, 0, "openrouter");
-        if (kind !== "openrouter") throw new UsageError(`unknown secret "${kind}": only openrouter is supported`);
+        const kind = need(args, 0, "openrouter|proxy");
+        if (kind === "proxy") {
+          if (values.dot === undefined || values.dot === "") throw new UsageError("missing --dot <dot>");
+          if (args.length > 1) throw new UsageError("the proxy is read from stdin, never from arguments (they end up in shell history and ps)");
+          const proxy = values.clear ? null : await secretFromInput(io, { prompt: "VM proxy (socks5://user:pass@host:port)", noun: "proxy", command: `invisible-dots secret proxy --dot ${values.dot}` });
+          const result = await (await api()).setVmProxy(values.dot, proxy);
+          out(result, result.proxy ? `VM proxy stored for Dot ${result.dot_id}; it is used from the Dot's next start\n` : `Dot ${result.dot_id} goes out directly from its next start\n`);
+          return EXIT.ok;
+        }
+        if (kind !== "openrouter") throw new UsageError(`unknown secret "${kind}": openrouter or proxy`);
         if (args.length > 1) {
           throw new UsageError("the key is read from stdin, never from arguments (they end up in shell history and ps)");
         }

@@ -73,8 +73,8 @@ export interface SeedFiles {
  * new config.json is written on the next boot, while rewriting an identical
  * seed (a retried create, a restart) keeps the id and re-runs nothing.
  */
-export function renderSeed(templates: SeedTemplates, dotId: string, token: string): SeedFiles {
-  const bootConfig: GuestBootConfig = { dotId, token };
+export function renderSeed(templates: SeedTemplates, dotId: string, token: string, proxy?: string): SeedFiles {
+  const bootConfig: GuestBootConfig = { dotId, token, ...(proxy ? { proxy } : {}) };
   const hostname = guestHostname(dotId);
   const userData = renderTemplate(
     templates.userData,

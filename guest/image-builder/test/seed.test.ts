@@ -57,6 +57,8 @@ describe("the builder seed", () => {
     const uvTarball = join(dir, "uv.tar.gz");
     await writeFile(nodeTarball, "node bytes");
     await writeFile(uvTarball, "uv bytes");
+    const tunnelBinary = join(dir, "hev");
+    await writeFile(tunnelBinary, "hev bytes");
     const geoipArchive = join(dir, "geoip.zip");
     await writeFile(geoipArchive, "geoip bytes");
     const engineLock = await readGuestAsset(defaultAssetRoot(), BUILDER_ENGINE_LOCK);
@@ -73,6 +75,7 @@ describe("the builder seed", () => {
       python,
       nodeTarball,
       uvTarball,
+      tunnelBinary,
       geoipArchive,
       engineLock,
       engineBuild,

@@ -158,6 +158,18 @@ export class InvisibleDotsClient {
     return this.#json("PUT", "/api/secrets/openrouter", { body: dotId === undefined ? { value } : { value, dot_id: dotId } });
   }
 
+  /** Set a Dot's VM proxy (`socks5://...`), or clear it with null; used from the Dot's next start. Never echoed back. */
+  setVmProxy(idOrName: string, value: string | null): Promise<{ dot_id: string; proxy: boolean }> {
+    return value === null
+      ? this.#json("DELETE", `/api/dots/${encodeURIComponent(idOrName)}/proxy`)
+      : this.#json("PUT", `/api/dots/${encodeURIComponent(idOrName)}/proxy`, { body: { value } });
+  }
+
+  /** Whether a Dot has a VM proxy, never its value. */
+  vmProxy(idOrName: string): Promise<{ dot_id: string; proxy: boolean }> {
+    return this.#json("GET", `/api/dots/${encodeURIComponent(idOrName)}/proxy`);
+  }
+
   // Dots
 
   createDot(config: string | Record<string, unknown>): Promise<DotRecord> {

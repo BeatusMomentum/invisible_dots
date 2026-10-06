@@ -35,6 +35,7 @@ export interface GoldenManifest {
   pinned: {
     node: PinnedComponent;
     uv: PinnedComponent;
+    tunnel: PinnedComponent;
     /** The GeoIP release the image carries, checked against this hash at the build (the browser's own launch may fetch a newer one). */
     geoip: GeoipPin;
     "invisible-playwright-mcp": string;

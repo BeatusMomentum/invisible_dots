@@ -15,10 +15,13 @@ describe("the pins in this checkout", () => {
     expect(GUEST_PINS.node.version).toMatch(/^24\.\d+\.\d+$/);
     for (const tool of [GUEST_PINS.node, GUEST_PINS.uv]) {
       expect(tool.url).toContain(tool.version);
-      expect(tool.url.endsWith(tool.shasums_entry)).toBe(true);
+      expect(tool.url.endsWith(tool.shasums_entry ?? "")).toBe(true);
       expect(downloadFileName(tool)).toBe(tool.shasums_entry);
     }
-    expect(GUEST_PINS.node.shasums_url.endsWith("/SHASUMS256.txt")).toBe(true);
+    expect(GUEST_PINS.node.shasums_url?.endsWith("/SHASUMS256.txt")).toBe(true);
+    // The tunnel publishes no checksum list: its pinned sha256 is the only record.
+    expect(GUEST_PINS.tunnel.url).toContain(`/${GUEST_PINS.tunnel.version}/`);
+    expect(GUEST_PINS.tunnel.shasums_url).toBeUndefined();
     // The Python packages are pinned, with hashes, by builder/mcp-requirements.lock alone.
     expect(Object.keys(GUEST_PINS)).not.toContain("python_packages");
   });

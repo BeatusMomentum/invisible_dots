@@ -3,6 +3,8 @@ import type { Queryable } from "./rows.js";
 
 export const GLOBAL_SCOPE = "global";
 export const OPENROUTER_KEY_NAME = "openrouter_api_key";
+/** A Dot's VM proxy, stored under the Dot's scope only: there is no install-wide proxy. */
+export const VM_PROXY_NAME = "vm_proxy";
 
 const aad = (scope: string, name: string) => `secret:${scope}:${name}`;
 

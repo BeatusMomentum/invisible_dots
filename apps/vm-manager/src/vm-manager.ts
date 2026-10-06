@@ -60,6 +60,8 @@ export interface VmSpec {
   dotId: string;
   /** The Dot token, in clear (the control plane decrypts `token_enc`). It goes into the seed. */
   token: string;
+  /** The Dot's VM proxy in clear, or absent for a direct exit. It goes into the seed. */
+  proxy?: string;
   /** Absolute path of the golden image the overlay is backed by. */
   goldenImage: string;
   /** Absolute path of the runtime ISO attached on every start. */
@@ -393,7 +395,7 @@ export class VmManager {
   }
 
   private async writeSeed(spec: VmSpec): Promise<string> {
-    const seed = renderSeed(await this.loadTemplates(), spec.dotId, spec.token);
+    const seed = renderSeed(await this.loadTemplates(), spec.dotId, spec.token, spec.proxy);
     // Replaces a seed.iso a QEMU killed a moment ago may still hold open (Windows).
     await retryWhileInUse(() => writeSeedIso(this.paths.seedPath(spec.dotId), seed));
     return seed.instanceId;

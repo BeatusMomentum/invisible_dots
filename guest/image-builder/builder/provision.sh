@@ -54,6 +54,10 @@ install -m 0755 "$uv_tmp"/uv-x86_64-unknown-linux-gnu/uv "$uv_tmp"/uv-x86_64-unk
 rm -rf "$uv_tmp"
 /usr/local/bin/uv --version
 
+step "installing hev-socks5-tunnel $TUNNEL_VERSION (the VM proxy's tunnel)"
+# Root's and run by root only, from the runtime's install.sh, when the Dot has a VM proxy.
+install -m 0755 "$payload/$TUNNEL_BINARY" /usr/local/bin/hev-socks5-tunnel
+
 id dot >/dev/null 2>&1 || useradd --create-home --shell /bin/bash dot
 # The computer daemon's user comes from the builder seed's user list like the engine's (architecture 4.1): an
 # image without it would fail at every boot, so it fails the build.
@@ -104,6 +108,7 @@ component ubuntu "$VERSION_ID"
 component kernel "$(uname -r)"
 component node "$(/usr/local/bin/node --version)"
 component uv "$(/usr/local/bin/uv --version)"
+component hev-socks5-tunnel "$TUNNEL_VERSION"
 component invisible-playwright-mcp "$MCP_VERSION"
 component invisible-playwright "$PLAYWRIGHT_VERSION"
 component browser-engine "$engine_version"

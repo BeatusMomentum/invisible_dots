@@ -67,6 +67,8 @@ export interface ComputerSpecInput {
   dotId: string;
   /** The Dot token in clear; it goes into the seed (section 4.2). */
   token: string;
+  /** The Dot's VM proxy in clear, absent for a direct exit; it goes into the seed with the token. */
+  proxy?: string;
   resources: ComputerResources;
 }
 

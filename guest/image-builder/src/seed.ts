@@ -27,6 +27,8 @@ export interface BuilderSeedInput {
   /** Host paths of the verified tarballs, streamed into the image. */
   nodeTarball: string;
   uvTarball: string;
+  /** The verified hev-socks5-tunnel binary (pins.tunnel). */
+  tunnelBinary: string;
   /** The verified zip of the GeoIP database (pins.geoip), streamed into the image. */
   geoipArchive: string;
   /** builder/engine-requirements.lock and builder/build-engine-env.sh, as read. */
@@ -48,6 +50,8 @@ export function pinsEnv(pins: GuestPins, python: PythonLock): string {
     ["NODE_TARBALL", downloadFileName(pins.node)],
     ["UV_VERSION", pins.uv.version],
     ["UV_TARBALL", downloadFileName(pins.uv)],
+    ["TUNNEL_VERSION", pins.tunnel.version],
+    ["TUNNEL_BINARY", downloadFileName(pins.tunnel)],
     ["GEOIP_TAG", pins.geoip.tag],
     ["GEOIP_ARCHIVE", downloadFileName(pins.geoip)],
     ["GEOIP_SHA256", pins.geoip.sha256],
@@ -81,6 +85,7 @@ export function builderSeedEntries(input: BuilderSeedInput): IsoEntry[] {
     { path: SEED_PYTHON_LOCK, data: input.pythonLock },
     { path: downloadFileName(input.pins.node), file: input.nodeTarball },
     { path: downloadFileName(input.pins.uv), file: input.uvTarball },
+    { path: downloadFileName(input.pins.tunnel), file: input.tunnelBinary },
     { path: downloadFileName(input.pins.geoip), file: input.geoipArchive },
     { path: SEED_ENGINE_LOCK, data: input.engineLock },
     { path: SEED_ENGINE_BUILD, data: input.engineBuild },

@@ -176,10 +176,16 @@ export function identityPaths(
   };
 }
 
-/** `/etc/invisible-dots/config.json` in the guest, written by cloud-init. */
+/** `/etc/invisible-dots/config.json` in the guest, written by cloud-init (root-only: dot never reads it). */
 export interface GuestBootConfig {
   dotId: string;
   token: string;
+  /**
+   * The Dot's VM proxy, `socks5://[user:password@]host:port`, absent for a Dot that goes out directly. The guest's
+   * runtime routes the whole VM through it at boot (guest/image-builder/runtime/install.sh); a new value is used from
+   * the next start, because the seed is written at every start.
+   */
+  proxy?: string;
 }
 
 /** The QEMU `-name` of a Dot's VM, also stored as `computers.vm_name` (sections 3.4 and 9.1). */

@@ -516,6 +516,11 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     return scheduler.setOpenRouterKey(body.value, body.dot_id);
   });
 
+  // A Dot's VM proxy: write-only, the answers say only whether there is one.
+  app.get<{ Params: { id: string } }>("/api/dots/:id/proxy", async (request) => scheduler.vmProxy(request.params.id));
+  app.put<{ Params: { id: string } }>("/api/dots/:id/proxy", async (request) => scheduler.setVmProxy(request.params.id, bodyOf(request).value));
+  app.delete<{ Params: { id: string } }>("/api/dots/:id/proxy", async (request) => scheduler.setVmProxy(request.params.id, null));
+
   return app;
 }
 
