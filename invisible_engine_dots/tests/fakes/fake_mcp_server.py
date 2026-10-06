@@ -59,7 +59,7 @@ def write_control(mcp_home: Path, **control: Any) -> None:
     refuse_close: `browser_close` fails.
     fail_watch: `browser_watch` fails the way the real server does when the browser has no page.
 
-A `browser_navigate` to `crash://now` ends the process without an answer, like a server killed in the
+A `browser_navigate` to `https://crash.test/now` ends the process without an answer, like a server killed in the
 middle of a call; to `slow://...` it answers after 0.3 s. Each call is recorded when it arrives
 (`call`) and when it is answered (`done`).
     """
@@ -136,7 +136,7 @@ async def _serve() -> None:
         if name == "browser_status":
             return text(f"the {role} browser is open on {state['url']}")
         if name == "browser_navigate":
-            if args.get("url") == "crash://now":
+            if args.get("url") == "https://crash.test/now":
                 # Exit without answering, like a server killed in the middle of a call.
                 record({"kind": "exit", "code": 3})
                 os._exit(3)

@@ -228,7 +228,7 @@ async def test_launch_opens_the_browser_and_close_keeps_the_profile(env: Env) ->
 
 
 async def test_launching_past_max_open_says_which_browser_it_closed(env: Env) -> None:
-    await env.manager.set_limits(1, 20)
+    env.manager.set_limits(1, 20)
     first = await env.open_identity("first")
     second = (await env.manager.create("second")).id
 
@@ -280,7 +280,7 @@ async def test_a_refused_request_is_an_error_result_that_says_why(env: Env) -> N
 
 
 async def test_the_limit_on_identities_is_reported_to_the_model(env: Env) -> None:
-    await env.manager.set_limits(1, 1)
+    env.manager.set_limits(1, 1)
     await env.run("browser_identity_create", name="one")
 
     over = await env.run("browser_identity_create", name="two")
@@ -346,10 +346,45 @@ async def test_an_error_of_the_server_is_an_error_result(env: Env) -> None:
     assert "gone" in result
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///etc/passwd",
+        "file://localhost/home/dot/.ssh/id_ed25519",
+        "FILE:///etc/passwd",
+        "about:config",
+        "view-source:https://example.com/",
+        "data:text/html,<h1>x</h1>",
+        "javascript:alert(1)",
+        "ftp://example.com/",
+        " https://example.com/",
+        "example.com",
+    ],
+)
+async def test_navigate_refuses_every_url_that_is_not_http_or_https_and_the_server_sees_nothing(
+    env: Env, url: str
+) -> None:
+    identity_id = await env.open_identity()
+
+    result = await env.run("browser_navigate", identity_id=identity_id, url=url)
+
+    assert said(result) == "browser_navigate opens only http:// and https:// URLs"
+    assert env.page_calls(identity_id) == []
+    schema = env.registry.get("browser_navigate").parameters["properties"]["url"]
+    assert schema["pattern"] == "^https?://"
+
+
+async def test_navigate_still_opens_http_and_https_urls(env: Env) -> None:
+    identity_id = await env.open_identity()
+
+    for url in ("http://example.com/a?b=c", "https://example.com/"):
+        assert await env.run("browser_navigate", identity_id=identity_id, url=url) == f"200 {url}"
+
+
 async def test_a_browser_process_that_dies_in_a_call_is_a_crash_the_model_is_told_about(env: Env) -> None:
     identity_id = await env.open_identity()
 
-    result = await env.run("browser_navigate", identity_id=identity_id, url="crash://now")
+    result = await env.run("browser_navigate", identity_id=identity_id, url="https://crash.test/now")
 
     assert isinstance(result, ToolResult) and result.is_error
     assert "exited during browser_navigate" in result and "launch it again" in result

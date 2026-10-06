@@ -56,7 +56,8 @@ and the checks read that file. What they pin:
 - the host's two actions on an identity: `GET .../frame` answers a JPEG (the stand-in's `browser_watch`) for an open
   identity and 409 `not_open` for a closed one, and `POST .../close` closes an open one through `browser_close`
   (one `closed` event, the profile kept) and is a 204 that changes nothing for a closed one;
-- a proxy password is in no approval, event, engine log or `dot-agentd` log; `/health` counts the identities
+- a proxy password is in no approval, event, engine log or `dot-agentd` log, and on no process's command line (the
+  relay is told the variable's name, `--env-from`, and reads the value from its own environment); `/health` counts the identities
   and the open ones.
 
 The real server and a real Firefox are not run by this smoke: they are the browser smoke's (below).

@@ -390,6 +390,7 @@ check "the identity is listed with its proxy redacted, and browser.identity.crea
 check "the model launches it: the least recently used of the three open (the second) is closed" "tool_turn 9 browser_identity_launch '{\"identity_id\":\"$ID5\"}' && launched $ID5 && closed $ID2 && wait_fakes 3"
 check "its server got the proxy in STEALTHFOX_PROXY (dot's process, not the engine's), with the rest of the environment as before" "mcp_env_ok $ID5 '$PROXY'"
 check "the proxy password is in no event, no engine log and no dot-agentd log after the launch either" "no_proxy_password_in $STREAM /tmp/engine.log /tmp/agentd.log"
+check "the proxy password is on no process's command line, which every user can read (the relay of the open browser names the variable and nothing else)" "cmdline_holds '--env-from STEALTHFOX_PROXY' && ! cmdline_holds \$PROXY_PASSWORD"
 
 # browser.identity.delete asks: the parked call survives kill -9, and the servers die with the engine that started them.
 say msg-bt-del "RUN-TOOL browser_identity_delete {\"identity_id\":\"$ID3\"}" >/dev/null

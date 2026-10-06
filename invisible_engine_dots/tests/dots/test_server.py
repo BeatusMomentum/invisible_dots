@@ -484,7 +484,7 @@ class TestBrowserIdentities:
     ) -> None:
         api: Api = await make_api()
         api.h.configure(runtime_config_body(browser={"identities": {"managed_by_dot": True, "max_identities": 1, "max_open": 1}}))
-        await api.h.engine.apply_browser_limits()
+        api.h.engine.apply_browser_limits()
 
         for body, message in (
             ({"name": 5}, "name must be a string"),
@@ -552,9 +552,40 @@ class TestBrowserIdentities:
 
         assert put.status == 204
         assert api.h.browser.limits == (1, 20)
-        # The least recently used is the one closed; the other stays open.
+        # The least recently used is the one closed; the other stays open. The close runs after the answer.
         assert [i["status"] for i in (await api.call("GET", "/browser-identities")).json["identities"]] == ["available", "open"]
+        async with asyncio.timeout(10):
+            while api.h.types().count("browser.identity.closed") < 1:
+                await asyncio.sleep(0.02)
         assert api.h.types().count("browser.identity.closed") == 1
+
+    async def test_a_config_a_close_a_delete_and_a_create_do_not_wait_for_a_launch_in_flight(
+        self, make_api: Callable[..., Any]
+    ) -> None:
+        api: Api = await make_api(browser={"open_retry_initial_s": 0.05, "open_retry_max_s": 0.05})
+        slow = (await api.call("POST", "/browser-identities", {"name": "slow"})).json
+        other = (await api.call("POST", "/browser-identities", {"name": "other"})).json
+        await api.h.browser.launch(other["id"])
+        write_control(api.h.tmp_path / "browsers" / slow["id"] / "mcp", download_answers=100_000)
+        launching = asyncio.create_task(api.h.browser.launch(slow["id"]))
+        await asyncio.sleep(0.3)
+
+        # The host gives a guest 30 s; a launch can take 15 minutes. None of these may wait for it.
+        async with asyncio.timeout(10):
+            put = await api.call(
+                "PUT",
+                "/config",
+                runtime_config_body(browser={"identities": {"managed_by_dot": True, "max_identities": 20, "max_open": 1}}),
+            )
+            closed = await api.call("POST", f"/browser-identities/{other['id']}/close")
+            created = await api.call("POST", "/browser-identities", {"name": "fresh"})
+            deleted = await api.call("DELETE", f"/browser-identities/{created.json['id']}")
+
+        assert (put.status, closed.status, created.status, deleted.status) == (204, 204, 201, 204)
+        assert not launching.done()
+        launching.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await launching
 
     async def test_preparing_to_sleep_closes_the_open_browsers(self, make_api: Callable[..., Any]) -> None:
         api: Api = await make_api()

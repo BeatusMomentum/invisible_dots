@@ -35,6 +35,18 @@ environ_holds() { # text
   return 1
 }
 
+# Whether a text is on the command line of some process. A command line is readable by every user of the
+# machine, so one sweep as the least privileged user shows what any of them can read. The text goes in the
+# environment and not in an argument: an argument would put it on the sweep's own command line.
+cmdline_holds() { # text
+  CMDLINE_TEXT="$1" su -p -s /bin/bash nobody -c '
+    for f in /proc/[0-9]*/cmdline; do
+      line=$(tr "\0" " " < "$f" 2>/dev/null) || continue
+      [[ $line == *"$CMDLINE_TEXT"* ]] && exit 0
+    done
+    exit 1'
+}
+
 # --- the runtime disk's directories (install.sh's directory and socket steps; the systemd parts do not run here) ---
 # The users (dot, dotengine) are the golden image's: prepare-engine.sh made them.
 lay_out_guest() {

@@ -162,7 +162,7 @@ async def serve(environment: Environment, stop: asyncio.Event) -> None:
         retry: asyncio.Task[None] | None = None
         try:
             engine.start()
-            await engine.apply_browser_limits()
+            engine.apply_browser_limits()
             await cron.start()
             retry = asyncio.get_running_loop().create_task(_retry(engine))
             await stop.wait()

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -55,6 +56,8 @@ class PageTool:
     arguments: the MCP tool's arguments (without `browser`) from the model's.
     shows_image: whether the image the MCP tool answers with is shown to the model; any other image is dropped.
     confirmation: what the tool says when the MCP tool said nothing.
+    refusal: the reason the model's arguments must not be sent to the MCP tool, or None when they may; the tool
+        then answers an error and the server is not called.
     """
 
     name: str
@@ -66,6 +69,20 @@ class PageTool:
     shows_image: bool = False
     confirmation: Callable[[Mapping[str, Any]], str] | None = None
     read_only: bool = False
+    refusal: Callable[[Mapping[str, Any]], str | None] | None = None
+
+
+# What browser_navigate may open. The server passes the URL to the page unchecked, so file:///home/dot/... would
+# put any file the dot user can read into browser_read_text, whatever files.read says, and about:, view-source:,
+# data: and javascript: reach browser internals and run script. Each permission decides only its own action.
+_WEB_URL = r"^https?://"
+
+
+def _only_web_urls(params: Mapping[str, Any]) -> str | None:
+    url = params.get("url")
+    if isinstance(url, str) and re.match(_WEB_URL, url):
+        return None
+    return "browser_navigate opens only http:// and https:// URLs"
 
 
 def _none(params: Mapping[str, Any]) -> dict[str, Any]:
@@ -99,9 +116,10 @@ PAGE_TOOLS: Mapping[str, PageTool] = {
             "browser_navigate",
             "Load a URL in the browser of an identity and wait for the page to start loading." + _OPEN_FIRST,
             "browser_navigate",
-            {"url": _string("The full URL, with its scheme (https://...).", maxLength=4096)},
+            {"url": _string("The full http or https URL, with its scheme (https://...).", maxLength=4096, pattern=_WEB_URL)},
             ("url",),
             _taken("url"),
+            refusal=_only_web_urls,
         ),
         PageTool(
             "browser_snapshot",
@@ -407,6 +425,8 @@ class BrowserPageTool(_BrowserTool):
     async def execute(self, **params: Any) -> Any:
         spec = self._spec
         identity_id = str(params.get("identity_id", ""))
+        if spec.refusal is not None and (reason := spec.refusal(params)) is not None:
+            return ToolResult.error(reason)
         try:
             result = await self.browser.call_tool(identity_id, spec.mcp_tool, spec.arguments(params))
         except BrowserIdentityError as error:

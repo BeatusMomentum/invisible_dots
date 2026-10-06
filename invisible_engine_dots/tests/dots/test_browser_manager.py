@@ -252,14 +252,18 @@ async def test_starts_the_server_as_dot_through_the_relay_with_the_environment_o
     assert start["cwd"] == str(root)
 
     # The one spawn of the program is the relay's: the working directory, the variables in the order of
-    # the table and then the program, which is what runs it as dot in the guest.
+    # the table and then the program, which is what runs it as dot in the guest. The proxy, which has a
+    # password, is not among the variables of the command line: the relay is told its name and reads the
+    # value from its own environment.
     relay = [json.loads(line) for line in env.relay_log.read_text(encoding="utf-8").splitlines()]
     mcp_runs = [entry for entry in relay if entry["program"] == [str(env.mcp_bin)]]
     assert len(mcp_runs) == 1
     assert mcp_runs[0]["cwd"] == str(root)
     assert [pair.partition("=")[0] for pair in mcp_runs[0]["env"]] == [
-        BROWSER_ENV[name] for name in ("MCP_HOME", "MCP_SESSION_ID", "PROFILE_DIR", "HEADLESS", "DISPLAY", "PROXY")
+        BROWSER_ENV[name] for name in ("MCP_HOME", "MCP_SESSION_ID", "PROFILE_DIR", "HEADLESS", "DISPLAY")
     ]
+    assert mcp_runs[0]["env_from"] == [BROWSER_ENV["PROXY"]]
+    assert "user:pw" not in json.dumps(mcp_runs[0])
     assert not mcp_runs[0]["tty"]
 
 
@@ -437,7 +441,7 @@ async def test_a_process_that_exited_is_a_crash_closed_once_and_launched_again_o
     await manager.launch(identity.id)
 
     with pytest.raises(BrowserIdentityError, match="exited during browser_navigate") as crashed:
-        await manager.call_tool(identity.id, "browser_navigate", {"url": "crash://now"})
+        await manager.call_tool(identity.id, "browser_navigate", {"url": "https://crash.test/now"})
 
     assert crashed.value.code == "crashed"
     assert not manager.is_open(identity.id)
@@ -522,18 +526,18 @@ async def test_set_limits_closes_only_the_sessions_beyond_a_lower_max_open_and_c
     for identity in (a, b, c):
         await manager.launch(identity.id)
 
-    await manager.set_limits(1, 3)
+    manager.set_limits(1, 3)
 
     assert manager.limits == (1, 3)
     assert [manager.is_open(i.id) for i in (a, b, c)] == [False, False, True]
     with pytest.raises(BrowserIdentityError, match="max_identities 3"):
         await manager.create("d")
-    await manager.set_limits(2, 4)
+    manager.set_limits(2, 4)
     await manager.launch(a.id)
     assert manager.open_count == 2
     assert (await manager.create("d")).name == "d"
     with pytest.raises(ValueError, match="max_open"):
-        await manager.set_limits(0, 4)
+        manager.set_limits(0, 4)
     assert manager.limits == (2, 4)
 
 
@@ -542,7 +546,7 @@ async def test_a_lower_max_identities_deletes_nothing(env: Env) -> None:
     for name in "abc":
         await manager.create(name)
 
-    await manager.set_limits(1, 1)
+    manager.set_limits(1, 1)
 
     assert len(manager.list_identities()) == 3
 
@@ -666,6 +670,146 @@ async def test_a_delete_waits_for_a_launch_in_flight_and_then_closes_what_it_ope
         "browser.identity.deleted",
     ]
     assert not (env.browsers / identity.id).exists() and manager.open_count == 0
+
+
+async def start_slow_launch(env: Env, manager: BrowserManager, name: str) -> tuple[str, asyncio.Task[Any]]:
+    """A launch that is still waiting for the engine's download: the identity's id and the launch's task."""
+    identity = await manager.create(name)
+    write_control(env.mcp_home(identity.id), download_answers=100_000)
+    launching = asyncio.create_task(manager.launch(identity.id))
+    async with asyncio.timeout(30):
+        while not env.calls(identity.id):
+            await asyncio.sleep(0.02)
+    return identity.id, launching
+
+
+async def stop_launch(launching: asyncio.Task[Any]) -> None:
+    launching.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await launching
+
+
+async def test_a_launch_in_flight_holds_up_no_other_identity_and_no_config_change(env: Env) -> None:
+    manager = env.manager(max_open=3, open_retry_initial_s=0.05, open_retry_max_s=0.05)
+    other = await manager.create("other")
+    spare = await manager.create("spare")
+    await manager.launch(other.id)
+    slow_id, launching = await start_slow_launch(env, manager, "slow")
+
+    async with asyncio.timeout(10):
+        manager.set_limits(3, 30)
+        await manager.close(other.id)
+        await manager.delete(spare.id)
+        fresh = await manager.create("fresh")
+
+    assert not launching.done()
+    assert manager.get(spare.id) is None and manager.get(fresh.id) is not None
+    assert not manager.is_open(slow_id) and not manager.is_open(other.id)
+    await stop_launch(launching)
+    assert manager.open_count == 0
+
+
+async def test_a_lower_max_open_answers_at_once_and_closes_the_excess_in_the_background(env: Env) -> None:
+    manager = env.manager(max_open=3)
+    a, b, c = [await manager.create(name) for name in "abc"]
+    for identity in (a, b, c):
+        await manager.launch(identity.id)
+
+    manager.set_limits(1, 20)
+
+    # Nothing has been closed yet, but only c counts as open and the others cannot be used.
+    assert [manager.is_open(i.id) for i in (a, b, c)] == [False, False, True]
+    assert env.event_types().count("browser.identity.closed") == 0
+    with pytest.raises(BrowserIdentityError) as refused:
+        await manager.call_tool(a.id, "browser_status")
+    assert refused.value.code == "not_open"
+    await manager.close_all()
+    assert sorted(
+        event["data"]["identity_id"] for event in env.events() if event["type"] == "browser.identity.closed"
+    ) == sorted([a.id, b.id, c.id])
+    for identity in (a, b):
+        assert env.record(identity.id)[-1]["kind"] == "exit"
+
+
+async def test_a_lower_max_open_closes_a_browser_that_is_still_opening_once_it_has_opened(env: Env) -> None:
+    manager = env.manager(max_open=2, open_retry_initial_s=0.05, open_retry_max_s=0.05)
+    identity = await manager.create("late")
+    write_control(env.mcp_home(identity.id), download_answers=3)
+    launching = asyncio.create_task(manager.launch(identity.id))
+    await asyncio.sleep(0.1)
+    other = await manager.create("other")
+    await manager.launch(other.id)
+
+    manager.set_limits(1, 20)
+    await launching
+    await manager.close_all()
+
+    assert env.event_types().count("browser.identity.launched") == 2
+    assert sorted(
+        event["data"]["identity_id"] for event in env.events() if event["type"] == "browser.identity.closed"
+    ) == sorted([identity.id, other.id])
+
+
+async def test_two_launches_of_one_identity_start_one_browser_and_share_the_outcome(env: Env) -> None:
+    manager = env.manager(open_retry_initial_s=0.05, open_retry_max_s=0.05)
+    identity = await manager.create("shared")
+    write_control(env.mcp_home(identity.id), download_answers=2)
+
+    first, second = await asyncio.gather(manager.launch(identity.id), manager.launch(identity.id))
+
+    assert first.status == second.status == "open"
+    assert len([entry for entry in env.record(identity.id) if entry["kind"] == "start"]) == 1
+    assert env.event_types().count("browser.identity.launched") == 1
+
+    broken = await manager.create("broken")
+    write_control(env.mcp_home(broken.id), fail_open=True)
+    outcomes = await asyncio.gather(manager.launch(broken.id), manager.launch(broken.id), return_exceptions=True)
+
+    assert all(isinstance(o, BrowserIdentityError) and o.code == "launch_failed" for o in outcomes)
+    assert len([entry for entry in env.record(broken.id) if entry["kind"] == "start"]) == 1
+    assert manager.open_count == 1
+
+
+async def test_a_launch_of_an_identity_that_is_being_deleted_is_not_found(env: Env) -> None:
+    manager = env.manager()
+    identity = await manager.create("going")
+    await manager.launch(identity.id)
+
+    deleting = asyncio.create_task(manager.delete(identity.id))
+    await asyncio.sleep(0)
+    with pytest.raises(BrowserIdentityError) as launch:
+        await manager.launch(identity.id)
+    with pytest.raises(BrowserIdentityError) as again:
+        await manager.delete(identity.id)
+    await deleting
+
+    assert launch.value.code == again.value.code == "not_found"
+    assert not (env.browsers / identity.id).exists() and manager.get(identity.id) is None
+    assert env.event_types().count("browser.identity.deleted") == 1
+
+
+async def test_a_close_that_raises_still_ends_the_process_and_leaves_the_identity_launchable(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = env.manager()
+    identity = await manager.create("fragile")
+    await manager.launch(identity.id)
+    request = manager._request
+
+    async def failing(session: Any, tool: str, arguments: Any) -> Any:
+        if tool == "browser_close":
+            raise ConnectionError("the pipe is gone")
+        return await request(session, tool, arguments)
+
+    monkeypatch.setattr(manager, "_request", failing)
+    await manager.close(identity.id)
+    monkeypatch.undo()
+
+    assert not manager.is_open(identity.id)
+    assert env.event_types().count("browser.identity.closed") == 1
+    assert env.record(identity.id)[-1]["kind"] == "exit"
+    await asyncio.wait_for(manager.launch(identity.id), 30)
+    assert manager.is_open(identity.id)
 
 
 async def test_calls_on_one_identity_run_one_at_a_time(env: Env) -> None:

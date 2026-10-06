@@ -1424,7 +1424,7 @@ class TestStoppingWithBrowsersOpen:
         assert h.browser.limits == (3, 20)
 
         h.configure(cfg(browser={"identities": {"managed_by_dot": True, "max_identities": 5, "max_open": 2}}))
-        await h.engine.apply_browser_limits()
+        h.engine.apply_browser_limits()
 
         assert h.browser.limits == (2, 5)
 

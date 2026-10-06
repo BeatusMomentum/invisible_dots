@@ -221,8 +221,9 @@ class Engine:
         """The Dot's browser identities: the engine closes their browsers when it stops work."""
         return self._browser
 
-    async def apply_browser_limits(self) -> None:
-        """Give the browser manager the limits of the config: a lower `max_open` closes the excess open browsers.
+    def apply_browser_limits(self) -> None:
+        """Give the browser manager the limits of the config: a lower `max_open` closes the excess open browsers
+        in the background.
 
         Called after a config arrives (`PUT /config`) and after the stored one was applied at start; the
         same limits again change nothing.
@@ -231,7 +232,7 @@ class Engine:
         if config is None:
             return
         identities = config.browser.identities
-        await self._browser.set_limits(identities.max_open, identities.max_identities)
+        self._browser.set_limits(identities.max_open, identities.max_identities)
 
     def state_answer(self) -> StateAnswer:
         def answer(conn: sqlite3.Connection) -> StateAnswer:

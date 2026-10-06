@@ -19,6 +19,7 @@ import stat as stat_module
 import sys
 import tempfile
 import uuid
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -153,13 +154,14 @@ class LocalComputer:
         cwd: str | None = None,
         tty: bool = False,
         env: dict[str, str] | None = None,
+        secrets: Mapping[str, str] | None = None,
     ) -> list[str]:
         return self._agentd.relay_argv(
-            argv, cwd=str(self._local(cwd)) if cwd else None, tty=tty, env=env
+            argv, cwd=str(self._local(cwd)) if cwd else None, tty=tty, env=env, secrets=secrets
         )
 
-    def spawn_env(self, *, tty: bool = False) -> dict[str, str]:
-        return self._agentd.spawn_env(tty=tty)
+    def spawn_env(self, *, tty: bool = False, secrets: Mapping[str, str] | None = None) -> dict[str, str]:
+        return self._agentd.spawn_env(tty=tty, secrets=secrets)
 
     async def run(
         self,

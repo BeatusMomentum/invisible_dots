@@ -602,8 +602,8 @@ It runs the program as `dot`, without a shell, in its own process group, on a
 pseudo-terminal when asked (a new session whose controlling terminal it is).
 The process lives exactly as long as the connection: a caller that goes away
 takes the whole group with it. Its client is `dot-agentd relay [--socket P]
-[--cwd DIR] [--tty] [--env NAME=VALUE]... -- PROGRAM [ARGS...]`, which copies
-its own standard input and output through and exits with the program's code
+[--cwd DIR] [--tty] [--env NAME=VALUE]... [--env-from NAME]... -- PROGRAM
+[ARGS...]`, which copies its own standard input and output through and exits with the program's code
 (128 plus the signal number when a signal ended it); with `--tty` and a
 terminal on its input it puts that terminal in raw mode and forwards its size
 changes. The engine runs the model's every command through it, and reads and
@@ -797,7 +797,13 @@ The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
   process that is gone. The proxy is stored as given, password included, in
   the engine's database (`dotengine`'s state directory, 0700, which the model
   cannot read); everything shown to a model, a person, an event or a log has
-  the password replaced.
+  the password replaced. The browser's own process is the one exception, by
+  decision: it runs as `dot` with the proxy in its environment, so the `dot`
+  user, and the model through `exec`, can read the proxy of an identity whose
+  browser is open from that process's `/proc/<pid>/environ`. The proxy is never
+  on a command line, which every user of the VM can read: the engine tells the
+  relay the variable's name (`--env-from`) and the relay reads the value from
+  its own environment, which only `dotengine` can read.
 - The fingerprint seed of an identity is stored by the browser layer in the
   profile itself (`profile/.stealth-identity.json`). invisible_dots never stores
   or passes a seed: the first launch of a profile picks one and every later
@@ -825,6 +831,11 @@ The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
   action, and `browser.identity.launch: deny` cannot be got round by navigating.
   The first launch of a machine can take minutes while the engine downloads the
   browser; the launch asks again (2 s doubling to 30 s) for up to 15 minutes.
+  A launch waits only for its own browser: a config change, a close, a delete or
+  a create of another identity does not wait for it, and neither does the
+  answer of `PUT /config`, which closes the browsers beyond a lower `max_open`
+  (least recently used first) after it has answered. A close, a delete or a
+  launch of an identity that is still opening waits for that launch to finish.
 - Closing a session asks the browser to close first (up to 30 s, so Firefox
   flushes its profile), then stops the process; the profile stays on disk.
   Deleting an identity closes it and removes its directory. The engine closes
@@ -993,7 +1004,7 @@ does not know.
 | `browser_identity_delete` | `browser.identity.delete` | closes an identity and deletes it with its profile: `identity_id` (offered only when `managed_by_dot`) |
 | `browser_identity_launch` | `browser.identity.launch` | opens the browser of an identity, closing the least recently used one at `max_open`: `identity_id` |
 | `browser_identity_close` | `browser.identity.close` | closes the browser of an identity, keeping its profile: `identity_id` |
-| `browser_navigate` | `browser.navigate` | loads a URL: `identity_id, url` |
+| `browser_navigate` | `browser.navigate` | loads an `http://` or `https://` URL and no other (`file:`, `about:`, `view-source:`, `data:` and `javascript:` are refused, so the permission to navigate is not a permission to read files): `identity_id, url` |
 | `browser_snapshot` | `browser.read` | lists the interactive elements of the page with selectors and coordinates: `identity_id` |
 | `browser_read_text` | `browser.read` | reads the text of the page or of one element: `identity_id, selector?` |
 | `browser_screenshot` | `browser.read` | takes a screenshot of the page and shows it to the model: `identity_id` |
