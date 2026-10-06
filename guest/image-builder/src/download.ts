@@ -171,6 +171,11 @@ function asRetryable(url: string, error: unknown, signal: AbortSignal): Error {
   return new RetryableError(`${url}: ${(error as Error).message ?? String(error)}`, { cause: error });
 }
 
+/** A small text file, with the same retries as a download; an HTTP error answer is a DownloadError with its status. */
+export function fetchTextWithRetries(url: string, options: FetchVerifiedOptions = {}): Promise<string> {
+  return withRetries(options, () => fetchText(url, options));
+}
+
 async function fetchText(url: string, options: FetchVerifiedOptions): Promise<string> {
   const { response, done } = await openResponse(url, options);
   try {

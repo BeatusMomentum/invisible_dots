@@ -2751,10 +2751,14 @@ shipped by this project. The guest operating system (the Ubuntu cloud image),
 Node, `uv`, the browser engine, `invisible-playwright-mcp` with its Python
 packages, and the Python packages the engine's lock
 (`guest/image-builder/builder/engine-requirements.lock`) names are
-downloaded from their publishers when a host builds its golden image, each
-under its own license, as the wheels the publishers released. This project publishes no image (section
-3.3); whoever copies a golden image to another machine takes on the license
-terms of the components inside it.
+downloaded from their publishers when the golden image is built, each under
+its own license, as the wheels the publishers released. The golden image is
+published as built by CI (the release `golden-<inputs digest>`, made by
+`.github/workflows/golden-image.yml`; `image build` downloads it when its
+inputs are the checkout's, `guest/image-builder/src/prebuilt.ts`, and builds the
+image itself otherwise); the sources of its Ubuntu packages are in Ubuntu's
+archive, and whoever copies it takes on the license terms of the components
+inside it.
 
 The default `npm install` holds nothing under the GPL (section 9.8, WhatsApp); that is a
 statement about the npm lock file and no more. The few LGPL packages of the lock file

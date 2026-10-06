@@ -58,8 +58,10 @@ What sets it apart:
   was accepted, and a tool call cut short is never run twice: the model is told
   its outcome is unknown and checks before trying again.
 
-No image, package or hosted service is published: you build everything on your
-own machine from this repository.
+No package or hosted service is published. The one thing published is the
+golden image, built by CI from this repository's pinned inputs and downloaded
+by `image build` when its inputs are yours; everything else you build on your
+own machine.
 
 > [!IMPORTANT]
 > invisible_dots is alpha and has not yet run end to end on real hardware: the
@@ -141,7 +143,7 @@ you can still run any of them alone:
 | 1. The guest daemon | Builds `dot-agentd`, the program that runs inside every Dot's VM, for Linux whatever your host is. It stops here, before changing anything, when Go is missing, and prints the command that installs it. | `go -C guest/dot-agentd build -trimpath -o bin/dot-agentd ./cmd/dot-agentd` with `CGO_ENABLED=0 GOOS=linux GOARCH=amd64` |
 | 2. QEMU and its accelerator | Checks the host and fixes only what is missing. On **Windows** it enables the Windows Hypervisor Platform and installs QEMU in one elevated step (one UAC prompt). On **Linux** it installs QEMU with `sudo apt-get` (sudo asks for your password). | `invisible-dots setup` |
 | 3. The web client | Builds it, with Next.js's anonymous telemetry turned off, unless it is built already. | `npm run build --workspace @invisible-dots/web` |
-| 4. The guest images | Builds the golden image (Ubuntu 24.04, the desktop, the browser) and the runtime disk (the daemon and the engine). It is the longest step, and a second run with unchanged inputs does nothing. | `invisible-dots image build` |
+| 4. The guest images | Builds the runtime disk (the daemon and the engine), and downloads the golden image (Ubuntu 24.04, the desktop, the browser) that CI built for exactly these inputs, or builds it here when none is published (a changed pin, a fork, no network). A second run with unchanged inputs does nothing. | `invisible-dots image build` (`--no-download` always builds) |
 
 Two things can stop it on purpose, and both end with the same advice: run the
 same command again and it carries on.
@@ -803,7 +805,7 @@ smokes fail on a skipped check, so a test that stops running fails the build.
 
 ## Status and what is not done yet
 
-Alpha. Nothing is released or published yet.
+Alpha. Nothing is released yet; the golden image is the one thing published.
 
 - **The real-VM acceptance run has not been run yet.** It exists
   (`tests/e2e/run.ts`: build, create, browse, approve, kill the VM, restart,
@@ -839,8 +841,9 @@ parts of this repository's history come from Open Multi-Agent, also MIT. Their
 notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). QEMU (GPL-2.0)
 is installed from its official installer or your distribution and only run as
 a separate program, never bundled. The guest operating system, the browser
-engine and the packages a host downloads keep their own licenses; whoever
-copies a golden image to another machine takes on those licenses
+engine and the packages in the golden image keep their own licenses; the
+published golden image is Ubuntu with those packages, and whoever copies it
+takes on those licenses
 ([architecture: licensing](docs/architecture.md#113-licensing)). Nothing under
 the GPL is installed by the default `npm install`; the WhatsApp client, which
 brings a GPL-3.0 dependency, is an opt-in install. The Dot's computer is

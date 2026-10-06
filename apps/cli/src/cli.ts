@@ -29,12 +29,18 @@ export const CLI_VERSION = "0.1.0";
  * discovery, the image builder and the whole control plane, so they are
  * imported only when one of them runs; tests pass fakes.
  */
+/** `image build`: whether the golden image may be downloaded instead of built, and whether it is written compressed. */
+export interface ImageBuildOptions {
+  download: boolean;
+  compress: boolean;
+}
+
 export interface HostCommands {
   doctor(options: { json: boolean }, io: CliIo): Promise<number>;
   setup(io: CliIo): Promise<number>;
   /** `setup --all`: setup, the builds and `image build` in one run that can be run again (setup/all.ts). */
   setupAll(io: CliIo): Promise<number>;
-  imageBuild(io: CliIo): Promise<number>;
+  imageBuild(io: CliIo, options?: ImageBuildOptions): Promise<number>;
   server(io: CliIo, options: { web: boolean }): Promise<number>;
 }
 
@@ -68,7 +74,10 @@ Getting this host ready (the same commands on Linux and Windows):
                                                 run it again after a restart or a failure and it carries on
   invisible-dots setup                          just QEMU and its accelerator (may ask for administrator rights once)
   invisible-dots doctor [--json]                check everything; one line per check and the command that fixes a failure
-  invisible-dots image build                    build the golden image and the runtime ISO
+  invisible-dots image build [--no-download] [--compress]
+                                                the runtime ISO, and the golden image: downloaded when one is published for
+                                                these inputs, built here otherwise (--no-download: always build; --compress:
+                                                a compressed qcow2, as the published one is)
   invisible-dots server [--no-web]              run the control plane and the web client in the foreground (--no-web: the control plane only)
 
 Using the server:
@@ -156,6 +165,8 @@ const OPTIONS = {
   tail: { type: "string" },
   "no-follow": { type: "boolean" },
   "no-web": { type: "boolean" },
+  "no-download": { type: "boolean" },
+  compress: { type: "boolean" },
   all: { type: "boolean" },
   clear: { type: "boolean" },
   help: { type: "boolean", short: "h" },
@@ -312,7 +323,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
         const what = need(args, 0, "build");
         if (what !== "build") throw new UsageError(`unknown image subcommand "${what}": use build`);
         noArguments(args.slice(1), "image build");
-        return await (await host()).imageBuild(io);
+        return await (await host()).imageBuild(io, { download: values["no-download"] !== true, compress: values.compress === true });
       }
       case "server":
         noArguments(args, "server");

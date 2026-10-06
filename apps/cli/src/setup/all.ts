@@ -75,7 +75,7 @@ export async function runSetupAll(deps: SetupAllDeps): Promise<number> {
   for (const line of web.lines) out(`  ${line}\n`);
   if (interrupted()) return stopped(["interrupted"]);
 
-  heading(4, "the guest images (what `invisible-dots image build` does; the longest step)");
+  heading(4, "the guest images (what `invisible-dots image build` does: the golden image is downloaded when one is published for these inputs)");
   try {
     const code = await deps.images();
     if (code !== EXIT.ok) return stopped([`image build ended with exit code ${code}`]);

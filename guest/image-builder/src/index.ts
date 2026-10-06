@@ -35,3 +35,4 @@ export {
   type RuntimeBuildResult,
   type RuntimeInputs,
 } from "./runtime.js";
+export { PREBUILT_RELEASES, parsePrebuiltRelease, prebuiltTag, pullPrebuiltGolden, type PrebuiltPart, type PrebuiltRelease } from "./prebuilt.js";

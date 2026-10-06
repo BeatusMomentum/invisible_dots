@@ -15,6 +15,7 @@ import { acquireLock, type Lock } from "./lock.js";
 import { manifestPathFor, writeManifest, type GoldenManifest } from "./manifest.js";
 import { BASE_IMAGE, downloadFileName, GUEST_PINS, type BaseImagePin, type GuestPins, type PinnedDownload } from "./pins.js";
 import { waitForExit, type ProcessRunner } from "./process.js";
+import { PREBUILT_RELEASES, pullPrebuiltGolden } from "./prebuilt.js";
 import { parseHashedLock, parsePythonLock, type PythonLock } from "./python-lock.js";
 import { builderQemuArgs, type Accelerator, type QemuPrograms } from "./qemu.js";
 import { SEED_VOLUME_ID } from "@invisible-dots/vm-manager";
@@ -60,6 +61,13 @@ export interface GoldenBuildOptions {
   serialPollMs?: number;
   /** Aborting kills the builder VM and fails the build. */
   signal?: AbortSignal;
+  /**
+   * Where the prebuilt golden images are released (prebuilt.ts), `PREBUILT_RELEASES` by default; false builds the
+   * image here without looking for one. Only a build of the default version looks: an explicit version is built.
+   */
+  prebuilt?: string | false;
+  /** Write the image as a compressed qcow2 (smaller to publish; QEMU reads it as it is). */
+  compress?: boolean;
 }
 
 export interface GoldenBuildResult {
@@ -129,6 +137,20 @@ export async function buildGoldenImage(options: GoldenBuildOptions): Promise<Gol
 
   const lock = await acquireLock(join(paths.imagesDir, ".golden-build.lock"), "golden image build");
   try {
+    if (options.version === undefined && options.prebuilt !== false) {
+      const download: FetchVerifiedOptions = { ...options.download, log };
+      if (options.fetch) download.fetch = options.fetch;
+      const pulled = await pullPrebuiltGolden({
+        releases: options.prebuilt ?? PREBUILT_RELEASES,
+        digest,
+        imagesDir: paths.imagesDir,
+        imagePath: (pulledVersion) => paths.goldenImagePath(pulledVersion),
+        manifestPath: manifestPathFor,
+        download,
+        log,
+      });
+      if (pulled) return { ...pulled, created: true };
+    }
     return await buildLocked(
       { ...options, log, paths, base, pins, diskSize, now, lock },
       { version, image, manifest, digest, userData, provision, pythonLock, python, engineLock, engineBuild, browserBuild },
@@ -225,7 +247,7 @@ async function buildLocked(options: GoldenBuildOptions & Resolved, target: Targe
 
     const partial = `${target.image}.part`;
     await rm(partial, { force: true });
-    await options.runner.run(options.qemu.img, ["convert", "-O", "qcow2", disk, partial], { timeoutMs: CONVERT_TIMEOUT_MS });
+    await options.runner.run(options.qemu.img, ["convert", ...(options.compress ? ["-c"] : []), "-O", "qcow2", disk, partial], { timeoutMs: CONVERT_TIMEOUT_MS });
     const sha256 = await sha256File(partial);
     const size = (await stat(partial)).size;
     const manifest: GoldenManifest = {

@@ -40,7 +40,7 @@ import {
 } from "@invisible-dots/vm-manager";
 import windowsQemuPinJson from "../../../virtualization/qemu/windows.json" with { type: "json" };
 import { connectApi } from "./api-client.js";
-import type { CliIo, HostCommands } from "./cli.js";
+import type { CliIo, HostCommands, ImageBuildOptions } from "./cli.js";
 import { doctorCommand } from "./doctor/command.js";
 import { EXIT } from "./exit.js";
 import { runSetupAll } from "./setup/all.js";
@@ -137,7 +137,7 @@ const IMAGE_BUILDER_DIR = join(REPO_ROOT, "guest", "image-builder");
  * bundle or dot-agentd has not been built, before an hour of golden image
  * provisioning.
  */
-async function imageBuild(io: CliIo): Promise<number> {
+async function imageBuild(io: CliIo, options: ImageBuildOptions = { download: true, compress: false }): Promise<number> {
   const log = (line: string) => io.stdout(`${line}\n`);
   const paths = hostPaths(io.env);
   const runtime = await buildRuntimeIso({ paths, log, assetRoot: IMAGE_BUILDER_DIR, inputs: defaultRuntimeInputs(REPO_ROOT) });
@@ -150,10 +150,12 @@ async function imageBuild(io: CliIo): Promise<number> {
     paths,
     assetRoot: IMAGE_BUILDER_DIR,
     log,
+    ...(options.download ? {} : { prebuilt: false as const }),
+    ...(options.compress ? { compress: true } : {}),
     ...(io.fetch ? { fetch: io.fetch } : {}),
     ...(io.signal ? { signal: io.signal } : {}),
   });
-  log(`${golden.created ? "built" : "already built"}: ${golden.image}`);
+  log(`${golden.created ? "ready" : "already there"}: ${golden.image}`);
   return EXIT.ok;
 }
 
