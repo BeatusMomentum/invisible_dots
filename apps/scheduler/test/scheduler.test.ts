@@ -1146,6 +1146,39 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     expect(await db.computers.get(offByIdle.id)).toMatchObject({ state: "STOPPED", stop_reason: "idle" });
   });
 
+  it("recovery: an idle stop that was interrupted is finished also when work came due meanwhile, and the computer is woken for it", async () => {
+    const driver = new FakeDriver();
+    const lifecycle = { healthPollMs: 5, readyTimeoutMs: 3_000, pumpRetryMs: 10, pumpMaxRetryMs: 50, automationWakeLeadMs: 60_000 };
+    const first = make(driver, { lifecycle }).scheduler;
+    const withAutomation = await readyDot(first, "cut-automation");
+    const withTask = await readyDot(first, "cut-task");
+    await first.close();
+    open.splice(open.indexOf(first), 1);
+
+    // Both were being put to sleep when the control plane went down; while it was down an automation came due for
+    // one and a task for the other.
+    await db.computers.setState(withAutomation.id, "STOPPING", undefined, "idle");
+    await db.computers.setState(withTask.id, "STOPPING", undefined, "idle");
+    const { scheduler, clock } = make(driver, { dispatchIntervalMs: 60_000, idleCheckIntervalMs: 60_000, lifecycle });
+    await db.computers.setNextAutomation(withAutomation.id, clock.now().getTime() - 1_000);
+    const task = await db.tasks.insert({ id: `task_cut${Date.now()}`, dotId: withTask.id, description: "came due while away" });
+
+    await scheduler.start();
+    await waitFor(async () => (await db.tasks.get(task.id))?.status === "COMPLETED", "the task ran");
+    await scheduler.settle();
+    // The pass that start() runs came before the stop was over; the next one wakes the computer for its automation.
+    await scheduler.pass();
+    await scheduler.settle();
+    // The stop was finished, not called off: a computer that runs is a computer that is READY and pumped.
+    for (const dot of [withAutomation, withTask]) {
+      expect(driver.calls.filter((c) => c === `stop:${dot.id}`)).toHaveLength(1);
+      expect(driver.calls.filter((c) => c === `start:${dot.id}`)).toHaveLength(2);
+      expect(await db.computers.get(dot.id)).toMatchObject({ state: "RUNNING", stop_reason: null });
+      expect((await db.dots.get(dot.id))?.status).toBe("READY");
+      expect(scheduler.lifecycle.isReady(dot.id)).toBe(true);
+    }
+  });
+
   it("recovery: reattaches to running VMs, marks powered-off ones STOPPED and delivers undelivered tasks", async () => {
     const driver = new FakeDriver();
     const first = make(driver).scheduler;

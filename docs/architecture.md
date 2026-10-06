@@ -1668,7 +1668,10 @@ stop`) and the web (the stop confirmation) say so. A message or a task for it
 still starts it, as it does for any stopped Dot, and from that start on it
 sleeps and wakes for its automations like any other. The person's stop of a
 computer that is already asleep is recorded too. A stop that the control plane
-was interrupted in is finished for the reason it was asked for.
+was interrupted in is finished for the reason it was asked for, without the idle
+check again: the shutdown had begun, and the guest may already have taken
+prepare-sleep. Work that came due meanwhile starts the computer again from the
+next pass, as for any stopped Dot.
 
 "Has work" is one definition, `Lifecycle.keepsAwake`: a task or inbound work for
 the Dot, or an automation due within the lead time (a past one included). The
