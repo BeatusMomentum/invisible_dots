@@ -41,8 +41,8 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
       "0001_initial",
       "0002_inbound_events",
       "0003_task_spend",
-      "0005_orphaned_secrets",
-      "0006_removed_config_names",
+      "0007_orphaned_secrets",
+      "0008_removed_config_names",
     ]);
   });
 

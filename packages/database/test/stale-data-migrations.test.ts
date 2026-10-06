@@ -13,8 +13,8 @@ import { loadMigrations, migrate, openDb, PGLITE_IN_MEMORY, PgliteDb, type Db, t
 import { createScratchPostgres, testAdapters } from "../src/testing.js";
 
 const SETUP_TIMEOUT = 60_000;
-const ORPHANED_SECRETS = "0005_orphaned_secrets";
-const REMOVED_CONFIG_NAMES = "0006_removed_config_names";
+const ORPHANED_SECRETS = "0007_orphaned_secrets";
+const REMOVED_CONFIG_NAMES = "0008_removed_config_names";
 
 async function emptyDb(kind: DbKind): Promise<{ db: Db; dispose(): Promise<void> }> {
   if (kind === "pglite") {
