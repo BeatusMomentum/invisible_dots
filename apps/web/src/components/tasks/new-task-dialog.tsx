@@ -71,7 +71,7 @@ export function NewTaskDialog({ dotId, onCreated }: { dotId: string; onCreated: 
                 <label
                   key={priority.id}
                   className={cn(
-                    "flex cursor-pointer items-center gap-2 rounded-md border bg-background px-3 py-1.5 text-sm hover:bg-accent has-[:focus-visible]:ring-[3px] has-[:focus-visible]:ring-ring/80 has-[:focus-visible]:outline-hidden",
+                    "flex cursor-pointer items-center gap-2 rounded-md border bg-background px-3 py-1.5 text-sm hover:bg-accent has-[:focus-visible]:ring-[3px] has-[:focus-visible]:ring-ring has-[:focus-visible]:outline-hidden",
                     named === priority.id && "border-primary bg-accent",
                   )}
                 >

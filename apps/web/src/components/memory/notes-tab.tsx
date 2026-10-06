@@ -124,7 +124,7 @@ export function NotesTab({ dotId, open }: { dotId: string; open: string | null }
 function NoteRow({ dotId, note, current, fresh }: { dotId: string; note: Note; current: boolean; fresh: boolean }) {
   return (
     <li className={cn("bg-card", current && "bg-accent", fresh && !current && "bg-info-soft")}>
-      <Link href={memoryHref(dotId, { note: note.key })} aria-current={current ? "true" : undefined} className="flex items-start gap-2 px-3 py-2 text-sm hover:bg-accent focus-visible:ring-[3px] focus-visible:ring-ring/80 focus-visible:outline-hidden">
+      <Link href={memoryHref(dotId, { note: note.key })} aria-current={current ? "true" : undefined} className="flex items-start gap-2 px-3 py-2 text-sm hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-hidden">
         <FileTextIcon aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <span className="min-w-0 flex-1">
           <span className="block break-all">

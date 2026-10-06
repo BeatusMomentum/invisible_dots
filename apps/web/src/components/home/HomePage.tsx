@@ -26,7 +26,9 @@ export function HomePage() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight">Dots</h1>
+        <h1 className="flex items-baseline gap-2 text-2xl font-semibold tracking-tight">
+          Dots{list && list.length > 0 ? <span className="font-mono text-sm font-normal text-muted-foreground">{list.length}</span> : null}
+        </h1>
         {list && list.length > 0 ? (
           <Button asChild size="sm">
             <Link href="/new">
@@ -40,9 +42,9 @@ export function HomePage() {
       {dots.error !== null && list === undefined ? <ErrorAlert error={dots.error} title="Could not load the Dots" /> : null}
 
       {list === undefined && dots.error === null ? (
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3" aria-busy="true" aria-label="Loading the Dots">
+        <div className="space-y-2" aria-busy="true" aria-label="Loading the Dots">
           {[0, 1, 2].map((i) => (
-            <Skeleton key={i} className="h-48 w-full" />
+            <Skeleton key={i} className="h-16 w-full" />
           ))}
         </div>
       ) : null}
@@ -58,7 +60,7 @@ export function HomePage() {
             </div>
           ) : null}
           {shown.length > 0 ? (
-            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <div>
               {shown.map((dot) => (
                 <DotCard key={dot.id} dot={dot} />
               ))}
@@ -77,11 +79,12 @@ export function HomePage() {
 /** Nothing here yet: three dots that become one, and the way to make it. */
 function EmptyHome() {
   return (
-    <section aria-labelledby="empty-title" className="flex flex-col items-center gap-4 rounded-lg border border-dashed bg-card px-6 py-14 text-center">
-      <span aria-hidden="true" className="flex items-center gap-2">
-        <span className="size-4 rounded-full bg-primary" />
-        <span className="size-4 rounded-full bg-primary/60" />
-        <span className="size-4 rounded-full bg-primary/30" />
+    <section aria-labelledby="empty-title" className="flex flex-col items-center gap-4 border-y px-6 py-14 text-center">
+      <span aria-hidden="true" className="grid grid-cols-2 gap-1">
+        <span className="size-3 bg-foreground" />
+        <span className="size-3 bg-foreground/40" />
+        <span className="size-3 bg-foreground/40" />
+        <span className="size-3 bg-attention" />
       </span>
       <div className="space-y-1">
         <h2 id="empty-title" className="text-lg font-semibold">

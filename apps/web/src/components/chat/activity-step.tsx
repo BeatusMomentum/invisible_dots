@@ -31,7 +31,7 @@ export function ActivityStep({ icon: Icon, label, title, active = false, tone = 
   return (
     <div data-testid="activity-step" className={cn("grid min-w-0 grid-cols-[1.125rem_minmax(0,1fr)] items-start gap-2 py-0.5 text-ui", className)}>
       <span aria-hidden="true" className="flex h-5 w-[1.125rem] items-center justify-center">
-        <span className={cn("grid size-3.5 place-items-center rounded-full border bg-background", MARKER_TONE[tone])}>{Icon ? <Icon className="size-2.5" strokeWidth={2.15} /> : null}</span>
+        <span className={cn("grid size-3.5 place-items-center rounded-[3px] border bg-background", MARKER_TONE[tone])}>{Icon ? <Icon className="size-2.5" strokeWidth={2.15} /> : null}</span>
       </span>
       <div title={title} className={cn("flex min-w-0 items-center gap-1.5 font-medium text-muted-foreground", active && "shimmer")}>
         {label}

@@ -53,9 +53,9 @@ export function ScheduleCard({
 } & Omit<ComponentProps<"article">, "children" | "onToggle">) {
   const Icon = lastRun ? RUN_ICON[lastRun.status] : null;
   return (
-    <article aria-label={name} data-slot="schedule-card" className={cn("space-y-3 rounded-xl border bg-card p-4 text-card-foreground", className)} {...props}>
+    <article aria-label={name} data-slot="schedule-card" className={cn("space-y-3 rounded-lg border bg-card p-4 text-card-foreground", className)} {...props}>
       <div className="flex items-start gap-3">
-        <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+        <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-[3px] bg-muted text-muted-foreground">
           <ClockIcon className="size-4" />
         </span>
         <div className="min-w-0 flex-1">

@@ -81,7 +81,7 @@ export function RunningCard({ task, onChanged }: { task: Task; onChanged: () => 
             <Elapsed task={task} />
           </span>
         </span>
-        {waiting ? <span className="rounded-full bg-warn-soft px-2 py-0.5 font-medium text-warn">Waiting for you</span> : null}
+        {waiting ? <span className="rounded-[3px] bg-warn-soft px-2 py-0.5 font-medium text-warn">Waiting for you</span> : null}
         <span className="ml-auto">
           <CancelTaskButton task={task} onDone={onChanged} />
         </span>

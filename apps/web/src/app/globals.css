@@ -59,10 +59,10 @@
   @keyframes breathe {
     0%,
     100% {
-      box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 55%, transparent);
+      box-shadow: 0 0 0 0 color-mix(in srgb, var(--attention) 55%, transparent);
     }
     50% {
-      box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 0%, transparent);
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--attention) 0%, transparent);
     }
   }
 }
@@ -70,7 +70,7 @@
 @layer base {
   * {
     border-color: var(--border);
-    outline-color: color-mix(in srgb, var(--ring) 50%, transparent);
+    outline-color: var(--ring);
   }
 
   body {

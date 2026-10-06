@@ -139,7 +139,7 @@ export function StreamIndicator() {
   if (!context) return null;
   return (
     <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" role="status" title={context.detail || undefined}>
-      <span aria-hidden="true" className={cn("size-2 rounded-full", STREAM_DOT[context.status])} />
+      <span aria-hidden="true" className={cn("size-2 rounded-[3px]", STREAM_DOT[context.status])} />
       <span className="sr-only">Updates: </span>
       {STREAM_LABEL[context.status]}
     </span>

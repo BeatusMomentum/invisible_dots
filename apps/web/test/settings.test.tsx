@@ -178,7 +178,7 @@ describe("Settings: the OpenRouter key", () => {
   });
 });
 
-describe("Settings: appearance, session and about", () => {
+describe("Settings: appearance and about", () => {
   it("chooses the theme, applies it at once and keeps it in this browser", async () => {
     await renderSettings();
     expect((screen.getByRole("radio", { name: /System/ }) as HTMLInputElement).checked).toBe(true);
@@ -188,15 +188,6 @@ describe("Settings: appearance, session and about", () => {
     expect((screen.getByRole("radio", { name: /Dark/ }) as HTMLInputElement).checked).toBe(true);
     await userEvent.click(screen.getByRole("radio", { name: /Light/ }));
     expect(document.documentElement.dataset.theme).toBe("light");
-  });
-
-  it("signs out through the session route and loads the login page", async () => {
-    const assign = vi.fn();
-    vi.stubGlobal("location", { assign, pathname: "/settings", search: "" });
-    await renderSettings();
-    await userEvent.click(within(section("Session")).getByRole("button", { name: "Sign out" }));
-    await waitFor(() => expect(assign).toHaveBeenCalledWith("/login"));
-    expect(plane.requests).toContain("DELETE /session");
   });
 
   it("lists the version, the database and where the data and the logs are", async () => {

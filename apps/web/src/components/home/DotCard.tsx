@@ -8,7 +8,7 @@ import type { Dot } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { CostPill } from "../dot/CostPill";
 import { PowerMenu } from "../dot/PowerMenu";
-import { TONE_CLASS } from "../dot/tone";
+import { TONE_DOT } from "../dot/tone";
 import { useDotAttention, useDotLive, useShell } from "../shell/attention";
 import { DotAvatar } from "../shell/DotAvatar";
 import { Badge } from "../ui/badge";
@@ -30,16 +30,17 @@ export function DotCard({ dot }: { dot: Dot }) {
   const model = dot.config?.model?.id;
 
   return (
-    <article aria-labelledby={`dot-${dot.id}-name`} className="flex flex-col gap-3 rounded-lg border bg-card p-4 text-card-foreground">
-      <div className="flex items-start gap-3">
-        <DotAvatar id={dot.id} name={dot.name} ring={ring} size="md" />
+    <article aria-labelledby={`dot-${dot.id}-name`} className="grid gap-x-6 gap-y-2 border-b py-4 first:border-t md:grid-cols-[minmax(12rem,16rem)_1fr_auto] md:items-center">
+      <div className="flex items-center gap-3">
+        <DotAvatar id={dot.id} name={dot.name} ring={ring} size="sm" />
         <div className="min-w-0 flex-1 space-y-1">
-          <h2 id={`dot-${dot.id}-name`} className="truncate text-base leading-tight font-semibold">
+          <h2 id={`dot-${dot.id}-name`} className="truncate text-sm leading-tight font-semibold">
             <Link href={`${href}/chat`} className="hover:underline">
               {dot.name}
             </Link>
           </h2>
-          <p className={cn("w-fit rounded-full px-2 py-0.5 text-xs font-medium", TONE_CLASS[status.tone], status.working && "animate-pulse motion-reduce:animate-none")}>
+          <p className={cn("flex w-fit items-center gap-1.5 font-mono text-xs text-muted-foreground", status.working && "animate-pulse motion-reduce:animate-none")}>
+            <span aria-hidden="true" className={cn("size-1.5", TONE_DOT[status.tone])} />
             <span className="sr-only">Status: </span>
             {status.label}
           </p>
@@ -51,10 +52,11 @@ export function DotCard({ dot }: { dot: Dot }) {
         ) : null}
       </div>
 
-      {status.reason ? <p className="rounded-md bg-danger-soft px-2.5 py-1.5 text-sm text-danger">{status.reason}</p> : null}
-      <p className="line-clamp-2 min-h-10 text-sm text-muted-foreground">{dot.config?.goal ?? ""}</p>
+      <div className="min-w-0 space-y-1">
+        {status.reason ? <p className="text-sm text-danger">{status.reason}</p> : null}
+        <p className="line-clamp-2 text-sm text-muted-foreground">{dot.config?.goal ?? ""}</p>
 
-      <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+      <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs text-muted-foreground">
         {model ? (
           <div className="flex gap-1">
             <dt className="sr-only">Model</dt>
@@ -72,9 +74,10 @@ export function DotCard({ dot }: { dot: Dot }) {
           <LastActivity dotId={dot.id} />
         </div>
       </dl>
+      </div>
 
-      <div className="mt-auto flex flex-wrap items-center gap-2 pt-1">
-        <Button asChild size="sm">
+      <div className="flex flex-wrap items-center gap-2 md:justify-end">
+        <Button asChild size="sm" variant="outline">
           <Link href={`${href}/chat`}>Open chat</Link>
         </Button>
         <PowerMenu dotId={dot.id} computerState={dot.computer_state} taskRunning={taskRunning(dot.status)} onDone={dots.reload} />

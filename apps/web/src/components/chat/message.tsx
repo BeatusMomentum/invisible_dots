@@ -23,7 +23,7 @@ function When({ at }: { at: string }) {
 export function UserMessage({ text, at, note, via }: { text: string; at?: string; note?: string; via?: string }) {
   return (
     <article aria-label="You" className="flex flex-col items-end gap-1">
-      <p className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-sm leading-relaxed break-words whitespace-pre-wrap text-primary-foreground">{text}</p>
+      <p className="max-w-[85%] rounded-lg bg-muted px-3.5 py-2 text-sm leading-relaxed break-words whitespace-pre-wrap text-foreground">{text}</p>
       <div className="flex items-center gap-2">
         {via ? <span className="text-xs text-muted-foreground">{via}</span> : null}
         {note ? (

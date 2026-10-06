@@ -57,7 +57,7 @@ export function Composer({
 
   return (
     <form onSubmit={submit} className="border-t p-3">
-      <div className={cn("mx-auto flex w-full max-w-[760px] items-end gap-2 rounded-xl border bg-background p-2 focus-within:ring-[3px] focus-within:ring-ring/80 focus-within:outline-hidden", blocked !== null && "opacity-70")}>
+      <div className={cn("mx-auto flex w-full max-w-[760px] items-end gap-2 rounded-lg border bg-background p-2 focus-within:border-ring focus-within:outline-hidden", blocked !== null && "opacity-70")}>
         <label htmlFor="chat-input" className="sr-only">
           Message
         </label>

@@ -32,8 +32,8 @@ function Meter({ label, usage }: { label: string; usage: Usage }) {
           {formatBytes(usage.usedBytes)} of {formatBytes(usage.totalBytes)} used ({percent}%)
         </span>
       </div>
-      <div role="meter" aria-label={`${label} used`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={`${percent}%`} className="h-2 overflow-hidden rounded-full bg-muted">
-        <div className={cn("h-full rounded-full", usage.fraction >= 0.9 ? "bg-danger" : usage.fraction >= 0.75 ? "bg-warn" : "bg-ok")} style={{ width: `${percent}%` }} />
+      <div role="meter" aria-label={`${label} used`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={`${percent}%`} className="h-2 overflow-hidden rounded-[3px] bg-muted">
+        <div className={cn("h-full rounded-[3px]", usage.fraction >= 0.9 ? "bg-danger" : usage.fraction >= 0.75 ? "bg-warn" : "bg-ok")} style={{ width: `${percent}%` }} />
       </div>
     </div>
   );

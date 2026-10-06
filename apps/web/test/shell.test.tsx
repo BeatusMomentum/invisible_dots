@@ -47,7 +47,7 @@ describe("the rail", () => {
     renderShell();
 
     const dots = within(await screen.findByRole("navigation", { name: "Dots" }));
-    await waitFor(() => expect(dots.getAllByRole("link")).toHaveLength(4));
+    await waitFor(() => expect(dots.getAllByRole("link", { name: (name) => name !== "New Dot" })).toHaveLength(4));
     const ringOf = (name: string) => dots.getByRole("link", { name: new RegExp(name) }).querySelector("[data-ring]")?.getAttribute("data-ring");
     expect(ringOf("quiet")).toBe("ready");
     expect(ringOf("stopped")).toBe("stopped");
@@ -67,7 +67,7 @@ describe("the rail", () => {
     pathname = "/dots/two/tasks";
     renderShell();
     const dots = within(await screen.findByRole("navigation", { name: "Dots" }));
-    await waitFor(() => expect(dots.getAllByRole("link")).toHaveLength(2));
+    await waitFor(() => expect(dots.getAllByRole("link", { name: (name) => name !== "New Dot" })).toHaveLength(2));
     expect(dots.getByRole("link", { name: /two/ }).getAttribute("aria-current")).toBe("page");
     expect(dots.getByRole("link", { name: /one/ }).getAttribute("aria-current")).toBeNull();
     expect(screen.getByRole("link", { name: "Home" }).getAttribute("aria-current")).toBeNull();
@@ -229,7 +229,7 @@ describe("what the live stream changes in the rail", () => {
     plane.approvals = [approvalRecord("a1", "d1")];
     renderShell();
     await waitFor(() => expect(document.title).toBe("(2) Dots - invisible_dots"));
-    expect(document.head.querySelector('link[rel="icon"]')?.getAttribute("href")).toContain(encodeURIComponent("#c96a00"));
+    expect(document.head.querySelector('link[rel="icon"]')?.getAttribute("href")).toContain(encodeURIComponent("#a85a00"));
 
     plane.approvals = [];
     plane.dots = [dotRecord("d1"), dotRecord("d2")];
@@ -239,7 +239,7 @@ describe("what the live stream changes in the rail", () => {
       plane.push("d2", "dot.updated");
     });
     await waitFor(() => expect(document.title).toBe("Dots - invisible_dots"));
-    expect(document.head.querySelector('link[rel="icon"]')?.getAttribute("href")).not.toContain(encodeURIComponent("#c96a00"));
+    expect(document.head.querySelector('link[rel="icon"]')?.getAttribute("href")).not.toContain(encodeURIComponent("#a85a00"));
   });
 
   it("counts a task that failed in the last day, and not one that failed earlier or one that was dismissed", async () => {
@@ -305,7 +305,6 @@ describe("the menu on a narrow screen", () => {
     await userEvent.click(screen.getByRole("button", { name: "Open the menu" }));
     const sheet = await screen.findByRole("dialog");
     const link = await within(sheet).findByRole("link", { name: /d1/ });
-    expect(within(sheet).getByRole("button", { name: "Sign out" })).toBeTruthy();
     // jsdom cannot navigate: the click is still heard by the page, which is what closes the sheet.
     document.addEventListener("click", (event) => event.preventDefault(), { once: true });
     await userEvent.click(link);

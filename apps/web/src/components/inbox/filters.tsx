@@ -8,7 +8,7 @@ import { cn } from "../../lib/utils";
 import { Label } from "../ui/label";
 
 const SELECT_CLASS =
-  "h-8 min-w-0 rounded-md border border-input bg-background px-2 text-sm shadow-xs focus-visible:outline-hidden focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/80";
+  "h-8 min-w-0 rounded-md border border-input bg-background px-2 text-sm shadow-xs focus-visible:outline-hidden focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring";
 
 function FilterSelect({ id, label, value, onChange, children }: { id: string; label: string; value: string; onChange: (value: string) => void; children: React.ReactNode }) {
   return (

@@ -10,7 +10,6 @@ import { dotIdFromPath, liveOf } from "../../lib/dot-live";
 import { cn } from "../../lib/utils";
 import { StreamIndicator } from "../events";
 import { Badge } from "../ui/badge";
-import { Button } from "../ui/button";
 import { Separator } from "../ui/separator";
 import { Skeleton } from "../ui/skeleton";
 import { ApiStatus } from "./ApiStatus";
@@ -58,20 +57,14 @@ export function Rail({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="flex h-full flex-col gap-3 p-3">
       <div className="flex items-center gap-2 px-2 pt-1">
-        <span aria-hidden="true" className="flex gap-0.5">
-          <span className="size-2 rounded-full bg-primary" />
-          <span className="size-2 rounded-full bg-primary/60" />
-          <span className="size-2 rounded-full bg-primary/30" />
+        <span aria-hidden="true" className="grid grid-cols-2 gap-px">
+          <span className="size-1.5 bg-foreground" />
+          <span className="size-1.5 bg-foreground/40" />
+          <span className="size-1.5 bg-foreground/40" />
+          <span className="size-1.5 bg-attention" />
         </span>
-        <span className="text-base font-semibold tracking-tight">invisible_dots</span>
+        <span className="font-mono text-sm font-medium">invisible_dots</span>
       </div>
-
-      <Button asChild size="sm" className="justify-start">
-        <Link href={NEW_DOT_HREF} onClick={onNavigate}>
-          <PlusIcon />
-          New Dot
-        </Link>
-      </Button>
 
       <nav aria-label="Main" className="space-y-0.5">
         <NavLink href="/" current={path === "/"} onNavigate={onNavigate}>
@@ -92,7 +85,12 @@ export function Rail({ onNavigate }: { onNavigate?: () => void }) {
       <Separator />
 
       <nav aria-label="Dots" className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
-        <h2 className="px-2 pb-1 text-xs font-medium tracking-wide text-muted-foreground uppercase">Dots</h2>
+        <div className="flex items-center justify-between px-2 pb-1">
+          <h2 className="text-xs text-muted-foreground">Dots</h2>
+          <Link href={NEW_DOT_HREF} onClick={onNavigate} aria-label="New Dot" className="rounded-[3px] p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground">
+            <PlusIcon className="size-3.5" />
+          </Link>
+        </div>
         {dots.data === undefined && dots.error === null ? (
           <div className="space-y-2 px-2" aria-hidden="true">
             <Skeleton className="h-8 w-full" />
@@ -127,7 +125,7 @@ export function Rail({ onNavigate }: { onNavigate?: () => void }) {
             >
               <DotAvatar id={dot.id} name={dot.name} ring={ring} size="sm" />
               <span className="min-w-0 flex-1 truncate">{dot.name}</span>
-              {dotLive.unread ? <span role="img" aria-label="New reply" className="size-2 shrink-0 rounded-full bg-primary" /> : null}
+              {dotLive.unread ? <span role="img" aria-label="New reply" className="size-2 shrink-0 rounded-[3px] bg-primary" /> : null}
               {relinks.length > 0 ? <UnplugIcon role="img" aria-label={`${relinks.map((relink) => CHANNEL_LABELS[relink.kind]).join(" and ")} needs linking again`} className="size-3.5 shrink-0 text-warn" /> : null}
               <CountBadge count={approvals} label="waiting" />
             </Link>

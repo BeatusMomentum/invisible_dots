@@ -22,8 +22,8 @@ function Section({ number, title, description, children }: { number: number; tit
   return (
     <section aria-labelledby={id} className="space-y-4 rounded-lg border bg-card p-5">
       <div className="flex items-start gap-3">
-        <span aria-hidden="true" className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
-          {number}
+        <span aria-hidden="true" className="pt-0.5 font-mono text-xs text-muted-foreground">
+          {String(number).padStart(2, "0")}
         </span>
         <div>
           <h2 id={id} className="text-base font-semibold">
@@ -125,7 +125,7 @@ export function ComputerSection({ form, change, errorOf }: SectionProps) {
             {...control}
             value={form.idleTimeout}
             onChange={(event) => change({ idleTimeout: event.target.value })}
-            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs focus-visible:outline-hidden focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/80 sm:w-56"
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs focus-visible:outline-hidden focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring sm:w-56"
           >
             {IDLE_CHOICES.map((choice) => (
               <option key={choice.value} value={choice.value}>

@@ -69,7 +69,7 @@ export function ApprovalLine({ dotId, step }: { dotId: string; step: ApprovalSte
 /** A note the Dot saved to its memory; its name leads to the note. */
 export function MemoryNote({ dotId, chip }: { dotId: string; chip: MemoryChip }) {
   return (
-    <span title={`Saved to memory at ${formatDate(chip.at)}`} className="inline-flex max-w-full items-center gap-1.5 rounded-full border bg-card px-2.5 py-0.5 text-xs text-muted-foreground">
+    <span title={`Saved to memory at ${formatDate(chip.at)}`} className="inline-flex max-w-full items-center gap-1.5 rounded-[3px] border bg-card px-2.5 py-0.5 text-xs text-muted-foreground">
       <BrainIcon aria-hidden="true" className="size-3 shrink-0" />
       <span className="shrink-0">Remembered</span>
       <Link href={memoryHref(dotId, { note: chip.key })} className="min-w-0 hover:text-foreground hover:underline">
@@ -89,7 +89,7 @@ function Cluster({ steps }: { steps: readonly ToolStep[] }) {
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="flex items-center gap-1.5 rounded py-0.5 text-ui font-medium text-muted-foreground focus-visible:outline-hidden hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/80"
+        className="flex items-center gap-1.5 rounded py-0.5 text-ui font-medium text-muted-foreground focus-visible:outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
       >
         <ChevronRightIcon aria-hidden="true" className={cn("size-3.5 transition-transform", open && "rotate-90")} />
         <span className={cn(bad && "text-warn")}>{clusterSummary(steps)}</span>

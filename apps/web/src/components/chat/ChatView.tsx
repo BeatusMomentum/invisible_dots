@@ -144,9 +144,9 @@ function ChatInner({ dotId }: { dotId: string }) {
   return (
     <>
       <div className={panel.open && wide ? "grid gap-4 lg:grid-cols-[minmax(0,1fr)_26rem]" : undefined}>
-        <div className="flex h-[max(26rem,calc(100dvh-19rem))] min-w-0 flex-col overflow-hidden rounded-xl border bg-card">{column}</div>
+        <div className="flex h-[max(26rem,calc(100dvh-19rem))] min-w-0 flex-col overflow-hidden border-y">{column}</div>
         {panel.open && wide ? (
-          <aside aria-label="Computer" className="max-h-[max(26rem,calc(100dvh-19rem))] overflow-y-auto rounded-xl border bg-card p-4">
+          <aside aria-label="Computer" className="max-h-[max(26rem,calc(100dvh-19rem))] overflow-y-auto rounded-lg border bg-card p-4">
             <ComputerPanel dotId={dotId} computerState={computerState} />
           </aside>
         ) : null}

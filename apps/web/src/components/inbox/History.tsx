@@ -21,7 +21,7 @@ const ANSWER_WORD: Record<string, string> = { approved: "Allowed", rejected: "De
 
 function Answer({ status }: { status: string }) {
   return (
-    <span className={cn("inline-flex w-fit items-center rounded-full px-2 py-0.5 text-xs font-medium", TONE_CLASS[statusTone(status)])}>
+    <span className={cn("inline-flex w-fit items-center rounded-[3px] px-2 py-0.5 text-xs font-medium", TONE_CLASS[statusTone(status)])}>
       <span className="sr-only">Answer: </span>
       {ANSWER_WORD[status] ?? status}
     </span>

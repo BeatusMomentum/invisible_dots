@@ -8,27 +8,27 @@
 :root {
   color-scheme: light;
 
-  --background: #faf9f7;
-  --foreground: #1c1b1a;
-  --card: #ffffff;
-  --card-foreground: #1c1b1a;
+  --background: #f3f3f1;
+  --foreground: #161615;
+  --card: #fbfbfa;
+  --card-foreground: #161615;
   --popover: #ffffff;
-  --popover-foreground: #1c1b1a;
-  --muted: #f1efec;
-  --muted-foreground: #5f5b57;
-  --secondary: #f1efec;
-  --secondary-foreground: #1c1b1a;
-  --accent: #ebe8e3;
-  --accent-foreground: #1c1b1a;
-  --border: #e4e1dc;
-  --input: #898478;
-  --ring: #5b5bd6;
+  --popover-foreground: #161615;
+  --muted: #e9e9e6;
+  --muted-foreground: #5a5a55;
+  --secondary: #e9e9e6;
+  --secondary-foreground: #161615;
+  --accent: #e2e2de;
+  --accent-foreground: #161615;
+  --border: #d9d9d4;
+  --input: #86867f;
+  --ring: #161615;
 
-  /* The Dot's identity and the primary action. */
-  --primary: #5b5bd6;
-  --primary-foreground: #ffffff;
+  /* The primary action is ink, not a color: color is kept for status, and amber (--attention) for what needs the person. */
+  --primary: #161615;
+  --primary-foreground: #fbfbfa;
   /* The fill of the primary action under the pointer: a deeper accent, so its text keeps AA (a fill at 90 percent of the accent over a light surface does not). */
-  --primary-hover: #4a4ac4;
+  --primary-hover: #33332f;
 
   /* Status: saturated color is for status only. Each has a soft surface to sit on. */
   --ok: #19794a;
@@ -40,38 +40,40 @@
   --info: #1f5fbf;
   --info-soft: #e3edfb;
   /* Not text: the ring and badge of a Dot that waits for the person, and the favicon's second dot. */
-  --attention: #c96a00;
+  --attention: #a85a00;
   /* The fill of a destructive button (the text color of an error is --danger). */
   --destructive: #b3261e;
   --destructive-foreground: #ffffff;
 
-  --radius: 0.625rem;
-  --font-ui: "Segoe UI Variable", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-code: ui-monospace, "Cascadia Code", Menlo, Consolas, "Liberation Mono", monospace;
+  /* Square-ish: 4px, an instrument's corners, not a toy's. */
+  --radius: 0.25rem;
+  /* IBM Plex, bundled with the client (src/app/layout.tsx imports it; nothing is loaded from another site): Sans for words, Mono for what the machine reports. */
+  --font-ui: "IBM Plex Sans", system-ui, sans-serif;
+  --font-code: "IBM Plex Mono", ui-monospace, Consolas, monospace;
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --background: #0f0f10;
-  --foreground: #f4f4f5;
-  --card: #18181a;
-  --card-foreground: #f4f4f5;
-  --popover: #1d1d20;
-  --popover-foreground: #f4f4f5;
-  --muted: #1f1f22;
-  --muted-foreground: #a1a1a8;
-  --secondary: #26262a;
-  --secondary-foreground: #f4f4f5;
-  --accent: #2a2a2f;
-  --accent-foreground: #f4f4f5;
-  --border: #2c2c30;
-  --input: #6b6b75;
-  --ring: #8b8cf0;
+  --background: #0e0e0d;
+  --foreground: #ecece8;
+  --card: #151514;
+  --card-foreground: #ecece8;
+  --popover: #1b1b1a;
+  --popover-foreground: #ecece8;
+  --muted: #1c1c1b;
+  --muted-foreground: #a2a29b;
+  --secondary: #232321;
+  --secondary-foreground: #ecece8;
+  --accent: #272725;
+  --accent-foreground: #ecece8;
+  --border: #2a2a28;
+  --input: #6d6d66;
+  --ring: #ecece8;
 
-  --primary: #8b8cf0;
-  --primary-foreground: #0f0f10;
-  --primary-hover: #a3a4f5;
+  --primary: #ecece8;
+  --primary-foreground: #0e0e0d;
+  --primary-hover: #ffffff;
 
   --ok: #5fd28f;
   --ok-soft: #12301f;
@@ -81,7 +83,7 @@
   --danger-soft: #401b18;
   --info: #8db4f5;
   --info-soft: #1a2a42;
-  --attention: #f59e0b;
+  --attention: #f0a43a;
   --destructive: #c9302c;
   --destructive-foreground: #ffffff;
 }

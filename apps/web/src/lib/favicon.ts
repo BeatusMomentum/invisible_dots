@@ -3,8 +3,8 @@
  * read CSS variables, so the two colors are written here as the `--primary` and `--attention` values of tokens.css;
  * test/tokens.test.ts fails when they drift apart.
  */
-export const FAVICON_PRIMARY = "#5b5bd6";
-export const FAVICON_ATTENTION = "#c96a00";
+export const FAVICON_PRIMARY = "#161615";
+export const FAVICON_ATTENTION = "#a85a00";
 
 export function faviconHref(needsYou: boolean): string {
   const badge = needsYou ? `<circle cx="24" cy="8" r="7" fill="${FAVICON_ATTENTION}" stroke="#ffffff" stroke-width="2"/>` : "";

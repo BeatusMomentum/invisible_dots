@@ -37,7 +37,7 @@ export function PowerMenu({ dotId, computerState, taskRunning, onDone }: { dotId
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button type="button" variant="outline" size="sm" disabled={pending} aria-label={`Computer: ${computerState}. Power menu`}>
-          <span aria-hidden="true" className={cn("size-2 rounded-full bg-muted-foreground", STATE_DOT[computerState])} />
+          <span aria-hidden="true" className={cn("size-2 rounded-[3px] bg-muted-foreground", STATE_DOT[computerState])} />
           {computerState}
           <ChevronDownIcon />
         </Button>

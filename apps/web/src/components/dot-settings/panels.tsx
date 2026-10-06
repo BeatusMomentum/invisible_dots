@@ -95,7 +95,7 @@ export function ComputerPanel({ draft, saved, change, errorOf }: PanelProps) {
             {...control}
             value={computer.idle_timeout}
             onChange={(event) => change(setField(draft, "computer.idle_timeout", event.target.value))}
-            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs focus-visible:outline-hidden focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/80 sm:w-56"
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs focus-visible:outline-hidden focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring sm:w-56"
           >
             {IDLE_CHOICES.map((choice) => (
               <option key={choice.value} value={choice.value}>

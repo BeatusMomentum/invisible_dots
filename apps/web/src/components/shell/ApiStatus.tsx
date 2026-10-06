@@ -13,7 +13,7 @@ export function ApiStatus({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="space-y-0.5">
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground" role="status" title={state === "down" ? String(health.error instanceof Error ? health.error.message : health.error) : undefined}>
-        <span aria-hidden="true" className={cn("size-2 rounded-full", state === "ok" ? "bg-ok" : state === "down" ? "bg-danger" : "bg-muted-foreground")} />
+        <span aria-hidden="true" className={cn("size-2 rounded-[3px]", state === "ok" ? "bg-ok" : state === "down" ? "bg-danger" : "bg-muted-foreground")} />
         {label}
         {state === "ok" && health.data ? <span>v{health.data.version}</span> : null}
       </p>

@@ -18,8 +18,8 @@ import { Button } from "../ui/button";
 /** The marker of a browser the Dot is working in at this moment. */
 export function UsingNow() {
   return (
-    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-info-soft px-2 py-0.5 text-xs font-medium text-info">
-      <span aria-hidden="true" className="size-1.5 animate-pulse rounded-full bg-info motion-reduce:animate-none" />
+    <span className="inline-flex shrink-0 items-center gap-1.5 rounded-[3px] bg-info-soft px-2 py-0.5 text-xs font-medium text-info">
+      <span aria-hidden="true" className="size-1.5 animate-pulse rounded-[3px] bg-info motion-reduce:animate-none" />
       The Dot is using this now
     </span>
   );
@@ -28,8 +28,8 @@ export function UsingNow() {
 function StatusChip({ identity }: { identity: BrowserIdentity }) {
   const { label, tone } = identityStatus(identity.status);
   return (
-    <span className={cn("inline-flex w-fit items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium", TONE_CLASS[tone])}>
-      <span aria-hidden="true" className={cn("size-1.5 rounded-full", TONE_DOT[tone])} />
+    <span className={cn("inline-flex w-fit items-center gap-1.5 rounded-[3px] px-2 py-0.5 text-xs font-medium", TONE_CLASS[tone])}>
+      <span aria-hidden="true" className={cn("size-1.5 rounded-[3px]", TONE_DOT[tone])} />
       <span className="sr-only">Status: </span>
       {label}
     </span>

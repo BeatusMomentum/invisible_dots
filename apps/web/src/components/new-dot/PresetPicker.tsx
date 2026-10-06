@@ -20,7 +20,7 @@ export function PresetPicker({ permissions, onChange }: { permissions: Record<st
             <label
               key={id}
               className={cn(
-                "flex cursor-pointer flex-col gap-1 rounded-lg border bg-background p-3 text-sm transition-colors hover:bg-accent has-[:focus-visible]:ring-[3px] has-[:focus-visible]:ring-ring/80 has-[:focus-visible]:outline-hidden",
+                "flex cursor-pointer flex-col gap-1 rounded-lg border bg-background p-3 text-sm transition-colors hover:bg-accent has-[:focus-visible]:ring-[3px] has-[:focus-visible]:ring-ring has-[:focus-visible]:outline-hidden",
                 chosen === id && "border-primary bg-accent",
               )}
             >

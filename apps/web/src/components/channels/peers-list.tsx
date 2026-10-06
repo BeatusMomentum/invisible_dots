@@ -29,7 +29,7 @@ function PeerRow({ dotId, kind, peer, onChanged }: { dotId: string; kind: Channe
       <div className="min-w-0 flex-1 basis-48">
         <p className="text-sm font-medium break-words">
           {peer.label}
-          {peer.role === "owner" ? <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">Owner</span> : null}
+          {peer.role === "owner" ? <span className="ml-2 rounded-[3px] bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">Owner</span> : null}
         </p>
         <p className="text-xs break-all text-muted-foreground">
           {peer.label === peer.peer_id ? null : <>{peer.peer_id} · </>}

@@ -33,7 +33,7 @@ export function CopyButton({ text, label, className }: { text: string | (() => s
       onClick={() => void copy()}
       aria-label={copied ? "Copied" : label}
       className={cn(
-        "rounded-md border bg-card p-1 text-muted-foreground focus-visible:outline-hidden hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/80",
+        "rounded-md border bg-card p-1 text-muted-foreground focus-visible:outline-hidden hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
         className,
       )}
     >

@@ -6,8 +6,8 @@ import { TONE_CLASS, TONE_DOT } from "../dot/tone";
 export function ComputerStatus({ state }: { state: string }) {
   const tone = statusTone(state);
   return (
-    <span className={cn("inline-flex w-fit items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium", TONE_CLASS[tone])}>
-      <span aria-hidden="true" className={cn("size-1.5 rounded-full", TONE_DOT[tone])} />
+    <span className={cn("inline-flex w-fit items-center gap-1.5 rounded-[3px] px-2.5 py-0.5 text-xs font-medium", TONE_CLASS[tone])}>
+      <span aria-hidden="true" className={cn("size-1.5 rounded-[3px]", TONE_DOT[tone])} />
       <span className="sr-only">Computer state: </span>
       {state}
     </span>

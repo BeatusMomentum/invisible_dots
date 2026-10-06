@@ -10,7 +10,8 @@ export { ApiError };
 
 export type ComputerAction = "start" | "stop" | "reboot";
 
-export const api = new InvisibleDotsClient({ baseUrl: "" });
+// fetch is looked up at each call, not bound once: a test (or a polyfill) that replaces it later is the one used.
+export const api = new InvisibleDotsClient({ baseUrl: "", fetch: (input, init) => fetch(input, init) });
 
 export function computerAction(client: InvisibleDotsClient, dotId: string, action: ComputerAction): Promise<unknown> {
   switch (action) {
