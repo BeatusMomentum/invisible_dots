@@ -108,7 +108,7 @@ test("the browsers are made here, watched with the page the Dot is on, closed an
   await expect(card).toBeVisible();
   await expect(card.getByText(/^Status: Closed$/)).toBeVisible();
   // The password shows nowhere: not the form's field after it closes, nor the card.
-  await expect(card.getByText("http://***@proxy.example:8080")).toBeVisible();
+  await expect(card.getByText("http://user:***@proxy.example:8080")).toBeVisible();
   await expect(page.getByText("hunter2")).toHaveCount(0);
 
   // The Dot opens it: its window shows, without a bar page until the Dot has opened one.

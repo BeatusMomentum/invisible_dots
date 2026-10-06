@@ -120,7 +120,7 @@ describe("the screen", () => {
 describe("the browsers", () => {
   it("lists them open first, with the state in words, the proxy without its password and the time of last use", async () => {
     plane.identities = [
-      identity("closed-1", "Closed one", "available", { proxy: "http://user:***@proxy.example:8080", lastUsedAt: secondsAgo(3 * 3600) }),
+      identity("closed-1", "Closed one", "available", { proxy: "http://user:hunter2@proxy.example:8080", lastUsedAt: secondsAgo(3 * 3600) }),
       identity("open-1", "Open one", "open", { lastUsedAt: secondsAgo(120) }),
     ];
     await renderComputer({ view: "browser" });
@@ -135,9 +135,10 @@ describe("the browsers", () => {
     const closed = screen.getByRole("article", { name: "Closed one" });
     expect(within(closed).getByText("Closed")).toBeTruthy();
     expect(within(closed).getByText("3h ago")).toBeTruthy();
-    // The control plane already replaced the password; the page hides the user too.
-    expect(within(closed).getByText("http://***@proxy.example:8080")).toBeTruthy();
-    expect(within(closed).queryByText(/user/)).toBeNull();
+    // The control plane replaces the password before it answers; whatever reached the page, it is replaced again by the
+    // same rule (the shared package's, the engine's own), which keeps the user.
+    expect(within(closed).getByText("http://user:***@proxy.example:8080")).toBeTruthy();
+    expect(within(closed).queryByText(/hunter2/)).toBeNull();
   });
 
   it("explains the limits, and the empty case", async () => {

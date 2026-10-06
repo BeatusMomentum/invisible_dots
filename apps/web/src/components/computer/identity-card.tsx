@@ -1,11 +1,12 @@
 "use client";
 
+import { redactProxy } from "@invisible-dots/shared/browser";
 import { EyeIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "../../lib/api";
 import type { IdentityActivity } from "../../lib/browser-activity";
-import { formatDate, maskProxy } from "../../lib/format";
+import { formatDate } from "../../lib/format";
 import { identityStatus } from "../../lib/identity";
 import { relativeTime } from "../../lib/time";
 import type { BrowserIdentity } from "../../lib/types";
@@ -109,7 +110,7 @@ export function IdentityCard({
           )}
         </dd>
         <dt>Proxy</dt>
-        <dd>{identity.proxy ? <code>{maskProxy(identity.proxy)}</code> : "none"}</dd>
+        <dd>{identity.proxy ? <code>{redactProxy(identity.proxy)}</code> : "none"}</dd>
         <dt>Id</dt>
         <dd>
           <code>{identity.id}</code>

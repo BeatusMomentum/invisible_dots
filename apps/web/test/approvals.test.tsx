@@ -248,7 +248,7 @@ describe("what a tool's card shows", () => {
     plane.approvals = [];
 
     const identity = within(await renderCard(askOf("a2", { tool: "browser_identity_create", permission: "browser.identity.create", arguments: { name: "shop", proxy: "http://u:hunter2@proxy.example:8080" } })));
-    expect(identity.getByText("http://***@proxy.example:8080")).toBeTruthy();
+    expect(identity.getByText("http://u:***@proxy.example:8080")).toBeTruthy();
     // The password is in no text of the card, the raw arguments included.
     expect(identity.getByText("Details").closest("details")?.textContent).not.toContain("hunter2");
     cleanup();

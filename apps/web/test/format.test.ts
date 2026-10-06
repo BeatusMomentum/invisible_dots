@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { allowedActions, automationsNote, computerView, confirmText } from "../src/lib/computer";
-import { formatBytes, formatDuration, formatMillis, formatUsd, maskProxy, startOfToday, statusTone } from "../src/lib/format";
+import { formatBytes, formatDuration, formatMillis, formatUsd, startOfToday, statusTone } from "../src/lib/format";
 import type { DotConfig } from "../src/lib/types";
 
 const GIB = 1024 ** 3;
@@ -27,12 +27,6 @@ describe("format helpers", () => {
     expect(statusTone("WAITING_APPROVAL")).toBe("warn");
     expect(statusTone("STOPPED")).toBe("neutral");
     expect(statusTone("whatever")).toBe("neutral");
-  });
-
-  it("hides proxy credentials", () => {
-    expect(maskProxy("http://user:secret@proxy.example:8080")).toBe("http://***@proxy.example:8080");
-    expect(maskProxy("socks5://proxy.example:1080")).toBe("socks5://proxy.example:1080");
-    expect(maskProxy(undefined)).toBe("");
   });
 });
 

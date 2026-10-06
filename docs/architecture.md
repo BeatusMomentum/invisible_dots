@@ -2139,7 +2139,7 @@ the desktop as the chat's panel shows it (one `FrameView` draws both), with
 "The Dot has control". Browser lists the Dot's identities, open ones first
 (`GET /browser-identities`, read again on each `browser.identity.*` event, so a
 card is never refreshed by a second route): the state in words (Closed is the
-engine's `available`), the last use, the proxy with its user and password hidden,
+engine's `available`), the last use, the proxy with its password replaced (by `redactProxy`, the rule the engine uses; the web has no rule of its own),
 the window of an open one (`.../frame`, every 2 s while the page is in view)
 under a bar with the page the Dot last sent it to, and a mark "The Dot is using
 this now". Both come from the log, not from the identity routes, which know
