@@ -74,9 +74,21 @@ SERVER_NAME = "browser"
 # engine's download progress, and it is asked again.
 _OPENED = re.compile(r"\bbrowser is open\b", re.IGNORECASE)
 # What the server answers when its browser closed under it while the process lives on (Firefox crashed): its
-# GONE and NOT_OPEN sentences (invisible_playwright_mcp/mcp/__init__.py, in the MCP's own environment, so there
-# is nothing importable to call).
-_BROWSER_LOST = re.compile(r"\bbrowser is (?:gone|not open)\b", re.IGNORECASE)
+# GONE and NOT_OPEN sentences for the main browser (invisible_playwright_mcp/mcp/__init__.py, in the MCP's own
+# environment, so there is nothing importable to call; the browser smoke reads the real GONE sentence).
+# The sentence is the WHOLE error, behind the prefix FastMCP puts on what a tool raises. A phrase anywhere in
+# a longer error is not it: a failed click or select echoes text the page controls (the covering element's
+# text, the option asked for), and a page that says "the main browser is gone" must not close the identity.
+_BROWSER_LOST = re.compile(
+    r"(?:Error executing tool \w+: )?(?:"
+    + re.escape("the main browser is not open. Call browser_open to open it.")
+    + "|"
+    + re.escape(
+        "the main browser is gone: it closed or crashed. Call browser_open to open it again; "
+        "it comes back as the same person."
+    )
+    + ")"
+)
 
 # Why a session ended without a close of ours, as the log says it.
 _PROCESS_ENDED = "the MCP server exited unexpectedly"
@@ -733,7 +745,7 @@ class BrowserManager:
 
     @staticmethod
     def _is_browser_lost(result: Any) -> bool:
-        return result_is_error(result) and _BROWSER_LOST.search(result_text(result)) is not None
+        return result_is_error(result) and _BROWSER_LOST.fullmatch(result_text(result).strip()) is not None
 
     async def _close_ended(self, session: _Session, why: str) -> None:
         """Close the identity of a session that cannot be used any more, and emit `closed` once."""

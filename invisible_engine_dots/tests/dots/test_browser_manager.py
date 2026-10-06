@@ -701,6 +701,50 @@ async def test_a_browser_the_server_says_is_gone_closes_the_identity_and_is_not_
     assert [name for name, _ in env.calls(identity.id)] == ["browser_open", "browser_snapshot"]
 
 
+async def test_a_page_that_says_the_browser_is_gone_in_a_failed_click_does_not_close_the_identity(env: Env) -> None:
+    manager = env.manager()
+    identity = await manager.create("hostile overlay")
+    write_control(env.mcp_home(identity.id), overlay_says_gone=True)
+    await manager.launch(identity.id)
+
+    result = await manager.call_tool(identity.id, "browser_click", {"selector": "#go"})
+
+    # The error is the page's answer and passes through as it is; the identity stays open and nothing was closed.
+    assert result_is_error(result) and "the main browser is gone" in result_text(result)
+    assert manager.is_open(identity.id)
+    assert env.event_types() == ["browser.identity.created", "browser.identity.launched"]
+    follow_up = await manager.call_tool(identity.id, "browser_snapshot")
+    assert not result_is_error(follow_up)
+    assert [name for name, _ in env.calls(identity.id)] == ["browser_open", "browser_click", "browser_snapshot"]
+
+
+GONE_SENTENCE = (
+    "the main browser is gone: it closed or crashed. Call browser_open to open it again; "
+    "it comes back as the same person."
+)
+NOT_OPEN_SENTENCE = "the main browser is not open. Call browser_open to open it."
+
+
+@pytest.mark.parametrize(
+    ("text", "lost"),
+    [
+        (GONE_SENTENCE, True),
+        (NOT_OPEN_SENTENCE, True),
+        (f"Error executing tool browser_click: {GONE_SENTENCE}", True),
+        (f"Error executing tool browser_navigate: {NOT_OPEN_SENTENCE}\n", True),
+        # What a page controls inside a longer error: never the library's whole answer.
+        ('click failed: {"covered_by": {"text": "the main browser is gone"}}', False),
+        (f"Error executing tool browser_click: click on #a failed: {GONE_SENTENCE}", False),
+        (f"Error executing tool browser_click: {GONE_SENTENCE} and then some page text", False),
+        ("no option in #size has the value or the label 'the main browser is not open'", False),
+        ("the support browser is gone: it closed or crashed.", False),
+    ],
+)
+def test_only_the_librarys_whole_sentence_is_a_lost_browser(text: str, lost: bool) -> None:
+    assert BrowserManager._is_browser_lost(ToolResult.error(text)) is lost
+    assert BrowserManager._is_browser_lost(text) is False
+
+
 async def test_the_launch_that_follows_a_lost_browser_makes_a_new_server_and_the_identity_works_again(env: Env) -> None:
     manager = env.manager()
     identity = await manager.create("lost, then launched")

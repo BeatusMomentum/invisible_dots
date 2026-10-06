@@ -26,12 +26,14 @@ from nanobot.dots.engine import Engine
 from nanobot.dots.main import (
     DEFAULT_AGENT_SOCKET,
     DEFAULT_STATE_DIR,
+    GEOIP_MISSING,
     LOCK_FILE,
     LOCK_MISMATCH,
     REFUSAL,
     UPSTREAM_COMMIT,
     Environment,
-    GoldenLockError,
+    GoldenImageError,
+    check_golden_geoip,
     check_golden_lock,
     main,
     read_environment,
@@ -280,7 +282,7 @@ class TestTheGoldenLock:
         (source / LOCK_FILE).write_bytes(b"idna==3.21\n")
         (prefix / LOCK_FILE).write_bytes(b"idna==3.20\n")
 
-        with pytest.raises(GoldenLockError, match="another requirements lock: build a new golden image"):
+        with pytest.raises(GoldenImageError, match="another requirements lock: build a new golden image"):
             check_golden_lock(source, prefix)
 
     @pytest.mark.parametrize("present", ["source", "venv"])
@@ -288,7 +290,7 @@ class TestTheGoldenLock:
         source, prefix = self.trees(tmp_path)
         ((source if present == "source" else prefix) / LOCK_FILE).write_bytes(b"idna==3.20\n")
 
-        with pytest.raises(GoldenLockError):
+        with pytest.raises(GoldenImageError):
             check_golden_lock(source, prefix)
 
     def test_a_directory_in_the_place_of_a_lock_is_a_mismatch_not_a_crash(self, tmp_path: Path) -> None:
@@ -296,7 +298,7 @@ class TestTheGoldenLock:
         (source / LOCK_FILE).mkdir()
         (prefix / LOCK_FILE).write_bytes(b"idna==3.20\n")
 
-        with pytest.raises(GoldenLockError):
+        with pytest.raises(GoldenImageError):
             check_golden_lock(source, prefix)
 
     @pytest.mark.usefixtures("a_run_that_ends")
@@ -319,6 +321,62 @@ class TestTheGoldenLock:
 
         assert code == 1
         assert capsys.readouterr().err == f"refusing to start: {LOCK_MISMATCH}\n"
+        assert not state.exists()
+
+
+class TestTheGoldenGeoip:
+    """A golden image built before the GeoIP file was part of its contract is refused at start, with the way out."""
+
+    def runtime_disk(self, tmp_path: Path) -> Path:
+        source = tmp_path / "engine"
+        source.mkdir()
+        (source / LOCK_FILE).write_bytes(b"idna==3.20\n")
+        return source
+
+    def test_a_runtime_disk_on_an_image_with_the_file_starts(self, tmp_path: Path) -> None:
+        database = tmp_path / "geoip.mmdb"
+        database.write_bytes(b"mmdb")
+
+        check_golden_geoip(self.runtime_disk(tmp_path), str(database))
+
+    def test_a_runtime_disk_on_an_image_without_it_is_refused_and_says_what_to_do(self, tmp_path: Path) -> None:
+        with pytest.raises(GoldenImageError, match="no GeoIP database at .*missing.mmdb.*build a new golden image"):
+            check_golden_geoip(self.runtime_disk(tmp_path), str(tmp_path / "missing.mmdb"))
+
+    def test_a_directory_in_the_place_of_the_file_is_refused(self, tmp_path: Path) -> None:
+        database = tmp_path / "geoip.mmdb"
+        database.mkdir()
+
+        with pytest.raises(GoldenImageError):
+            check_golden_geoip(self.runtime_disk(tmp_path), str(database))
+
+    def test_a_development_checkout_has_no_lock_and_is_not_checked(self, tmp_path: Path) -> None:
+        source = tmp_path / "engine"
+        source.mkdir()
+
+        check_golden_geoip(source, str(tmp_path / "missing.mmdb"))
+
+    @pytest.mark.usefixtures("a_run_that_ends")
+    def test_main_refuses_to_start_before_it_opens_the_state(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # The locks agree and the image lacks the file: the refusal is this one, not a launch that fails later.
+        source, prefix = self.runtime_disk(tmp_path), tmp_path / "venv"
+        prefix.mkdir()
+        (prefix / LOCK_FILE).write_bytes(b"idna==3.20\n")
+        package = source / "nanobot"
+        package.mkdir()
+        (package / "__init__.py").write_bytes(b"")
+        monkeypatch.setattr(nanobot, "__file__", str(package / "__init__.py"))
+        monkeypatch.setattr(sys, "prefix", str(prefix))
+        database = str(tmp_path / "missing.mmdb")
+        monkeypatch.setattr("nanobot.dots.main.GEOIP_DATABASE", database)
+        state = tmp_path / "state"
+
+        code = main([], {"INVISIBLE_DOTS_ENGINE_STATE": str(state), "HOME": str(tmp_path / "home")})
+
+        assert code == 1
+        assert capsys.readouterr().err == f"refusing to start: {GEOIP_MISSING.format(path=database)}\n"
         assert not state.exists()
 
 

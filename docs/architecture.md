@@ -271,7 +271,12 @@ QEMU on the same disk would corrupt it.
   when the lock on the runtime disk differs from the venv's copy ("the golden
   image's Python environment was built from another requirements lock: build a
   new golden image"), so a runtime disk that needs another dependency never
-  runs on an older golden image.
+  runs on an older golden image. The start checks one more fact of the golden
+  image the same way: the GeoIP database at `GUEST_PATHS.geoipDatabase`, which
+  the browser layer is told to use as it is and which an image built before it
+  was part of the contract lacks. A runtime disk (the one that carries the lock)
+  refuses to start on such an image with "build a new golden image", instead of
+  a launch that fails behind a proxy or takes the VM's own timezone.
 - Every input of the golden image is pinned by content: the cloud image, Node
   and `uv` by SHA-256 (`virtualization/images/base.json`,
   `guest/image-builder/pins.json`), the GeoIP database as one release of
@@ -1370,7 +1375,9 @@ state.
   `browser_identity_launch` opens it again as the same person, on a blank page
   (the model cannot call `browser_open`; the launch is its way, and the one
   decision of whether a browser starts). A frame that finds the browser gone
-  closes the identity the same way. The manager hears of the end
+  closes the identity the same way. "Gone" is the library's own sentence as the
+  whole error of the call, not a phrase inside one: a failed click or select
+  echoes text the page controls, and a page that writes the sentence closes nothing. The manager hears of the end
   when it happens, from the client's transport, so a process that dies while idle
   is closed at once, frees its slot of `max_open`, and the next action says
   `not_open`; a file never claims an open browser for a process that is gone. Text
