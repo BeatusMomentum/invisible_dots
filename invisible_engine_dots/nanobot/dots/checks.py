@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import shutil
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
@@ -105,9 +106,5 @@ async def _can_connect(target: str, timeout_s: float) -> bool:
 
 
 def _is_installed(command: str, path: str) -> bool:
-    """Whether `command` names an executable file, directly or through `path`."""
-    if os.path.isabs(command) or "/" in command:
-        candidates = [command]
-    else:
-        candidates = [os.path.join(directory, command) for directory in path.split(os.pathsep) if directory]
-    return any(os.path.isfile(candidate) and os.access(candidate, os.X_OK) for candidate in candidates)
+    """Whether `command` names an executable file, directly or through `path` (the standard library's own lookup)."""
+    return shutil.which(command, path=path) is not None
