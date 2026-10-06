@@ -37,7 +37,13 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect(again.applied).toEqual([]);
     expect(again.alreadyApplied).toContain("0001_initial");
     const { rows } = await db.query<{ version: string }>("SELECT version FROM schema_migrations ORDER BY version");
-    expect(rows.map((r) => r.version)).toEqual(["0001_initial", "0002_inbound_events", "0003_task_spend"]);
+    expect(rows.map((r) => r.version)).toEqual([
+      "0001_initial",
+      "0002_inbound_events",
+      "0003_task_spend",
+      "0005_orphaned_secrets",
+      "0006_removed_config_names",
+    ]);
   });
 
   it("dots: unique names, resolve by id or name, status with error", async () => {

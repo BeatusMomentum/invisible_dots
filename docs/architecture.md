@@ -1352,6 +1352,16 @@ drew id 10 could commit after one that drew 11, and a client that resumed
 event and changes other rows inserts the event first, so the lock is never
 taken while holding a row lock another event writer waits for.
 
+Two migrations clean data written before a rule existed. `0005_orphaned_secrets`
+deletes the secrets scoped to a Dot that no longer exists (those of Dots deleted
+before `DotsRepository.delete` removed them). `0006_removed_config_names` removes
+from every stored `dots.config` the model roles other than `summary` and the five
+permission names that were deleted from `PERMISSIONS` (`web.fetch`, `web.search`,
+`subagents`, `message.send`, `memory.write`, section 7): `dots.config` is jsonb that
+is not parsed again on its way to the guest, so a stored name the schema no longer
+knows would reach the engine, which refuses the whole config, and would make every
+update of the Dot fail until the person removed it by hand.
+
 Tables: `dots`, `computers`, `tasks`, `task_runs`, `events`, `approvals`,
 `inbound_events`, `secrets`, `schema_migrations`. Migrations are plain SQL
 files applied in order at start.
@@ -1363,7 +1373,7 @@ files applied in order at start.
 - `events(id bigserial pk, dot_id, type, data jsonb, source 'host'|'guest', guest_seq bigint, created_at)`, unique `(dot_id, guest_seq)`
 - `approvals(id text pk, dot_id, task_id, tool, permission, arguments jsonb, reason, status 'pending'|'approved'|'rejected'|'expired', note, created_at, resolved_at)`: an approval whose task reached a terminal state before anyone decided is `expired`, in the same statement that ends the task, and an `approval.requested` for a task that is already terminal is stored as `expired`, never `pending`
 - `inbound_events(seq bigserial pk, id text unique, dot_id fk, type, data jsonb, ts, task_id, run_id, created_at, sent_at, delivered_at, dropped_at, drop_reason, failures int, last_error, retry_at)`: the outbox of host to guest events (section 9.2)
-- `secrets(scope text, name text, value_enc bytea, updated_at, pk(scope, name))`: `scope` is `global` or a dot id; no foreign key can cover that, so deleting a Dot deletes the secrets scoped to it in the same statement (`DotsRepository.delete`)
+- `secrets(scope text, name text, value_enc bytea, updated_at, pk(scope, name))`: `scope` is `global` or a dot id; no foreign key can cover that, so deleting a Dot deletes the secrets scoped to it in the same statement (`DotsRepository.delete`); the migration `0005_orphaned_secrets` deleted those of Dots removed before that
 
 Secrets are encrypted with AES-256-GCM under `master.key`. The OpenRouter key
 is looked up as `(<dot_id>, openrouter_api_key)` first, then
