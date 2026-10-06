@@ -717,7 +717,7 @@ it, and to whom:
   themselves.
 - **The sites a Dot visits** see its browser, coming from the egress of the Dot's
   VM, or from the identity's proxy when you gave that one identity a proxy.
-- **Publishers of what the images are made of** (Ubuntu, Node, uv, the Python
+- **Publishers of what the images are made of** (Ubuntu, uv, the Python
   packages, the browser engine) serve the downloads
   when you build them; on Windows, `setup` downloads the official QEMU
   installer.

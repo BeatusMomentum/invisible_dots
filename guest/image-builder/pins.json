@@ -1,11 +1,4 @@
 {
-  "node": {
-    "version": "24.21.0",
-    "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz",
-    "shasums_url": "https://nodejs.org/dist/v24.21.0/SHASUMS256.txt",
-    "shasums_entry": "node-v24.21.0-linux-x64.tar.xz",
-    "sha256": "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6"
-  },
   "uv": {
     "version": "0.12.22",
     "url": "https://github.com/astral-sh/uv/releases/download/0.12.22/uv-x86_64-unknown-linux-gnu.tar.gz",
@@ -24,7 +17,6 @@
     "xfwm4",
     "xfdesktop4",
     "xfce4-panel",
-    "xfce4-terminal",
     "dbus-x11",
     "libgtk-3-0t64",
     "libdbus-glib-1-2",
@@ -32,17 +24,6 @@
     "fonts-dejavu-core",
     "imagemagick",
     "ca-certificates",
-    "curl",
-    "git",
-    "xz-utils",
-    "nftables",
-    "jq",
-    "file",
-    "less",
-    "nano",
-    "rsync",
-    "zstd",
-    "lsof",
-    "iputils-ping"
+    "nftables"
   ]
 }

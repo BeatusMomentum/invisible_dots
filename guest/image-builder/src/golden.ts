@@ -199,7 +199,6 @@ async function buildLocked(options: GoldenBuildOptions & Resolved, target: Targe
     await fetchVerified({ url: pin.url, sha256: pin.sha256, sumsUrl: pin.shasums_url, sumsEntry: pin.shasums_entry }, dest, downloads);
     return dest;
   };
-  const nodeTarball = await fetchPinned(pins.node);
   const uvTarball = await fetchPinned(pins.uv);
   const tunnelBinary = await fetchPinned(pins.tunnel);
 
@@ -228,7 +227,6 @@ async function buildLocked(options: GoldenBuildOptions & Resolved, target: Targe
         provision: target.provision,
         pythonLock: target.pythonLock,
         python: target.python,
-        nodeTarball,
         uvTarball,
         tunnelBinary,
         engineLock: target.engineLock,
@@ -261,7 +259,6 @@ async function buildLocked(options: GoldenBuildOptions & Resolved, target: Targe
       inputs_digest: target.digest,
       base,
       pinned: {
-        node: { version: pins.node.version, sha256: pins.node.sha256, url: pins.node.url },
         uv: { version: pins.uv.version, sha256: pins.uv.sha256, url: pins.uv.url },
         tunnel: { version: pins.tunnel.version, sha256: pins.tunnel.sha256, url: pins.tunnel.url },
         "invisible-playwright-mcp": target.python.mcpVersion,

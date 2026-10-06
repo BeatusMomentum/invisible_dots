@@ -35,7 +35,6 @@ export interface BaseImagePin {
  * with their hashes, and is the one place their versions live (python-lock.ts).
  */
 export interface GuestPins {
-  node: PinnedDownload;
   uv: PinnedDownload;
   /** hev-socks5-tunnel, the static binary the guest routes the whole VM through when the Dot has a VM proxy. */
   tunnel: PinnedDownload;
@@ -121,7 +120,6 @@ export function parseGuestPins(value: unknown): GuestPins {
   const apt = o.apt_packages;
   if (!Array.isArray(apt) || apt.length === 0) throw new Error(`${where}: apt_packages must be a non-empty array`);
   return {
-    node: parseDownload(o.node, `${where} node`),
     uv: parseDownload(o.uv, `${where} uv`),
     tunnel: parseDownload(o.tunnel, `${where} tunnel`),
     apt_packages: apt.map((name, i) => plainWord(typeof name === "string" ? name : "", `${where} apt_packages[${i}]`)),

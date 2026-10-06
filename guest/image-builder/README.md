@@ -15,7 +15,7 @@ image's SHA-256; `invisible-dots doctor` checks an image against it with
 `buildGoldenImage({ qemu, accelerator, runner })`:
 
 1. Downloads the Ubuntu 24.04 cloud image pinned in
-   `virtualization/images/base.json` and the Node, uv and hev-socks5-tunnel
+   `virtualization/images/base.json` and the uv and hev-socks5-tunnel
    downloads pinned in `pins.json`, with Node's fetch. Each published checksum list
    (`SHA256SUMS`, `SHASUMS256.txt`, uv's `.sha256`) must name the pinned hash
    before the download starts, and the downloaded bytes must hash to it (Node
@@ -33,7 +33,9 @@ image's SHA-256; `invisible-dots doctor` checks an image against it with
    same machine, CPU model and devices as a Dot (its command line is built
    from the vm-manager's `machineArgs()`). `provision.sh` installs the
    apt packages (Xvfb, a minimal XFCE, the browser's libraries, ImageMagick
-   for dot-agentd's screenshots), Node, uv, then builds the Dot's browser with
+   for dot-agentd's screenshots), uv, then removes the cloud image's services a
+   Dot never uses (snapd, unattended-upgrades, apport, the LXD stubs, Ubuntu Pro,
+   the release upgrader, the SSH server), then builds the Dot's browser with
    `build-browser-env.sh <lock> ~dot/.local/share/invisible-dots/mcp`, as user
    `dot`: a virtual environment filled with
    `uv pip install --require-hashes -r mcp-requirements.lock`, its

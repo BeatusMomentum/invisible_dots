@@ -248,7 +248,7 @@ QEMU on the same disk would corrupt it.
 
 - The **golden image** carries the operating system and third-party software:
   Ubuntu 24.04, Xvfb and a minimal XFCE session, the libraries
-  the browser needs, Node 24, `uv`, `invisible-playwright-mcp` in its own
+  the browser needs, `uv`, `invisible-playwright-mcp` in its own
   Python environment, the browser engine already downloaded (the library
   keeps its own GeoIP database, fetched from its release at a launch), and the Python
   environment of the Dot's engine (`/opt/invisible-dots-engine`). It changes
@@ -273,8 +273,8 @@ QEMU on the same disk would corrupt it.
   code is ours to change often, so a change to it is a new ISO and not an hour
   of golden build (the engine's source is not an input of the golden digest).
   A runtime disk that needs another dependency needs a new golden image.
-- Every input of the golden image is pinned by content: the cloud image, Node
-  and `uv` by SHA-256 (`virtualization/images/base.json`,
+- Every input of the golden image is pinned by content: the cloud image, `uv`
+  and the tunnel by SHA-256 (`virtualization/images/base.json`,
   `guest/image-builder/pins.json`), and the whole Python environment of
   `invisible-playwright-mcp`, transitive packages included, by
   `guest/image-builder/builder/mcp-requirements.lock`, every package at an
@@ -2748,7 +2748,7 @@ drift from the lockfile. QEMU (GPL-2.0) is installed
 from the official Windows installer or the distribution's package and is only
 ever run as a separate program; it is never linked into, bundled with or
 shipped by this project. The guest operating system (the Ubuntu cloud image),
-Node, `uv`, the browser engine, `invisible-playwright-mcp` with its Python
+`uv`, the browser engine, `invisible-playwright-mcp` with its Python
 packages, and the Python packages the engine's lock
 (`guest/image-builder/builder/engine-requirements.lock`) names are
 downloaded from their publishers when the golden image is built, each under

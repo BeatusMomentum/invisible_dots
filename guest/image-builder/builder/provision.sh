@@ -38,15 +38,17 @@ apt-get "${apt_wait[@]}" update
 # unsafe-io: no fsync per package, the builder VM is thrown away if the build fails anyway.
 apt-get "${apt_wait[@]}" -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends $APT_PACKAGES
 
-step "installing Node $NODE_VERSION"
-node_root=/usr/local/lib/nodejs
-mkdir -p "$node_root"
-tar -xJf "$payload/$NODE_TARBALL" -C "$node_root"
-ln -sfn "$node_root/node-v$NODE_VERSION-linux-x64" "$node_root/current"
-for bin in node npm npx corepack; do
-  ln -sf "$node_root/current/bin/$bin" "/usr/local/bin/$bin"
+step "removing what a Dot never uses"
+# Services of the cloud image that would run in every Dot for nothing: snaps, automatic upgrades (apt in the
+# background of each Dot), crash reports, the LXD stubs, Ubuntu Pro, release upgrades and an SSH server nobody
+# logs into. Purged one by one without --auto-remove, so nothing else goes with them.
+for package in snapd unattended-upgrades apport apport-core-dump-handler lxd-installer lxd-agent-loader \
+  ubuntu-pro-client ubuntu-release-upgrader-core openssh-server; do
+  if dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q "install ok installed"; then
+    apt-get "${apt_wait[@]}" purge -y "$package"
+  fi
 done
-[ "$(/usr/local/bin/node --version)" = "v$NODE_VERSION" ] || { console "node reports $(/usr/local/bin/node --version)"; false; }
+rm -rf /snap /var/snap /var/lib/snapd
 
 step "installing uv $UV_VERSION"
 uv_tmp="$(mktemp -d)"
@@ -104,7 +106,6 @@ step "recording installed versions"
 . /etc/os-release
 component ubuntu "$VERSION_ID"
 component kernel "$(uname -r)"
-component node "$(/usr/local/bin/node --version)"
 component uv "$(/usr/local/bin/uv --version)"
 component hev-socks5-tunnel "$TUNNEL_VERSION"
 component invisible-playwright-mcp "$MCP_VERSION"

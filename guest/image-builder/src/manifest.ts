@@ -32,7 +32,6 @@ export interface GoldenManifest {
   base: BaseImagePin;
   /** The pinned inputs, as they were when the image was built. */
   pinned: {
-    node: PinnedComponent;
     uv: PinnedComponent;
     tunnel: PinnedComponent;
     "invisible-playwright-mcp": string;
@@ -43,7 +42,7 @@ export interface GoldenManifest {
   };
   /** The engine's Python environment (builder/engine-requirements.lock): the lock the runtime disk's copy must equal. */
   engine: { lock_sha256: string };
-  /** What the provisioner reported it installed (node, uv, browser-engine, ubuntu, kernel, ...). */
+  /** What the provisioner reported it installed (uv, browser-engine, ubuntu, kernel, ...). */
   installed: Record<string, string>;
   builder: { accelerator: string };
 }

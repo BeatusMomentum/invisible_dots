@@ -1,7 +1,7 @@
 #cloud-config
 # Seed of the one-off builder VM that turns the Ubuntu cloud image into a
 # golden image. The seed disk (label cidata) also carries provision.sh, pins.env
-# and the Node and uv tarballs: runcmd mounts it again and runs the
+# and the pinned downloads: runcmd mounts it again and runs the
 # provisioner, which reports on the serial console and powers the VM off.
 hostname: idots-golden-builder
 # No user gets a sudo rule here: provision.sh runs as root and reaches dot

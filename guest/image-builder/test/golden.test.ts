@@ -13,18 +13,16 @@ import { fakeRunner, type VmScript } from "./fake-runner.js";
 import { sha256, startFakeHttp, type FakeHttp } from "./http-fixture.js";
 
 const BASE = Buffer.from("QFI\xfb pretend qcow2 cloud image ".repeat(4000), "latin1");
-const NODE = Buffer.from("node tarball ".repeat(1000));
 const UV = Buffer.from("uv tarball ".repeat(1000));
 const TUNNEL = Buffer.from("tunnel binary ".repeat(1000));
-const NODE_FILE = "node-v24.21.0-linux-x64.tar.xz";
 const UV_FILE = "uv-x86_64-unknown-linux-gnu.tar.gz";
 const TUNNEL_FILE = "hev-socks5-tunnel-linux-x86_64";
 
 const OK_CONSOLE = [
   "[    0.000000] Linux version 6.8.0",
   "idots-build: installing packages: xvfb",
-  "idots-build: installing Node 24.21.0",
-  "IDOTS-BUILD-COMPONENT: node=v24.21.0",
+  "idots-build: installing uv 0.12.22",
+  "IDOTS-BUILD-COMPONENT: uv=uv 0.12.22",
   "IDOTS-BUILD-COMPONENT: browser-engine=151.0",
   "IDOTS-BUILD-RESULT: ok",
   "[  300.1] reboot: Power down",
@@ -41,8 +39,6 @@ beforeEach(async () => {
   http = await startFakeHttp({
     "/noble/base.img": { body: BASE },
     "/noble/SHA256SUMS": { body: `${sha256(BASE)} *base.img\n` },
-    [`/node/${NODE_FILE}`]: { body: NODE },
-    "/node/SHASUMS256.txt": { body: `${sha256(NODE)}  ${NODE_FILE}\n` },
     [`/uv/${UV_FILE}`]: { body: UV },
     [`/tunnel/${TUNNEL_FILE}`]: { body: TUNNEL },
     [`/uv/${UV_FILE}.sha256`]: { body: `${sha256(UV)} *${UV_FILE}\n` },
@@ -60,7 +56,6 @@ beforeEach(async () => {
     local_name: "noble-minimal-cloudimg-amd64.img",
   };
   pins = {
-    node: { version: "24.21.0", url: http.url(`/node/${NODE_FILE}`), shasums_url: http.url("/node/SHASUMS256.txt"), shasums_entry: NODE_FILE, sha256: sha256(NODE) },
     uv: { version: "0.12.22", url: http.url(`/uv/${UV_FILE}`), shasums_url: http.url(`/uv/${UV_FILE}.sha256`), shasums_entry: UV_FILE, sha256: sha256(UV) },
     tunnel: { version: "2.18.0", url: http.url(`/tunnel/${TUNNEL_FILE}`), sha256: sha256(TUNNEL) },
     apt_packages: ["xvfb", "imagemagick"],
@@ -119,7 +114,7 @@ describe("buildGoldenImage", () => {
       expect.arrayContaining(["-accel", "kvm", "-cpu", "host,-vmx,-svm", "-m", String(GOLDEN_DEFAULTS.memoryMib), "-smp", String(GOLDEN_DEFAULTS.cpus)]),
     );
     // The seed carried the pinned downloads.
-    expect(seedSize).toBeGreaterThan(NODE.length + UV.length + TUNNEL.length);
+    expect(seedSize).toBeGreaterThan(UV.length + TUNNEL.length);
 
     expect(await readFile(result.image)).toEqual(BASE);
     expect((await stat(result.image)).mode & 0o222).toBe(0);
@@ -134,7 +129,6 @@ describe("buildGoldenImage", () => {
       built_at: "2026-10-02T12:34:56.000Z",
       base: { sha256: sha256(BASE), serial: "20260926" },
       pinned: {
-        node: { version: "24.21.0", sha256: sha256(NODE) },
         uv: { version: "0.12.22", sha256: sha256(UV) },
         "invisible-playwright-mcp": "0.70.2",
         "invisible-playwright": "0.25.7",
@@ -142,18 +136,18 @@ describe("buildGoldenImage", () => {
       },
       // The engine's lock, which the runtime disk's copy must equal.
       engine: { lock_sha256: sha256(await readFile(join(defaultAssetRoot(), BUILDER_ENGINE_LOCK))) },
-      installed: { node: "v24.21.0", "browser-engine": "151.0" },
+      installed: { uv: "uv 0.12.22", "browser-engine": "151.0" },
       builder: { accelerator: "kvm" },
     });
     expect(result.version.endsWith(manifest.inputs_digest)).toBe(true);
     expect(await verifyImage(result.image)).toMatchObject({ ok: true });
 
     // The guest's progress reached the person; the work directory and the lock are gone.
-    expect(logs).toEqual(expect.arrayContaining(["guest: installing packages: xvfb", "guest: installing Node 24.21.0"]));
+    expect(logs).toEqual(expect.arrayContaining(["guest: installing packages: xvfb", "guest: installing uv 0.12.22"]));
     expect((await readdir(paths.imagesDir)).sort()).toEqual(
       [".cache", "noble-minimal-cloudimg-amd64.img", `golden-${result.version}.json`, `golden-${result.version}.qcow2`].sort(),
     );
-    expect((await readdir(join(paths.imagesDir, ".cache"))).sort()).toEqual([NODE_FILE, TUNNEL_FILE, UV_FILE].sort());
+    expect((await readdir(join(paths.imagesDir, ".cache"))).sort()).toEqual([TUNNEL_FILE, UV_FILE].sort());
   });
 
   it("does nothing when an image for the same inputs exists", async () => {

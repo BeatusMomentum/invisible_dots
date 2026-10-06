@@ -24,8 +24,7 @@ export interface BuilderSeedInput {
   /** builder/mcp-requirements.lock, as read, and what it pins. */
   pythonLock: Uint8Array;
   python: PythonLock;
-  /** Host paths of the verified tarballs, streamed into the image. */
-  nodeTarball: string;
+  /** Host path of the verified uv tarball, streamed into the image. */
   uvTarball: string;
   /** The verified hev-socks5-tunnel binary (pins.tunnel). */
   tunnelBinary: string;
@@ -44,8 +43,6 @@ export interface BuilderSeedInput {
  */
 export function pinsEnv(pins: GuestPins, python: PythonLock): string {
   const values: Array<[string, string]> = [
-    ["NODE_VERSION", pins.node.version],
-    ["NODE_TARBALL", downloadFileName(pins.node)],
     ["UV_VERSION", pins.uv.version],
     ["UV_TARBALL", downloadFileName(pins.uv)],
     ["TUNNEL_VERSION", pins.tunnel.version],
@@ -78,7 +75,6 @@ export function builderSeedEntries(input: BuilderSeedInput): IsoEntry[] {
     { path: "provision.sh", data: input.provision },
     { path: "pins.env", data: pinsEnv(input.pins, input.python) },
     { path: SEED_PYTHON_LOCK, data: input.pythonLock },
-    { path: downloadFileName(input.pins.node), file: input.nodeTarball },
     { path: downloadFileName(input.pins.uv), file: input.uvTarball },
     { path: downloadFileName(input.pins.tunnel), file: input.tunnelBinary },
     { path: SEED_ENGINE_LOCK, data: input.engineLock },

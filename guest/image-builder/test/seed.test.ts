@@ -23,8 +23,6 @@ afterEach(async () => {
 describe("pins.env", () => {
   it("carries every value provision.sh reads, single-quoted", async () => {
     const text = pinsEnv(GUEST_PINS, python);
-    expect(text).toContain(`NODE_VERSION='${GUEST_PINS.node.version}'\n`);
-    expect(text).toContain(`NODE_TARBALL='node-v${GUEST_PINS.node.version}-linux-x64.tar.xz'\n`);
     expect(text).toContain(`UV_VERSION='${GUEST_PINS.uv.version}'\n`);
     expect(text).toContain("UV_TARBALL='uv-x86_64-unknown-linux-gnu.tar.gz'\n");
     // The two Python versions come from the lock, the one place they are written.
@@ -49,9 +47,7 @@ describe("pins.env", () => {
 
 describe("the builder seed", () => {
   it("holds the NoCloud files, the provisioner, its pins, the Python lock, the pinned downloads, the engine's lock with the script that builds its environment, and the script that builds the browser", async () => {
-    const nodeTarball = join(dir, "node.tar.xz");
     const uvTarball = join(dir, "uv.tar.gz");
-    await writeFile(nodeTarball, "node bytes");
     await writeFile(uvTarball, "uv bytes");
     const tunnelBinary = join(dir, "hev");
     await writeFile(tunnelBinary, "hev bytes");
@@ -67,7 +63,6 @@ describe("the builder seed", () => {
       provision,
       pythonLock,
       python,
-      nodeTarball,
       uvTarball,
       tunnelBinary,
       engineLock,
@@ -81,7 +76,6 @@ describe("the builder seed", () => {
       "provision.sh",
       "pins.env",
       "mcp-requirements.lock",
-      `node-v${GUEST_PINS.node.version}-linux-x64.tar.xz`,
       "uv-x86_64-unknown-linux-gnu.tar.gz",
       "hev-socks5-tunnel-linux-x86_64",
       "engine-requirements.lock",
@@ -90,11 +84,11 @@ describe("the builder seed", () => {
     ]);
     expect(entries[0]).toEqual({ path: "user-data", data: userData });
     expect(entries[4]).toEqual({ path: "mcp-requirements.lock", data: pythonLock });
-    expect(entries[5]).toEqual({ path: entries[5]!.path, file: nodeTarball });
-    expect(entries[7]).toEqual({ path: "hev-socks5-tunnel-linux-x86_64", file: tunnelBinary });
-    expect(entries[8]).toEqual({ path: "engine-requirements.lock", data: engineLock });
-    expect(entries[9]).toEqual({ path: "build-engine-env.sh", data: engineBuild });
-    expect(entries[10]).toEqual({ path: "build-browser-env.sh", data: browserBuild });
+    expect(entries[5]).toEqual({ path: entries[5]!.path, file: uvTarball });
+    expect(entries[6]).toEqual({ path: "hev-socks5-tunnel-linux-x86_64", file: tunnelBinary });
+    expect(entries[7]).toEqual({ path: "engine-requirements.lock", data: engineLock });
+    expect(entries[8]).toEqual({ path: "build-engine-env.sh", data: engineBuild });
+    expect(entries[9]).toEqual({ path: "build-browser-env.sh", data: browserBuild });
 
     // The real writer accepts it under the label NoCloud looks for.
     const summary = await writeIso(join(dir, "seed.iso"), entries, { volumeId: SEED_VOLUME_ID });
