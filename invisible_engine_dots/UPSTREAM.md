@@ -220,3 +220,15 @@ every other command). It is described in docs/architecture.md, section 8.8.
 - agent/runner.py: `AgentRunSpec.request_attachments` takes the messages of one model
   request and returns the ones to send. The Dot uses it to show the newest screenshots of
   a turn (nanobot/dots/images.py) without them entering the transcript.
+
+## What the automations change: runs missed while the computer was off
+
+- cron/service.py: `_recompute_next_runs` no longer counts a next run from now for every enabled job at
+  start: only for a job that has none. A next run already stored, in the past or not, is kept, so the
+  first tick runs a job that came due while no process ran once (a one-time job, which has no next
+  run once its time passed, ran never before) and counts its next run from that moment, one run for
+  all the occurrences a recurring job missed. `CronService(on_next_wake=...)` is told the earliest
+  next run of the enabled jobs (None when there is none) each time the timer is armed, which is
+  after every change and every tick; a failure of the callback is logged and the jobs go on. The Dot
+  uses it to tell the host (`Engine.automations_next_run`, the `automation.next_run` event; docs/architecture.md
+  sections 5.4, 8.8 and 9.5).

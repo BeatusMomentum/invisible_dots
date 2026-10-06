@@ -20,13 +20,17 @@ disk lay them out. This smoke does, in one Linux container, with no QEMU:
   that run as `dot` and end with the call that started them (cancel, terminate,
   SIGTERM within systemd's 30 s), a program on a pseudo-terminal (`exec` with `tty`) that
   sees an 80x24 terminal and is answered through `exec_session`, its output read as the
-  screen's text with no escape sequence, approvals that survive a crash, the cost cap that
+  screen's text with no escape sequence and whose `tool.called` says `tty`, an automation whose time passed while the engine was
+  off (run once at the next start, with the `automation.next_run` the host is told on the way, and not again after a `kill -9`),
+  approvals that survive a crash, the cost cap that
   stops a task and a chat turn and still holds after a crash, the `spent_usd` the
   events of tasks and chat answers carry, the `target` of `tool.called` (the command with
   its credential masked, a token flag and a `curl -U` proxy login alike, the path a file tool wrote and none of the content), the tools offered
-  for each permission map, the summary of an outgrown thread going to the
+  for each permission map (and `GET /tools` through `dot-agentd` saying the same, with `GET /automations` and its refusals), the summary of an outgrown thread going to the
   `models.summary` model with no tool in the request, the text sent to the model, the key reaching no file,
-  log or process environment, the browser seams (below), and the engine refusing to start on a lock that is not
+  log or process environment, the browser seams (below), the host's file routes (the TCP port) refusing a symbolic link
+  under home that leads to `/proc/<pid>/environ`, the token file or `/etc` while the engine's socket
+  still follows it, and the engine refusing to start on a lock that is not
   the golden image's or on a key in a dotenv file.
 
 ## The browser seams
@@ -62,7 +66,10 @@ and the checks read that file. What they pin:
   none open, with no call made to find out;
 - a proxy password is in no approval, event, engine log or `dot-agentd` log, and on no process's command line (the
   relay is told the variable's name, `--env-from`, and reads the value from its own environment); `/health` counts the identities
-  and the open ones.
+  and the open ones;
+- a server's home is `/var/lib/invisible-dots/mcp/<identity_id>`, outside `/home/dot`, and a delete removes it; the stand-in
+  saves the proxy with its password in `sessions/<identity_id>.json` there, as the real server does, and the TCP port refuses
+  that file, its directory and a link to it with `403 outside_home`.
 
 The real server and a real Firefox are not run by this smoke: they are the browser smoke's (below).
 
@@ -102,12 +109,12 @@ engine, the GeoIP file) and at a launch (the egress address, for the timezone). 
 - Firefox killed under a live server: the model's next page action is answered that the browser is gone and to
   launch the identity again, nothing is reopened (no Firefox), the identity is closed with its server ended, and
   a launch brings back the same person (the seed file is unchanged);
-- a proxy without a port is refused at create (400), and an identity with a proxy (a small authenticating proxy
-  of the smoke, `browser/proxy.py`) launches: its egress lookup went through the proxy with the credentials, and
-  `/home/dot` is searched for the password. The one file that holds it is the MCP server's own session file
-  (`<identity>/mcp/sessions/<id>.json`): a KNOWN FINDING of `invisible-playwright-mcp` (it saves the whole proxy),
-  marked in the check and printed on every run, until it is fixed upstream; the check fails for any other file
-  (the profile, a cache, a log);
+- a proxy without a port is refused at create (400), and an identity with a proxy (a small authenticating
+  proxy of the smoke, `browser/proxy.py`, whose credentials come by its environment) launches: its egress
+  lookup went through the proxy with the credentials. The real server saves the proxy with its password in
+  its session file under its home (`/var/lib/invisible-dots/mcp/<id>/sessions/<id>.json`, outside
+  `/home/dot`): no file under `/home/dot` holds the password, the TCP port refuses the file (`403
+  outside_home`), the identity's directory has no MCP home, and a delete removes the home;
 - the key is in no file, process environment or log, the browser's included, and the identity's
   events are all in the stream.
 

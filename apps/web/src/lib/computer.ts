@@ -51,6 +51,16 @@ export function computerView(
   };
 }
 
+/**
+ * What the person is asked before a power action that is not a start. Stopping says what it costs: a computer the
+ * person stopped runs none of its automations until the person starts it again (architecture section 9.5).
+ */
+export function confirmText(action: "stop" | "reboot"): string {
+  return action === "stop"
+    ? "Stop this Dot's computer? Its automations do not run while it is stopped; start it again to resume them."
+    : "Reboot this Dot's computer?";
+}
+
 /** Which power buttons make sense in a state. Unknown states enable everything and let the API decide. */
 export function allowedActions(state: string): { start: boolean; stop: boolean; reboot: boolean } {
   switch (state) {

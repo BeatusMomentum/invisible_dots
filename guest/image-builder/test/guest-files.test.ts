@@ -255,6 +255,13 @@ describe("guest units", () => {
     expect(text("builder/user-data.yaml")).toMatch(/- name: dotengine\n[\s\S]*?groups: \[dot\]/);
   });
 
+  it("the provisioner and install.sh make the home of the MCP servers, dot's, outside the home the host reads", () => {
+    expect(GUEST_PATHS.mcpHomes.startsWith(`${GUEST_PATHS.home}/`)).toBe(false);
+    for (const file of ["builder/provision.sh", "runtime/install.sh"]) {
+      expect(text(file), file).toContain(`install -d -o dot -g dot -m 0700 ${GUEST_PATHS.mcpHomes}\n`);
+    }
+  });
+
   it("install.sh refuses a golden image without the engine's environment", () => {
     const install = text("runtime/install.sh");
     expect(install).toContain("[ -x /opt/invisible-dots-engine/bin/python ] || die ");

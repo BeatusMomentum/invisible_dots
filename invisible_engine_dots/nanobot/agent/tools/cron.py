@@ -15,7 +15,7 @@ from nanobot.agent.tools.schema import (
     tool_parameters_schema,
 )
 from nanobot.cron.service import CronService
-from nanobot.cron.types import CronJobState, CronSchedule
+from nanobot.cron.types import MAX_RUN_AT_MS, CronJobState, CronSchedule
 
 _CRON_PARAMETERS = tool_parameters_schema(
     action=StringSchema("Action to perform", enum=["add", "list", "remove"]),
@@ -155,6 +155,8 @@ class CronTool(Tool):
             if every_seconds <= 0:
                 return ToolResult.error("Error: every_seconds must be a positive integer")
             schedule = CronSchedule(kind="every", every_ms=every_seconds * 1000)
+            if int(time.time() * 1000) + schedule.every_ms > MAX_RUN_AT_MS:
+                return ToolResult.error("Error: every_seconds is so long that the next run would be past the year 9999")
         elif cron_expr:
             effective_tz = tz or self._default_timezone
             if err := self._validate_timezone(effective_tz):
@@ -177,6 +179,8 @@ class CronTool(Tool):
                     f"Error: one-time job time '{at}' is not in the future. "
                     "Retry with a future ISO datetime computed from the current time."
                 )
+            if at_ms > MAX_RUN_AT_MS:
+                return ToolResult.error(f"Error: one-time job time '{at}' is past the year 9999")
             schedule = CronSchedule(kind="at", at_ms=at_ms)
             delete_after = True
         else:

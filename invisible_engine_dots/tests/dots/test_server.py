@@ -16,15 +16,18 @@ from typing import Any
 
 import aiohttp
 import pytest
+from fakes.browser_manager import mcp_home
 from fakes.dot_config import ALLOW_ALL, runtime_config_body
 from fakes.engine_harness import EngineHarness, user_message
 from fakes.fake_mcp_server import write_control
 from fakes.scripted_provider import call, calls, says
 from loguru import logger
 
+from nanobot.cron.types import CronJob, CronPayload, CronSchedule
 from nanobot.dots import store as s
 from nanobot.dots.browser import BrowserIdentityError
 from nanobot.dots.checks import GuestChecks
+from nanobot.dots.permissions import TOOL_PERMISSIONS, offered_tools
 from nanobot.dots.server import AgentServer
 
 MakeEngine = Callable[..., EngineHarness]
@@ -98,14 +101,17 @@ async def make_api(make_engine: MakeEngine) -> AsyncIterator[Callable[..., Any]]
         h = make_engine(script, key=key, stop_grace_s=stop_grace_s, browser=browser)
         if started:
             h.engine.start()
+        # Running, as it is in the process: a stopped service replays its action log over every read.
+        await h.cron.start()
         # A short directory: a unix socket path has a small limit that pytest's tmp_path can exceed.
         directory = Path(tempfile.mkdtemp(prefix="dots-sock-"))
         socket_path = directory / "agent.sock"
-        server = AgentServer(engine=h.engine, key_holder=h.keys, checks=fixed_checks, **options)
+        server = AgentServer(engine=h.engine, key_holder=h.keys, checks=fixed_checks, automations=h.cron, **options)
         await server.listen(socket_path)
         api = Api(h, server, socket_path)
 
         async def cleanup() -> None:
+            h.cron.stop()
             await api.session.close()
             await server.close()
             shutil.rmtree(directory, ignore_errors=True)
@@ -126,7 +132,7 @@ class TestTheSocket:
         directory = Path(tempfile.mkdtemp(prefix="dots-sock-"))
         socket_path = directory / "agent.sock"
         socket_path.write_bytes(b"left by a crash")
-        server = AgentServer(engine=h.engine, key_holder=h.keys, checks=fixed_checks)
+        server = AgentServer(engine=h.engine, key_holder=h.keys, checks=fixed_checks, automations=h.cron)
         try:
             await server.listen(socket_path)
             mode = stat.S_IMODE(os.stat(socket_path).st_mode)
@@ -567,7 +573,7 @@ class TestBrowserIdentities:
         slow = (await api.call("POST", "/browser-identities", {"name": "slow"})).json
         other = (await api.call("POST", "/browser-identities", {"name": "other"})).json
         await api.h.browser.launch(other["id"])
-        write_control(api.h.tmp_path / "browsers" / slow["id"] / "mcp", download_answers=100_000)
+        write_control(mcp_home(api.h.tmp_path, slow["id"]), download_answers=100_000)
         launching = asyncio.create_task(api.h.browser.launch(slow["id"]))
         await asyncio.sleep(0.3)
 
@@ -650,7 +656,7 @@ class TestBrowserIdentityActions:
     async def test_a_frame_the_server_cannot_give_is_502_frame_failed(self, make_api: Callable[..., Any]) -> None:
         api: Api = await make_api()
         identity = (await api.call("POST", "/browser-identities", {"name": "blank"})).json
-        write_control(api.h.tmp_path / "browsers" / identity["id"] / "mcp", fail_watch=True)
+        write_control(mcp_home(api.h.tmp_path, identity["id"]), fail_watch=True)
         await api.h.browser.launch(identity["id"])
 
         failed = await api.call("GET", f"/browser-identities/{identity['id']}/frame")
@@ -730,6 +736,29 @@ class TestStateAndTheRest:
             "pending_approval": None,
         }
 
+    async def test_the_state_names_the_oldest_pending_approval_by_its_id(self, make_api: Callable[..., Any]) -> None:
+        api: Api = await make_api()
+        ids = [
+            api.h.store.write(
+                lambda conn, n=n: s.request_approval(
+                    conn,
+                    session_key=s.CHAT_SESSION_KEY,
+                    task_id=None,
+                    tool_call_id=f"call-{n}",
+                    tool="exec",
+                    permission="computer.exec",
+                    arguments={"command": "make clean"},
+                    now_ms=1000 * n,
+                )
+            )[0].approval_id
+            for n in (1, 2)
+        ]
+
+        answer = (await api.call("GET", "/state")).json
+
+        # The id of the oldest one, a bare string: the shape of AgentStateAnswer in packages/shared.
+        assert answer["pending_approval"] == ids[0]
+
     async def test_the_identity_routes_name_what_they_cannot_find_and_the_methods_they_refuse(
         self, make_api: Callable[..., Any]
     ) -> None:
@@ -750,6 +779,135 @@ class TestStateAndTheRest:
         assert (put.status, put.json["message"]) == (405, "PUT is not allowed here; use GET or POST")
         post = await api.call("POST", "/browser-identities/x")
         assert (post.status, post.json["message"]) == (405, "POST is not allowed here; use GET or DELETE")
+
+    async def test_lists_the_automations_the_dot_made_with_their_schedules_and_last_runs(
+        self, make_api: Callable[..., Any]
+    ) -> None:
+        api: Api = await make_api()
+        assert (await api.call("GET", "/automations")).json == {"automations": []}
+        daily = api.h.cron.add_job("daily", CronSchedule(kind="cron", expr="0 9 * * 1-5", tz="Europe/Rome"), "check the fares")
+        often = api.h.cron.add_job("often", CronSchedule(kind="every", every_ms=60_000), "look again")
+        api.h.cron.add_job("once", CronSchedule(kind="at", at_ms=4_102_444_800_000), "new year", delete_after_run=True)
+        api.h.cron.enable_job(often.id, False)
+        job = api.h.cron.get_job(daily.id)
+        assert job is not None
+        job.state.last_run_at_ms, job.state.last_status, job.state.last_error = 1_000, "error", "the model was down"
+        api.h.cron._save_store()
+
+        answer = await api.call("GET", "/automations")
+
+        rows = {row["name"]: row for row in answer.json["automations"]}
+        assert answer.status == 200 and set(rows) == {"daily", "often", "once"}
+        assert rows["daily"] == {
+            "id": daily.id,
+            "name": "daily",
+            "enabled": True,
+            "schedule": {"kind": "cron", "expr": "0 9 * * 1-5", "tz": "Europe/Rome"},
+            "message": "check the fares",
+            "next_run_at_ms": rows["daily"]["next_run_at_ms"],
+            "last_run_at_ms": 1_000,
+            "last_status": "error",
+            "last_error": "the model was down",
+            "delete_after_run": False,
+            "created_at_ms": daily.created_at_ms,
+        }
+        assert rows["daily"]["next_run_at_ms"] > daily.created_at_ms
+        # A paused job is listed, with no next run; the schedule names only what its kind uses.
+        assert (rows["often"]["enabled"], rows["often"]["next_run_at_ms"]) == (False, None)
+        assert rows["often"]["schedule"] == {"kind": "every", "every_ms": 60_000}
+        assert rows["once"]["schedule"] == {"kind": "at", "at_ms": 4_102_444_800_000}
+        assert (rows["once"]["delete_after_run"], rows["once"]["last_status"]) == (True, None)
+
+    async def test_pauses_and_resumes_an_automation_and_changes_nothing_when_it_is_already_so(
+        self, make_api: Callable[..., Any]
+    ) -> None:
+        api: Api = await make_api()
+        job = api.h.cron.add_job("daily", CronSchedule(kind="every", every_ms=3_600_000), "go")
+
+        paused = await api.call("PATCH", f"/automations/{job.id}", {"enabled": False})
+        assert (paused.status, paused.json["enabled"], paused.json["next_run_at_ms"]) == (200, False, None)
+        assert api.h.cron.get_job(job.id).enabled is False
+        resumed = await api.call("PATCH", f"/automations/{job.id}", {"enabled": True})
+        assert (resumed.status, resumed.json["enabled"]) == (200, True)
+        assert resumed.json["next_run_at_ms"] is not None
+
+        # Resuming a job that runs already must not move its next run a whole interval on.
+        api.h.cron.get_job(job.id).state.next_run_at_ms = 1234
+        api.h.cron._save_store()
+        again = await api.call("PATCH", f"/automations/{job.id}", {"enabled": True})
+        assert (again.status, again.json["next_run_at_ms"]) == (200, 1234)
+
+    async def test_refuses_an_automation_patch_that_is_not_exactly_enabled_true_or_false(
+        self, make_api: Callable[..., Any]
+    ) -> None:
+        api: Api = await make_api()
+        job = api.h.cron.add_job("daily", CronSchedule(kind="every", every_ms=60_000), "go")
+        for body in ({}, {"enabled": "yes"}, {"enabled": 1}, {"enabled": None}, {"enabled": True, "name": "x"}, {"name": "x"}, [True]):
+            answer = await api.call("PATCH", f"/automations/{job.id}", body)
+            assert (answer.status, answer.json["error"]) == (400, "invalid_automation"), body
+        assert (await api.call("PATCH", f"/automations/{job.id}", "{")).json["error"] == "invalid_json"
+        assert api.h.cron.get_job(job.id).enabled is True
+
+    async def test_removes_an_automation_and_says_404_for_one_that_is_not_there(
+        self, make_api: Callable[..., Any]
+    ) -> None:
+        api: Api = await make_api()
+        keep = api.h.cron.add_job("keep", CronSchedule(kind="every", every_ms=60_000), "go")
+        gone = api.h.cron.add_job("gone", CronSchedule(kind="every", every_ms=60_000), "go")
+
+        assert (await api.call("DELETE", f"/automations/{gone.id}")).status == 204
+        assert [row["id"] for row in (await api.call("GET", "/automations")).json["automations"]] == [keep.id]
+        again = await api.call("DELETE", f"/automations/{gone.id}")
+        assert (again.status, again.json) == (404, {"error": "not_found", "message": f'no automation "{gone.id}"'})
+        patched = await api.call("PATCH", "/automations/with%20space", {"enabled": False})
+        assert (patched.status, patched.json["message"]) == (404, 'no automation "with space"')
+
+    async def test_a_system_job_cannot_be_removed(self, make_api: Callable[..., Any]) -> None:
+        api: Api = await make_api()
+        api.h.cron.register_system_job(
+            CronJob(id="sys", name="system", schedule=CronSchedule(kind="every", every_ms=60_000), payload=CronPayload(kind="system_event"))
+        )
+
+        answer = await api.call("DELETE", "/automations/sys")
+
+        assert (answer.status, answer.json["error"]) == (409, "protected")
+        assert [row["id"] for row in (await api.call("GET", "/automations")).json["automations"]] == ["sys"]
+
+    async def test_automations_take_only_their_methods(self, make_api: Callable[..., Any]) -> None:
+        api: Api = await make_api()
+        for method, path, allowed in (
+            ("POST", "/automations", "GET"),
+            ("PUT", "/automations", "GET"),
+            ("GET", "/automations/x", "PATCH or DELETE"),
+            ("POST", "/automations/x", "PATCH or DELETE"),
+        ):
+            answer = await api.call(method, path)
+            assert (answer.status, answer.json["message"]) == (405, f"{method} is not allowed here; use {allowed}")
+
+    async def test_lists_the_tools_with_the_permission_each_exercises_and_whether_the_model_is_offered_it(
+        self, make_api: Callable[..., Any]
+    ) -> None:
+        api: Api = await make_api()
+        # No config yet: nothing is offered, but the table is there.
+        before = (await api.call("GET", "/tools")).json["tools"]
+        assert [row["name"] for row in before] == list(TOOL_PERMISSIONS)
+        assert not any(row["offered"] for row in before)
+
+        permissions = {"computer.exec": "allow", "files.read": "ask", "files.write": "deny", "automations": "deny", "memory.read": "allow"}
+        api.h.configure(runtime_config_body(permissions=permissions, memory={"enabled": False}))
+        answer = await api.call("GET", "/tools")
+
+        rows = {row["name"]: row for row in answer.json["tools"]}
+        assert answer.status == 200 and set(rows) == set(TOOL_PERMISSIONS)
+        assert {name for name, row in rows.items() if row["offered"]} == set(offered_tools(permissions, memory_enabled=False))
+        assert rows["exec"]["permission"] == "computer.exec" and rows["exec"]["offered"] is True
+        assert rows["grep"]["offered"] is True and rows["write_file"]["offered"] is False
+        # Memory is off: its tools are not offered although their permission is allow.
+        assert (rows["memory_get"]["permission"], rows["memory_get"]["offered"]) == ("memory.read", False)
+        assert (rows["cron"]["permission"], rows["cron"]["offered"]) == ("automations", False)
+        # The description is the one the model reads in the tool's schema.
+        assert all(isinstance(row["description"], str) and row["description"] for row in rows.values())
+        assert (await api.call("POST", "/tools")).status == 405
 
     async def test_prepares_to_sleep_and_answers_404_for_anything_else(self, make_api: Callable[..., Any]) -> None:
         api: Api = await make_api()

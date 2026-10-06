@@ -410,3 +410,23 @@ async def test_legacy_zero_interval_job_can_be_listed_repaired_and_removed(tmp_p
     assert "Repair me" in await reloaded.execute(action="list")
     await reloaded.execute(action="remove", job_id="legacy-zero")
     assert _make_tool(tmp_path)._cron.list_jobs(include_disabled=True) == []
+
+
+@pytest.mark.parametrize("every_seconds", [8_700_000_000_000, 10**18])
+def test_add_refuses_an_interval_whose_next_run_is_past_year_9999(tmp_path, every_seconds: int) -> None:
+    """The model can ask for any integer: the tool answers it with an error it can read, and no job is made."""
+    tool = _make_tool(tmp_path)
+
+    result = tool._add_job("too far", "remind me", every_seconds, None, None, None)
+
+    assert "past the year 9999" in result
+    assert tool._cron.list_jobs(include_disabled=True) == []
+
+
+def test_add_refuses_a_one_time_job_past_year_9999(tmp_path) -> None:
+    tool = _make_tool_with_tz(tmp_path, "Pacific/Pago_Pago")
+
+    result = tool._add_job("too far", "remind me", None, None, None, "9999-12-31T23:59:59")
+
+    assert "past the year 9999" in result
+    assert tool._cron.list_jobs(include_disabled=True) == []

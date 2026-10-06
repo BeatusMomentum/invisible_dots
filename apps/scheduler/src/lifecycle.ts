@@ -20,6 +20,7 @@ import {
   type DotState,
   type HealthAnswer,
   type OutboundEvent,
+  type StopReason,
   type StoredEvent,
   type VmState,
 } from "@invisible-dots/shared";
@@ -39,6 +40,13 @@ export interface LifecycleOptions {
   pumpMaxRetryMs: number;
   /** Time the agent gets to flush its state before a shutdown (section 9.5). Default PREPARE_SLEEP_TIMEOUT_MS of packages/shared, which the engine's own steps fit inside. */
   prepareSleepTimeoutMs: number;
+  /**
+   * How long before an automation is due a stopped computer is started, and how close to one a running computer is
+   * kept awake (section 9.5). It is the time a start takes to reach READY with some to spare; the passes that look
+   * for the Dots to start run every few seconds, so the computer is up between this long and a pass before the run.
+   * Default 90 s.
+   */
+  automationWakeLeadMs: number;
 }
 
 export const DEFAULT_LIFECYCLE_OPTIONS: LifecycleOptions = {
@@ -48,6 +56,7 @@ export const DEFAULT_LIFECYCLE_OPTIONS: LifecycleOptions = {
   pumpRetryMs: 1_000,
   pumpMaxRetryMs: 30_000,
   prepareSleepTimeoutMs: PREPARE_SLEEP_TIMEOUT_MS,
+  automationWakeLeadMs: 90_000,
 };
 
 export interface LifecycleDeps {
@@ -63,7 +72,8 @@ export interface LifecycleDeps {
   onReady?: (dotId: string) => void;
 }
 
-export type StopReason = "idle" | "user";
+/** Why a stop is asked for: the idle sleep, or the person (`exited` is only ever recorded, never asked for). */
+export type StopRequest = Exclude<StopReason, "exited">;
 
 /** Part of the error a Dot gets when READY failed only for want of a key; setting a key retries those Dots. */
 export const MISSING_KEY_MESSAGE = "no OpenRouter API key is configured";
@@ -141,9 +151,9 @@ export class Lifecycle {
     return this.#driver.guest({ dotId, port: computer.guest_port }, await this.#db.computers.token(dotId));
   }
 
-  async #setVmState(dotId: string, state: VmState, lastError?: string | null): Promise<void> {
+  async #setVmState(dotId: string, state: VmState, lastError?: string | null, stopReason?: StopReason): Promise<void> {
     const before = await this.#db.computers.get(dotId);
-    await this.#db.computers.setState(dotId, state, lastError);
+    await this.#db.computers.setState(dotId, state, lastError, stopReason);
     if (before?.state !== state) await this.#events.appendHost(dotId, "computer.state", { state });
   }
 
@@ -379,47 +389,82 @@ export class Lifecycle {
   async #stillIdle(dotId: string): Promise<boolean> {
     const [dot, computer] = await Promise.all([this.#db.dots.get(dotId), this.#db.computers.get(dotId)]);
     if (dot?.status !== "READY" || computer?.state !== "RUNNING") return false;
-    return !(await this.#db.tasks.hasWork(dotId, this.#clock.now()));
+    return !(await this.keepsAwake(dotId));
   }
 
-  /** Put the Dot to sleep, or stop it on the user's request (section 9.5). */
-  stop(dotId: string, reason: StopReason): Promise<void> {
-    return this.#mutex.run(dotId, async () => {
-      const computer = await this.#db.computers.get(dotId);
-      if (!computer) throw new ControlPlaneError(404, "not_found", `Dot ${dotId} has no computer`);
-      if (computer.state === "STOPPED") return;
-      if (computer.state === "DELETING" || computer.state === "PROVISIONING") {
-        throw new ControlPlaneError(409, "invalid_state", `Dot ${dotId} cannot be stopped while ${computer.state}`);
-      }
-      const wasReady = await this.#leaveReady(dotId);
-      if (reason === "idle" && !(await this.#stillIdle(dotId))) {
-        if (wasReady) this.#ready.add(dotId);
-        this.#log.info("idle sleep called off: work arrived meanwhile", { dotId });
-        return;
-      }
-      this.#log.info("stopping computer", { dotId, reason });
-      await this.#setVmState(dotId, "STOPPING");
-      if (wasReady) {
-        try {
-          const guest = await this.guest(dotId);
-          await guest.prepareSleep(this.#opts.prepareSleepTimeoutMs);
-        } catch (error) {
-          // The shutdown still happens: the guest flushes its own state on SIGTERM too.
-          this.#log.warn("prepare-sleep failed, shutting down anyway", { dotId, error: errorMessage(error) });
-        }
-      }
-      await this.#stopPump(dotId);
-      let result;
+  /**
+   * Whether the Dot has something that makes an idle sleep pointless (section 9.5): work (`tasks.hasWork`), or an
+   * automation due within the wake lead time, past ones included (the guest makes a missed run when it starts, and a
+   * computer put to sleep now would be started again at once).
+   */
+  async keepsAwake(dotId: string): Promise<boolean> {
+    const now = this.#clock.now();
+    if (await this.#db.tasks.hasWork(dotId, now)) return true;
+    const dueAt = (await this.#db.computers.get(dotId))?.next_automation_at;
+    return dueAt != null && Date.parse(dueAt) <= now.getTime() + this.#opts.automationWakeLeadMs;
+  }
+
+  /**
+   * The Dots whose computer is stopped and has an automation due within the wake lead time: the ones to start so
+   * their guest is ready when the run is due (or, for a run already missed, makes it as it starts).
+   */
+  stoppedDotsWithAutomationDue(): Promise<string[]> {
+    return this.#db.computers.stoppedWithAutomationBy(new Date(this.#clock.now().getTime() + this.#opts.automationWakeLeadMs));
+  }
+
+  /**
+   * Put the Dot to sleep, or stop it on the user's request (section 9.5). The reason is recorded with the computer: a
+   * computer the person stopped is not started for its automations until the person starts it again, also when it was
+   * already asleep.
+   */
+  stop(dotId: string, reason: StopRequest): Promise<void> {
+    return this.#mutex.run(dotId, () => this.#stopLocked(dotId, reason, true));
+  }
+
+  /**
+   * The stop, with the per-Dot lock held. An idle stop that is asked for now checks again that the Dot is idle
+   * (`recheckIdle`); one that recovery finds half done does not: the shutdown began before the control plane went
+   * down, the guest may already have taken prepare-sleep, and calling it off would leave a computer that runs without
+   * being READY. It is finished, and the pass wakes the computer if the work that came meanwhile needs it.
+   */
+  async #stopLocked(dotId: string, reason: StopRequest, recheckIdle: boolean): Promise<void> {
+    const computer = await this.#db.computers.get(dotId);
+    if (!computer) throw new ControlPlaneError(404, "not_found", `Dot ${dotId} has no computer`);
+    if (computer.state === "STOPPED") {
+      if (reason === "user") await this.#setVmState(dotId, "STOPPED", undefined, "user");
+      return;
+    }
+    if (computer.state === "DELETING" || computer.state === "PROVISIONING") {
+      throw new ControlPlaneError(409, "invalid_state", `Dot ${dotId} cannot be stopped while ${computer.state}`);
+    }
+    const wasReady = await this.#leaveReady(dotId);
+    if (reason === "idle" && recheckIdle && !(await this.#stillIdle(dotId))) {
+      if (wasReady) this.#ready.add(dotId);
+      this.#log.info("idle sleep called off: work arrived meanwhile", { dotId });
+      return;
+    }
+    this.#log.info("stopping computer", { dotId, reason });
+    await this.#setVmState(dotId, "STOPPING", undefined, reason);
+    if (wasReady) {
       try {
-        result = await this.#driver.stop(dotId, await this.#db.computers.token(dotId));
+        const guest = await this.guest(dotId);
+        await guest.prepareSleep(this.#opts.prepareSleepTimeoutMs);
       } catch (error) {
-        return this.#fail(dotId, "stop", error);
+        // The shutdown still happens: the guest flushes its own state on SIGTERM too.
+        this.#log.warn("prepare-sleep failed, shutting down anyway", { dotId, error: errorMessage(error) });
       }
-      await this.#db.computers.setProcess(dotId, null);
-      await this.#setVmState(dotId, "STOPPED", null);
-      await this.#events.appendHost(dotId, "computer.stopped", { reason, forced: result.forced });
-      await this.#setDotStatus(dotId, "IDLE");
-    });
+    }
+    await this.#stopPump(dotId);
+    let result;
+    try {
+      result = await this.#driver.stop(dotId, await this.#db.computers.token(dotId));
+    } catch (error) {
+      return this.#fail(dotId, "stop", error);
+    }
+    await this.#db.computers.setProcess(dotId, null);
+    await this.#setVmState(dotId, "STOPPED", null, reason);
+    await this.#events.appendHost(dotId, "computer.stopped", { reason, forced: result.forced });
+    await this.#setDotStatus(dotId, "IDLE");
   }
 
   /**
@@ -592,8 +637,9 @@ export class Lifecycle {
   /**
    * The QEMU of a READY Dot exited without a stop from the control plane: the
    * guest powered itself off, or QEMU crashed or was killed. The computer is
-   * recorded as stopped; when the Dot still has work, it is started again so
-   * its guest picks that work up (section 9.5).
+   * recorded as stopped; when the Dot still has work (`keepsAwake`: a task, or
+   * an automation due within the wake lead time), it is started again so its
+   * guest picks that work up (section 9.5).
    */
   async #exited(dotId: string): Promise<void> {
     const recorded = await this.#mutex.run(dotId, async () => {
@@ -604,12 +650,12 @@ export class Lifecycle {
       await this.#stopPump(dotId);
       this.#log.warn("the VM stopped without being asked to", { dotId });
       await this.#db.computers.setProcess(dotId, null);
-      await this.#setVmState(dotId, "STOPPED", null);
+      await this.#setVmState(dotId, "STOPPED", null, "exited");
       await this.#events.appendHost(dotId, "computer.stopped", { reason: "exited", forced: false });
       await this.#setDotStatus(dotId, "IDLE");
       return true;
     });
-    if (recorded && (await this.#db.tasks.hasWork(dotId, this.#clock.now()))) {
+    if (recorded && (await this.keepsAwake(dotId))) {
       this.#log.info("the Dot still has work, starting its computer again", { dotId });
       this.#runInBackground("restart after an unexpected stop", dotId, () => this.ensureReady(dotId));
     }
@@ -683,8 +729,10 @@ export class Lifecycle {
       if (vm.state === "RUNNING") {
         if (computer.state === "STOPPING") {
           this.#log.info("recovery: finishing an interrupted stop", { dotId });
+          // The reason the stop was asked for was recorded with STOPPING; setting RUNNING clears it.
           await this.#db.computers.setState(dotId, "RUNNING");
-          track(dotId, "stop", this.stop(dotId, "user"));
+          const reason = computer.stop_reason === "idle" ? "idle" : "user";
+          track(dotId, "stop", this.#mutex.run(dotId, () => this.#stopLocked(dotId, reason, false)));
         } else if (vm.guestPort === null) {
           const message = "QEMU runs but has no forward to the guest port, so the guest cannot be reached";
           await this.#setVmState(dotId, "ERROR", message);
@@ -701,7 +749,8 @@ export class Lifecycle {
         if (computer.state !== "STOPPED" || computer.guest_port !== null || computer.pid !== null) {
           this.#log.info("recovery: computer is off", { dotId, was: computer.state });
           await this.#db.computers.setProcess(dotId, null);
-          await this.#setVmState(dotId, "STOPPED");
+          // A stop that was under way keeps its reason; a VM that went off with the control plane down exited by itself.
+          await this.#setVmState(dotId, "STOPPED", undefined, computer.stop_reason ?? "exited");
           const dot = await this.#db.dots.get(dotId);
           if (dot && dot.status !== "DISABLED" && dot.status !== "ERROR") await this.#setDotStatus(dotId, "IDLE");
         }

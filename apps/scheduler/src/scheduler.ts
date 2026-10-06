@@ -4,7 +4,7 @@
  * database, the VM layer or a guest happens here.
  */
 import { randomBytes } from "node:crypto";
-import { DotNameTakenError, GLOBAL_SCOPE, OPENROUTER_KEY_NAME, type Database } from "@invisible-dots/database";
+import { DotChangedError, DotNameTakenError, GLOBAL_SCOPE, OPENROUTER_KEY_NAME, type Database } from "@invisible-dots/database";
 import { EventLog, USER_MESSAGE_EVENT } from "@invisible-dots/events";
 import type {
   AcceptedAnswer,
@@ -19,23 +19,32 @@ import type {
   UsageAnswer,
 } from "@invisible-dots/shared";
 import {
+  checkHomePath,
   checkOpenRouterKey,
   computerResources,
   DotConfigError,
   isIdentityAnswer,
+  isPermission,
+  isStoredEventType,
+  MAX_HOST_FILE_BYTES,
   newId,
   parseDotConfig,
+  parseMessageOrigin,
   parseSize,
   TASK_CANCELLED_SYSTEM_EVENT,
   TERMINAL_TASK_STATES,
   vmName,
   type ApprovalStatus,
+  type Automation,
   type BrowserIdentity,
   type CreateBrowserIdentityRequest,
   type DotConfig,
+  type FilesListAnswer,
   type InboundEvent,
+  type MessageOrigin,
   type StoredEvent,
   type SystemAnswer,
+  type ToolInfo,
 } from "@invisible-dots/shared";
 import { Dispatcher } from "./dispatcher.js";
 import { guestErrorCode, guestErrorStatus, type ComputerDriver, type GuestApi } from "./driver.js";
@@ -67,6 +76,13 @@ export interface SchedulerOptions {
 }
 
 const TOKEN_BYTES = 32;
+
+/** A path the files routes may read, normalized; the 400 of the rule of `checkHomePath` otherwise. */
+function homePath(raw: unknown): string {
+  const checked = checkHomePath(raw);
+  if (!checked.ok) throw new ControlPlaneError(400, "invalid_path", checked.problem);
+  return checked.path;
+}
 
 export class Scheduler {
   readonly db: Database;
@@ -137,8 +153,9 @@ export class Scheduler {
 
   /**
    * One round of looking for work (section 9.5): claim due tasks, send the
-   * inbound rows whose retry time came, and wake stopped Dots whose new work
-   * waits behind a task their guest has not finished.
+   * inbound rows whose retry time came, wake stopped Dots whose new work
+   * waits behind a task their guest has not finished, and wake the ones whose
+   * next automation is due within the wake lead time.
    */
   async pass(): Promise<void> {
     await this.dispatcher.dispatch();
@@ -147,6 +164,11 @@ export class Scheduler {
       if (this.lifecycle.isBusy(dotId)) continue;
       this.#log.info("waking a stopped Dot: new work waits behind its unfinished task", { dotId });
       this.#runInBackground("wake for blocked work", dotId, () => this.lifecycle.ensureReady(dotId));
+    }
+    for (const dotId of await this.lifecycle.stoppedDotsWithAutomationDue()) {
+      if (this.lifecycle.isBusy(dotId)) continue;
+      this.#log.info("waking a stopped Dot: an automation is due", { dotId });
+      this.#runInBackground("wake for an automation", dotId, () => this.lifecycle.ensureReady(dotId));
     }
   }
 
@@ -247,7 +269,16 @@ export class Scheduler {
     return dot;
   }
 
-  async updateDot(idOrName: string, configInput: unknown): Promise<DotRecord> {
+  /**
+   * Replace the Dot's config. `expectedConfigVersion` (the `config_version` of the Dot as the caller read it) makes the
+   * save conditional: when the config changed since (the person answered "Always allow" in another view, another
+   * save), it is a 409 `dot_changed` and nothing is written, so a form opened before cannot silently undo what
+   * happened after. A change of the Dot's status (a task turn, an approval waiting) is not a change of the config.
+   */
+  async updateDot(idOrName: string, configInput: unknown, expectedConfigVersion?: unknown): Promise<DotRecord> {
+    if (expectedConfigVersion !== undefined && (typeof expectedConfigVersion !== "number" || !Number.isInteger(expectedConfigVersion) || expectedConfigVersion < 1)) {
+      throw new ControlPlaneError(400, "invalid_request", "expected_config_version must be the config_version of the Dot, a positive integer");
+    }
     const current = await this.requireDot(idOrName);
     const config = this.#parseConfig(configInput);
     if (parseSize(config.computer.disk) < parseSize(current.config.computer.disk)) {
@@ -259,24 +290,35 @@ export class Scheduler {
     }
     let updated: DotRecord | null;
     try {
-      updated = await this.db.dots.updateConfig(current.id, config);
+      updated = await this.db.dots.updateConfig(current.id, config, expectedConfigVersion);
     } catch (error) {
+      if (error instanceof DotChangedError) {
+        throw new ControlPlaneError(409, "dot_changed", `Dot ${current.name} changed after you read it: read it again and apply the change to what it is now`);
+      }
       if (error instanceof DotNameTakenError) throw new ControlPlaneError(409, "name_taken", error.message);
       throw error;
     }
     if (!updated) throw notFound("Dot", idOrName);
+    await this.#configChanged(updated);
+    return updated;
+  }
+
+  /**
+   * The Dot's saved config changed (a PATCH, an "always allow"): push it to the guest like a PATCH does and log
+   * `dot.updated`. A failed push does not fail the change: the config is pushed again on the next READY.
+   */
+  async #configChanged(dot: DotRecord): Promise<void> {
     let pushed = false;
     try {
-      pushed = await this.lifecycle.syncGuest(current.id);
+      pushed = await this.lifecycle.syncGuest(dot.id);
     } catch (error) {
       this.#log.warn("config saved but the push to the guest failed; it is pushed again on the next READY", {
-        dotId: current.id,
+        dotId: dot.id,
         error: errorMessage(error),
       });
-      this.lifecycle.markSuspect(current.id);
+      this.lifecycle.markSuspect(dot.id);
     }
-    await this.events.appendHost(current.id, "dot.updated", { name: config.name, pushed_to_guest: pushed });
-    return updated;
+    await this.events.appendHost(dot.id, "dot.updated", { name: dot.name, pushed_to_guest: pushed });
   }
 
   async deleteDot(idOrName: string): Promise<AcceptedAnswer> {
@@ -290,11 +332,17 @@ export class Scheduler {
   /**
    * Log the message and store it for the guest in one transaction, so a
    * message the person saw accepted always reaches the Dot, also across a
-   * failed wake or a control plane restart.
+   * failed wake or a control plane restart. `origin` names the channel chat
+   * the message came from; it is kept in the event log (the one place a reply
+   * is routed back by) and never sent to the guest. Only code inside the
+   * control plane passes one: the HTTP route does not take it.
    */
-  async sendMessage(idOrName: string, text: string): Promise<MessageAnswer> {
+  async sendMessage(idOrName: string, text: string, origin?: MessageOrigin): Promise<MessageAnswer> {
     if (typeof text !== "string" || text.trim() === "") {
       throw new ControlPlaneError(400, "invalid_request", "text must be a non-empty string");
+    }
+    if (origin !== undefined && parseMessageOrigin(origin) === null) {
+      throw new ControlPlaneError(400, "invalid_request", "origin must be a channel, a binding id, a chat id and an external id");
     }
     const dot = await this.requireDot(idOrName);
     const messageId = newId("msg");
@@ -305,14 +353,25 @@ export class Scheduler {
       data: { text },
     };
     const stored = await this.db.transaction(async (tx) => {
-      // The event first: its insert takes the event-order lock (database events.ts).
-      const logged = await this.events.appendUserMessageIn(tx, dot.id, { message_id: messageId, text });
-      await tx.inbound.enqueue(dot.id, event);
+      // The event first: its insert takes the event-order lock (database events.ts). A channel message
+      // already logged is not stored again, so what a redelivery finds is exactly what the first delivery
+      // committed: the message and its queue row together, or neither.
+      const logged = await this.events.appendUserMessageIn(tx, dot.id, { message_id: messageId, text, ...(origin && { origin }) });
+      if (logged) await tx.inbound.enqueue(dot.id, event);
       return logged;
     });
+    if (!stored) return this.#answerRedelivery(dot.id, origin!);
     this.events.publish(stored);
     const delivery = await this.#deliver(dot.id, event.id);
     return { message_id: messageId, event_id: stored.id, delivery };
+  }
+
+  /** The answer for a channel message that was already handed to the Dot: the same message, delivered if it is not yet. */
+  async #answerRedelivery(dotId: string, origin: MessageOrigin): Promise<MessageAnswer> {
+    const logged = await this.events.userMessageOfOrigin(dotId, origin.binding_id, origin.external_id);
+    const messageId = logged?.data.message_id;
+    if (!logged || typeof messageId !== "string") throw new Error(`a channel message is stored twice but cannot be found: ${origin.binding_id}`);
+    return { message_id: messageId, event_id: logged.id, delivery: await this.#deliver(dotId, messageId) };
   }
 
   async conversation(idOrName: string, limit = 500): Promise<ConversationMessage[]> {
@@ -322,14 +381,19 @@ export class Scheduler {
       types: [USER_MESSAGE_EVENT, "message.assistant"],
       limit,
     });
-    return events.map((e) => ({
-      event_id: e.id,
+    return events.map((e) => {
       // StoredEvent.type lists the contract's event types; the user side is logged as USER_MESSAGE_EVENT.
-      role: (e.type as string) === USER_MESSAGE_EVENT ? "user" : "assistant",
-      text: String(e.data.text ?? ""),
-      in_reply_to: typeof e.data.in_reply_to === "string" ? e.data.in_reply_to : null,
-      created_at: e.created_at,
-    }));
+      const user = (e.type as string) === USER_MESSAGE_EVENT;
+      const origin = user ? parseMessageOrigin(e.data.origin) : null;
+      return {
+        event_id: e.id,
+        role: user ? "user" : "assistant",
+        text: String(e.data.text ?? ""),
+        in_reply_to: typeof e.data.in_reply_to === "string" ? e.data.in_reply_to : null,
+        ...(origin && { origin }),
+        created_at: e.created_at,
+      };
+    });
   }
 
   /**
@@ -512,6 +576,22 @@ export class Scheduler {
     return this.#guestCall(dotId, "screenshot", () => guest.screenshot());
   }
 
+  /** The files of a directory under /home/dot, as dot-agentd lists them; `path` defaults to home itself. */
+  async listFiles(idOrName: string, path: string = "~"): Promise<FilesListAnswer> {
+    const checked = homePath(path);
+    const { dotId, guest } = await this.#runningGuest(idOrName);
+    const { entries } = await this.#guestCall(dotId, "list files", () => guest.listFiles(checked));
+    return { path: checked, entries };
+  }
+
+  /** The bytes of a file under /home/dot; a file larger than MAX_HOST_FILE_BYTES is a 413. */
+  async readFile(idOrName: string, path: unknown): Promise<{ path: string; content: Uint8Array }> {
+    const checked = homePath(path);
+    const { dotId, guest } = await this.#runningGuest(idOrName);
+    const content = await this.#guestCall(dotId, "read a file", () => guest.readFile(checked, { maxBytes: MAX_HOST_FILE_BYTES }));
+    return { path: checked, content };
+  }
+
   async listIdentities(idOrName: string): Promise<BrowserIdentity[]> {
     const { dotId, guest } = await this.#runningGuest(idOrName);
     return (await this.#guestCall(dotId, "list browser identities", () => guest.listBrowserIdentities())).identities;
@@ -550,6 +630,31 @@ export class Scheduler {
     await this.#guestCall(dotId, "close a browser identity", () => guest.closeBrowserIdentity(identityId));
   }
 
+  // Automations and tools: what the Dot's engine keeps (its cron jobs, its tool table), through the computer
+
+  async listAutomations(idOrName: string): Promise<Automation[]> {
+    const { dotId, guest } = await this.#runningGuest(idOrName);
+    return (await this.#guestCall(dotId, "list automations", () => guest.listAutomations())).automations;
+  }
+
+  /** Pause (`enabled: false`) or resume an automation; the answer is the automation as it is now. */
+  async setAutomationEnabled(idOrName: string, automationId: string, enabled: unknown): Promise<Automation> {
+    if (typeof enabled !== "boolean") throw new ControlPlaneError(400, "invalid_request", "enabled must be true or false");
+    const { dotId, guest } = await this.#runningGuest(idOrName);
+    return this.#guestCall(dotId, "set an automation", () => guest.setAutomationEnabled(automationId, enabled));
+  }
+
+  async deleteAutomation(idOrName: string, automationId: string): Promise<void> {
+    const { dotId, guest } = await this.#runningGuest(idOrName);
+    await this.#guestCall(dotId, "delete an automation", () => guest.deleteAutomation(automationId));
+  }
+
+  /** The Dot's tools, each with the permission it exercises and whether the model is offered it now. */
+  async listTools(idOrName: string): Promise<ToolInfo[]> {
+    const { dotId, guest } = await this.#runningGuest(idOrName);
+    return (await this.#guestCall(dotId, "list tools", () => guest.listTools())).tools;
+  }
+
   // Approvals
 
   listApprovals(status?: ApprovalStatus): Promise<ApprovalRecord[]> {
@@ -561,36 +666,77 @@ export class Scheduler {
    * `approval.received` for the guest, in one transaction: a decision the
    * person saw accepted always reaches the guest, also when the Dot sleeps
    * and its wake fails or the control plane restarts first.
+   *
+   * `always` (an approval only) is "allow this from now on": in the same
+   * transaction `permissions[<the approval's permission>]` becomes `allow` in
+   * the Dot's config, and the config is pushed to the guest before the answer
+   * is delivered, so what the approved call does next is not asked again: the
+   * Dot's deliveries are held (`InboundDelivery.hold`) from before the commit
+   * until the push is over, so no flush overtakes it. A push that fails does
+   * not fail the answer; the guest gets the config on its next READY. An
+   * answer that loses the race for the approval (409) changes nothing.
    */
-  async resolveApproval(id: string, decision: "approve" | "reject", note?: string): Promise<ApprovalRecord> {
+  async resolveApproval(
+    id: string,
+    decision: "approve" | "reject",
+    answer: { note?: string; always?: true } = {},
+  ): Promise<ApprovalRecord> {
+    const { note, always } = answer;
     if (note !== undefined && typeof note !== "string") {
       throw new ControlPlaneError(400, "invalid_request", "note must be a string");
     }
+    if (always !== undefined && always !== true) {
+      throw new ControlPlaneError(400, "invalid_request", "always must be true");
+    }
+    if (always && decision !== "approve") {
+      throw new ControlPlaneError(400, "invalid_request", "always applies to an approval, not to a rejection");
+    }
     const existing = await this.db.approvals.get(id);
     if (!existing) throw notFound("approval", id);
+    // A pending approval stored before its permission was removed from PERMISSIONS: a config cannot name it any more.
+    if (always && !isPermission(existing.permission)) {
+      throw new ControlPlaneError(
+        400,
+        "invalid_request",
+        `"${existing.permission}" is not a permission a Dot's config can set, so it cannot be allowed for good`,
+      );
+    }
     const event: InboundEvent<"approval.received"> = {
       id: newId("evt"),
       type: "approval.received",
       ts: this.#clock.now().toISOString(),
       data: { approval_id: id, decision, ...(note !== undefined ? { note } : {}) },
     };
-    const { logged, resolved } = await this.db.transaction(async (tx) => {
-      // The event first: its insert takes the event-order lock (database events.ts).
-      const logged = await this.events.appendHostIn(tx, existing.dot_id, "approval.resolved", {
-        approval_id: id,
-        decision,
-        ...(note !== undefined ? { note } : {}),
+    // From its commit on, any flush may send the answer: the Dot's deliveries wait until the config that "always"
+    // changed has reached the guest, so the approved call's next use of the permission is not asked again.
+    const release = always ? this.inbound.hold(existing.dot_id) : undefined;
+    let resolved: ApprovalRecord;
+    try {
+      const stored = await this.db.transaction(async (tx) => {
+        // The event first: its insert takes the event-order lock (database events.ts).
+        const logged = await this.events.appendHostIn(tx, existing.dot_id, "approval.resolved", {
+          approval_id: id,
+          decision,
+          ...(note !== undefined ? { note } : {}),
+          ...(always ? { always } : {}),
+        });
+        const resolved = await tx.approvals.resolve(id, decision === "approve" ? "approved" : "rejected", note ?? null);
+        if (!resolved) {
+          const current = await tx.approvals.get(id);
+          throw new ControlPlaneError(409, "already_resolved", `approval ${id} is already ${current?.status ?? existing.status}`);
+        }
+        const reconfigured = always ? await tx.dots.setPermission(resolved.dot_id, resolved.permission, "allow") : null;
+        if (always && !reconfigured) throw notFound("Dot", resolved.dot_id);
+        if (resolved.task_id) await tx.tasks.transition(resolved.task_id, "RUNNING", { dotId: resolved.dot_id });
+        await tx.inbound.enqueue(resolved.dot_id, event);
+        return { logged, resolved, reconfigured };
       });
-      const resolved = await tx.approvals.resolve(id, decision === "approve" ? "approved" : "rejected", note ?? null);
-      if (!resolved) {
-        const current = await tx.approvals.get(id);
-        throw new ControlPlaneError(409, "already_resolved", `approval ${id} is already ${current?.status ?? existing.status}`);
-      }
-      if (resolved.task_id) await tx.tasks.transition(resolved.task_id, "RUNNING", { dotId: resolved.dot_id });
-      await tx.inbound.enqueue(resolved.dot_id, event);
-      return { logged, resolved };
-    });
-    this.events.publish(logged);
+      resolved = stored.resolved;
+      this.events.publish(stored.logged);
+      if (stored.reconfigured) await this.#configChanged(stored.reconfigured);
+    } finally {
+      release?.();
+    }
     await this.#deliver(resolved.dot_id, event.id);
     return resolved;
   }
@@ -605,8 +751,19 @@ export class Scheduler {
     return dotId;
   }
 
-  async listEvents(idOrName: string, after?: number, limit?: number): Promise<StoredEvent[]> {
-    return this.events.query({ dotId: await this.#historyDotId(idOrName), after, limit });
+  /**
+   * The Dot's events, oldest first: those after an id, of these types (an unknown type name is a 400, so a typo
+   * does not look like a quiet Dot) and of this task.
+   */
+  async listEvents(
+    idOrName: string,
+    filter: { after?: number; limit?: number; types?: readonly string[]; taskId?: string } = {},
+  ): Promise<StoredEvent[]> {
+    const unknown = filter.types?.filter((type) => !isStoredEventType(type)) ?? [];
+    if (unknown.length > 0) throw new ControlPlaneError(400, "invalid_request", `unknown event type: ${unknown.join(", ")}`);
+    if (filter.taskId === "") throw new ControlPlaneError(400, "invalid_request", "task_id must not be empty");
+    const types = filter.types === undefined || filter.types.length === 0 ? undefined : filter.types;
+    return this.events.query({ dotId: await this.#historyDotId(idOrName), after: filter.after, limit: filter.limit, types, taskId: filter.taskId });
   }
 
   /** The model spend the Dot's guest reported since `since` (every event when omitted), from the event log. */
@@ -650,10 +807,10 @@ export class Scheduler {
 
   /**
    * Put every Dot to sleep that is READY with an IDLE agent, has no work
-   * (no due or active task, nothing waiting to reach its guest), and was not
-   * active for its `idle_timeout`. Returns the ids of the Dots it started
-   * stopping; the stop checks all of it again under the Dot's lock and is
-   * called off when work arrived meanwhile.
+   * (no due or active task, nothing waiting to reach its guest, no automation
+   * due within the wake lead time), and was not active for its `idle_timeout`.
+   * Returns the ids of the Dots it started stopping; the stop checks all of it
+   * again under the Dot's lock and is called off when work arrived meanwhile.
    */
   async idleCheck(): Promise<string[]> {
     const now = this.#clock.now();
@@ -666,7 +823,7 @@ export class Scheduler {
       if (timeout === null) continue;
       const lastActive = new Date(computer.last_active_at ?? computer.updated_at).getTime();
       if (now.getTime() - lastActive < timeout) continue;
-      if (await this.db.tasks.hasWork(dotId, now)) continue;
+      if (await this.lifecycle.keepsAwake(dotId)) continue;
       this.#log.info("dot idle, going to sleep", { dotId, idleMs: now.getTime() - lastActive });
       sleeping.push(dotId);
       this.#runInBackground("idle sleep", dotId, () => this.lifecycle.stop(dotId, "idle"));

@@ -36,8 +36,10 @@ click. The text of `browser_type` is never in one, and neither is a character se
 more); `exec` cuts earlier, at `EXEC_TARGET_MAX`.
 
 The table also says, per tool, which function states what of the arguments leaves the guest in an
-`approval.requested`, which a person decides on: the arguments as they are, except that the proxy of
-`browser_identity_create` has its password replaced.
+`approval.requested`, which a person decides on (on the web and, when the Dot's channel is on, in a chat
+that a third party carries): the arguments as they are, except that the proxy of `browser_identity_create`
+has its password replaced and the URL of `browser_navigate` is shown as its target shows it. The text of
+`browser_type` and the value of `browser_select_option` stay, because a person who approves typing sees what is typed.
 """
 
 from __future__ import annotations
@@ -189,15 +191,26 @@ def _shown_word(word: str) -> str:
     if any(char.isspace() for char in inner):
         return _mask_word(word)
     quote = word[0] if quoted else ""
-    url = _URL.fullmatch(inner)
-    if url:
-        scheme, authority, rest = url.groups()
-        shown = scheme + authority.rpartition("@")[2] + _QUERY_VALUE.sub(lambda m: m.group(1) + _MASK, rest)
+    shown = shown_url(inner)
+    if shown is not None:
         return f"{quote}{shown}{quote}"
     _, colon, after = inner.partition(":")
     if colon and after and not _PORT_OR_PATH.fullmatch(after):
         return _mask_word(word)
     return word
+
+
+def shown_url(text: str) -> str | None:
+    """The URL without the user and the password of its authority and with the values of its query masked.
+
+    Only the URL's own parts decide, never the characters in it: a quote or a space in a path stays what it is.
+    None when the text is no URL.
+    """
+    url = _URL.fullmatch(text)
+    if url is None:
+        return None
+    scheme, authority, rest = url.groups()
+    return scheme + authority.rpartition("@")[2] + _QUERY_VALUE.sub(lambda m: m.group(1) + _MASK, rest)
 
 
 def clip(text: str, limit: int) -> str:
@@ -224,6 +237,16 @@ def exec_target(params: Mapping[str, Any]) -> str | None:
     if not command:
         return None
     return clip(redact_command(command.splitlines()[0]), EXEC_TARGET_MAX)
+
+
+def exec_starts_terminal(params: Mapping[str, Any]) -> bool:
+    """Whether the call asks `exec` for a terminal session (`tty`): the one thing `tool.called` says of a call
+    besides what it acted on, because a client shows "started a terminal session" and not "ran a command"."""
+    return params.get("tty") is True
+
+
+def never_starts_terminal(params: Mapping[str, Any]) -> bool:
+    return False
 
 
 def path_target(params: Mapping[str, Any]) -> str | None:
@@ -304,9 +327,14 @@ def identity_target(params: Mapping[str, Any]) -> str | None:
     return _identity(params) or None
 
 
+def _shown_navigation(url: str) -> str:
+    """The address a person approves: `shown_url`; a text that is no URL is masked whole."""
+    return shown_url(url) or _MASK
+
+
 def browser_navigate_target(params: Mapping[str, Any]) -> str | None:
     url = _string(params, "url")
-    return _on_identity(params, _shown_word(url) if url else None)
+    return _on_identity(params, _shown_navigation(url) if url else None)
 
 
 def browser_selector_target(params: Mapping[str, Any]) -> str | None:
@@ -350,6 +378,15 @@ def browser_identity_only_target(params: Mapping[str, Any]) -> str | None:
 def all_arguments(params: Mapping[str, Any]) -> dict[str, Any]:
     """The arguments of a call that carries nothing to hide: as they are."""
     return dict(params)
+
+
+def navigate_arguments(params: Mapping[str, Any]) -> dict[str, Any]:
+    """The arguments of `browser_navigate` with the URL as its target shows it: no user or password, the values of its query masked."""
+    shown = dict(params)
+    url = shown.get("url")
+    if isinstance(url, str) and url.strip():
+        shown["url"] = _shown_navigation(url.strip())
+    return shown
 
 
 def identity_create_arguments(params: Mapping[str, Any]) -> dict[str, Any]:

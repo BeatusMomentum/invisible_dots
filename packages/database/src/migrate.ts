@@ -44,10 +44,19 @@ export async function loadMigrations(dir: string = defaultMigrationsDir()): Prom
   }
   const files = names.filter((name) => name.endsWith(".sql")).sort();
   const out: MigrationFile[] = [];
+  const byNumber = new Map<number, string>();
   for (const name of files) {
-    if (!MIGRATION_NAME.test(name)) {
+    const match = MIGRATION_NAME.exec(name);
+    if (!match) {
       throw new Error(`migration file "${name}" does not match NNNN_name.sql`);
     }
+    // Two branches that each took the next free number meet here once merged, not in production.
+    const number = Number(match[1]);
+    const first = byNumber.get(number);
+    if (first !== undefined) {
+      throw new Error(`migrations "${first}" and "${name}" carry the same number; renumber the later one`);
+    }
+    byNumber.set(number, name);
     out.push({ version: name.replace(/\.sql$/, ""), sql: await readFile(join(dir, name), "utf8") });
   }
   if (out.length === 0) throw new Error(`no migrations found in ${dir}`);

@@ -41,7 +41,7 @@ from nanobot.dots.computer import Computer, ComputerError, Entry
 from nanobot.dots.gate import close_open_calls
 from nanobot.dots.images import TurnImages, bind_turn_images, reset_turn_images
 from nanobot.dots.memory_tools import MEMORY_DIR, memory_keys_written
-from nanobot.dots.permissions import tool_target
+from nanobot.dots.permissions import tool_starts_terminal, tool_target
 from nanobot.dots.projection import EngineSettings
 from nanobot.dots.provider import OpenRouterProviders
 from nanobot.dots.secrets import KeyHolder
@@ -72,6 +72,9 @@ class OpeningMessage:
     text: str
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
+
+# The runner's checkpoint phases that act on a model response, so an unpriced one must stop the turn first.
+_ACTS_ON_A_RESPONSE = frozenset({"assistant_tool_calls", "final_response"})
 
 # What the engine hands a running chat turn: the inputs accepted since the last look, oldest first.
 InjectionSource = Callable[[], Awaitable[Sequence[OpeningMessage]]]
@@ -172,6 +175,7 @@ class DotsTurnHook(AgentHook):
                 started_at=dots_store.clock_ms(),
                 memory_keys=memory_keys_written(tool_call.name, params, self._resolve),
                 target=tool_target(tool_call.name, params),
+                tty=tool_starts_terminal(tool_call.name, params),
             )
         )
 
@@ -304,6 +308,11 @@ class TurnRunner:
 
         async def commit(payload: dict[str, Any]) -> None:
             final_index = 0 if payload["phase"] == "final_response" else None
+            if payload["phase"] in _ACTS_ON_A_RESPONSE:
+                # These writes act on the response: the answer is delivered (and a task completes), the
+                # tool calls run next, and no check of the hook comes in between. A turn that sent a
+                # request it could not price ends here, before anything is done on its word.
+                spend.ensure_priced()
             self._store.write(
                 lambda conn: dots_store.append_messages(
                     conn, session_key, [_stamped(payload["message"])], final_index=final_index

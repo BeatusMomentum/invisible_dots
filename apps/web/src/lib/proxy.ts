@@ -14,7 +14,7 @@ export const WEB_ENV = {
   /** The API token itself; when unset, the `api.token` file is read. */
   token: ENV.TOKEN,
   /** Extra host names (comma separated) this web server may be reached by, besides loopback. */
-  allowedHosts: "INVISIBLE_DOTS_WEB_ALLOWED_HOSTS",
+  allowedHosts: ENV.WEB_ALLOWED_HOSTS,
 } as const;
 
 type Env = Record<string, string | undefined>;
@@ -192,7 +192,15 @@ export function checkRequestOrigin(input: OriginCheckInput, env: Env = process.e
 const FORWARDED_REQUEST_HEADERS = ["accept", "content-type", "last-event-id"];
 
 /** Response headers passed back to the browser. Length and encoding are dropped: fetch already decoded the body. */
-const FORWARDED_RESPONSE_HEADERS = ["content-type", "cache-control", "content-disposition", "retry-after"];
+const FORWARDED_RESPONSE_HEADERS = [
+  "content-type",
+  "cache-control",
+  "content-disposition",
+  "retry-after",
+  // A Dot's file is served under these (apps/api/src/file-types.ts); dropped here, the browser would sniff it and run it.
+  "x-content-type-options",
+  "content-security-policy",
+];
 
 export function forwardRequestHeaders(incoming: Headers, token: string): Headers {
   const out = new Headers();

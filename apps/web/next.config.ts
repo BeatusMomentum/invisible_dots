@@ -7,6 +7,9 @@ import type { NextConfig } from "next";
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 const config: NextConfig = {
+  // `invisible-dots server` runs the built web client as a child process:
+  // .next/standalone holds a server.js and the files it needs, no `next` CLI.
+  output: "standalone",
   // The workspace packages publish their .ts sources, not compiled output.
   transpilePackages: ["@invisible-dots/shared", "@invisible-dots/sdk"],
   outputFileTracingRoot: workspaceRoot,

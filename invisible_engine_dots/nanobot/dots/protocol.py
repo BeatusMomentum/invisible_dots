@@ -25,6 +25,8 @@ AGENT_ROUTES = {
     "events_stream": "/events/stream",
     "state": "/state",
     "browser_identities": "/browser-identities",
+    "automations": "/automations",
+    "tools": "/tools",
     "prepare_sleep": "/prepare-sleep",
 }
 
@@ -73,6 +75,7 @@ OUTBOUND_EVENT_TYPES = (
     "browser.identity.launched",
     "browser.identity.closed",
     "memory.written",
+    "automation.next_run",
 )
 
 AGENT_STATES = (
@@ -93,9 +96,13 @@ MODEL_ROLES = ("summary",)
 # keeps the two equal, and packages/shared/test/events.test.ts pins the unit).
 TOOL_TARGET_MAX = 160
 
-# Where the browser identities of a Dot live, and the display their browsers draw on (GUEST_PATHS.browsers and
-# GUEST_DISPLAY in packages/shared protocol.ts; tests/repo/vendored-nanobot.test.ts keeps them equal).
+# Where the browser identities of a Dot live, where the MCP server of each keeps its own files (outside /home/dot on
+# purpose: the server saves the proxy of the browser it opened, password included, under its home, and the host's
+# file routes read /home/dot and nothing else), and the display their browsers draw on (GUEST_PATHS.browsers,
+# GUEST_PATHS.mcpHomes and GUEST_DISPLAY in packages/shared protocol.ts; tests/repo/vendored-nanobot.test.ts keeps
+# them equal).
 BROWSERS_DIR = "/home/dot/browsers"
+MCP_HOMES_DIR = "/var/lib/invisible-dots/mcp"
 GUEST_DISPLAY = ":0"
 
 # The GeoIP database the golden image carries, the one its build checked against the pin: root's and read-only, so

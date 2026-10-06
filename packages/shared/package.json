@@ -11,6 +11,7 @@
     "./browser": "./src/browser.ts",
     "./api": "./src/api.ts",
     "./paths": "./src/paths.ts",
+    "./process": "./src/process.ts",
     "./api-token": "./src/api-token.ts",
     "./replace-file": "./src/replace-file.ts"
   },

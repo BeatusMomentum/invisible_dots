@@ -484,6 +484,20 @@ class TestToolTarget:
         ((_, data),) = transcript.events()
         assert (data["decision"], data["target"]) == ("ask", "rm build")
 
+    def test_a_call_that_started_a_terminal_session_says_so_beside_its_target(
+        self, dot_store: DotStore, transcript: Transcript
+    ) -> None:
+        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("call-1", "exec", CHAT, None, 5, (), "python3", True)))
+        transcript.append(CHAT, tool_result("call-1", content="started"))
+        ((_, data),) = transcript.events()
+        assert (data["target"], data["tty"]) == ("python3", True)
+
+    def test_a_call_that_did_not_leaves_the_key_out(self, dot_store: DotStore, transcript: Transcript) -> None:
+        self.intent(dot_store, "ls")
+        transcript.append(CHAT, tool_result("call-1"))
+        ((_, data),) = transcript.events()
+        assert "tty" not in data
+
     @pytest.mark.parametrize("target", [None, ""])
     def test_an_intent_without_a_target_leaves_the_key_out(
         self, dot_store: DotStore, transcript: Transcript, target: str | None

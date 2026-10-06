@@ -32,8 +32,8 @@ test covers. The complete list today:
 | what | Linux | Windows | where |
 |---|---|---|---|
 | QEMU accelerator | `-accel kvm` | `-accel whpx` | `apps/vm-manager/src/host.ts` `accelerator()` |
-| how `invisible-dots doctor` reads the accelerator before probing it | `/dev/kvm` opens read-write | the `HypervisorPlatform` feature state through `Get-CimInstance` | `apps/cli/src/setup/install.ts` `checkAcceleratorAccess()` |
-| how `invisible-dots setup` installs QEMU and enables the accelerator | `sudo apt-get install` (or the distribution's equivalent, printed) | one UAC prompt: enables the Windows Hypervisor Platform feature and runs the official QEMU installer silently | `apps/cli/src/setup/install.ts` `installHostPrerequisites()`, given the host's platform by `apps/cli/src/host.ts` |
+| how `doctor` (the CLI's and `GET /api/doctor`'s) reads the accelerator before probing it | `/dev/kvm` opens read-write | the `HypervisorPlatform` feature state through `Get-CimInstance` | `apps/vm-manager/src/accelerator-access.ts` `checkAcceleratorAccess()`, given the host's platform by `hostAccessDeps()` in the same file |
+| how `invisible-dots setup` installs QEMU and enables the accelerator | `sudo apt-get install` (or the distribution's equivalent, printed) | one UAC prompt: enables the Windows Hypervisor Platform feature and runs the official QEMU installer silently | `apps/cli/src/setup/install.ts` `installHostPrerequisites()`, given the host's platform by `hostAccessDeps()` of `apps/vm-manager/src/accelerator-access.ts` |
 | `setup` run as root | refused: it would check `/dev/kvm` as root and add root to the `kvm` group, not the person who runs the server; it calls `sudo` itself | there is no root; setup always runs as the normal user and elevates its one step | `apps/cli/src/setup/install.ts` `setupRefusal()` |
 | a file or directory private to the user (`config/`, `master.key`, `api.token`, `db/`, the data directory) | mode `0600` / `0700` | an ACL that no account but the current user can use, inheritance removed (`icacls`), because Windows ignores the mode bits and a directory under a drive root inherits "Authenticated Users: Modify"; SYSTEM and the local Administrators may stay, as root does on Linux, since some machines grant them explicitly on every new directory | `packages/shared/src/files.ts` `permissionBitsEnforced()` and `restrictToOwner()` |
 
@@ -80,7 +80,7 @@ image and an arm64 browser build, which are not wired.
 apps/
   api/             control-plane HTTP API + SSE, and the control plane composed as one process (`invisible-dots server` runs it)
   scheduler/       task dispatcher, wake on work, sleep on idle
-  vm-manager/      QEMU driver: overlays, seed and runtime ISOs, QEMU argv, port forwards, the guest client, the host's one process runner
+  vm-manager/      QEMU driver: overlays, seed and runtime ISOs, QEMU argv, port forwards, the guest client, the host's one process runner, the doctor report (section 11.1)
   web/             Next.js web client
   cli/             `invisible-dots`: setup, doctor, image build, server, and the API client commands
 packages/
@@ -88,6 +88,7 @@ packages/
   database/        PostgreSQL schema (PGlite embedded or an external server), migrations, repositories, durable queue
   iso/             ISO 9660 + Joliet writer in plain TypeScript (seed and runtime disks)
   events/          event types, the host event log and its fan-out to SSE subscribers
+  channels/        the messaging channel hub and the Telegram and WhatsApp adapters (section 9.8): pairing, who may talk, the messages between a chat and its Dot; runs inside the control plane process
   sdk/             typed HTTP client for the API (used by cli and web)
 guest/
   dot-agentd/             the computer daemon (Go): the guest endpoint, exec, files, screenshots
@@ -111,7 +112,11 @@ virtualization/
   cloud-init/      NoCloud templates
   images/          pinned base image metadata
 tests/
-  repo/            checks over the whole repository (the platform branches of section 1.1)
+  repo/            checks over the whole repository (the platform branches of section 1.1, and the
+                   contract of the end-to-end run below with the product)
+  e2e/             the real-VM acceptance run (`node tests/e2e/run.ts`, on a Linux host with an
+                   accelerator and an OpenRouter key; not in CI), its stand-in Linux host for
+                   machines that cannot run it directly, and README.md
 docs/
 ```
 
@@ -491,12 +496,22 @@ because cloud-init adds no group to a user that exists already.
   memory/                           long-term memory notes the Dot writes itself (files; section 8.6)
   browsers/<identity_id>/
     profile/                        the browser profile
-    mcp/                            INVISIBLE_MCP_HOME for that identity's server
+/var/lib/invisible-dots/            root, 0755
+  mcp/<identity_id>/                INVISIBLE_MCP_HOME for that identity's server (dot, 0700; outside /home/dot on purpose)
 /run/invisible-dots/                dot:dotengine 2750
   agentd.sock                       dot-agentd's local API for the engine (dot:dotengine 0660)
 /run/invisible-dots-agent/          dotengine:dot 2750
   agent.sock                        the engine's API, reached by dot-agentd's proxy (dotengine:dot 0660)
 ```
+
+The home of an identity's MCP server is not under `/home/dot` because the
+server saves who its browser is, the proxy with its password included, in
+`<home>/sessions/<identity_id>.json` on every `browser_open`: a file under
+`/home/dot` would be served by the host's file routes (section 9.6), which read
+`/home/dot` and nothing else, and dot-agentd's TCP listener refuses a path
+outside it (`403 outside_home`). The directory is made by the image's
+provisioner and by `install.sh` (dot owns it, the server runs as dot) and the
+`BrowserManager` makes and removes one subdirectory per identity.
 
 Each socket sits in a directory its server owns and only the other side may
 enter, setgid so the socket takes that side's group (`install.sh` writes both
@@ -610,6 +625,11 @@ sees the token, the key or the config; the call fails with
 | `POST /v1/system/poweroff` | | `202 { status: "powering_off" }` after starting `sudo -n systemctl poweroff` detached (the seed lets `dot` run exactly that without a password, section 4.1); `500 poweroff_failed` when it cannot be started. How the control plane stops a VM (section 3.4) |
 | `* /v1/agent/<rest>` | | reverse proxy to `unix:/run/invisible-dots-agent/agent.sock` at `/<rest>` |
 
+The three file routes are limited to home on the TCP port, the host's door:
+the path is resolved with every symbolic link followed and a real location not
+under home is a `403 outside_home`. On `agentd.sock` they take any path the
+Dot's user may open.
+
 The same routes, without `/v1/agent`, `/v1/proof` and `/v1/system/poweroff`,
 are served on `agentd.sock` for the engine (no token: section 4.2 says who can
 reach the socket), plus one route of that socket only:
@@ -655,13 +675,17 @@ command detached into another session outlives it.
 | `PUT /config` | `DotRuntimeConfig` (section 7) | `204`, validated, persisted in the engine's database (`dots_kv`) and projected onto the engine's settings in process (section 8.8); a config that does not validate is `400 invalid_config` |
 | `POST /events` | `InboundEvent` | `202 { accepted: true }` |
 | `GET /events/stream` | `?after=<seq>` | `text/event-stream`, one SSE message per outbound event, `id: <seq>` |
-| `GET /state` | | `{ state, current_task_id, pending_approval }` |
+| `GET /state` | | `{ state, current_task_id, pending_approval }`; `pending_approval` is the id of the oldest approval the engine waits on, or `null` |
 | `GET /browser-identities` | | `{ identities: BrowserIdentity[] }`, oldest first, the proxy with its password replaced |
 | `POST /browser-identities` | `{ name, proxy? }` | `201 BrowserIdentity`; `400 invalid` (name, or a proxy that is not an `http`, `https`, `socks4` or `socks5` URL with a host and a written port: the browser's server refuses one without a port at a launch, with a message that prints the URL and its password), `409 limit` (`max_identities`) |
 | `GET /browser-identities/:id` | | `BrowserIdentity`; `404 not_found` |
 | `DELETE /browser-identities/:id` | | `204` after the identity's browser is closed and its directory removed; `404 not_found` |
 | `GET /browser-identities/:id/frame` | | `200 image/jpeg` (`Cache-Control: no-store`), one frame of the identity's window, taken with the server's `browser_watch`; `404 not_found`; `409 not_open` when the identity is closed; `503 busy` when a call of the Dot held the identity for longer than 5 seconds; `502 frame_failed` (the server has no page to show) or `crashed` |
 | `POST /browser-identities/:id/close` | | `204` after the identity's browser is closed through `browser_close` and its server has ended; the profile stays. Closing a closed identity is a `204` too; `404 not_found` |
+| `GET /automations` | | `{ automations: Automation[] }`: every cron job of the Dot, paused ones too, as `{ id, name, enabled, schedule: { kind: "at"\|"every"\|"cron", at_ms?, every_ms?, expr?, tz? }, message, next_run_at_ms, last_run_at_ms, last_status, last_error, delete_after_run, created_at_ms }`; times are milliseconds since the epoch, `next_run_at_ms` is `null` while a job is paused |
+| `PATCH /automations/:id` | `{ enabled: bool }` | `200 Automation` (a job already in that state is not touched: resuming a running job does not move its next run); `404 not_found`, `400 invalid_automation` |
+| `DELETE /automations/:id` | | `204`; `404 not_found`, `409 protected` for a system job |
+| `GET /tools` | | `{ tools: [{ name, permission, offered, description }] }`: the engine's tool table (section 8.8) in its order; `offered` is whether the model is offered the tool now (its permission is not `deny`, a memory tool needs memory on, and a tool that creates or deletes a browser identity needs the Dot to manage its identities; before the first config, none); `description` is the one in the tool's schema |
 | `POST /prepare-sleep` | | `204` after the state is flushed and browser sessions are closed; the agent then starts no new work. A model request in flight is abandoned; a tool in flight gets up to 20 seconds to finish and record its result, then is aborted (section 8.7). A `POST /secrets` (the READY procedure of a VM whose stop failed, so no shutdown followed) lifts that, and so does a new inbound event |
 
 The identity routes and the model's identity tools are one code path, the
@@ -721,10 +745,15 @@ text, spent_usd?}`, `task.completed {task_id, summary, spent_usd?}`,
 `task.failed {task_id, error, spent_usd?}`,
 `approval.requested {approval_id, task_id?, tool, permission, arguments,
 reason}`, `tool.called {task_id?, tool, permission, decision, ok,
-duration_ms, target?, interrupted?}`, `browser.identity.created|deleted|launched|closed
-{identity_id, name}`, `memory.written {key}`. `interrupted: true` marks a call
+duration_ms, target?, tty?, interrupted?}`, `browser.identity.created|deleted|launched|closed
+{identity_id, name}`, `memory.written {key}`, `automation.next_run {next_run_at_ms}`.
+`interrupted: true` marks a call
 the engine stopped during: its outcome is unknown and it was not run again, so
-`ok` is false and `duration_ms` is 0.
+`ok` is false and `duration_ms` is 0. `tty: true` marks a call that started a
+terminal session (`exec` with `tty`, section 8.3), which is not what its target
+says (the command): a client shows "Started a terminal session: python3". It is
+absent for every other call, and the permission table
+(`TOOL_PERMISSIONS[...].starts_terminal`) is where a tool says it can.
 
 `task.progress {task_id, text}` is the model saying what it is about to do: the
 text an assistant message of a running task carries beside its tool calls (the
@@ -788,14 +817,31 @@ that stores the call's result, only when the call ran ok: a call that failed,
 was denied or was interrupted sends none, and a note an `apply_patch` wrote
 twice is one event. A note written through `exec` is not seen.
 
+`automation.next_run {next_run_at_ms}` is when the earliest enabled automation of
+the Dot is next due, in milliseconds since the epoch, or `null` when none is (no
+job, every job paused, or only one-time jobs that already ran). The engine sends
+it each time that value changes, so the last one the host has is the true one: when
+the cron service arms its timer, which it does after every change of the jobs (the
+tool, `PATCH` and `DELETE /automations`) and after every tick, the engine compares
+the value with the one it last reported, kept in its database in the transaction
+that writes the event, and writes the event only when they differ. A restart
+therefore does not say it again, a computer that never had a job has said nothing
+(the host takes that as `null`), and a time already past is reported as it is: it
+is a run the engine has not made yet, which it makes when it starts (section 8.8).
+The host keeps the value in `computers.next_automation_at` and uses it to wake a
+stopped computer shortly before the run and to not put one to sleep that is about
+to need it (section 9.5).
+
 The `arguments` of `approval.requested` are what the person decides on, and
 they leave the guest: a tool argument that carries a secret is redacted there
-by the engine, at the point where the event is built (the engine's tools carry
-no such argument yet and it redacts nothing; the browser phase adds the proxy
-URL of `browser_identity_create`, whose password is replaced by the rule of
-`redactProxy()` in `packages/shared/src/identity-rules.ts`). The pending call in
-the Dot's database keeps the full arguments, so the approved call is made as
-asked.
+by the engine, at the point where the event is built, and nowhere after it: the
+host, the web UI and a chat prompt (section 9.8) show the arguments as the event
+has them. The engine redacts the proxy URL of `browser_identity_create`, whose
+password is replaced by the rule of `redactProxy()` in
+`packages/shared/src/identity-rules.ts`, and the URL of `browser_navigate`, which
+is shown as the `target` of `tool.called` shows it (no user or password, the
+values of its query masked). The pending call in the Dot's database keeps the
+full arguments, so the approved call is made as asked.
 
 An outbound event is handed to the event stream only after the transaction
 that wrote it to the outbox committed: one written inside a transaction that
@@ -804,7 +850,21 @@ reused for another event.
 
 The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
 `computer.state {state}`, `computer.started`, `computer.stopped`,
-`task.created`, `task.cancelled`, `approval.resolved`.
+`task.created`, `task.cancelled`, `approval.resolved`, and the two of a messaging
+channel: `channel.status {kind, status, detail?}` (`kind` is `telegram` or
+`whatsapp`; `status` is `connecting`, `connected`, `needs_relink` or `error`,
+and `detail` never holds a credential) and `channel.peer.paired {kind, peer_id,
+label}`. A channel lives in the control plane only: the Dot never sees one, so
+no inbound or outbound type names it.
+
+The message a person sends is logged as a `user.message` host event
+`{message_id, text, origin?}`. `origin` is `{channel, binding_id, chat_id,
+external_id}` for a message that came through a channel and is absent for the
+web, the CLI and the SDK. The event log is the one place that says where a
+message came from, and a reply is routed back by it; the guest receives the
+event with `{text}` only. Only code inside the control plane can set an origin
+(`Scheduler.sendMessage`): `POST /api/dots/:id/messages` takes `{text}` and
+ignores anything else.
 
 ## 6. Browser identities
 
@@ -821,17 +881,17 @@ The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
   the password replaced. The browser's own process is the one exception, by
   decision: it runs as `dot` with the proxy in its environment, so the `dot`
   user, and the model through `exec`, can read the proxy of an identity whose
-  browser is open from that process's `/proc/<pid>/environ`. It is not the only
-  copy the model can read: `invisible-playwright-mcp` writes the proxy it was
-  launched with, password included, into its own session file
-  (`/home/dot/browsers/<id>/mcp/sessions/<id>.json`, owned by `dot`), which stays
-  there while the browser is closed. That is a defect of the library (its
-  `Work.remember()` saves the whole proxy; its own identity file keeps only a
-  digest), not something this repository can undo without patching it: the fix
-  belongs upstream (save the server and the user, or a digest, and read the
-  proxy from `STEALTHFOX_PROXY` at a reopen), and until it is pinned the browser
-  smoke records it as a known finding while it checks that no other file of
-  `/home/dot` (the profile, a cache, a log) holds the password. The proxy is never
+  browser is open from that process's `/proc/<pid>/environ`. The server's
+  session file is the second copy on disk, again by the server's own design
+  (it saves who its browser is, the proxy included, in
+  `/var/lib/invisible-dots/mcp/<identity_id>/sessions/<identity_id>.json`, as
+  `dot`, after every `browser_open`): the model's `exec` can read it, but it is
+  outside `/home/dot`, so the host's file routes (the API, the SDK, the Files
+  tab) can never serve it; deleting the identity removes it. That the server
+  keeps the whole proxy at rest is a defect of the library (its `Work.remember()` saves it; its own
+  identity file keeps only a digest), which this repository does not patch: the fix belongs upstream,
+  and the browser smoke checks that no file of `/home/dot` (the profile, a cache, a log) holds the
+  password and that the port refuses the session file. The proxy is never
   on a command line, which every user of the VM can read: the engine tells the
   relay the variable's name (`--env-from`) and the relay reads the value from
   its own environment, which only `dotengine` can read.
@@ -841,7 +901,7 @@ The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
   launch of the same profile gets the same one back.
 - Launching an identity starts one `invisible-playwright-mcp` process over
   stdio. Its environment is the allowlist of section 4.1 plus, through the MCP
-  server's documented settings: its home (`INVISIBLE_MCP_HOME=<identity>/mcp`)
+  server's documented settings: its home (`INVISIBLE_MCP_HOME=/var/lib/invisible-dots/mcp/<identity_id>`)
   and session id (`INVISIBLE_MCP_SESSION_ID=<identity_id>`), the identity's
   profile directory (`<identity>/profile`), headed mode, `DISPLAY=:0`, and the
   identity's proxy when it has one, and two settings of the libraries it
@@ -869,7 +929,7 @@ The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
   no `profile`, `proxy` or `seed` argument, so for a first launch the
   environment above is the only source of those values. A later `browser_open`
   with no argument is a reopen, and the library then takes who the browser is
-  from its session file (`<identity>/mcp/sessions/<id>.json`: seed, proxy and
+  from its session file (`/var/lib/invisible-dots/mcp/<identity_id>/sessions/<id>.json`: seed, proxy and
   profile directory, written at the first open) and does not read
   `STEALTHFOX_PROXY` or `STEALTHFOX_PROFILE_DIR` again: the file wins. An
   identity's proxy never changes after it is created (there is no route that
@@ -904,11 +964,15 @@ The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
   replays the placeholder; the model takes another screenshot when it wants one.
 - Secrets in the arguments. The proxy password has no place in anything shown:
   `approval.requested` carries `browser_identity_create`'s proxy with the
-  password replaced (the parked call keeps the real one, so the approved call
-  runs as asked), and no `target` of `tool.called` holds typed text. The
-  `text` of `browser_type` stays in the arguments of an approval when
-  `browser.act` is set to `ask`: whether a field is a password cannot be known
-  from the arguments, so a person approving typing sees what is typed.
+  password replaced and `browser_navigate`'s URL as the `target` of `tool.called`
+  shows it (the parked call keeps the real ones, so the approved call runs as
+  asked), and no `target` of `tool.called` holds typed text. The `text` of
+  `browser_type` and the `value` of `browser_select_option` stay in the arguments
+  of an approval when `browser.act` is set to `ask`: whether a field is a
+  password cannot be known from the arguments, so a person approving typing sees
+  what is typed. That includes a chat that carries approvals (section 9.8, not
+  end-to-end encrypted): a person who does not want typed text there turns
+  `show_arguments` off for the channel.
 
 ## 7. Dot configuration
 
@@ -1016,14 +1080,22 @@ limits.max_cost_per_task_usd (spent 1.0423 USD of 1.00)` (`task.failed`'s
 could not answer: ..."). A request cannot be priced before it is answered, so
 the cap may be exceeded by the last request, and an answer that crosses it is
 delivered and the task completes: the cap only stops the work from going on. A
-request that failed has no cost and counts for nothing. A task's spend is kept
+request that failed has no cost and counts for nothing: OpenRouter reports the cost in the last chunk of a
+stream, so a stream that stalled or was cut after tokens were streamed (and billed) has no figure to count, and
+neither has an attempt the retries of section 8.5 went past (4 attempts a request). The cap can therefore be
+exceeded by those partial streams, each at most the cost of one full response. A task's spend is kept
 across a restart, an approval and a resume (a task that was cut by a crash goes
 on from what it had spent); the chat's spend starts again with each answer it gives, so an approval or a
 restart does not reset it.
 A lowered cap applies from the next turn, like the step limit. A response that
-reports no cost fails the turn at its next check, `stopped: OpenRouter reported
-no cost for a request, so limits.max_cost_per_task_usd cannot be enforced`: the
-cap never runs blind. A request abandoned by a sleep may have cost something
+reports no cost fails the turn, `stopped: OpenRouter reported
+no cost for a request, so limits.max_cost_per_task_usd cannot be enforced`,
+before anything is done on that response: its tool calls are not written and do
+not run, or its answer is not delivered and the task does not complete (a
+summary request is not acted on this way, so the failure comes at the next
+check). The note is a column
+of the same ledger row as the money (`dots_spend.unpriced`), so a restart does
+not forget it: the cap never runs blind. A request abandoned by a sleep may have cost something
 that was never reported; that gap is at most one request a sleep.
 
 ### 8.3 Tools
@@ -1357,7 +1429,8 @@ state.
   registry no turn sees.
 - Browser identities. `BrowserManager` (`nanobot/dots/browser.py`) owns the
   identities (their rows in `dots_browser_identities`, their directories under
-  `/home/dot/browsers`, made and removed as dot through the Computer) and one
+  `/home/dot/browsers` and their servers' homes under `/var/lib/invisible-dots/mcp`,
+  made and removed as dot through the Computer) and one
   `invisible-playwright-mcp` process per open identity, started as dot through
   `dot-agentd relay` with the environment of section 6 and nanobot's MCP client
   on a registry of its own. Launch, close and delete run one at a time; calls on
@@ -1438,7 +1511,28 @@ state.
   `ask` by default) adds and removes them. A firing is recorded as a durable
   inbound row, `automation.fired`, once per firing, and the chat answers it as
   an input: the opening message reads `[Automation "<name>" fired] <message>`
-  and the answer is a `message.assistant` without `in_reply_to`.
+  and the answer is a `message.assistant` without `in_reply_to`. The person
+  lists, pauses and removes the jobs through `GET /automations`, `PATCH` and
+  `DELETE /automations/:id` (section 5.3), served from the same service object
+  the tool uses; the person does not make one. `GET /tools` shows the permission
+  table with what the model is offered now.
+- Automations while the computer is off. The jobs live in the guest and the
+  computer powers off when idle, so a job does not fire while it is off: the
+  host starts the computer shortly before the earliest run (section 9.5), told
+  when by `automation.next_run` (section 5.4), which the engine sends whenever
+  the cron service arms its timer and the earliest next run changed. A run that
+  came due while no engine ran is made once, when the engine starts. The next
+  run of a job is stored in `jobs.json` and is what the service starts from: a
+  time in the past is kept (the service counts a next run from now only for an
+  enabled job that has none), the first tick finds the job due, runs it once
+  and counts its next run from that moment. A one-time job (`at`) therefore runs
+  late and is then over, and a recurring one runs once for the occurrences it
+  missed, never once for each of them. A firing is recorded under the id
+  `cron:<job id>:<the time it was due>` before the service saves that the job ran,
+  and the engine ignores an id it already holds, so a `kill -9` between the two
+  finds the job due again and the engine recognizes its firing: it runs once.
+  On a stop the cron timer ends before the engine does, so no firing falls on a
+  stopped engine, which records nothing while the job moves on as if it had run.
 - Prepare-sleep and SIGTERM. The engine stops taking new work; a turn with no
   tool running is cancelled at once; a turn with a tool running gets up to 20
   seconds, in which the tool's result commits and the next iteration abandons
@@ -1496,18 +1590,37 @@ drew id 10 could commit after one that drew 11, and a client that resumed
 event and changes other rows inserts the event first, so the lock is never
 taken while holding a row lock another event writer waits for.
 
-Tables: `dots`, `computers`, `tasks`, `task_runs`, `events`, `approvals`,
-`inbound_events`, `secrets`, `schema_migrations`. Migrations are plain SQL
-files applied in order at start.
+Two migrations clean data written before a rule existed. `0008_orphaned_secrets`
+deletes the secrets scoped to a Dot that no longer exists (those of Dots deleted
+before `DotsRepository.delete` removed them). `0009_removed_config_names` removes
+from every stored `dots.config` the model roles other than `summary` and the five
+permission names that were deleted from `PERMISSIONS` (`web.fetch`, `web.search`,
+`subagents`, `message.send`, `memory.write`, section 7): `dots.config` is jsonb that
+is not parsed again on its way to the guest, so a stored name the schema no longer
+knows would reach the engine, which refuses the whole config, and would make every
+update of the Dot fail until the person removed it by hand. The migration rewrites
+`config` in one statement per Dot and moves its `config_version` once, as a save does,
+so a form opened before it is refused by the version precondition and not by the parser.
 
-- `dots(id text pk, name text unique, config jsonb, status text, created_at, updated_at)`
-- `computers(dot_id pk fk, vm_name, guest_port int null, pid int null, state text, golden_image text, runtime_image text, token_enc bytea, event_cursor bigint default 0, last_active_at, last_error, updated_at)`: `guest_port` and `pid` are null while no QEMU runs, and `guest_port` is not unique (a crashed VM's row may name a port since reused); both are copies of `qemu.json` (section 3.2), which wins on reconciliation
+Tables: `dots`, `computers`, `tasks`, `task_runs`, `events`, `approvals`,
+`inbound_events`, `secrets`, `channel_bindings`, `channel_peers`,
+`channel_pairings`, `channel_prompts`, `schema_migrations`. Migrations are plain
+SQL files applied in order at start.
+
+- `dots(id text pk, name text unique, config jsonb, status text, error text null, config_version int default 1, created_at, updated_at)`: `config_version` grows with every save of `config` (`updateConfig`, `setPermission`, and `0009_removed_config_names` once for each Dot it rewrites) and with nothing else, while `updated_at` also moves with every status change; the PATCH precondition is on the version
+- `computers(dot_id pk fk, vm_name, guest_port int null, pid int null, state text, golden_image text, runtime_image text, token_enc bytea, event_cursor bigint default 0, last_active_at, next_automation_at timestamptz null, stop_reason text null, last_error, updated_at)`: `guest_port` and `pid` are null while no QEMU runs, and `guest_port` is not unique (a crashed VM's row may name a port since reused); both are copies of `qemu.json` (section 3.2), which wins on reconciliation; `next_automation_at` is the guest's last `automation.next_run` report (migration `0010_computer_next_automation`), null while none is due or nothing was reported, and it is the guest's report: nothing else of the row moves with it; `stop_reason` (`idle`, `user` or `exited`, same migration) is why the computer is STOPPING or STOPPED and is null in every other state (section 9.5)
 - `tasks(id text pk, dot_id fk, description, priority int, status, created_at, scheduled_at, started_at, finished_at, summary, error, spent_usd double precision default 0)`: `spent_usd` is the highest `spent_usd` the guest reported on the task's events (section 5.4), recorded by the host in the transaction that stores each event, so a late or repeated event never lowers it and a cancelled task the guest keeps working on still counts; a task whose guest never reported spend stays 0
 - `task_runs(id pk, task_id fk, started_at, delivered_at, finished_at, outcome)`: `delivered_at` is set when the guest accepted the run's `task.created`
-- `events(id bigserial pk, dot_id, type, data jsonb, source 'host'|'guest', guest_seq bigint, created_at)`, unique `(dot_id, guest_seq)`
+- `events(id bigserial pk, dot_id, type, data jsonb, source 'host'|'guest', guest_seq bigint, created_at)`, unique `(dot_id, guest_seq)`, and unique `(dot_id, data->origin->>binding_id, data->origin->>external_id)` for a `user.message` with an origin: a channel message is stored once, by the channel's own id, in the transaction that stores it, so a redelivery after any failure finds the first one and the Dot gets it once (section 9.8)
 - `approvals(id text pk, dot_id, task_id, tool, permission, arguments jsonb, reason, status 'pending'|'approved'|'rejected'|'expired', note, created_at, resolved_at)`: an approval whose task reached a terminal state before anyone decided is `expired`, in the same statement that ends the task, and an `approval.requested` for a task that is already terminal is stored as `expired`, never `pending`
 - `inbound_events(seq bigserial pk, id text unique, dot_id fk, type, data jsonb, ts, task_id, run_id, created_at, sent_at, delivered_at, dropped_at, drop_reason, failures int, last_error, retry_at)`: the outbox of host to guest events (section 9.2)
-- `secrets(scope text, name text, value_enc bytea, updated_at, pk(scope, name))`: `scope` is `global` or a dot id; no foreign key can cover that, so deleting a Dot deletes the secrets scoped to it in the same statement (`DotsRepository.delete`)
+- `secrets(scope text, name text, value_enc bytea, updated_at, pk(scope, name))`: `scope` is `global` or a dot id; no foreign key can cover that, so deleting a Dot deletes the secrets scoped to it in the same statement (`DotsRepository.delete`); the migration `0008_orphaned_secrets` deleted those of Dots removed before that
+
+- `channel_bindings(id text pk, dot_id fk cascade, kind 'telegram'|'whatsapp', enabled bool, settings jsonb, status, status_detail, account, event_cursor bigint, created_at)`, unique `(dot_id, kind)`: one Dot's link to one channel kind (section 9.8), and unique `account` among the `telegram` bindings whose account is known: one bot serves one Dot (a WhatsApp number is learned at the scan and may be linked on several Dots, each a device of the phone); `settings` is `{approvals, notify_tasks, show_arguments}` and never a credential; `account` is the channel's public name for the account (a bot's username); `event_cursor` is the id of the last event of the Dot the hub dealt with
+- `channel_peers(binding_id fk cascade, peer_id, chat_id, role 'owner'|'user', label, created_at, pk(binding_id, peer_id))`: the people allowed to talk through the binding, by the channel's stable id, with the chat they paired from
+- `channel_pairings(binding_id fk cascade, code_hash, expires_at, consumed_at, pk(binding_id, code_hash))`: one-time pairing codes, stored hashed
+- Where a channel message came from is in its `user.message` event (section 5.4), the one owner of that fact; there is no table of handled messages. An index on `events` by `(dot_id, data->>'message_id')` for `user.message` lets an answer find the message it answers
+- `channel_prompts(binding_id fk cascade, approval_id fk approvals cascade, chat_id, ref, created_at, pk(binding_id, approval_id, chat_id))`: the approval prompts a channel sent, one message per chat; `ref` is the channel's handle for the message (a Telegram message id), what an edit needs. A row is deleted once its prompt was edited to the outcome
 
 Secrets are encrypted with AES-256-GCM under `master.key`. The OpenRouter key
 is looked up as `(<dot_id>, openrouter_api_key)` first, then
@@ -1587,7 +1700,8 @@ the Dot was READY can only meet a stop that has not begun.
 ### 9.5 Sleep and wake
 
 When a Dot has no PENDING task that is due, no RUNNING or WAITING_APPROVAL
-task and nothing undelivered in its outbox, its agent state is IDLE, and
+task, nothing undelivered in its outbox and no automation due within the wake
+lead time (below), its agent state is IDLE, and
 nothing happened for `idle_timeout`: `POST /v1/agent/prepare-sleep` ->
 `POST /v1/system/poweroff` -> QEMU exits (killed after 60 s, section 3.4) ->
 STOPPED. The idle stop checks all of it again under the Dot's lock, after
@@ -1596,9 +1710,55 @@ Disk, identities and memory stay. A new task or message for a STOPPED Dot
 starts the VM, waits for READY and then delivers it; so does a scheduled task
 when its `scheduled_at` comes. A STOPPED Dot whose due work waits behind a task
 its guest has not finished (it was stopped mid-task) is started too, so its
-guest finishes that task and the next one can be claimed. A VM that stops
+guest finishes that task and the next one can be claimed.
+
+A Dot's automations (section 8.8) run in its guest, which is off while the
+Dot sleeps, so the host starts the computer for them. The guest reports, with
+`automation.next_run` (section 5.4), when its earliest enabled automation is due,
+and the host keeps it in `computers.next_automation_at`. The scheduler's pass
+(every `dispatchIntervalMs`, 5 s) starts every STOPPED computer that the person did not stop (below) and whose Dot is not
+in ERROR, DISABLED or CREATING and whose next automation is due within the
+wake lead time (`lifecycle.automationWakeLeadMs`, 90 s by default: a start
+reaches READY with some to spare) or is already past, a run missed while the
+host or the computer was down, which the guest makes as it starts. The same
+condition is part of "has work" for the idle sleep, in the idle check and
+again under the Dot's lock, so a computer is not put to sleep when a run is
+due within the lead time, and with an automation every minute it stays up.
+The start is the ordinary one (the key and the config are pushed), and the run
+itself is the guest's: the host decides only when the computer starts.
+
+An explicit stop by the person wins over the automations. Why a computer is off
+is recorded with it (`computers.stop_reason`: `idle` for the sleep above,
+`user` for the person's stop through `POST /computer/stop`, the CLI or the
+web, `exited` for a VM that stopped by itself), kept while the computer is
+STOPPING or STOPPED and cleared by any start. A computer the person stopped is
+not started for its automations, missed or due, until the person starts it
+again: they are paused while it is stopped, and the CLI (`status`, `computer
+stop`) and the web (the stop confirmation) say so. A message or a task for it
+still starts it, as it does for any stopped Dot, and from that start on it
+sleeps and wakes for its automations like any other. The person's stop of a
+computer that is already asleep is recorded too. A stop that the control plane
+was interrupted in is finished for the reason it was asked for, without the idle
+check again: the shutdown had begun, and the guest may already have taken
+prepare-sleep. Work that came due meanwhile starts the computer again from the
+next pass, as for any stopped Dot.
+
+"Has work" is one definition, `Lifecycle.keepsAwake`: a task or inbound work for
+the Dot, or an automation due within the lead time (a past one included). The
+idle check, the idle stop under the lock and the restart after an unexpected
+exit all read it.
+
+A VM that stops
 without being asked (the guest powered itself off, QEMU crashed) is recorded
-as STOPPED, and started again at once when its Dot still has work.
+as STOPPED, and started again at once when `keepsAwake` says the Dot still has
+work.
+
+`next_automation_at` arrives only from a guest that ran. A Dot that was asleep
+when migration `0010` was applied has none stored, so it is not woken for its
+automations (and misses their runs) until it starts for another reason: a
+message, a task, or the person. Its guest then reports its next run at that
+start, and the automations are woken for from there on. The host does not boot
+every sleeping Dot once at an upgrade to ask.
 
 ### 9.6 API
 
@@ -1614,11 +1774,11 @@ trimmed, and at least 16 characters.
 POST   /api/dots                     body: { config: <yaml string> | <object> }
 GET    /api/dots
 GET    /api/dots/:id
-PATCH  /api/dots/:id                 body: { config }   (pushed to the guest if running)
+PATCH  /api/dots/:id                 body: { config, expected_config_version? }   (pushed to the guest if running; with `expected_config_version`, the `config_version` of the Dot as read, a Dot whose config changed since is a 409 `dot_changed` and nothing is saved)
 DELETE /api/dots/:id                 destroys the VM and its disk, then deletes the Dot, its rows and its own secrets
 
 POST   /api/dots/:id/messages        body: { text }
-GET    /api/dots/:id/messages        conversation, from the event log
+GET    /api/dots/:id/messages        conversation, from the event log (a user message carries `origin` when it came through a channel)
 POST   /api/dots/:id/tasks           body: { description, priority?, scheduled_at? }
 GET    /api/dots/:id/tasks
 GET    /api/tasks/:id
@@ -1637,20 +1797,41 @@ DELETE /api/dots/:id/browser-identities/:identityId
 GET    /api/dots/:id/browser-identities/:identityId/frame     image/jpeg, only while the identity is open (409 not_open, 503 busy, 502 frame_failed or crashed: the engine's own answers pass through)
 POST   /api/dots/:id/browser-identities/:identityId/close     204; the browser ends, the profile stays
 
+GET    /api/dots/:id/channels        { channels: [{ kind, enabled, status, status_detail, account, settings, peers, created_at }], available: [kind] }; never a token; `available` is what this server runs (WhatsApp only when it was started with it, section 9.8)
+PUT    /api/dots/:id/channels/telegram  body: { token }   links the Dot to the bot (201), or gives the linked bot a new token (200); the token is checked with Telegram, stored encrypted, never returned
+PATCH  /api/dots/:id/channels/:kind  body: { settings?: { approvals?, notify_tasks?, show_arguments? }, enabled? }   enabled false pauses the channel, its people and token stay
+POST   /api/dots/:id/channels/whatsapp/link   202 the channel's record, waiting: starts linking WhatsApp (400 when the server does not run it, 409 `already_linked`)
+GET    /api/dots/:id/channels/whatsapp/qr   server-sent events of `ChannelLinkFrame` (`waiting`, `code`, then `linked` or `failed`, and the stream ends); never cached, never stored
+DELETE /api/dots/:id/channels/:kind  unlink: the channel stops, its token (WhatsApp: the linked device's keys) and its people are deleted
+POST   /api/dots/:id/channels/:kind/pairing   201 { code, deep_link, message, expires_at }: a one-time code, valid ten minutes; `message` is what to send the account to pair
+DELETE /api/dots/:id/channels/:kind/peers/:peer   revoke a paired person
+
 GET    /api/approvals                ?status=pending|approved|rejected|expired
-POST   /api/approvals/:id/approve    body: { note? }
+POST   /api/approvals/:id/approve    body: { note?, always?: true }   `always` also sets the approval's permission to `allow` in the Dot's config in the same transaction (then pushed like a PATCH, `dot.updated` logged); `approval.resolved` carries `always: true`
 POST   /api/approvals/:id/reject     body: { note? }
 
-GET    /api/dots/:id/events          ?after=<id>&limit=
+GET    /api/dots/:id/events          ?after=<id>&limit=&types=<a,b>&task_id=   `types` are event type names (an unknown one is a 400), `task_id` keeps the events whose `data.task_id` it is
+GET    /api/dots/:id/files/list      ?path=   { path, entries: [{ name, type, size, mtime }] }: a directory under /home/dot (home when omitted)
+GET    /api/dots/:id/files           ?path=   the bytes of a file under /home/dot, at most 16 MiB (413 `file_too_large`)
+GET    /api/dots/:id/automations     { automations: Automation[] }: the Dot's cron jobs (section 5.3); needs the computer running (409 `computer_stopped`)
+PATCH  /api/dots/:id/automations/:automationId   body: { enabled }   pauses or resumes one; answers the automation
+DELETE /api/dots/:id/automations/:automationId   204
+GET    /api/dots/:id/tools           { tools: [{ name, permission, offered, description }] }: the engine's tool table and what the model is offered now; needs the computer running
 GET    /api/dots/:id/usage           ?since=<ISO 8601 timestamp>   { dot_id, since, spent_usd }
 GET    /api/stream                   SSE: every event, ?dot_id= to filter
 PUT    /api/secrets/openrouter       body: { value, dot_id? }
 GET    /api/health
+GET    /api/doctor                   { ok, checks: [{ id, label, status: ok|missing|failed, detail, fix? }] }: the host report of section 11.1, run on the machine the server runs on
 ```
 
 `GET /api/health` answers `{ status: "ok", database: "ok", version,
 openrouter_configured }`; the last field is whether a global OpenRouter key is
 stored, which `invisible-dots doctor` reports.
+
+`GET /api/doctor` answers the report of section 11.1 as the server's own host
+sees it, the same rows in the same order as `invisible-dots doctor --json`
+(`{ ok, checks }`, `ok` true only when every check is). It runs QEMU's
+accelerator probe, so it takes a moment and it is not polled.
 
 `GET /api/dots/:id/usage` answers the model spend the Dot's guest reported, in
 USD, since `since` (the first event when omitted; a malformed `since` is a 400).
@@ -1664,14 +1845,75 @@ reported an end (a cancelled task) is not in the
 total; the task's own `spent_usd` still shows what was heard of it. Like
 `/events`, it reads the history of a deleted Dot by id.
 
-Browser identity routes need the Dot's computer running: on a stopped Dot they
-answer `409 { error: "computer_stopped" }`.
+`GET /api/dots/:id/events` filters in the database: `types` is a comma-separated
+list of type names, `task_id` matches `data->>'task_id'` (the one place the
+contract puts the task, so the host's `task.created` and `task.cancelled` and
+the guest's `task.*`, `tool.called` and `approval.requested` of a task all
+match), and both combine with `after` and `limit`. A chat turn's events carry
+no task. Migration `0006_events_task.sql` adds the expression index the task
+filter reads. A type name no event has (`tool.calls`) is a 400, so a typo does not
+look like a quiet Dot.
+
+`GET /api/dots/:id/automations`, `PATCH` and `DELETE /api/dots/:id/automations/:automationId`
+and `GET /api/dots/:id/tools` pass through to the engine's routes of section 5.3:
+the cron jobs and the tool table are the engine's, and the control plane keeps no
+copy of either. They need the computer running (`409 computer_stopped`), the
+engine's own refusals pass through with their code and status, and a `PATCH` whose
+`enabled` is not a boolean is a `400 invalid_request` before the guest is called.
+A job the Dot makes with its `cron` tool needs the approval of `automations`
+(`ask` by default), so a person sees an automation here only after approving it.
+
+`GET /api/dots/:id/files/list` and `GET /api/dots/:id/files` read the Dot's
+computer through dot-agentd's `GET /v1/files/list` and `GET /v1/files`, and
+only under `/home/dot`: `path` is absolute, relative to `/home/dot` or `~`, and
+the control plane normalizes it (`checkHomePath` in `packages/shared`) so the
+guest always gets an absolute one; a path outside home, or with any `..` segment,
+is a `400 invalid_path` without a call to the guest. That check is lexical and
+only the early answer; the rule is dot-agentd's: its TCP listener (the host's
+door) resolves every path to its real location with the symbolic links followed
+and refuses one that is not under home, `403 outside_home`, which passes through
+(a link under home to `/proc/<pid>/environ`, where the browser server runs as `dot`
+with the proxy password in its environment, shows nothing; the session file the
+server saves the proxy in is not under home at all, section 4.2). The same goes for the
+`PUT` and the listing of that listener; a link that stays in home works, one that
+leaves it lists as `other`. The engine's socket is not confined. A read is one buffered answer of at most 16 MiB; a larger
+file is a `413 file_too_large` and the host stops reading it as soon as it passes
+the limit. The bytes are the Dot's own (a model wrote them, perhaps after reading
+hostile text) and the web server answers from the page's origin, so the type is
+never one a browser runs: images are served as `image/png`, `image/jpeg`,
+`image/gif` or `image/webp` inline, source and markup (`.md`, `.json`, `.html`,
+`.svg`, ...) as `text/plain` inline, everything else as a download, always with
+`nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` and `no-store`
+(the web proxy passes those headers on). The guest's own refusals pass through
+with their code (`404 not_found`, `400 is_a_directory`, `400 not_a_directory`).
+
+Browser identity and file routes need the Dot's computer running: on a stopped
+Dot they answer `409 { error: "computer_stopped" }`.
 
 Errors are `{ error: <code>, message }` with a 4xx or 5xx status.
 
 ### 9.7 Web client
 
-`apps/web` is a Next.js server on `127.0.0.1:3000`. It answers `/api/...` with
+`apps/web` is a Next.js server on `127.0.0.1:3000`. `invisible-dots server`
+starts it: the build `npm run build --workspace @invisible-dots/web` leaves
+(Next's standalone server and the browser files beside it, assembled by
+`apps/web/scripts/standalone.mjs`) is run with `node` as a child process of the
+server, on `INVISIBLE_DOTS_WEB_LISTEN` (default `127.0.0.1:3000`), with
+`INVISIBLE_DOTS_URL` set to the control plane's address; the setting is read
+before anything starts, so a malformed value or port 0 (the person has to be
+told where to go) fails the command at once. The child gets an
+allowlisted environment, not the server's: the data directory (so it reads
+`api.token` itself on every request), `INVISIBLE_DOTS_TOKEN` only when the
+server was given the token that way, and `INVISIBLE_DOTS_WEB_ALLOWED_HOSTS`.
+It also gets the server's pid (`INVISIBLE_DOTS_WEB_PARENT_PID`) and exits when
+that process is gone (`apps/web/src/instrumentation.ts`), so a `kill -9` of the
+server does not leave an orphan holding the port: a stop signal ends the child
+through the server, anything else through the child itself.
+The web client is a companion, not a dependency: when it is not built, its
+port is taken or it exits, the server logs why and the control plane and the
+command line go on; `server --no-web` does not start it. A stop signal closes
+the web client first, then the control plane, and a Ctrl+C while the web
+client is still starting ends that start. It answers `/api/...` with
 the control plane's own paths, so the browser uses the SDK unchanged, and
 adds the API token on the way, so the browser never sees it. It holds that
 token and listens on the host's loopback, which every guest reaches as
@@ -1692,13 +1934,269 @@ token and listens on the host's loopback, which every guest reaches as
   by the client, so they never let a request through on their own. The Host
   must be loopback or listed in `INVISIBLE_DOTS_WEB_ALLOWED_HOSTS`.
 
+### 9.8 Messaging channels
+
+A person can talk to a Dot from a chat (Telegram, WhatsApp). This is the control
+plane's business only: the Dot never sees a channel, no guest route or event
+type names one, and the Dot has no tool that sends a message anywhere.
+`packages/channels` holds the **channel hub**, built in `startServer` right after
+the Scheduler, started after `scheduler.start()` and closed before it. It runs in
+the server process because the database is single-process (section 9.1) and the
+credentials live in it. It uses only what the Scheduler offers: `sendMessage`
+(with an origin), `resolveApproval`, `requireDot` and the event log.
+
+An adapter (`Channel`) is transport only: `run(sink, signal)` connects and
+delivers until aborted, `sendText`, `sendApproval` and `editApproval`, optionally `typing`. A `ChannelType` makes the
+adapter for a binding and names the secrets a binding of its kind keeps (and which
+of them are credentials a log line could hold, `scrubNames`). A kind that is
+linked by scanning a code on a phone (`scanned`: WhatsApp) is linked with `link`
+and never given credentials; the others with `add`. The hub owns every policy:
+
+- **Who may talk.** Only a person paired with a one-time code, by the channel's
+  stable id (a Telegram numeric user id, a WhatsApp phone number, never a mutable
+  name). The code is eight
+  symbols (40 bits), valid ten minutes, used once, stored as a SHA-256 hash with
+  the binding id, and pairs the sender as an `owner` together with their chat.
+  Anyone else, a chat that is not a private one, an empty message: dropped
+  before anything is written, so a stranger costs no row and no model call. A
+  paired person is held to a token bucket (10 messages at once, then 20 per
+  minute, told once) and to 8000 characters per message.
+- **Inbound.** A message becomes `Scheduler.sendMessage(dot, text, {channel,
+  binding_id, chat_id, external_id})`; the guest receives `{text}` only. The
+  channel's own message id is part of the `user.message` event, which a unique
+  index allows once per Dot, binding and channel id, so the message and the proof
+  that it was handed over commit together. `sink.inbound` resolves only after the
+  control plane has answered, so an adapter commits its offset after the hub is
+  done with the message. A redelivered message, after a failure at any point or
+  across a restart, finds the first one: the Dot gets it once, and the repeat is
+  answered with the first message.
+- **Outbound.** One `events.stream({dotId}, {after: event_cursor})` per binding.
+  `message.assistant` goes to the chat of the `user.message` its `in_reply_to`
+  names, when that message came through this binding and its person is still
+  paired; an answer that answers nothing (an automation's) goes to every owner's
+  chat; an answer to a message from the web or another channel is not mirrored.
+  `task.completed`, `task.failed` and an answer that answers nothing go to the
+  owners unless `notify_tasks` is off.
+  `agent.state` THINKING shows typing in the chat of the last message while the
+  Dot has not answered it. Text is split at the adapter's `maxText` on paragraph,
+  line and word boundaries. The cursor moves after a send succeeded (events that
+  need no send are written in batches), so a restart resumes where it stopped;
+  a crash between a send and the cursor write sends that message again. A send
+  that fails is retried with backoff (a channel's `retry_after` is honoured); one
+  the channel refuses for good (the person blocked the bot) is dropped.
+- **Approvals.** When the Dot asks (`approval.requested`) and the binding's
+  `approvals` setting is on, every owner's chat gets a prompt: the tool, its
+  permission, the reason and the arguments, each cut to 300 characters (the
+  arguments can hold private data, and a chat is read by a third party; with
+  `show_arguments` off the prompt leaves them out), with an
+  Approve and a Reject button. Only a paired owner, in their private chat, can
+  answer; the button's id proves nothing, so the hub also checks that the
+  approval belongs to the binding's own Dot and that approvals are still asked
+  in chats. The answer is `Scheduler.resolveApproval`, the one way an approval
+  is answered, so a second press, or a press after the web answered, is the
+  scheduler's 409 and the person is told it was answered already. The person
+  always gets a short notice for the press. Every answer, whoever gave it,
+  arrives as `approval.resolved` and edits the prompts to the outcome with the
+  buttons taken away; `channel_prompts` remembers where each prompt is. The
+  prompts are brought up to date when the channel starts, when a person pairs
+  and when `approvals` is switched on: a prompt whose approval was settled
+  meanwhile (answered elsewhere, or its task ended: "No longer needed") is
+  edited, and a pending approval with no prompt in an owner's chat is sent one.
+  Delivery is at least once like every send: a crash between sending a prompt and
+  recording it sends it again. An approval over a chat is as strong as the
+  person's Telegram account; switching `approvals` off keeps the answer in the
+  app.
+- **Answers in words.** A channel without buttons (`approvalByText`: WhatsApp)
+  ends its prompt with `Reply "yes ap-xxxxxx" to approve or "no ap-xxxxxx" to
+  reject`, where the token is the last six characters of the approval's id. The
+  hub, not the adapter, reads a message that is exactly that, from a paired owner
+  only (a stranger's message is dropped before anything is read, so a stranger is
+  never answered), and resolves it with the same checks and the same
+  `Scheduler.resolveApproval` as a button; the person is told "Approved.",
+  "Rejected.", "It was answered already.", "That request does not exist." or that
+  two requests share the code. Anything else, including a bare `yes`, is an
+  ordinary message to the Dot: an answer given by a misread sentence would be an
+  approval nobody meant.
+- **Failure.** An adapter that fails is started again after an exponential backoff
+  (1 s up to 60 s, with jitter) on a fresh instance; `ChannelNeedsRelinkError`
+  (a revoked token, a logged-out device) stops it until the person relinks.
+  Every change of status is a `channel.status` host event, once; the reason is
+  cut to 300 characters and has the binding's credentials replaced, whatever
+  the adapter wrote. A new binding starts after the Dot's latest event: history
+  is not replayed into the chat. When the Dot is deleted its bindings go with it
+  (foreign keys) and the hub stops the adapter on `dot.deleted`.
+- **Credentials.** Stored as secrets scoped to the Dot, under the names the
+  channel type declares, encrypted like the OpenRouter key, never returned,
+  never pushed to the guest, deleted with the binding and with the Dot. A channel
+  type may check credentials before anything is stored (`check`): Telegram asks
+  `getMe`, so a wrong token is a 400 `invalid_credentials` (the message never
+  holds the token), an unreachable Telegram a 502 `channel_unreachable`, and a
+  bot another Dot already uses a 409 `account_in_use` (a bot serves one Dot: two
+  pollers on one token take turns failing). Giving a linked channel a new token
+  (`PUT`) starts it again with the people kept; it is the way back from
+  `needs_relink`.
+
+#### Telegram
+
+`packages/channels/src/telegram/` is the adapter, on grammY (the Bot API client,
+MIT). It is transport only, like every adapter.
+
+- **Long polling**, because the control plane listens on a local address behind
+  NAT and polling needs only outbound HTTPS. Telegram keeps an update that was
+  not confirmed for 24 hours: a PC that is off for longer loses what was sent
+  meanwhile. A webhook the bot had is deleted on connect (the bot is the Dot's
+  own). Only `message` and `callback_query` updates are asked for.
+- **An update is confirmed to Telegram** (the `offset` of the next poll) only after
+  the hub dealt with it. When the hub could not record a message the adapter
+  fails, the hub starts it again, and Telegram offers the update once more; the
+  hub recognises one it already gave the Dot by its id, `<bot id>:<update id>`
+  (update ids of two bots overlap, and a Dot's bot can be replaced). No offset is
+  stored: a restart is the same as a failure.
+- **Pairing.** `/start <code>` in a private chat is a pairing attempt; the deep
+  link `https://t.me/<bot>?start=<code>` sends exactly that. A bare `/start` and
+  everything a stranger sends get no answer. Only private chats are served.
+  Authorization is the sender's numeric user id, never a username.
+- **Approval buttons.** `callback_data` is `ap1:y:<approval id>` or
+  `ap1:n:<approval id>` (47 bytes for `appr_<uuid>`): versioned, checked to fit
+  Telegram's 64 bytes when the prompt is made (an id that does not fit is
+  refused for good) and again when parsed, and parsed strictly, so data from
+  another version or a forged shape is answered "This button is out of date"
+  and goes no further. A press is confirmed to Telegram only after the hub dealt
+  with it, like a message. The press is always answered (`answerCallbackQuery`)
+  with the hub's notice, best effort: Telegram refuses an answer that is too
+  old. An edit of a prompt that is gone or already says the same counts as done.
+- **Messages.** Plain text, no formatting; a long answer is split at 4000
+  characters. A message without text (a photo, a voice note) is answered "not
+  supported yet" to a paired person and dropped. Typing shows while the Dot
+  thinks.
+- **Failures are told to the hub in words.** A 401 is a revoked token
+  (`needs_relink`); a 409 on polling says another process polls the same bot; a
+  403, 400 or 404 on send is final (the person blocked the bot), a 429 carries its
+  `retry_after`, anything else is retried. The token is in every request URL, so
+  no message the adapter makes carries a URL, and the hub replaces the binding's
+  token in whatever it stores or logs. Retries and backoff are the hub's alone.
+- **Not private.** Telegram bot chats are not end-to-end encrypted: Telegram can
+  read what a person and the Dot write there. The CLI says so when a bot is linked.
+
+From the CLI, `invisible-dots channel add telegram --dot <dot>` (token asked for in
+a terminal or read from stdin, never from arguments), `channel list [--dot]`,
+`channel pair <kind> --dot <dot>` (prints the deep link and the words to send) and
+`channel remove <kind> --dot <dot>`.
+
+#### WhatsApp (opt-in, unofficial)
+
+`packages/channels/src/whatsapp-baileys/` is the adapter, on Baileys
+(WhiskeySockets, MIT), a client of the WhatsApp Web protocol. **It is not an
+official way to use WhatsApp.** It links the Dot as a device of a personal account,
+which WhatsApp's terms do not allow for automation, and WhatsApp can answer by
+restricting or banning the account. The library is a release candidate pinned to
+one exact version (`7.0.0-rc14`; a test keeps `package.json` and the lock file at
+the same exact version) because the protocol moves under it: when WhatsApp stops
+accepting that release, WhatsApp stops working until the pin is moved. Use a number
+of its own (a spare SIM or eSIM), never the one a person lives on. The official
+Cloud API (a business account and a public webhook) is a later adapter on the same
+hub.
+
+- **Licenses.** Baileys is MIT, but it depends on `libsignal`, which is GPL-3.0.
+  Neither is in this repository; the command bundle leaves Baileys out
+  (`external` in `apps/cli/scripts/build.mjs`, checked by a test), so no build of
+  ours embeds GPL code, and the server resolves it from `node_modules` when WhatsApp
+  is linked. `THIRD_PARTY_NOTICES.md` says what that means for whoever
+  distributes an installation.
+- **Off by default.** The server runs WhatsApp only when started with
+  `INVISIBLE_DOTS_WHATSAPP=1` (`defaultChannelTypes` in `apps/api/src/start.ts`).
+  Otherwise the type does not exist: `GET .../channels` lists only the kinds it
+  runs (`available`), and linking answers 400 with how to turn it on. Baileys is
+  loaded by a dynamic `import()` when a connection opens, so a server that never
+  links WhatsApp never loads it, and no file but `baileys.ts` and `auth-state.ts`
+  names it (a test reads the sources).
+- **One port.** `port.ts` is what the channel needs of a connection (messages in,
+  text out, a code to scan, why it ended); `baileys.ts` implements it over
+  the network and `FakeWhatsAppConnector` for tests, because WhatsApp cannot be
+  faked. Everything WhatsApp-specific that is a decision is in `whatsapp.ts` and
+  tested against the fake; the glue is tested for what it decides alone (how a
+  message is read, how a close is understood) and for surviving a socket that
+  cannot connect. The real network is not reached by any test.
+- **Linking by a code.** `POST .../whatsapp/link` creates the binding without
+  credentials and starts the adapter, which opens a connection that is not
+  linked; WhatsApp sends a code every few seconds, shown on the phone under
+  Settings, Linked devices, Link a device. `GET .../whatsapp/qr` streams the codes
+  and the end as `ChannelLinkFrame`. The code is a way into the account for as long
+  as it is shown, so it lives in memory only (`LinkSessions`): not in the
+  database, not in an event, not in a log, not in a status, and the stream is
+  `no-store`. A watcher that joins late gets the code on show now. The scan ends
+  with `linked` and the number; a code that ran out before the scan, a device WhatsApp
+  rejects or one removed on the phone ends with `failed` and `needs_relink`
+  (`ChannelNeedsRelinkError`); a connection that is lost is retried by the hub with
+  backoff. Linking again after a failure deletes every key of the old device first.
+  WhatsApp asks for a new connection when a link finishes (status 515); the adapter
+  opens it at once, and gives up after three in a row.
+- **The keys are secrets.** The linked device's identity and Signal keys are an
+  account takeover if they leak, so they are not the plaintext JSON files of
+  Baileys' own helper: `AuthStore` implements Baileys' `AuthenticationState` over
+  the encrypted `secrets` of the Dot, one secret for the credentials and one per
+  group of keys (eleven; a `Record` over the library's own list of groups makes a
+  group added by an upgrade a compile error), under the same AES-256-GCM and the
+  same row-bound associated data as the OpenRouter key. A change is written (the
+  credentials and the groups that changed, in one transaction, in order) before it
+  is acknowledged to Baileys, so a crash leaves the state as it was or as it is
+  now, never a step apart; a failed write is kept and tried again with the next.
+  A closed store refuses every write, so a delete by the hub is final, and the
+  write itself holds the binding row, so a session still open when the channel or
+  its Dot is deleted cannot write its keys back afterwards (the write is refused
+  as `ChannelGoneError`). They are never sent to the guest, and deleted with the
+  channel and with the Dot.
+- **Who is who.** WhatsApp addresses a person by phone (`<number>@s.whatsapp.net`)
+  or by LID (`<id>@lid`), and may switch. The peer is the phone number when it is
+  known from the address, from its twin address in the same message, or from what
+  the account learned earlier (a local lookup that sends nothing to WhatsApp), and
+  `lid:<id>` otherwise, so one person is one peer whichever address is used; the
+  chat to answer is the matching address. The one edge: someone paired while only
+  their LID was known, whose number is learned later, appears under the number and
+  pairs again. Device and agent suffixes are dropped.
+- **Reply-only.** Nothing is sent to a chat that did not write first: the hub sends
+  only to paired people, and a person pairs by writing the code. A stranger is never
+  answered, told they are refused, or sent a read receipt (the unread message of a
+  chat is marked read just before the Dot answers that chat, from a bounded memory),
+  so no stranger learns that the number is alive. Each send is preceded by a typing
+  indicator and a pause of 0.4 to 1.5 seconds. The account does not announce itself
+  online. No groups (WhatsApp is told to ignore every address that is not one
+  person's, so those messages are neither decrypted nor seen), no broadcast, no
+  channel posts, no messages the account wrote itself, no attachments (a paired
+  person is told "not supported yet", as on Telegram). There is no way to send to a
+  number that has not written.
+- **Pairing.** `pair <code>` as a whole message; the link
+  `https://wa.me/<number>?text=pair%20<code>` opens the chat with exactly that
+  ready to send. The number is the account the adapter reported when it connected.
+- **Approvals.** In words, as described above: the prompt is a message with the
+  reply to send, and when the approval is settled the prompt is edited to the
+  outcome (WhatsApp limits how long a sent message can be edited, about fifteen
+  minutes, so the prompt of an old approval may keep its question; a late answer is
+  told it was answered already).
+- **At most once on the way in.** WhatsApp confirms a message to its sender when
+  it arrives, not when the hub dealt with it, so unlike Telegram a message the hub
+  could not record cannot be offered again. The adapter then drops the connection,
+  the channel shows `error`, the hub reconnects, and the person writes again.
+  Messages come one at a time, in order.
+- **Not private, and not stable.** WhatsApp and the account's other devices see
+  what the Dot writes; the account's owner sees the Dot as a linked device. Baileys
+  follows a protocol WhatsApp does not publish: a release of it can stop working
+  without notice, and nothing here can prevent a ban.
+
+From the CLI, `invisible-dots channel link whatsapp --dot <dot>` prints the risk,
+then each code as a QR for the terminal until the number is linked, then
+`channel pair whatsapp --dot <dot>` prints the link and the words that pair.
+
 ## 10. Out of scope for this version
 
-Snapshots and rollback, scheduled recurring jobs, MCP integrations beyond the
-browser, remote desktop and interactive terminal, artifacts, backups, quotas,
-network policies, multiple hosts, organisations and RBAC, macOS hosts. The
-tables and states above leave room for them; nothing here pretends to
-implement them.
+Snapshots and rollback, MCP integrations beyond the browser, remote desktop
+and interactive terminal, artifacts, backups, quotas, network policies,
+multiple hosts, organisations and RBAC, macOS hosts. The tables and states
+above leave room for them; nothing here pretends to implement them.
+
+Scheduled and recurring jobs are in scope: they are the Dot's automations
+(sections 8.8 and 9.5), which run in its guest and, with the computer off,
+start it.
 
 ## 11. Getting a host ready
 
@@ -1708,7 +2206,7 @@ The same four commands on every host:
 invisible-dots setup         get QEMU and its accelerator ready (may ask for administrator rights once)
 invisible-dots doctor        check everything, print one line per check and the command that fixes a failure
 invisible-dots image build   build the golden image and the runtime ISO (section 3.3)
-invisible-dots server        run the control plane in the foreground
+invisible-dots server        run the control plane and the web client in the foreground (section 9.7)
 ```
 
 `invisible-dots server` is the one entry point of the control plane; no
@@ -1734,7 +2232,9 @@ running QEMU with `-nodefaults -no-user-config -machine q35 -accel <kvm|whpx>
 with code 0; the data directory, `INVISIBLE_DOTS_HOME`, a path QEMU can be
 given (plain ASCII, no comma, section 3.2) with enough free space;
 the golden image and runtime ISO present and matching their manifests; the
-OpenRouter key stored. `doctor` never changes anything and creates nothing.
+web client built (the files `invisible-dots server` serves, section 9.7; the
+fix is its build command; a row of `invisible-dots doctor` and `setup` only: the
+report of `GET /api/doctor` is read in the web client, which is built by then); the OpenRouter key stored. `doctor` never changes anything and creates nothing.
 Exit code 0 only when every check is `ok`. On a host invisible_dots does not
 run on, the accelerator rows say so, and the report still prints.
 
@@ -1757,6 +2257,12 @@ run on, the accelerator rows say so, and the report still prints.
 - The OpenRouter key is read from the running server's `GET /api/health`,
   because only the server may open the embedded database (section 9.1). While
   the server is down that row is `failed`, with the command that starts it.
+  Inside the server (`GET /api/doctor`) the row asks the Scheduler directly.
+- One code runs the report in both places: `runDoctor` in
+  `apps/vm-manager/src/doctor.ts`, over the real machine's
+  `hostDoctorDeps()` and the images' rows of `apps/api/src/doctor.ts`; the CLI
+  only renders it (`apps/cli/src/doctor/render.ts`). The wire types
+  (`DoctorCheck`, `DoctorAnswer`) are in `packages/shared/src/api.ts`.
 
 ### 11.2 setup
 

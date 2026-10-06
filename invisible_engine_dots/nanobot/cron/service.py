@@ -16,6 +16,7 @@ from filelock import FileLock
 from loguru import logger
 
 from nanobot.cron.types import (
+    MAX_RUN_AT_MS,
     CronJob,
     CronJobState,
     CronPayload,
@@ -35,7 +36,12 @@ def _now_ms() -> int:
 
 
 def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
-    """Compute next run time in ms."""
+    """Compute next run time in ms; None when there is none or it is past `MAX_RUN_AT_MS`."""
+    next_run = _next_run_unbounded(schedule, now_ms)
+    return next_run if next_run is not None and next_run <= MAX_RUN_AT_MS else None
+
+
+def _next_run_unbounded(schedule: CronSchedule, now_ms: int) -> int | None:
     if schedule.kind == "at":
         return schedule.at_ms if schedule.at_ms and schedule.at_ms > now_ms else None
 
@@ -69,6 +75,10 @@ def _validate_schedule_for_add(schedule: CronSchedule) -> None:
         raise ValueError("tz can only be used with cron schedules")
     if schedule.kind == "every" and (schedule.every_ms is None or schedule.every_ms <= 0):
         raise ValueError("every schedule requires a positive 'every_ms'")
+    if schedule.kind == "every" and _now_ms() + schedule.every_ms > MAX_RUN_AT_MS:
+        raise ValueError("every schedule's 'every_ms' is so long that its next run is past the year 9999")
+    if schedule.kind == "at" and schedule.at_ms is not None and schedule.at_ms > MAX_RUN_AT_MS:
+        raise ValueError("at schedule's 'at_ms' is past the year 9999")
 
     if schedule.kind == "cron":
         if not schedule.expr or not schedule.expr.strip():
@@ -97,11 +107,15 @@ class CronService:
         store_path: Path,
         on_job: Callable[[CronJob], Coroutine[Any, Any, str | CronRunResult | None]] | None = None,
         max_sleep_ms: int = 300_000,  # 5 minutes
+        on_next_wake: Callable[[int | None], None] | None = None,
     ):
         self.store_path = store_path
         self._action_path = store_path.parent / "action.jsonl"
         self._lock = FileLock(str(self._action_path.parent) + ".lock")
         self.on_job = on_job
+        # Told the earliest next run of the enabled jobs (None when no job is due ever) each time the timer is
+        # armed, which is after every change of the jobs and after every tick.
+        self.on_next_wake = on_next_wake
         self._store: CronStore | None = None
         self._timer_task: asyncio.Task[None] | None = None
         self._running = False
@@ -363,12 +377,19 @@ class CronService:
             self._timer_task = None
 
     def _recompute_next_runs(self) -> None:
-        """Recompute next run times for all enabled jobs."""
+        """Give the enabled jobs that have no next run one, counted from now.
+
+        A job that has one keeps it, past or not. The time a job was due at is what the process that stopped left
+        in jobs.json, and one that passed while no process ran is a run missed: it stays, the first tick runs the
+        job once (`_on_timer`), and `_execute_job` counts the next run from that moment, so a job that missed
+        a hundred occurrences runs once. Counting it again from now would drop the run, and a one-time job (whose
+        time is then past, so it has no next run at all) would never run.
+        """
         if not self._store:
             return
         now = _now_ms()
         for job in self._store.jobs:
-            if job.enabled:
+            if job.enabled and job.state.next_run_at_ms is None:
                 job.state.next_run_at_ms = _compute_next_run(job.schedule, now)
 
     def _get_next_wake_ms(self) -> int | None:
@@ -393,6 +414,7 @@ class CronService:
             return
 
         next_wake = self._get_next_wake_ms()
+        self._report_next_wake(next_wake)
         if next_wake is None:
             delay_ms = self.max_sleep_ms
         else:
@@ -405,6 +427,15 @@ class CronService:
                 await self._on_timer()
 
         self._timer_task = asyncio.create_task(tick())
+
+    def _report_next_wake(self, next_wake: int | None) -> None:
+        """Tell the owner when the earliest job is next due. The owner's failure is its own: the jobs go on."""
+        if self.on_next_wake is None:
+            return
+        try:
+            self.on_next_wake(next_wake)
+        except Exception:
+            logger.exception("Cron: reporting the next run failed; the next change reports it again")
 
     async def _on_timer(self) -> None:
         """Handle timer tick - run due jobs."""

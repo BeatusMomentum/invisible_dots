@@ -21,6 +21,7 @@ from aiohttp import web
 from fakes.dot_config import runtime_config_body
 
 import nanobot
+from nanobot.cron.service import CronService
 from nanobot.dots import main as entry_point
 from nanobot.dots.engine import Engine
 from nanobot.dots.main import (
@@ -391,7 +392,8 @@ class FakeOpenRouter:
     async def _completions(self, request: web.Request) -> web.StreamResponse:
         body = await request.json()
         self.requests.append({"headers": dict(request.headers), "body": body})
-        usage = {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}
+        # OpenRouter prices every request in the usage of its last chunk; a response without it fails the turn.
+        usage = {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6, "cost": 0.0125}
         # The provider always streams: the model's answer comes back as server-sent events.
         response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
         await response.prepare(request)
@@ -500,7 +502,7 @@ class TestTheEngineServed:
         assert [e["type"] for e in events] == [
             "agent.started", "agent.state", "agent.state", "message.assistant", "agent.state", "agent.state",
         ]
-        assert events[3]["data"] == {"text": "pong", "in_reply_to": "m1", "spent_usd": 0.0}
+        assert events[3]["data"] == {"text": "pong", "in_reply_to": "m1", "spent_usd": 0.0125}
         (request,) = served.fake.requests
         # The key reached the provider from memory, the model is the Dot's, and nothing of the Dot's
         # attribution goes to a stand-in.
@@ -521,6 +523,80 @@ class TestTheEngineServed:
             await asyncio.sleep(0.02)
 
         assert jobs.exists()
+
+    async def test_the_automations_route_serves_the_jobs_of_that_same_service(self, served: Served) -> None:
+        jobs = Path(served.environment.state_dir) / "cron" / "jobs.json"
+        for _ in range(100):
+            if jobs.exists():
+                break
+            await asyncio.sleep(0.02)
+        job = {
+            "id": "j1",
+            "name": "daily",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "payload": {"kind": "agent_turn", "message": "go"},
+            "state": {},
+        }
+        jobs.write_text(json.dumps({"version": 1, "jobs": [job]}), encoding="utf-8")
+
+        status, text = await served.call("GET", "/automations")
+        assert status == 200 and [row["id"] for row in json.loads(text)["automations"]] == ["j1"]
+        assert (await served.call("PATCH", "/automations/j1", {"enabled": False}))[0] == 200
+        assert json.loads(jobs.read_text(encoding="utf-8"))["jobs"][0]["enabled"] is False
+        assert (await served.call("DELETE", "/automations/j1"))[0] == 204
+        assert json.loads((await served.call("GET", "/automations"))[1]) == {"automations": []}
+
+    async def test_resuming_an_automation_tells_the_host_when_it_is_next_due(self, served: Served) -> None:
+        jobs = Path(served.environment.state_dir) / "cron" / "jobs.json"
+        for _ in range(100):
+            if jobs.exists():
+                break
+            await asyncio.sleep(0.02)
+        job = {
+            "id": "j1",
+            "name": "daily",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "payload": {"kind": "agent_turn", "message": "go"},
+            "state": {},
+        }
+        jobs.write_text(json.dumps({"version": 1, "jobs": [job]}), encoding="utf-8")
+
+        # Paused, nothing is due and nothing was reported before, so nothing is said; resumed, the time is.
+        assert (await served.call("PATCH", "/automations/j1", {"enabled": False}))[0] == 200
+        status, text = await served.call("PATCH", "/automations/j1", {"enabled": True})
+        assert status == 200
+        next_run = json.loads(text)["next_run_at_ms"]
+        assert isinstance(next_run, int)
+
+        events = await asyncio.wait_for(next_events(served, 0, 3), 30)
+        assert [e["type"] for e in events] == ["agent.started", "agent.state", "automation.next_run"]
+        assert events[2]["data"] == {"next_run_at_ms": next_run}
+
+    async def test_the_cron_timer_stops_before_the_engine_does_so_no_firing_falls_into_the_stop(
+        self, served: Served, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A firing that reaches a stopped engine is recorded nowhere, and its job moves on as if it had run.
+        order: list[str] = []
+        cron_stop = CronService.stop
+        engine_stop = Engine.stop
+
+        def record_cron_stop(self: CronService) -> None:
+            order.append("cron")
+            cron_stop(self)
+
+        async def record_engine_stop(self: Engine) -> None:
+            order.append("engine")
+            await engine_stop(self)
+
+        monkeypatch.setattr(CronService, "stop", record_cron_stop)
+        monkeypatch.setattr(Engine, "stop", record_engine_stop)
+
+        served.stop.set()
+        await asyncio.wait_for(served.task, 30)
+
+        assert order == ["cron", "engine"]
 
     async def test_stopping_closes_the_socket_and_the_database(self, served: Served) -> None:
         socket_path = Path(served.environment.agent_socket)

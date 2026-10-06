@@ -1,4 +1,6 @@
 import { randomBytes } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
@@ -40,6 +42,24 @@ describe("loadMigrations", () => {
     expect(files[0]?.version).toBe("0001_initial");
     expect(files[0]?.sql).toContain("CREATE TABLE dots");
     expect(files[0]?.sql).toContain("guest_port");
+  });
+
+  it("numbers the shipped migrations once each, so two branches cannot both take the next one", async () => {
+    const numbers = (await loadMigrations()).map((file) => Number(file.version.slice(0, file.version.indexOf("_"))));
+    expect(new Set(numbers).size).toBe(numbers.length);
+    expect(numbers).toEqual([...numbers].sort((a, b) => a - b));
+  });
+
+  it("refuses two migrations that carry the same number", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "idots-migrations-"));
+    try {
+      await writeFile(join(dir, "0001_initial.sql"), "SELECT 1;");
+      await writeFile(join(dir, "0002_channel_prompts.sql"), "SELECT 1;");
+      await writeFile(join(dir, "0002_orphaned_secrets.sql"), "SELECT 1;");
+      await expect(loadMigrations(dir)).rejects.toThrow(/0002_channel_prompts.*0002_orphaned_secrets.*same number/);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });
 

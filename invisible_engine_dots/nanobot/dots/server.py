@@ -21,6 +21,8 @@ from urllib.parse import unquote
 from aiohttp import web
 from loguru import logger
 
+from nanobot.cron.service import CronService
+from nanobot.dots.automations import automation_json
 from nanobot.dots.browser import BrowserIdentity, BrowserIdentityError
 from nanobot.dots.checks import GuestCheckRunner
 from nanobot.dots.engine import Engine, EngineStopped
@@ -138,12 +140,14 @@ class AgentServer:
         engine: Engine,
         key_holder: KeyHolder,
         checks: GuestCheckRunner,
+        automations: CronService,
         max_body_bytes: int = MAX_BODY_BYTES,
         heartbeat_s: float = HEARTBEAT_S,
     ) -> None:
         self._engine = engine
         self._key_holder = key_holder
         self._checks = checks
+        self._automations = automations
         self._max_body = max_body_bytes
         self._heartbeat_s = heartbeat_s
         self._streams: set[_Stream] = set()
@@ -334,6 +338,20 @@ class AgentServer:
                 raise _identity_error(error) from None
             return web.Response(status=204)
 
+        automations = AGENT_ROUTES["automations"]
+        if path == automations:
+            _allow(method, "GET")
+            jobs = self._automations.list_jobs(include_disabled=True)
+            return _json_response(200, {"automations": [automation_json(job) for job in jobs]})
+
+        if path.startswith(f"{automations}/"):
+            _allow(method, "PATCH", "DELETE")
+            return await self._automation(request, unquote(path[len(automations) + 1 :]))
+
+        if path == AGENT_ROUTES["tools"]:
+            _allow(method, "GET")
+            return _json_response(200, {"tools": engine.tool_table()})
+
         if path == AGENT_ROUTES["prepare_sleep"]:
             _allow(method, "POST")
             logger.info("preparing to sleep")
@@ -342,6 +360,29 @@ class AgentServer:
             return web.Response(status=204)
 
         raise HttpError(404, "not_found", f"no route {method} {path}")
+
+    async def _automation(self, request: web.Request, job_id: str) -> web.StreamResponse:
+        """`PATCH /automations/:id {"enabled": bool}` pauses or resumes one; `DELETE` removes it."""
+        cron = self._automations
+        if request.method == "DELETE":
+            outcome = cron.remove_job(job_id)
+            if outcome == "not_found":
+                raise HttpError(404, "not_found", f'no automation "{job_id}"')
+            if outcome == "protected":
+                raise HttpError(409, "protected", f'automation "{job_id}" is a system job and cannot be removed')
+            logger.info("automation removed id={}", job_id)
+            return web.Response(status=204)
+        body = await _read_json(request, self._max_body)
+        if not isinstance(body, dict) or set(body) != {"enabled"} or not isinstance(body["enabled"], bool):
+            raise HttpError(400, "invalid_automation", 'the body must be {"enabled": true} or {"enabled": false}')
+        job = cron.get_job(job_id)
+        if job is None:
+            raise HttpError(404, "not_found", f'no automation "{job_id}"')
+        if job.enabled != body["enabled"]:
+            # Enabling a job that is on already would move its next run a whole interval on.
+            job = cron.enable_job(job_id, body["enabled"]) or job
+            logger.info("automation {} id={}", "resumed" if job.enabled else "paused", job_id)
+        return _json_response(200, automation_json(job))
 
     async def _stream(self, request: web.Request) -> web.StreamResponse:
         """Replay every event after `after`, then keep sending new ones.

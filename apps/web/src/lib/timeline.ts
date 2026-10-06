@@ -101,6 +101,22 @@ export function describeEvent(event: StoredEvent): TimelineEntry {
       return entry("Browser closed", identity(d), "neutral");
     case "memory.written":
       return entry("Memory written", str(d.key), "neutral");
+    case "automation.next_run":
+      return entry(
+        "Next automation",
+        typeof d.next_run_at_ms === "number" ? `due ${new Date(d.next_run_at_ms).toISOString()}` : "none due",
+        "neutral",
+      );
+    case "channel.status": {
+      const status = str(d.status);
+      return entry(
+        "Channel status",
+        joined(str(d.kind), status, str(d.detail) && `- ${str(d.detail)}`),
+        status === "error" ? "error" : status === "needs_relink" ? "warn" : status === "connected" ? "ok" : "neutral",
+      );
+    }
+    case "channel.peer.paired":
+      return entry("Person paired", joined(str(d.label), str(d.kind) && `on ${str(d.kind)}`), "ok");
     case "dot.created":
       return entry("Dot created", str(d.name), "ok");
     case "dot.updated":

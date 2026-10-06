@@ -1,106 +1,53 @@
 /**
  * The real host commands: the doctor, setup, image build and server of
  * architecture section 11, wired to the real machine. Everything decided
- * here comes from the package that owns it: QEMU discovery and the
- * accelerator from the vm-manager, image verification and building from the
- * image builder, the control plane from the API, paths from shared. This
- * file only connects them; it holds no platform branch (those are in
- * setup/install.ts).
+ * here comes from the package that owns it: QEMU discovery, the accelerator
+ * and the doctor report from the vm-manager, image verification and building
+ * from the image builder (the doctor's image rows through the API), the
+ * control plane from the API, paths from shared. This file only connects
+ * them; it holds no platform branch (those are in setup/install.ts and the
+ * vm-manager's accelerator-access.ts).
  *
  * cli.ts imports this module only when a host command runs, so the API
  * client commands never load QEMU discovery, the image builder or the
  * database.
  */
 import { randomBytes } from "node:crypto";
-import { mkdtemp, open, readFile, rm, stat, statfs } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { latestImage, runServer } from "@invisible-dots/api";
+import { createImageChecks, parseListen, serverLogger, startServer, untilStopSignal } from "@invisible-dots/api";
 import {
   buildGoldenImage,
   buildRuntimeIso,
   defaultRuntimeInputs,
   fetchVerified,
-  verifyImage,
   type ProcessRunner,
 } from "@invisible-dots/image-builder";
-import { allowlistedEnvironment, currentUserSid, ENV, hostPaths, type HostPaths } from "@invisible-dots/shared";
+import { allowlistedEnvironment, currentUserSid, hostPaths, type DoctorCheck } from "@invisible-dots/shared";
 import {
   accelerator,
   findQemu,
   firstLine,
-  isExecutableFile,
+  hostAccessDeps,
+  hostDoctorDeps,
   NodeCommandRunner,
-  QEMU_SYSTEM_NAMES,
-  QemuNotFoundError,
-  qemuSearchDirs,
+  openRouterCheck,
   runProcess,
   startProcess,
+  type DoctorDeps,
 } from "@invisible-dots/vm-manager";
 import windowsQemuPinJson from "../../../virtualization/qemu/windows.json" with { type: "json" };
 import { connectApi } from "./api-client.js";
-import { STORE_OPENROUTER_KEY } from "./commands.js";
 import type { CliIo, HostCommands } from "./cli.js";
-import type { CheckResult, DoctorDeps, FoundQemu } from "./doctor/checks.js";
 import { doctorCommand } from "./doctor/command.js";
 import { EXIT } from "./exit.js";
-import { checkAcceleratorAccess, currentUserIsRoot, type InstallDeps } from "./setup/install.js";
+import { currentUserIsRoot, type InstallDeps } from "./setup/install.js";
 import { parseWindowsQemuPin } from "./setup/qemu-pin.js";
+import { serve } from "./serve.js";
 import { runSetup } from "./setup/setup.js";
-
-/**
- * The vm-manager's discovery, with each program reported separately for
- * doctor. findQemu stops at the first program it cannot find; the probe
- * passed as `exists` remembers qemu-system-x86_64 when it was found and only
- * qemu-img is missing, so doctor can still check its version.
- */
-export async function locateQemu(env: Record<string, string | undefined>): Promise<FoundQemu> {
-  const found = new Set<string>();
-  const exists = async (path: string) => {
-    const ok = await isExecutableFile(path);
-    if (ok) found.add(path);
-    return ok;
-  };
-  const configured = Boolean(env[ENV.QEMU_DIR]?.trim());
-  try {
-    const programs = await findQemu(env, exists);
-    return { ...programs, searched: qemuSearchDirs(env), configured };
-  } catch (error) {
-    if (!(error instanceof QemuNotFoundError)) throw error;
-    const system = [...found].find((path) => (QEMU_SYSTEM_NAMES as readonly string[]).includes(basename(path)));
-    return { ...(system ? { system } : {}), searched: [...error.searched], configured };
-  }
-}
-
-/** Free space where INVISIBLE_DOTS_HOME is or will be: its nearest existing directory, since doctor creates nothing. */
-async function freeSpace(home: string): Promise<{ path: string; bytes: number }> {
-  let path = home;
-  for (;;) {
-    const info = await stat(path).catch(() => undefined);
-    if (info?.isDirectory()) break;
-    const parent = dirname(path);
-    if (parent === path) break;
-    path = parent;
-  }
-  const fs = await statfs(path);
-  return { path, bytes: fs.bavail * fs.bsize };
-}
-
-/** The image a Dot would get now (the newest one, as the control plane picks it), checked against its manifest. */
-async function imageCheck(paths: HostPaths, id: "golden-image" | "runtime-image"): Promise<CheckResult> {
-  const golden = id === "golden-image";
-  const label = golden ? "golden image" : "runtime ISO";
-  let image: string;
-  try {
-    image = await latestImage(paths.imagesDir, golden ? "golden" : "runtime");
-  } catch {
-    return { id, label, status: "missing", detail: `none in ${paths.imagesDir}`, fix: "invisible-dots image build" };
-  }
-  const verdict = await verifyImage(image);
-  if (verdict.ok) return { id, label, status: "ok", detail: `${basename(image)} matches its manifest` };
-  return { id, label, status: "failed", detail: verdict.reason, fix: verdict.fix };
-}
+import { locateWebBuild, startWebServer } from "./web.js";
 
 /**
  * Whether the running server holds an OpenRouter key. The key lives in the
@@ -108,7 +55,7 @@ async function imageCheck(paths: HostPaths, id: "golden-image" | "runtime-image"
  * process that has it open (a second opener would corrupt it), so doctor
  * asks the server instead of reading the database.
  */
-async function openRouterKey(env: Record<string, string | undefined>, fetchImpl?: typeof fetch): Promise<CheckResult> {
+async function openRouterKey(env: Record<string, string | undefined>, fetchImpl?: typeof fetch): Promise<DoctorCheck> {
   const base = { id: "openrouter", label: "OpenRouter key" } as const;
   let health: unknown;
   try {
@@ -122,38 +69,22 @@ async function openRouterKey(env: Record<string, string | undefined>, fetchImpl?
     };
   }
   const configured = (health as { openrouter_configured?: unknown }).openrouter_configured;
-  if (configured === true) return { ...base, status: "ok", detail: "stored" };
-  if (configured === false) {
-    return { ...base, status: "missing", detail: "no key stored", fix: STORE_OPENROUTER_KEY };
-  }
+  if (typeof configured === "boolean") return openRouterCheck(configured);
   return { ...base, status: "failed", detail: "the server's /api/health does not report openrouter_configured", fix: "update the server" };
 }
 
 function doctorDeps(io: CliIo): DoctorDeps {
   const paths = hostPaths(io.env);
   return {
-    nodeVersion: process.versions.node,
-    // Asked when a check needs it: on an unsupported host it throws, and that check reports it.
-    accelerator: () => accelerator(),
-    findQemu: () => locateQemu(io.env),
-    run: runProcess,
-    acceleratorAccess: () => checkAcceleratorAccess(installDeps(io)),
-    home: paths.home,
-    freeSpace: () => freeSpace(paths.home),
-    images: async () => [await imageCheck(paths, "golden-image"), await imageCheck(paths, "runtime-image")],
-    openRouterKey: () => openRouterKey(io.env, io.fetch),
+    ...hostDoctorDeps({ env: io.env, home: paths.home, images: createImageChecks(paths), openRouterKey: () => openRouterKey(io.env, io.fetch) }),
+    webBuild: () => locateWebBuild(REPO_ROOT),
   };
 }
 
 function installDeps(io: CliIo): InstallDeps {
   const log = (line: string) => io.stdout(`${line}\n`);
   return {
-    platform: process.platform,
-    env: io.env,
-    run: runProcess,
-    openReadWrite: async (path) => {
-      await (await open(path, "r+")).close();
-    },
+    ...hostAccessDeps(io.env),
     log,
     readText: (path) => readFile(path, "utf8"),
     isRoot: currentUserIsRoot(),
@@ -215,8 +146,11 @@ export function realHostCommands(): HostCommands {
     doctor: (options, io) => doctorCommand(doctorDeps(io), options, io.stdout),
     setup: (io) => runSetup({ doctor: doctorDeps(io), install: installDeps(io), out: io.stdout }),
     imageBuild,
-    server: async (io) => {
-      await runServer({ env: io.env });
+    server: async (io, options) => {
+      await serve(
+        { env: io.env, logger: serverLogger(io.env), web: options.web, repoRoot: REPO_ROOT },
+        { startServer, untilStopSignal, parseListen, startWebServer },
+      );
       return EXIT.ok;
     },
   };

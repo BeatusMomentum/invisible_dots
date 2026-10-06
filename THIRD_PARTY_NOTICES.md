@@ -157,3 +157,17 @@ is the file it publishes).
   (https://creativecommons.org/publicdomain/zero/1.0/): No credit is required; the data comes from tdulcet/ip-geolocation-dbs (https://github.com/tdulcet/ip-geolocation-dbs).
 - OpenStreetMap contributors, through the time zone boundaries of timezone-boundary-builder that tzfpy carries, ODbL 1.0
   (https://opendatacommons.org/licenses/odbl/1-0/): Contains time zone data derived from OpenStreetMap, (c) OpenStreetMap contributors (https://www.openstreetmap.org/copyright).
+
+## The opt-in WhatsApp client and `libsignal` (GPL-3.0)
+
+The WhatsApp adapter (`packages/channels/src/whatsapp-baileys/`) loads Baileys
+(MIT) from `node_modules` when a person links WhatsApp. Baileys depends on the
+npm package `libsignal`, which is under the GNU General Public License,
+version 3, and so does not fit this repository's MIT license. None of it is
+part of this repository: it is installed by `npm ci` like any dependency, the
+command bundle that `apps/cli/scripts/build.mjs` makes leaves Baileys (and with
+it `libsignal`) out, and nothing loads it unless the server was started with
+`INVISIBLE_DOTS_WHATSAPP=1` and a person links a number. Whoever distributes a
+build of this repository together with its `node_modules`, or wants a GPL-free
+install, has to take that into account: the way out is to leave the adapter
+and its dependency out (`packages/channels/package.json`).

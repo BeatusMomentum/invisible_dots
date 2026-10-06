@@ -1,6 +1,6 @@
 /**
  * What a guest event changes on the host besides the event log: task rows (state, summary, error, spend),
- * approval rows and the Dot's status.
+ * approval rows, the Dot's status and the time of its next automation.
  */
 import type { Repositories } from "@invisible-dots/database";
 import { TERMINAL_TASK_STATES, type AgentState, type DotState, type OutboundEvent } from "@invisible-dots/shared";
@@ -57,6 +57,10 @@ export async function applyGuestEvent(tx: Repositories, dotId: string, event: Ou
     case "task.failed":
       await recordTaskSpend(tx, dotId, event.data);
       return { taskSettled: (await tx.tasks.transition(event.data.task_id, "FAILED", { error: event.data.error, dotId })) !== null };
+    case "automation.next_run":
+      // The guest's report of when its earliest automation is due, so a stopped computer is started shortly before it.
+      await tx.computers.setNextAutomation(dotId, event.data.next_run_at_ms);
+      return { taskSettled: false };
     case "approval.requested": {
       // A request for a task that already ended (cancelled while the guest
       // was asking) is kept for the record but never listed as pending.

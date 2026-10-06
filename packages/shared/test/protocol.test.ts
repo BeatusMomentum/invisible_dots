@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AGENT_ROUTES,
+  checkHomePath,
   checkOpenRouterKey,
   GUEST_PATHS,
   GUEST_PORT,
@@ -25,13 +26,26 @@ describe("protocol constants", () => {
     expect(PREPARE_SLEEP_TIMEOUT_MS).toBe(60_000);
   });
 
+  it("names the automation and tool routes, an automation id encoded as one path segment", () => {
+    expect(AGENT_ROUTES.automations).toBe("/automations");
+    expect(AGENT_ROUTES.automation("job 1/x")).toBe("/automations/job%201%2Fx");
+    expect(AGENT_ROUTES.tools).toBe("/tools");
+  });
+
   it("lays out an identity directory", () => {
     expect(identityPaths("shop-ab12cd")).toEqual({
       root: "/home/dot/browsers/shop-ab12cd",
       profile: "/home/dot/browsers/shop-ab12cd/profile",
-      mcp: "/home/dot/browsers/shop-ab12cd/mcp",
+      mcp: "/var/lib/invisible-dots/mcp/shop-ab12cd",
     });
-    expect(identityPaths("x", "/tmp/b/").profile).toBe("/tmp/b/x/profile");
+    expect(identityPaths("x", "/tmp/b/", "/tmp/m/").profile).toBe("/tmp/b/x/profile");
+    expect(identityPaths("x", "/tmp/b/", "/tmp/m/").mcp).toBe("/tmp/m/x");
+  });
+
+  it("keeps the home of an MCP server, which saves its proxy with the password, out of what the file routes read", () => {
+    const sessionFile = `${identityPaths("shop-ab12cd").mcp}/sessions/shop-ab12cd.json`;
+    expect(checkHomePath(sessionFile)).toEqual({ ok: false, problem: "path must be inside /home/dot" });
+    expect(checkHomePath(GUEST_PATHS.mcpHomes)).toEqual({ ok: false, problem: "path must be inside /home/dot" });
   });
 });
 
@@ -94,5 +108,53 @@ describe("truncateText", () => {
     expect(cut.startsWith("aaa")).toBe(true);
     expect(cut.endsWith("bbb")).toBe(true);
     expect(cut).toMatch(/\[\.\.\. truncated: \d+ characters not shown \.\.\.\]/);
+  });
+});
+
+describe("checkHomePath: the guest paths the host API reads", () => {
+  const ok = (raw: string) => {
+    const checked = checkHomePath(raw);
+    if (!checked.ok) throw new Error(`refused ${raw}: ${checked.problem}`);
+    return checked.path;
+  };
+  const problem = (raw: unknown) => {
+    const checked = checkHomePath(raw);
+    if (checked.ok) throw new Error(`accepted ${String(raw)} as ${checked.path}`);
+    return checked.problem;
+  };
+
+  it("takes absolute, relative and ~ paths and answers the normalized absolute one", () => {
+    expect(ok("/home/dot")).toBe("/home/dot");
+    expect(ok("/home/dot/")).toBe("/home/dot");
+    expect(ok("~")).toBe("/home/dot");
+    expect(ok("~/memory")).toBe("/home/dot/memory");
+    expect(ok("memory/notes.md")).toBe("/home/dot/memory/notes.md");
+    expect(ok("./memory//a/./b.md")).toBe("/home/dot/memory/a/b.md");
+    expect(ok("/home//dot/./workspace/")).toBe("/home/dot/workspace");
+    expect(ok(".")).toBe("/home/dot");
+    expect(ok("a b/é.txt")).toBe("/home/dot/a b/é.txt");
+  });
+
+  it("refuses what is outside home, however it is written", () => {
+    for (const raw of ["/", "/etc/passwd", "/home", "/home/dotter", "/home/dotter/x", "/home/other/x", "/root"]) {
+      expect(problem(raw), raw).toBe("path must be inside /home/dot");
+    }
+  });
+
+  it("refuses any .. segment instead of resolving it, even one that stays inside home", () => {
+    for (const raw of ["..", "../x", "memory/../x", "/home/dot/memory/..", "~/..", "~/memory/../../etc", "/home/dot/a/../b", "/home/dot/../../etc"]) {
+      expect(problem(raw), raw).toBe('path must not contain ".." segments');
+    }
+    // A name that merely contains dots is a name.
+    expect(ok("memory/..hidden")).toBe("/home/dot/memory/..hidden");
+    expect(ok("memory/a..b")).toBe("/home/dot/memory/a..b");
+  });
+
+  it("refuses an empty, non-string, NUL-carrying or over-long path", () => {
+    expect(problem("")).toMatch(/non-empty/);
+    expect(problem(undefined)).toMatch(/non-empty/);
+    expect(problem(["/home/dot"])).toMatch(/non-empty/);
+    expect(problem("a\0b")).toMatch(/NUL/);
+    expect(problem(`/home/dot/${"x".repeat(4100)}`)).toMatch(/longer than 4096/);
   });
 });

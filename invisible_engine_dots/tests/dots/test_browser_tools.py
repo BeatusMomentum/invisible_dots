@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from fakes.browser_manager import make_browser_manager
+from fakes.browser_manager import make_browser_manager, mcp_home
 from fakes.dot_config import ALLOW_ALL
 from fakes.fake_mcp_server import FIXTURE, PNG, read_record, write_control
 from fakes.local_computer import LocalComputer
@@ -75,7 +75,7 @@ class Env:
         return identity.id
 
     def calls(self, identity_id: str) -> list[tuple[str, dict[str, Any]]]:
-        record = read_record(self.tmp_path / "browsers" / identity_id / "mcp")
+        record = read_record(mcp_home(self.tmp_path, identity_id))
         return [(entry["name"], entry["args"]) for entry in record if entry["kind"] == "call"]
 
     def page_calls(self, identity_id: str) -> list[tuple[str, dict[str, Any]]]:
@@ -200,7 +200,7 @@ async def test_a_page_tool_on_an_identity_that_is_not_open_says_so_and_starts_no
     assert said(result) == NOT_OPEN.format(identity.id)
     assert not env.manager.is_open(identity.id)
     assert env.calls(identity.id) == []
-    assert read_record(env.tmp_path / "browsers" / identity.id / "mcp") == []
+    assert read_record(mcp_home(env.tmp_path, identity.id)) == []
     assert env.images.images == ()
 
 
@@ -264,7 +264,7 @@ async def test_creating_with_a_proxy_works_and_the_launch_gives_it_to_the_browse
     assert "hunter2" not in created
     identity_id = created_id(created)
     await env.run("browser_identity_launch", identity_id=identity_id)
-    starts = [entry for entry in read_record(env.tmp_path / "browsers" / identity_id / "mcp") if entry["kind"] == "start"]
+    starts = [entry for entry in read_record(mcp_home(env.tmp_path, identity_id)) if entry["kind"] == "start"]
     assert starts[0]["env"]["STEALTHFOX_PROXY"] == "http://user:hunter2@proxy.test:8080"
 
 
@@ -297,12 +297,13 @@ async def test_delete_removes_the_identity_and_its_profile(env: Env) -> None:
 
     assert deleted == f"Deleted the identity {identity_id} and its profile."
     assert not (env.tmp_path / "browsers" / identity_id).exists()
+    assert not mcp_home(env.tmp_path, identity_id).exists()
     assert env.manager.get(identity_id) is None
 
 
 async def test_a_launch_the_server_refuses_is_an_error_result_without_the_proxy_password(env: Env) -> None:
     identity = await env.manager.create("failing", "http://user:hunter2@proxy.test:8080")
-    write_control(env.tmp_path / "browsers" / identity.id / "mcp", fail_open=True, echo_proxy=True)
+    write_control(mcp_home(env.tmp_path, identity.id), fail_open=True, echo_proxy=True)
 
     result = await env.run("browser_identity_launch", identity_id=identity.id)
 
@@ -369,7 +370,7 @@ async def test_a_selector_given_as_null_is_left_out_and_the_server_reads_the_pag
 
 async def test_a_browser_the_server_lost_is_an_error_result_that_says_to_launch_the_identity_again(env: Env) -> None:
     identity_id = await env.open_identity()
-    write_control(env.tmp_path / "browsers" / identity_id / "mcp", lose_browser_always=True)
+    write_control(mcp_home(env.tmp_path, identity_id), lose_browser_always=True)
     await env.manager.close(identity_id)
     await env.manager.launch(identity_id)
 
@@ -617,18 +618,35 @@ async def test_a_policy_that_asks_before_navigating_shows_the_person_the_url_and
     permissions = {**ALLOW_ALL, **BROWSER_ALLOWED, "browser.navigate": "ask"}
     h = make_harness([], permissions)
     identity_id = await open_one(h)
-    h.provider.script[:] = [calls(call("c1", "browser_navigate", identity_id=identity_id, url="https://example.com/?q=1"))]
+    h.provider.script[:] = [calls(call("c1", "browser_navigate", identity_id=identity_id, url="https://example.com/a"))]
 
     outcome = await h.run(chat("open it"))
 
     assert outcome.kind == "parked"
     [asked] = h.events_of("approval.requested")
     assert (asked["tool"], asked["permission"]) == ("browser_navigate", "browser.navigate")
-    assert asked["arguments"] == {"identity_id": identity_id, "url": "https://example.com/?q=1"}
+    assert asked["arguments"] == {"identity_id": identity_id, "url": "https://example.com/a"}
     assert h.browser.is_open(identity_id)
     # Nothing was sent to the page.
-    record = read_record(Path(h.browser._browsers_dir) / identity_id / "mcp")
+    record = read_record(mcp_home(h.tmp_path, identity_id))
     assert [entry["name"] for entry in record if entry["kind"] == "call"] == ["browser_open"]
+
+
+async def test_an_approval_to_navigate_shows_the_url_as_the_tool_called_target_does(make_harness: MakeHarness) -> None:
+    permissions = {**ALLOW_ALL, **BROWSER_ALLOWED, "browser.navigate": "ask"}
+    h = make_harness([], permissions)
+    identity_id = await open_one(h)
+    url = "https://user:pw@example.com/a?token=s3cret&q=1"
+    h.provider.script[:] = [calls(call("c1", "browser_navigate", identity_id=identity_id, url=url))]
+
+    await h.run(chat("open it"))
+
+    [asked] = h.events_of("approval.requested")
+    assert asked["arguments"] == {"identity_id": identity_id, "url": "https://example.com/a?token=***&q=***"}
+    assert "pw" not in json.dumps(asked) and "s3cret" not in json.dumps(asked)
+    # The call waits with its full arguments, so the approved call goes to the address as asked.
+    [pending] = h.store.read(lambda conn: s.list_approvals(conn, "pending"))
+    assert pending.arguments["url"] == url
 
 
 async def test_the_proxy_password_never_reaches_the_host_through_an_approval(make_harness: MakeHarness) -> None:

@@ -99,6 +99,7 @@ geoip_untouched() { # the file is still the one the build installed, root's and 
   [ "$(sha256sum "$GEOIP" | cut -d' ' -f1)" = "$GEOIP_SHA" ] && [ "$(stat -c '%U %a' "$GEOIP")" = 'root 644' ] \
     && ! su -s /bin/bash dot -c "test -w $GEOIP" && [ ! -e /home/dot/.cache/invisible-playwright/geoip ]
 }
+MCP_HOMES=/var/lib/invisible-dots/mcp   # the servers' homes, outside /home/dot (architecture 4.2)
 FIREFOX='\.cache/invisible-playwright/firefox-'   # what the cached engine's processes are called
 firefox_running() { pgrep -u dot -f "$FIREFOX" | wc -l; }
 # A process's environment is read by its own user only (the container's root has no CAP_SYS_PTRACE), so what runs
@@ -155,7 +156,7 @@ mcp_env_ok() {
   local env; env=$(su -s /bin/bash dot -c "tr '\\0' '\\n' < /proc/$MCP_PID/environ")
   [ "$(stat -c %U "/proc/$MCP_PID")" = dot ] \
     && grep -qx "STEALTHFOX_PROFILE_DIR=$BROWSERS/$ID/profile" <<< "$env" \
-    && grep -qx "INVISIBLE_MCP_HOME=$BROWSERS/$ID/mcp" <<< "$env" \
+    && grep -qx "INVISIBLE_MCP_HOME=$MCP_HOMES/$ID" <<< "$env" \
     && grep -qx 'STEALTHFOX_HEADLESS=0' <<< "$env" && grep -qx 'DISPLAY=:0' <<< "$env" && grep -qx 'HOME=/home/dot' <<< "$env" \
     && grep -qx "STEALTHFOX_GEOIP_MMDB=$GEOIP" <<< "$env" \
     && grep -qx 'INVISIBLE_CORE_AUTOFIX=off' <<< "$env" \
@@ -272,19 +273,17 @@ MCP_PID2=$(mcp_pid_of "$ID2")
 environ_of() { su -s /bin/bash dot -c "tr '\\0' '\\n' < /proc/$1/environ"; } # pid
 check "the server's process is dot's, with the proxy in its environment (by design: the engine passes it there, readable while the browser is open) and the same knobs as the first identity's" "[ -n '$MCP_PID2' ] && environ_of $MCP_PID2 | grep -qx 'STEALTHFOX_PROXY=http://$PROXY_USER:$PROXY_PASSWORD@127.0.0.1:8099' && environ_of $MCP_PID2 | grep -qx 'INVISIBLE_CORE_AUTOFIX=off' && environ_of $MCP_PID2 | grep -qx 'STEALTHFOX_GEOIP_MMDB=$GEOIP'"
 check "the password is on no process's command line, which every user can read" "! cmdline_holds $PROXY_PASSWORD"
-PROXY_HOLDERS=$(grep -rla -F "$PROXY_PASSWORD" /home/dot 2>/dev/null | sort)
-echo "files under /home/dot that hold the proxy password:"; echo "${PROXY_HOLDERS:-  (none)}"
-# KNOWN FINDING, upstream (invisible-playwright-mcp work.py remember(), not ours to patch here): the server writes the
-# proxy it was launched with, password included, into its session file under INVISIBLE_MCP_HOME, readable by the model's
-# exec as dot at rest. docs/architecture.md section 6 says so. This check accepts exactly that one file and nothing else:
-# not the profile, not a cache, not a log, not the workspace.
-check "KNOWN FINDING (upstream): under /home/dot the proxy password is held by the MCP server's session file and by no other file (the profile, caches and logs are clean)" "[ -z \"\$(grep -v '^$BROWSERS/$ID2/mcp/sessions/' <<< \"\$PROXY_HOLDERS\")\" ]"
-if [ -n "$PROXY_HOLDERS" ]; then
-  echo "KNOWN FINDING STILL OPEN: the MCP server's session file holds the proxy password in plain text (fix upstream in work.py remember())."
-else
-  echo "KNOWN FINDING FIXED UPSTREAM: no file of /home/dot holds the proxy password; remove the exception from this check and from architecture section 6."
-fi
+SESSION_FILE=$MCP_HOMES/$ID2/sessions/$ID2.json
+check "the real server saved the proxy with its password in its session file, dot's, in its home outside /home/dot" "[ \"\$(stat -c %U $SESSION_FILE)\" = dot ] && grep -qF $PROXY_PASSWORD $SESSION_FILE && [ ! -e $BROWSERS/$ID2/mcp ]"
+check "no file under /home/dot holds the proxy password: the profile, the caches and the logs are clean too" "[ -z \"\$(grep -rlaF $PROXY_PASSWORD /home/dot 2>/dev/null)\" ]"
+session_file_refused() { # the TCP port, which the host's file routes are the client of, refuses every way to it
+  su -s /bin/bash dot -c "ln -s $MCP_HOMES /home/dot/mcp-link"
+  refuses_outside_home "$SESSION_FILE" "$MCP_HOMES/$ID2/sessions" "mcp-link/$ID2/sessions/$ID2.json" "../../var/lib/invisible-dots/mcp/$ID2/sessions/$ID2.json"
+}
+check "the TCP port refuses that file, its directory and a link to it (403 outside_home): no file route of the host answers with the proxy" "session_file_refused"
+check "the identity's directory, which the host can list, has its profile and no MCP home" "files_list browsers/$ID2 | head -n 1 | jq -e '([.entries[].name] | index(\"profile\") != null) and ([.entries[].name] | index(\"mcp\") == null)' >/dev/null"
 check "the model closes the proxied identity: its Firefox and server end" "tool_turn 42 browser_identity_close '{\"identity_id\":\"$ID2\"}' && closed_times $ID2 1 && no_server_within 30 $ID2"
+check "the host deletes it: its directory and its server's home, with the session file, are gone" "[ \"\$(api -o /dev/null -w '%{http_code}' -X DELETE $A/browser-identities/$ID2)\" = 204 ] && [ ! -e $BROWSERS/$ID2 ] && [ ! -e $MCP_HOMES/$ID2 ]"
 
 # --- what the real browser must not have leaked ---
 sleep 3
@@ -292,7 +291,7 @@ stop_host_stream
 ALL=/tmp/stream-all.txt
 timeout 5 curl "${H[@]}" -N "$A/events/stream?after=0" > "$ALL" 2>/dev/null
 check "seqs of the full stream are 1..N without a gap" "[ \"\$(seqs $ALL | tr '\n' ' ')\" = \"\$(seq 1 \$(seqs $ALL | wc -l) | tr '\n' ' ')\" ]"
-check "the identity's events are all there: created twice, launched six times, closed four times (the model's close, SIGTERM, the browser that was lost and the proxied identity's close; kill -9 reports nothing)" "grep '^data: ' $ALL | sed 's/^data: //' | jq -s -e '([.[] | select(.type==\"browser.identity.created\")] | length) == 2 and ([.[] | select(.type==\"browser.identity.launched\")] | length) == 6 and ([.[] | select(.type==\"browser.identity.closed\")] | length) == 4' >/dev/null"
+check "the identity's events are all there: created twice, launched six times, closed four times (the model's close, SIGTERM, the browser that was lost and the proxied identity's close; kill -9 reports nothing), deleted once" "grep '^data: ' $ALL | sed 's/^data: //' | jq -s -e '([.[] | select(.type==\"browser.identity.created\")] | length) == 2 and ([.[] | select(.type==\"browser.identity.launched\")] | length) == 6 and ([.[] | select(.type==\"browser.identity.closed\")] | length) == 4 and ([.[] | select(.type==\"browser.identity.deleted\")] | length) == 1' >/dev/null"
 check "the proxy password is in no event of the whole stream, no engine log and no dot-agentd log" "! grep -qF $PROXY_PASSWORD $ALL /tmp/engine.log /tmp/agentd.log"
 check "the GeoIP file is as the build left it after every launch: unchanged, root's, read-only, and the library made no cache of its own" "geoip_untouched"
 check "the key is in no file of the engine, the config or the Dot (the browser's profile and cache included)" "! grep -rIl \"$KEY\" /home/dotengine /etc/invisible-dots /home/dot /run/invisible-dots /run/invisible-dots-agent 2>/dev/null | grep -q ."

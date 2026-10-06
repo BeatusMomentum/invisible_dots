@@ -15,7 +15,7 @@ browser of a Dot: a tool that browses another way has no row to be in.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -50,6 +50,7 @@ class ToolEntry:
     build: factory taking ToolDeps to instantiate the Tool.
     target: from the call's arguments, the one redacted line `tool.called` shows of it (None: nothing).
     needs_memory: the tool exists only while the Dot's memory is enabled.
+    starts_terminal: from the call's arguments, whether it starts a terminal session.
     needs_managed_identities: the tool exists only while the Dot may manage its browser identities itself
         (`browser.identities.managed_by_dot`).
     arguments: from the call's arguments, the ones an `approval.requested` shows the person.
@@ -59,6 +60,8 @@ class ToolEntry:
     build: Callable[[ToolDeps], Tool]
     target: Callable[[Mapping[str, Any]], str | None]
     needs_memory: bool = False
+    # Whether the call starts a terminal session, which `tool.called` marks (`tty`); no other tool does.
+    starts_terminal: Callable[[Mapping[str, Any]], bool] = targets.never_starts_terminal
     needs_managed_identities: bool = False
     arguments: Callable[[Mapping[str, Any]], dict[str, Any]] = targets.all_arguments
 
@@ -190,7 +193,7 @@ def _build_computer_screenshot(deps: ToolDeps) -> Tool:
 
 TOOL_PERMISSIONS: Mapping[str, ToolEntry] = MappingProxyType(
     {
-        "exec": ToolEntry("computer.exec", _build_exec, targets.exec_target),
+        "exec": ToolEntry("computer.exec", _build_exec, targets.exec_target, starts_terminal=targets.exec_starts_terminal),
         "exec_session": ToolEntry("computer.exec", _build_exec_session, targets.exec_session_target),
         "list_exec_sessions": ToolEntry("computer.exec", _build_list_exec_sessions, targets.no_target),
         "read_file": ToolEntry("files.read", _build_read_file, targets.path_target),
@@ -209,7 +212,7 @@ TOOL_PERMISSIONS: Mapping[str, ToolEntry] = MappingProxyType(
         "browser_identity_delete": ToolEntry("browser.identity.delete", _build_browser_identity_delete, targets.identity_target, needs_managed_identities=True),
         "browser_identity_launch": ToolEntry("browser.identity.launch", _build_browser_identity_launch, targets.identity_target),
         "browser_identity_close": ToolEntry("browser.identity.close", _build_browser_identity_close, targets.identity_target),
-        "browser_navigate": ToolEntry("browser.navigate", _build_page_tool("browser_navigate"), targets.browser_navigate_target),
+        "browser_navigate": ToolEntry("browser.navigate", _build_page_tool("browser_navigate"), targets.browser_navigate_target, arguments=targets.navigate_arguments),
         "browser_snapshot": ToolEntry("browser.read", _build_page_tool("browser_snapshot"), targets.browser_identity_only_target),
         "browser_read_text": ToolEntry("browser.read", _build_page_tool("browser_read_text"), targets.browser_selector_target),
         "browser_screenshot": ToolEntry("browser.read", _build_page_tool("browser_screenshot"), targets.browser_identity_only_target),
@@ -245,6 +248,14 @@ def tool_target(tool_name: str, params: Any) -> str | None:
     return targets.clip(target, TOOL_TARGET_MAX) if target else None
 
 
+def tool_starts_terminal(tool_name: str, params: Any) -> bool:
+    """Whether the call starts a terminal session (false for a tool that is not the Dot's, or odd arguments)."""
+    entry = TOOL_PERMISSIONS.get(tool_name)
+    if entry is None or not isinstance(params, Mapping):
+        return False
+    return entry.starts_terminal(params)
+
+
 def tool_arguments(tool_name: str, params: Mapping[str, Any]) -> dict[str, Any]:
     """The arguments of a call as an `approval.requested` may carry them: all of them, bar a secret the table redacts."""
     entry = TOOL_PERMISSIONS.get(tool_name)
@@ -267,6 +278,21 @@ def offered_tools(
         and (memory_enabled or not entry.needs_memory)
         and (managed_identities or not entry.needs_managed_identities)
     )
+
+
+def tool_table(registry: ToolRegistry, offered: Collection[str]) -> list[dict[str, Any]]:
+    """One row per tool of the table, as `GET /tools` shows it: the name, the permission it exercises,
+    whether the model is offered it now (`offered` is what the projection offers) and what its schema says
+    it does. The rows are in the table's order, which groups the tools by permission."""
+    rows: list[dict[str, Any]] = []
+    for name, entry in TOOL_PERMISSIONS.items():
+        tool = registry.get(name)
+        if tool is None:
+            raise LookupError(f'the registry has no tool "{name}" of the permission table')
+        rows.append(
+            {"name": name, "permission": entry.permission, "offered": name in offered, "description": tool.description}
+        )
+    return rows
 
 
 def build_registry(deps: ToolDeps) -> ToolRegistry:

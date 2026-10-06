@@ -22,6 +22,13 @@ export const VM_STATES = [
 ] as const;
 export type VmState = (typeof VM_STATES)[number];
 
+/**
+ * Why a computer is off or going off, stored in `computers.stop_reason` while it is STOPPING or STOPPED (section 9.5):
+ * the idle sleep, the person's own stop, or a VM that stopped without being asked.
+ */
+export const STOP_REASONS = ["idle", "user", "exited"] as const;
+export type StopReason = (typeof STOP_REASONS)[number];
+
 /** Dot states, stored in `dots.status` (section 9.3). */
 export const DOT_STATES = [
   "CREATING",

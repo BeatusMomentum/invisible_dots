@@ -6,7 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from nanobot.dots.permissions import TOOL_PERMISSIONS, offered_tools, tool_permission, tool_target
+from nanobot.dots.permissions import (
+    TOOL_PERMISSIONS,
+    offered_tools,
+    tool_permission,
+    tool_starts_terminal,
+    tool_target,
+)
 
 
 def test_every_tool_maps_to_the_permission_of_the_design() -> None:
@@ -64,6 +70,18 @@ def test_every_tool_of_the_table_states_what_of_its_call_may_be_shown() -> None:
         assert entry.target({}) is None, name
     assert tool_target("exec", {"command": "ls"}) == "ls"
     assert tool_target("web_search", {"query": "ls"}) is None
+
+
+def test_only_a_call_of_exec_that_asks_for_a_tty_starts_a_terminal_session() -> None:
+    assert tool_starts_terminal("exec", {"command": "python3", "tty": True}) is True
+    for params in ({"command": "python3"}, {"command": "python3", "tty": False}, {"command": "x", "tty": "yes"}):
+        assert tool_starts_terminal("exec", params) is False, params
+    # No other tool starts one, whatever its arguments say; nor does a call with arguments of no shape.
+    for name in TOOL_PERMISSIONS:
+        if name != "exec":
+            assert tool_starts_terminal(name, {"command": "x", "tty": True}) is False, name
+    assert tool_starts_terminal("exec", "tty") is False
+    assert tool_starts_terminal("web_search", {"tty": True}) is False
 
 
 def test_the_table_cannot_be_changed_by_a_caller() -> None:
@@ -405,3 +423,72 @@ def test_the_proxy_password_of_an_identity_is_redacted_in_the_arguments_an_appro
     assert tool_arguments("browser_identity_create", {"name": "shop"}) == {"name": "shop"}
     assert tool_arguments("exec", {"command": "ls", "timeout": 5}) == {"command": "ls", "timeout": 5}
     assert tool_arguments("not_a_tool", {"proxy": "http://u:p@h"}) == {"proxy": "http://u:p@h"}
+
+
+def test_the_url_of_a_navigation_is_masked_in_the_arguments_an_approval_shows_as_in_its_target() -> None:
+    from nanobot.dots.permissions import tool_arguments
+
+    ident = "shop-abc123"
+    for url in (
+        "https://example.com/a?token=s3cret&q=1",
+        "https://u:pw@example.com/",
+        "https://example.com/p#access_token=abc",
+        "http://example.com",
+    ):
+        params = {"identity_id": ident, "url": url}
+        shown = tool_arguments("browser_navigate", params)
+        # One rule: the URL of the arguments is the URL the target shows.
+        assert tool_target("browser_navigate", params) == f"{ident}: {shown['url']}"
+        assert shown["identity_id"] == ident
+    assert tool_arguments("browser_navigate", {"identity_id": ident, "url": "https://u:pw@example.com/a?k=v"})["url"] == "https://example.com/a?k=***"
+    # A call without a URL, or with one that is not text, is as it was.
+    assert tool_arguments("browser_navigate", {"identity_id": ident}) == {"identity_id": ident}
+    assert tool_arguments("browser_navigate", {"identity_id": ident, "url": 5}) == {"identity_id": ident, "url": 5}
+    # The text of a typed field stays (a person approving typing sees what is typed, architecture section 6).
+    typed = {"identity_id": ident, "selector": "#a", "text": "hunter2"}
+    assert tool_arguments("browser_type", typed) == typed
+
+
+def test_a_quote_or_a_space_in_the_url_of_a_navigation_never_hides_where_the_page_is() -> None:
+    from nanobot.dots.permissions import tool_arguments
+
+    ident = "shop-abc123"
+    # The schema checks the prefix only, so a model can put these characters in on purpose.
+    cases = {
+        'https://attacker.example/x"y?d=1': 'https://attacker.example/x"y?d=***',
+        "https://attacker.example/x'y?d=1": "https://attacker.example/x'y?d=***",
+        "https://attacker.example/a b?d=1": "https://attacker.example/a b?d=***",
+        'https://u:pw@attacker.example:8443/a b"c?token=s3 cret': 'https://attacker.example:8443/a b"c?token=***',
+    }
+    for url, expected in cases.items():
+        params = {"identity_id": ident, "url": url}
+        assert tool_arguments("browser_navigate", params)["url"] == expected
+        assert tool_target("browser_navigate", params) == f"{ident}: {expected}"
+    # A text that is no URL shows nothing of itself.
+    assert tool_arguments("browser_navigate", {"identity_id": ident, "url": "not a url"})["url"] == "***"
+
+
+# --- the table as GET /tools shows it ----------------------------------------------------------------
+
+
+def test_the_tool_table_has_a_row_per_tool_in_the_order_of_the_permission_table(tmp_path, dot_store) -> None:
+    from nanobot.dots.permissions import build_registry, tool_table
+
+    registry = build_registry(_deps(tmp_path, dot_store))
+    rows = tool_table(registry, {"exec", "grep"})
+
+    assert [row["name"] for row in rows] == list(TOOL_PERMISSIONS)
+    for row in rows:
+        assert row["permission"] == TOOL_PERMISSIONS[row["name"]].permission
+        assert row["description"] == registry.get(row["name"]).description
+        assert row["offered"] is (row["name"] in {"exec", "grep"})
+
+
+def test_the_tool_table_refuses_a_registry_that_lacks_a_tool_of_the_table(tmp_path, dot_store) -> None:
+    from nanobot.dots.permissions import build_registry, tool_table
+
+    registry = build_registry(_deps(tmp_path, dot_store))
+    registry.unregister("cron")
+
+    with pytest.raises(LookupError, match="cron"):
+        tool_table(registry, ())

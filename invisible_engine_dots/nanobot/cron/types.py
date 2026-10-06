@@ -8,6 +8,13 @@ from typing import Any, Literal, cast, overload
 from nanobot.utils.dict_keys import get_camel_snake
 
 
+# The last moment a job may run, in milliseconds since the epoch: 9999-12-31T23:59:59.999Z, the last one a datetime
+# and a JavaScript Date both hold. The host's contract bounds `next_run_at_ms` at the same value
+# (`MAX_RUN_AT_MS` of packages/shared/src/protocol.ts; `tests/dots/test_wire_shapes.py` pins the two equal), because a
+# time past it cannot be stored by the host's database nor shown by its web page.
+MAX_RUN_AT_MS = 253_402_300_799_999
+
+
 @overload
 def _store_int(value: Any, default: Literal[None]) -> int | None: ...
 

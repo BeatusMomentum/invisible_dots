@@ -45,6 +45,7 @@ from nanobot.dots import store as dots_store
 from nanobot.dots.browser import CLOSE_TIMEOUT_S, BrowserManager
 from nanobot.dots.computer import Computer
 from nanobot.dots.gate import DotsGate, close_open_calls
+from nanobot.dots.permissions import tool_table
 from nanobot.dots.projection import EngineSettings, project
 from nanobot.dots.protocol import (
     TASK_CANCELLED_EVENT,
@@ -175,6 +176,7 @@ class Engine:
     ) -> None:
         self._store = store
         self._browser = browser
+        self._registry = base_registry
         self._key_holder = key_holder
         self._workspace = workspace
         self._openrouter_base_url = openrouter_base_url
@@ -248,6 +250,11 @@ class Engine:
             )
 
         return self._store.read(answer)
+
+    def tool_table(self) -> list[dict[str, Any]]:
+        """The Dot's tools and whether the model is offered each now (none before a config arrived)."""
+        offered = self._settings.offered_tools if self._settings else ()
+        return tool_table(self._registry, offered)
 
     def read_outbox_after(self, after: int, limit: int) -> list[dict[str, Any]]:
         return self._store.read(lambda conn: dots_store.read_outbox_after(conn, after, limit))
@@ -399,6 +406,17 @@ class Engine:
         if self._store.write(lambda conn: dots_store.record_inbound(conn, event, "accepted")):
             logger.info("automation fired id={} name={}", event["id"], job.name)
             self.kick()
+
+    def automations_next_run(self, next_run_at_ms: int | None) -> None:
+        """The cron service armed its timer: tell the host when the earliest job is due, once per change.
+
+        The host wakes a computer that is off for it, and does not put one to sleep that is about to need
+        it (architecture section 9.5).
+        """
+        if self._stopped:
+            return
+        if self._store.write(lambda conn: dots_store.record_next_run(conn, next_run_at_ms)):
+            logger.info("next automation run reported at_ms={}", next_run_at_ms)
 
     async def suspend(self) -> None:
         """`POST /prepare-sleep`: start no new work; cancel a turn with no tool running at once; give

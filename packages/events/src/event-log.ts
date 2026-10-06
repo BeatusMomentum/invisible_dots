@@ -10,7 +10,7 @@
  * `publish` is the one place that has to become a NOTIFY.
  */
 import type { EventQuery, EventsRepository, Queryable } from "@invisible-dots/database";
-import type { HostEventDataMap, HostEventType, OutboundEvent, StoredEvent } from "@invisible-dots/shared";
+import type { HostEventDataMap, HostEventType, MessageOrigin, OutboundEvent, StoredEvent } from "@invisible-dots/shared";
 
 /**
  * Type of the event a user message is logged as. The conversation of
@@ -22,6 +22,8 @@ export const USER_MESSAGE_EVENT = "user.message";
 export interface UserMessageData {
   message_id: string;
   text: string;
+  /** Set when the message came through a channel; absent for the control plane's own API (the web, the CLI, the SDK). */
+  origin?: MessageOrigin;
 }
 
 export interface EventFilter {
@@ -51,7 +53,7 @@ function matches(filter: EventFilter, event: StoredEvent): boolean {
 }
 
 /** The part of the events repository the log needs; tests can hand in an in-memory one. */
-export type EventStore = Pick<EventsRepository, "insertHost" | "list" | "tail">;
+export type EventStore = Pick<EventsRepository, "insertHost" | "insertUserMessage" | "list" | "tail" | "userMessage" | "userMessageOfOrigin">;
 
 export class EventLog {
   readonly #subscribers = new Set<Subscriber>();
@@ -68,10 +70,10 @@ export class EventLog {
     return event;
   }
 
-  /** Write a user message (see USER_MESSAGE_EVENT) and publish it. */
-  async appendUserMessage(dotId: string, data: UserMessageData): Promise<StoredEvent> {
+  /** Write a user message (see USER_MESSAGE_EVENT) and publish it; null when it is a channel message already logged. */
+  async appendUserMessage(dotId: string, data: UserMessageData): Promise<StoredEvent | null> {
     const event = await this.appendUserMessageIn({ events: this.repo }, dotId, data);
-    this.publish(event);
+    if (event) this.publish(event);
     return event;
   }
 
@@ -89,13 +91,16 @@ export class EventLog {
     return tx.events.insertHost(dotId, type, data as Record<string, unknown>);
   }
 
-  /** `appendUserMessage` through the caller's transaction, published by the caller after COMMIT. */
+  /**
+   * `appendUserMessage` through the caller's transaction, published by the caller after COMMIT. A message
+   * that came through a channel is stored once per Dot, binding and channel message id: null means this one was already logged.
+   */
   async appendUserMessageIn(
-    tx: { events: Pick<EventsRepository, "insertHost"> },
+    tx: { events: Pick<EventsRepository, "insertUserMessage"> },
     dotId: string,
     data: UserMessageData,
-  ): Promise<StoredEvent> {
-    return tx.events.insertHost(dotId, USER_MESSAGE_EVENT, { ...data });
+  ): Promise<StoredEvent | null> {
+    return tx.events.insertUserMessage(dotId, { ...data });
   }
 
   /**
@@ -118,6 +123,16 @@ export class EventLog {
 
   tail(dotId: string, count: number): Promise<StoredEvent[]> {
     return this.repo.tail(dotId, count);
+  }
+
+  /** The logged `user.message` of the Dot that came through this binding as the channel's own message `externalId`, or null. */
+  userMessageOfOrigin(dotId: string, bindingId: string, externalId: string): Promise<StoredEvent | null> {
+    return this.repo.userMessageOfOrigin(dotId, bindingId, externalId);
+  }
+
+  /** The logged `user.message` of this message id (the `in_reply_to` of an answer), or null. */
+  userMessage(dotId: string, messageId: string): Promise<StoredEvent | null> {
+    return this.repo.userMessage(dotId, messageId);
   }
 
   /** Hand a stored event to every matching subscriber. A throwing listener does not stop the others. */

@@ -61,7 +61,7 @@ from nanobot.dots.identity_rules import (
     new_identity_id,
     redact_proxy,
 )
-from nanobot.dots.protocol import BROWSER_ENV, BROWSERS_DIR, GEOIP_DATABASE, GUEST_DISPLAY
+from nanobot.dots.protocol import BROWSER_ENV, BROWSERS_DIR, GEOIP_DATABASE, GUEST_DISPLAY, MCP_HOMES_DIR
 from nanobot.dots.store import BrowserIdentityRow, DotStore
 
 # The MCP server's own browser, the one carrying the identity. The server also has a `support` browser;
@@ -215,6 +215,7 @@ class BrowserManager:
         max_open: int,
         max_identities: int,
         browsers_dir: str = BROWSERS_DIR,
+        mcp_homes_dir: str = MCP_HOMES_DIR,
         display: str = GUEST_DISPLAY,
         open_deadline_s: float = 900.0,
         open_retry_initial_s: float = 2.0,
@@ -232,6 +233,7 @@ class BrowserManager:
         self._max_open = max_open
         self._max_identities = max_identities
         self._browsers_dir = browsers_dir
+        self._mcp_homes_dir = mcp_homes_dir
         self._display = display
         self._open_deadline_s = open_deadline_s
         self._open_retry_initial_s = open_retry_initial_s
@@ -523,8 +525,14 @@ class BrowserManager:
         self._sessions[identity_id] = self._sessions.pop(identity_id)
 
     def _paths(self, identity_id: str) -> tuple[str, str, str]:
+        """The identity's directory, its profile, and the home of its MCP server.
+
+        The home is not under the identity's directory, nor anywhere under /home/dot: the server saves the
+        proxy of its browser, password included, in a session file under its home, and the host's file routes
+        read /home/dot and nothing else.
+        """
         root = posixpath.join(self._browsers_dir, identity_id)
-        return root, posixpath.join(root, "profile"), posixpath.join(root, "mcp")
+        return root, posixpath.join(root, "profile"), posixpath.join(self._mcp_homes_dir, identity_id)
 
     async def _make_directories(self, identity_id: str) -> None:
         _, profile, mcp_home = self._paths(identity_id)
@@ -536,8 +544,8 @@ class BrowserManager:
             )
 
     async def _remove_directory(self, identity_id: str) -> None:
-        root, _, _ = self._paths(identity_id)
-        result = await self._computer.run(["rm", "-rf", "--", root])
+        root, _, mcp_home = self._paths(identity_id)
+        result = await self._computer.run(["rm", "-rf", "--", root, mcp_home])
         if result.exit_code != 0:
             raise RuntimeError(
                 f"could not remove the directory of browser identity {identity_id}: "

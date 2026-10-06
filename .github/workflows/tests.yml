@@ -95,7 +95,7 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - name: vitest on both adapters
-        run: npx vitest run packages/database packages/events apps/api apps/scheduler --reporter=default --reporter=json --outputFile=vitest-report.json
+        run: npx vitest run packages/database packages/events packages/channels apps/api apps/scheduler --reporter=default --reporter=json --outputFile=vitest-report.json
       - name: refuse a run in which the pg suites did not run
         if: always()
         run: node .github/scripts/test-guard.mjs vitest-report.json --suite postgres

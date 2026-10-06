@@ -161,6 +161,7 @@ describe("the vendored nanobot fork", () => {
 
     // Where the browser identities live, the display they draw on, and the environment of each one's MCP process.
     expect(/^BROWSERS_DIR = "([^"]+)"/m.exec(protocol)?.[1]).toBe(GUEST_PATHS.browsers);
+    expect(/^MCP_HOMES_DIR = "([^"]+)"/m.exec(protocol)?.[1]).toBe(GUEST_PATHS.mcpHomes);
     expect(/^GUEST_DISPLAY = "([^"]+)"/m.exec(protocol)?.[1]).toBe(GUEST_DISPLAY);
     expect(/^GEOIP_DATABASE = "([^"]+)"/m.exec(protocol)?.[1]).toBe(GUEST_PATHS.geoipDatabase);
     const browserEnv = /^BROWSER_ENV = \{([^}]*)\}/m.exec(protocol);

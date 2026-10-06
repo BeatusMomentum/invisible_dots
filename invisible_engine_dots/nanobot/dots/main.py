@@ -172,13 +172,14 @@ async def serve(environment: Environment, stop: asyncio.Event) -> None:
             openrouter_base_url=environment.openrouter_url,
         )
         cron.on_job = engine.automation_fired
+        cron.on_next_wake = engine.automations_next_run
         checks = create_guest_checks(
             writable_dir=state_dir,
             browser_command=environment.mcp_command,
             network_target=environment.network_check,
             path=environment.path,
         )
-        server = AgentServer(engine=engine, key_holder=key_holder, checks=checks)
+        server = AgentServer(engine=engine, key_holder=key_holder, checks=checks, automations=cron)
         await server.listen(environment.agent_socket)
         retry: asyncio.Task[None] | None = None
         try:
@@ -191,12 +192,14 @@ async def serve(environment: Environment, stop: asyncio.Event) -> None:
         finally:
             if retry is not None:
                 retry.cancel()
+            # The cron timer first: a firing that reached the stopped engine would be recorded nowhere, and its
+            # job would move on as if it had run.
+            cron.stop()
             # Stop accepting, then close the streams, then stop the engine (which closes the open
             # browsers once the turns in flight have ended): nothing new is taken meanwhile.
             await server.stop_accepting()
             server.close_streams()
             await engine.stop()
-            cron.stop()
             await exec_sessions.close_all()
             await server.close()
             await computer.aclose()

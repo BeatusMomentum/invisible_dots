@@ -55,6 +55,8 @@ lay_out_guest() {
   install -d -o dot -g dotengine -m 2750 /run/invisible-dots
   install -d -o dotengine -g dot -m 2750 /run/invisible-dots-agent
   install -d -o dot -g dot -m 2775 /home/dot/workspace
+  install -d -o root -g root -m 0755 /var/lib/invisible-dots
+  install -d -o dot -g dot -m 0700 /var/lib/invisible-dots/mcp
   install -d -o dotengine -g dotengine -m 0700 /home/dotengine /home/dotengine/state
 }
 
@@ -99,6 +101,18 @@ start_engine() { su -s /bin/bash dotengine -c "bash /tmp/engine.sh" >> /tmp/engi
 
 # --- the host's side: dot-agentd's TCP port with the Dot's token ---
 api() { curl "${H[@]}" "$@"; }
+# The host's file routes, as the TCP port serves them (limited to /home/dot, every symbolic link followed): the answer
+# and, on a last line, its status.
+files_get() { api -w '\n%{http_code}' --get --data-urlencode "path=$1" http://127.0.0.1:1024/v1/files; }
+files_list() { api -w '\n%{http_code}' --get --data-urlencode "path=$1" http://127.0.0.1:1024/v1/files/list; }
+refuses_outside_home() { # paths: each is answered 403 outside_home
+  local p out
+  for p in "$@"; do
+    out=$(files_get "$p")
+    [ "$(printf '%s\n' "$out" | tail -n 1)" = 403 ] || { echo "no 403 for $p: $out"; return 1; }
+    printf '%s\n' "$out" | grep -q '"error":"outside_home"' || { echo "not outside_home for $p: $out"; return 1; }
+  done
+}
 init_host_side() {
   H=(-sS -H "Authorization: Bearer $TOKEN")
   A=http://127.0.0.1:1024/v1/agent

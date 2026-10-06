@@ -439,6 +439,67 @@ class TestAutomations:
         assert h.count("dots_inbound") == 0
 
 
+class TestTheNextRunReport:
+    """The host wakes a stopped computer for an automation, so it is told when the earliest one is due."""
+
+    async def test_the_first_time_is_reported_and_the_same_time_again_is_not(self, make_engine: MakeEngine) -> None:
+        h = started(make_engine())
+
+        h.engine.automations_next_run(1_790_000_000_000)
+        h.engine.automations_next_run(1_790_000_000_000)
+
+        assert h.events_of("automation.next_run") == [{"next_run_at_ms": 1_790_000_000_000}]
+
+    async def test_each_change_is_reported_and_nothing_due_is_reported_as_none(self, make_engine: MakeEngine) -> None:
+        h = started(make_engine())
+
+        h.engine.automations_next_run(1_790_000_000_000)
+        h.engine.automations_next_run(1_790_000_060_000)
+        h.engine.automations_next_run(None)
+        h.engine.automations_next_run(None)
+
+        assert h.events_of("automation.next_run") == [
+            {"next_run_at_ms": 1_790_000_000_000},
+            {"next_run_at_ms": 1_790_000_060_000},
+            {"next_run_at_ms": None},
+        ]
+
+    async def test_a_computer_that_never_had_an_automation_reports_nothing(self, make_engine: MakeEngine) -> None:
+        h = started(make_engine())
+
+        h.engine.automations_next_run(None)
+
+        assert h.events_of("automation.next_run") == []
+
+    async def test_a_restart_does_not_say_again_what_the_host_already_heard(self, make_engine: MakeEngine) -> None:
+        h = started(make_engine())
+        h.engine.automations_next_run(1_790_000_000_000)
+
+        h.restart()
+        started(h)
+        h.engine.automations_next_run(1_790_000_000_000)
+        h.engine.automations_next_run(None)
+
+        assert h.events_of("automation.next_run") == [{"next_run_at_ms": 1_790_000_000_000}, {"next_run_at_ms": None}]
+
+    async def test_the_report_is_an_event_of_its_own_and_starts_no_turn(self, make_engine: MakeEngine) -> None:
+        h = started(make_engine([says("never asked")]))
+
+        h.engine.automations_next_run(1_790_000_000_000)
+        await h.idle()
+
+        assert h.asked() == 0
+        assert h.states() == ["IDLE"]
+
+    async def test_a_stopped_engine_reports_nothing(self, make_engine: MakeEngine) -> None:
+        h = started(make_engine())
+        await h.engine.stop()
+
+        h.engine.automations_next_run(1_790_000_000_000)
+
+        assert h.events_of("automation.next_run") == []
+
+
 class TestTasks:
     async def test_runs_one_at_a_time_each_in_its_own_session(self, make_engine: MakeEngine) -> None:
         gate = Gate()

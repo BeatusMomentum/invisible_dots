@@ -101,8 +101,15 @@ without it.
   After the program exits, output still held open by a child it left behind is
   read for at most 2 s.
 - File paths: relative paths and `~/...` resolve against home, absolute paths
-  are used as they are, a NUL byte is refused. `PUT` creates parent directories
-  and replaces the file atomically, keeping an existing file's mode.
+  are used as they are, a NUL byte is refused. On the TCP listener (the host's
+  door) the three file routes are limited to home: the path is resolved with
+  every symbolic link followed (a link whose target does not exist yet too, to where the
+  target would be), and one whose real location is not under the
+  real home (`/proc/<pid>/environ` included) is a `403 outside_home`; a link in
+  home that leads out of it lists as `other`. The engine's socket is not limited. `PUT` creates parent directories
+  and replaces the file atomically, keeping an existing file's mode; a symbolic link at the
+  path itself (inside home, dangling or not) is replaced by the file, as a rename does it, and
+  what it pointed to is left alone.
   `GET /v1/files/list` without `path` lists home.
 - `POST /v1/system/poweroff`: starts the poweroff command without waiting for
   it and answers `202 { "status": "powering_off" }`; a command that cannot be

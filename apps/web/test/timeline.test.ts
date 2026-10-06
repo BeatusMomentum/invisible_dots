@@ -56,6 +56,15 @@ describe("describeEvent", () => {
     expect(entry).toMatchObject({ title: "Browser identity created", detail: "shop (shop-ab12cd)" });
   });
 
+  it("says when the next automation is due, or that none is", () => {
+    expect(describeEvent(event(20, "automation.next_run", { next_run_at_ms: 1_790_000_000_000 }))).toMatchObject({
+      title: "Next automation",
+      detail: "due 2026-09-21T14:13:20.000Z",
+      tone: "neutral",
+    });
+    expect(describeEvent(event(21, "automation.next_run", { next_run_at_ms: null }))).toMatchObject({ detail: "none due" });
+  });
+
   it("describes host events and resolutions", () => {
     expect(describeEvent(event(7, "computer.state", { state: "ERROR" }, "host"))).toMatchObject({
       title: "Computer state",
@@ -65,6 +74,22 @@ describe("describeEvent", () => {
     });
     expect(describeEvent(event(8, "approval.resolved", { approval_id: "apr_1", decision: "reject", note: "no" }, "host")))
       .toMatchObject({ title: "Rejected", detail: "apr_1 - no", tone: "warn" });
+  });
+
+  it("describes the channel events by their kind and status", () => {
+    expect(describeEvent(event(12, "channel.status", { kind: "telegram", status: "connected" }, "host"))).toMatchObject({
+      title: "Channel status",
+      detail: "telegram connected",
+      tone: "ok",
+    });
+    expect(describeEvent(event(13, "channel.status", { kind: "whatsapp", status: "needs_relink" }, "host")).tone).toBe("warn");
+    expect(describeEvent(event(14, "channel.status", { kind: "telegram", status: "connecting" }, "host")).tone).toBe("neutral");
+    expect(
+      describeEvent(event(15, "channel.status", { kind: "telegram", status: "error", detail: "bot token revoked" }, "host")),
+    ).toMatchObject({ detail: "telegram error - bot token revoked", tone: "error" });
+    expect(
+      describeEvent(event(16, "channel.peer.paired", { kind: "telegram", peer_id: "4242", label: "Ada" }, "host")),
+    ).toMatchObject({ title: "Person paired", detail: "Ada on telegram", tone: "ok" });
   });
 
   it("falls back to the raw data for an unknown type and tolerates missing fields", () => {

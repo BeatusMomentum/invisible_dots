@@ -54,7 +54,7 @@ function ApprovalCard({
   const noteId = `note-${approval.id}`;
 
   async function resolve(decision: "approve" | "reject") {
-    const ok = await action.run(() => decision === "approve" ? api.approve(approval.id, note.trim() || undefined) : api.reject(approval.id, note.trim() || undefined));
+    const ok = await action.run(() => decision === "approve" ? api.approve(approval.id, { note: note.trim() || undefined }) : api.reject(approval.id, { note: note.trim() || undefined }));
     if (ok) onResolved();
   }
 

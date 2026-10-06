@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allowedActions, computerView } from "../src/lib/computer";
+import { allowedActions, computerView, confirmText } from "../src/lib/computer";
 import { formatBytes, formatDuration, maskProxy, statusTone } from "../src/lib/format";
 import type { DotConfig } from "../src/lib/types";
 
@@ -71,5 +71,10 @@ describe("computerView", () => {
     expect(allowedActions("STOPPED")).toEqual({ start: true, stop: false, reboot: false });
     expect(allowedActions("RUNNING")).toEqual({ start: false, stop: true, reboot: true });
     expect(allowedActions("STARTING")).toEqual({ start: false, stop: false, reboot: false });
+  });
+
+  it("says in the stop confirmation that the automations do not run while the computer is stopped", () => {
+    expect(confirmText("stop")).toMatch(/automations do not run while it is stopped/);
+    expect(confirmText("reboot")).not.toMatch(/automation/);
   });
 });

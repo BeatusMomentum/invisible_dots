@@ -1,6 +1,6 @@
 import type { Database } from "@invisible-dots/database";
 import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-dots/database/testing";
-import { IDENTITY_ERROR_STATUS, type IdentityErrorCode, type StoredEvent } from "@invisible-dots/shared";
+import { type Automation, IDENTITY_ERROR_STATUS, type IdentityErrorCode, type StoredEvent } from "@invisible-dots/shared";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Scheduler, type SchedulerOptions } from "../src/index.js";
 import { FakeDriver, FakeGuestError, ManualClock, waitFor, waitUntilSettledReady } from "../src/testing.js";
@@ -8,6 +8,21 @@ import { FakeDriver, FakeGuestError, ManualClock, waitFor, waitUntilSettledReady
 
 const yaml = (name: string, idle = "15m") =>
   `name: ${name}\ngoal: keep watch\nmodel:\n  provider: openrouter\n  id: test/model\ncomputer:\n  idle_timeout: ${idle}\n`;
+
+const automation = (over: Partial<Automation> = {}): Automation => ({
+  id: "job_1",
+  name: "daily fares",
+  enabled: true,
+  schedule: { kind: "cron", expr: "0 9 * * 1-5", tz: "Europe/Rome" },
+  message: "check the fares",
+  next_run_at_ms: 1_800_000_000_000,
+  last_run_at_ms: null,
+  last_status: null,
+  last_error: null,
+  delete_after_run: false,
+  created_at_ms: 1_700_000_000_000,
+  ...over,
+});
 
 describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s)", (kind) => {
   let t: TestDatabase;
@@ -202,7 +217,7 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     await waitFor(async () => (await db.tasks.get(task.id))?.status === "WAITING_APPROVAL", "task waiting");
     await waitFor(async () => (await db.dots.get(dot.id))?.status === "WAITING_APPROVAL", "dot waiting");
 
-    const resolved = await scheduler.resolveApproval(approval.id, "approve", "go ahead");
+    const resolved = await scheduler.resolveApproval(approval.id, "approve", { note: "go ahead" });
     expect(resolved.status).toBe("approved");
     const received = guest.inbound.find((e) => e.type === "approval.received");
     expect(received?.data).toEqual({ approval_id: approval.id, decision: "approve", note: "go ahead" });
@@ -213,6 +228,123 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
       code: "already_resolved",
     });
     expect(types(await db.events.list({ dotId: dot.id, types: ["approval.resolved"] }))).toEqual(["approval.resolved"]);
+  });
+
+  it("approve with always: the permission becomes allow in the config and the guest, once, in the same transaction as the decision", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "always-allow");
+    const guest = driver.guestOf(dot.id);
+    expect(guest.config?.permissions["browser.identity.delete"]).toBe("ask");
+    const original = guest.onInbound;
+    guest.onInbound = (event, g) => {
+      if (event.type === "task.created") {
+        g.emit("task.started", { task_id: event.data.task_id });
+        g.requestApproval(event.data.task_id);
+      } else {
+        return original(event, g);
+      }
+    };
+    const task = await scheduler.createTask(dot.id, { description: "delete the old identity" });
+    const approval = await waitFor(async () => (await scheduler.listApprovals("pending")).find((a) => a.task_id === task.id), "pending approval");
+    const configBefore = (await db.dots.get(dot.id))!.config;
+
+    const resolved = await scheduler.resolveApproval(approval.id, "approve", { always: true, note: "fine" });
+    expect(resolved.status).toBe("approved");
+    const stored = (await db.dots.get(dot.id))!;
+    expect(stored.config).toEqual({ ...configBefore, permissions: { ...configBefore.permissions, "browser.identity.delete": "allow" } });
+    expect(guest.config?.permissions["browser.identity.delete"]).toBe("allow");
+    expect(guest.config?.name).toBe("always-allow");
+    const events = await db.events.list({ dotId: dot.id, types: ["approval.resolved", "dot.updated"] });
+    expect(events.map((e) => [e.type, e.data])).toEqual([
+      ["approval.resolved", { approval_id: approval.id, decision: "approve", note: "fine", always: true }],
+      ["dot.updated", { name: "always-allow", pushed_to_guest: true }],
+    ]);
+    // The guest is told the plain decision: what the config says is the guest's own business.
+    expect(guest.inbound.find((e) => e.type === "approval.received")?.data).toEqual({ approval_id: approval.id, decision: "approve", note: "fine" });
+    await waitFor(async () => (await db.tasks.get(task.id))?.status === "COMPLETED", "task completed");
+
+    // Answered once: the second try is a 409 and changes nothing, however it asks.
+    await db.dots.setPermission(dot.id, "browser.identity.delete", "ask");
+    await expect(scheduler.resolveApproval(approval.id, "approve", { always: true })).rejects.toMatchObject({ status: 409, code: "already_resolved" });
+    expect((await db.dots.get(dot.id))?.config.permissions["browser.identity.delete"]).toBe("ask");
+    expect(types(await db.events.list({ dotId: dot.id, types: ["approval.resolved", "dot.updated"] }))).toEqual(["approval.resolved", "dot.updated"]);
+  });
+
+  it("approve with always: a flush that runs between the commit and the push does not send the answer ahead of the config", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "always-ordered");
+    const guest = driver.guestOf(dot.id);
+    const id = guest.requestApproval(undefined);
+    await waitFor(async () => (await db.approvals.get(id)) !== null, "stored");
+    let configWhenAnswered: string | undefined;
+    const original = guest.onInbound;
+    guest.onInbound = (event, g) => {
+      if (event.type === "approval.received") configWhenAnswered = g.config?.permissions["browser.identity.delete"];
+      return original(event, g);
+    };
+    let openGate!: () => void;
+    guest.configPushGate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+
+    const answered = scheduler.resolveApproval(id, "approve", { always: true });
+    // The answer is committed and waits in the outbox, the push is in flight: every way a delivery can start is tried.
+    await waitFor(async () => (await db.inbound.pending(dot.id)).some((row) => row.event.type === "approval.received"), "the answer stored");
+    void scheduler.inbound.kick(dot.id);
+    await scheduler.inbound.kickDue();
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(guest.inbound.some((e) => e.type === "approval.received")).toBe(false);
+
+    openGate();
+    expect((await answered).status).toBe("approved");
+    await scheduler.settle();
+    expect(guest.inbound.some((e) => e.type === "approval.received")).toBe(true);
+    expect(configWhenAnswered).toBe("allow");
+    // The hold is gone: the next answer for this Dot is not held up.
+    const next = guest.requestApproval(undefined);
+    await waitFor(async () => (await db.approvals.get(next)) !== null, "stored");
+    await scheduler.resolveApproval(next, "reject");
+    await scheduler.settle();
+    expect(guest.inbound.filter((e) => e.type === "approval.received")).toHaveLength(2);
+  });
+
+  it("approve with always refuses what cannot be allowed for good and leaves the approval pending", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "always-refused");
+    const guest = driver.guestOf(dot.id);
+    const known = guest.requestApproval(undefined);
+    // The one way an approval of an unknown permission exists: a row stored before the permission was deleted from
+    // PERMISSIONS (decision C1). The guest's own events cannot make one: the real client parses every event with the
+    // permission list, so it is seeded through the repository, as the old row is.
+    await waitFor(async () => (await db.approvals.get(known)) !== null, "stored");
+    await db.approvals.insertRequested(dot.id, { approval_id: "apr_unknownpermission", tool: "mystery", permission: "made.up" as never, arguments: {}, reason: "?" });
+    const configBefore = (await db.dots.get(dot.id))!.config;
+
+    await expect(scheduler.resolveApproval(known, "reject", { always: true })).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+    await expect(scheduler.resolveApproval("apr_unknownpermission", "approve", { always: true })).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+    await expect(scheduler.resolveApproval(known, "approve", { always: false as unknown as true })).rejects.toMatchObject({ status: 400 });
+    await expect(scheduler.resolveApproval("apr_missing", "approve", { always: true })).rejects.toMatchObject({ status: 404 });
+    for (const id of [known, "apr_unknownpermission"]) expect((await db.approvals.get(id))?.status).toBe("pending");
+    expect((await db.dots.get(dot.id))?.config).toEqual(configBefore);
+    expect(await db.events.list({ dotId: dot.id, types: ["approval.resolved", "dot.updated"] })).toEqual([]);
+    // A plain approval of the unknown permission still works: it asks nothing of the config.
+    expect((await scheduler.resolveApproval("apr_unknownpermission", "approve")).status).toBe("approved");
+  });
+
+  it("approve with always on a sleeping Dot saves the config, and the wake that delivers the answer pushes it", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "always-asleep");
+    const approvalId = driver.guestOf(dot.id).requestApproval(undefined);
+    await waitFor(async () => (await db.approvals.get(approvalId)) !== null, "stored");
+    await scheduler.stopComputer(dot.id);
+    await scheduler.settle();
+    expect((await db.computers.get(dot.id))?.state).toBe("STOPPED");
+
+    await scheduler.resolveApproval(approvalId, "approve", { always: true });
+    expect((await db.dots.get(dot.id))?.config.permissions["browser.identity.delete"]).toBe("allow");
+    expect((await db.events.list({ dotId: dot.id, types: ["dot.updated"] })).at(-1)?.data).toEqual({ name: "always-asleep", pushed_to_guest: false });
+    await waitFor(async () => (await db.computers.get(dot.id))?.state === "RUNNING", "woken for the answer");
+    await waitFor(() => driver.guestOf(dot.id).config?.permissions["browser.identity.delete"] === "allow", "config pushed on the wake");
   });
 
   it("sleeps after idle_timeout (fake clock) and wakes on a new task", async () => {
@@ -256,6 +388,271 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     expect((await db.tasks.get(task.id))?.status).toBe("RUNNING");
   });
 
+  describe("automations and the computer's sleep (section 9.5)", () => {
+    const LEAD_MS = 60_000;
+    const MIN = 60_000;
+
+    function makeWithLead() {
+      return make(new FakeDriver(), {
+        dispatchIntervalMs: 60_000,
+        idleCheckIntervalMs: 60_000,
+        lifecycle: { healthPollMs: 5, readyTimeoutMs: 3_000, pumpRetryMs: 10, pumpMaxRetryMs: 50, automationWakeLeadMs: LEAD_MS },
+      });
+    }
+
+    /** The Dot's engine reports that its earliest automation is due `inMs` from the clock's now, and the host has stored it. */
+    async function reportDueIn(scheduler: Scheduler, clock: ManualClock, dotId: string, inMs: number, id = "job_1") {
+      const at = clock.now().getTime() + inMs;
+      driverOf(scheduler).guestOf(dotId).putAutomation(automation({ id, next_run_at_ms: at }));
+      await waitFor(async () => (await db.computers.get(dotId))?.next_automation_at === new Date(at).toISOString(), "the report stored");
+      return at;
+    }
+
+    it("stores what the engine reports as the time of its next automation, and clears it when none is due", async () => {
+      const { scheduler, driver, clock } = makeWithLead();
+      const dot = await readyDot(scheduler, "reporter", "0");
+      expect((await db.computers.get(dot.id))?.next_automation_at).toBeNull();
+
+      const at = await reportDueIn(scheduler, clock, dot.id, 3 * 60 * MIN);
+      const logged = await db.events.list({ dotId: dot.id, types: ["automation.next_run"] });
+      expect(logged.map((e) => e.data)).toMatchObject([{ next_run_at_ms: at }]);
+
+      const guest = driver.guestOf(dot.id);
+      guest.putAutomation(automation({ id: "job_2", name: "sooner", next_run_at_ms: at - 60 * MIN }));
+      await waitFor(async () => (await db.computers.get(dot.id))?.next_automation_at === new Date(at - 60 * MIN).toISOString(), "the earlier one");
+      await guest.deleteAutomation("job_2");
+      await guest.deleteAutomation("job_1");
+      await waitFor(async () => (await db.computers.get(dot.id))?.next_automation_at === null, "cleared");
+      expect(await scheduler.listAutomations(dot.id)).toEqual([]);
+    });
+
+    it("does not put a Dot to sleep when a run is due within the wake lead time, and does when it is not", async () => {
+      const { scheduler, clock } = makeWithLead();
+      const soon = await readyDot(scheduler, "run-soon", "10m");
+      const far = await readyDot(scheduler, "run-far", "10m");
+      const none = await readyDot(scheduler, "run-none", "10m");
+      await reportDueIn(scheduler, clock, soon.id, 10 * MIN + LEAD_MS - 1_000);
+      await reportDueIn(scheduler, clock, far.id, 10 * MIN + LEAD_MS + 5 * MIN);
+
+      // Idle for the whole timeout: the one whose run is within the lead stays up.
+      clock.advance(10 * MIN + 1_000);
+      expect((await scheduler.idleCheck()).sort()).toEqual([far.id, none.id].sort());
+      await scheduler.settle();
+      expect((await db.computers.get(soon.id))?.state).toBe("RUNNING");
+      expect((await db.computers.get(far.id))?.state).toBe("STOPPED");
+    });
+
+    it("does not put a Dot to sleep that has a run already due, and does once the engine has moved it far off", async () => {
+      const { scheduler, driver, clock } = makeWithLead();
+      const dot = await readyDot(scheduler, "run-due", "10m");
+      await reportDueIn(scheduler, clock, dot.id, 2 * MIN);
+
+      clock.advance(20 * MIN);
+      expect(await scheduler.idleCheck()).toEqual([]);
+
+      // The engine made the run and tells the host the next one is hours away.
+      const guest = driver.guestOf(dot.id);
+      const next = clock.now().getTime() + 6 * 60 * MIN;
+      guest.putAutomation(automation({ id: "job_next", next_run_at_ms: next }));
+      await guest.deleteAutomation("job_1");
+      await waitFor(async () => (await db.computers.get(dot.id))?.next_automation_at === new Date(next).toISOString(), "the next run stored");
+      // The reports were activity: the idle timeout counts from them.
+      clock.advance(11 * MIN);
+      expect(await scheduler.idleCheck()).toEqual([dot.id]);
+    });
+
+    /** The Dot sleeps as the idle check puts it to sleep: nothing due within the lead, idle for its whole timeout. */
+    async function sleepIdle(scheduler: Scheduler, clock: ManualClock, dotId: string, idleMs = 11 * MIN) {
+      clock.advance(idleMs);
+      expect(await scheduler.idleCheck()).toEqual([dotId]);
+      await scheduler.settle();
+      expect(await db.computers.get(dotId)).toMatchObject({ state: "STOPPED", stop_reason: "idle" });
+    }
+
+    it("starts a stopped Dot shortly before its automation is due, and not before", async () => {
+      const { scheduler, driver, clock } = makeWithLead();
+      const dot = await readyDot(scheduler, "sleeping-job", "10m");
+      const at = await reportDueIn(scheduler, clock, dot.id, 60 * MIN);
+      await sleepIdle(scheduler, clock, dot.id);
+      const boots = driver.guestOf(dot.id).boots;
+
+      await scheduler.pass();
+      clock.advance(28 * MIN);
+      await scheduler.pass();
+      await scheduler.settle();
+      expect((await db.computers.get(dot.id))?.state).toBe("STOPPED");
+      expect(driver.guestOf(dot.id).boots).toBe(boots);
+
+      // 30 s before the run, within the 60 s lead.
+      clock.advance(at - clock.now().getTime() - 30_000);
+      await scheduler.pass();
+      await waitFor(async () => (await db.computers.get(dot.id))?.state === "RUNNING", "started for the automation");
+      await waitFor(async () => (await db.dots.get(dot.id))?.status === "READY", "READY");
+      expect(driver.guestOf(dot.id).boots).toBe(boots + 1);
+      // The key lives in guest memory only: the start pushed it as every start does.
+      expect(driver.guestOf(dot.id).openrouterKey).toBe("sk-or-test");
+    });
+
+    it("wakes a Dot for a missed run once: the guest makes it, the stored time moves on, and the Dot sleeps again", async () => {
+      const { scheduler, driver, clock } = makeWithLead();
+      const dot = await readyDot(scheduler, "missed-job", "10m");
+      const guest = driver.guestOf(dot.id);
+      guest.now = () => clock.now().getTime();
+      const at = clock.now().getTime() + 60 * MIN;
+      guest.putAutomation(automation({ schedule: { kind: "every", every_ms: 6 * 60 * MIN }, next_run_at_ms: at }));
+      await waitFor(async () => (await db.computers.get(dot.id))?.next_automation_at === new Date(at).toISOString(), "the report stored");
+      await sleepIdle(scheduler, clock, dot.id);
+      clock.advance(3 * 60 * MIN);
+      const boots = guest.boots;
+
+      await scheduler.pass();
+      await waitFor(async () => (await db.computers.get(dot.id))?.state === "RUNNING", "started for the missed run");
+      await scheduler.settle();
+      // The guest made the run at its boot and told the host when the next one is: the past time is gone.
+      const ranAt = clock.now().getTime();
+      const next = ranAt + 6 * 60 * MIN;
+      expect(guest.automations.get("job_1")).toMatchObject({ last_run_at_ms: ranAt, next_run_at_ms: next });
+      await waitFor(async () => (await db.computers.get(dot.id))?.next_automation_at === new Date(next).toISOString(), "the next run stored");
+      expect(await scheduler.lifecycle.keepsAwake(dot.id)).toBe(false);
+
+      // So the passes that follow find nothing to start, and the idle check puts the Dot to sleep again.
+      await scheduler.pass();
+      await scheduler.settle();
+      expect(guest.boots).toBe(boots + 1);
+      await sleepIdle(scheduler, clock, dot.id);
+      await scheduler.pass();
+      await scheduler.settle();
+      expect(guest.boots).toBe(boots + 1);
+      expect(guest.automations.get("job_1")?.last_run_at_ms).toBe(ranAt);
+    });
+
+    it("keeps a Dot the person stopped off, whatever its automations say, until the person starts it again", async () => {
+      const { scheduler, driver, clock } = makeWithLead();
+      const dot = await readyDot(scheduler, "stopped-by-me", "10m");
+      const guest = driver.guestOf(dot.id);
+      guest.now = () => clock.now().getTime();
+      const at = clock.now().getTime() + 5 * MIN;
+      guest.putAutomation(automation({ schedule: { kind: "every", every_ms: 60 * MIN }, next_run_at_ms: at }));
+      await waitFor(async () => (await db.computers.get(dot.id))?.next_automation_at === new Date(at).toISOString(), "the report stored");
+
+      await scheduler.stopComputer(dot.id);
+      await scheduler.settle();
+      expect(await db.computers.get(dot.id)).toMatchObject({ state: "STOPPED", stop_reason: "user" });
+      const boots = guest.boots;
+
+      // The run is past, then an hour of runs are: the Dot stays as the person left it.
+      clock.advance(10 * MIN);
+      await scheduler.pass();
+      clock.advance(60 * MIN);
+      await scheduler.pass();
+      await scheduler.settle();
+      expect(guest.boots).toBe(boots);
+      expect((await db.computers.get(dot.id))?.state).toBe("STOPPED");
+
+      // The person starts it: the guest makes the run it missed, and the reason is gone.
+      await scheduler.startComputer(dot.id);
+      await waitFor(async () => (await db.dots.get(dot.id))?.status === "READY", "READY");
+      expect((await db.computers.get(dot.id))?.stop_reason).toBeNull();
+      const ranAt = clock.now().getTime();
+      expect(guest.automations.get("job_1")?.last_run_at_ms).toBe(ranAt);
+
+      // From then on it sleeps and wakes for its automations like any other. The guest's report of the next run is
+      // activity: the idle timeout counts from it, so it is stored before the clock moves.
+      await waitFor(async () => (await db.computers.get(dot.id))?.next_automation_at === new Date(ranAt + 60 * MIN).toISOString(), "the next run stored");
+      await scheduler.settle();
+      clock.advance(11 * MIN);
+      expect(await scheduler.idleCheck()).toEqual([dot.id]);
+      await scheduler.settle();
+      expect((await db.computers.get(dot.id))?.stop_reason).toBe("idle");
+      clock.advance(60 * MIN);
+      await scheduler.pass();
+      await waitFor(async () => (await db.computers.get(dot.id))?.state === "RUNNING", "woken for the next run");
+      expect(guest.boots).toBe(boots + 2);
+    });
+
+    it("records the person's stop of a computer that is already asleep, and a message still starts it", async () => {
+      const { scheduler, driver, clock } = makeWithLead();
+      const dot = await readyDot(scheduler, "asleep-then-stopped", "10m");
+      await reportDueIn(scheduler, clock, dot.id, 60 * MIN);
+      await sleepIdle(scheduler, clock, dot.id);
+      const boots = driver.guestOf(dot.id).boots;
+
+      await scheduler.stopComputer(dot.id);
+      await scheduler.settle();
+      expect((await db.computers.get(dot.id))?.stop_reason).toBe("user");
+      clock.advance(2 * 60 * MIN);
+      await scheduler.pass();
+      await scheduler.settle();
+      expect(driver.guestOf(dot.id).boots).toBe(boots);
+
+      // The person's stop is about the automations: their own message still starts the computer.
+      await scheduler.sendMessage(dot.id, "are you there");
+      await scheduler.settle();
+      expect(driver.guestOf(dot.id).boots).toBe(boots + 1);
+      expect((await db.computers.get(dot.id))?.stop_reason).toBeNull();
+    });
+
+    it("starts a VM that stopped by itself at once when a run is due, by the same rule as the idle sleep", async () => {
+      const { scheduler, driver, clock } = makeWithLead();
+      const dot = await readyDot(scheduler, "self-stopper-job", "10m");
+      await reportDueIn(scheduler, clock, dot.id, LEAD_MS - 10_000);
+      const guest = driver.guestOf(dot.id);
+      const boots = guest.boots;
+
+      // No pass runs here: it is the exit itself that starts the computer again, not the next round of the scheduler.
+      driver.crash(dot.id);
+      await waitFor(async () => (await db.events.list({ dotId: dot.id, types: ["computer.stopped"] })).some((e) => e.data.reason === "exited"), "stop recorded");
+      await waitFor(() => guest.boots === boots + 1 && scheduler.lifecycle.isReady(dot.id), "started again");
+    });
+
+    it("leaves a VM that stopped by itself off when nothing is due, and records that it exited", async () => {
+      const { scheduler, driver, clock } = makeWithLead();
+      const dot = await readyDot(scheduler, "self-stopper-idle", "10m");
+      await reportDueIn(scheduler, clock, dot.id, 5 * 60 * MIN);
+      const boots = driver.guestOf(dot.id).boots;
+
+      driver.crash(dot.id);
+      await waitFor(async () => (await db.computers.get(dot.id))?.state === "STOPPED", "stop recorded");
+      await scheduler.settle();
+      expect(await db.computers.get(dot.id)).toMatchObject({ state: "STOPPED", stop_reason: "exited" });
+      expect(driver.guestOf(dot.id).boots).toBe(boots);
+    });
+
+    it("leaves a stopped Dot alone that has no automation to run, or whose Dot needs the person", async () => {
+      const { scheduler, driver, clock } = makeWithLead();
+      const nothing = await readyDot(scheduler, "stopped-nothing", "10m");
+      const broken = await readyDot(scheduler, "stopped-broken", "10m");
+      await reportDueIn(scheduler, clock, broken.id, 30 * MIN);
+      // Both slept by themselves (nothing due within the lead): it is the Dot's status that keeps the second one off.
+      clock.advance(11 * MIN);
+      expect((await scheduler.idleCheck()).sort()).toEqual([nothing.id, broken.id].sort());
+      await scheduler.settle();
+      await db.dots.setStatus(broken.id, "ERROR", "the person has to look");
+      const boots = [driver.guestOf(nothing.id).boots, driver.guestOf(broken.id).boots];
+
+      clock.advance(60 * MIN);
+      await scheduler.pass();
+      await scheduler.settle();
+
+      expect([driver.guestOf(nothing.id).boots, driver.guestOf(broken.id).boots]).toEqual(boots);
+      expect((await db.computers.get(nothing.id))?.state).toBe("STOPPED");
+      expect((await db.computers.get(broken.id))?.state).toBe("STOPPED");
+    });
+
+    it("calls an idle sleep off under the Dot's lock when the run came within the lead meanwhile", async () => {
+      const { scheduler, clock } = makeWithLead();
+      const dot = await readyDot(scheduler, "late-report", "10m");
+      clock.advance(11 * MIN);
+      // The idle check saw nothing due; then the engine reported a run within the lead, before the stop took the lock.
+      await reportDueIn(scheduler, clock, dot.id, LEAD_MS - 5_000);
+
+      await scheduler.lifecycle.stop(dot.id, "idle");
+
+      expect((await db.computers.get(dot.id))?.state).toBe("RUNNING");
+      expect(scheduler.lifecycle.isReady(dot.id)).toBe(true);
+    });
+  });
+
   it("a message to a stopped Dot is queued, wakes it and is delivered", async () => {
     const { scheduler, driver } = make();
     const dot = await readyDot(scheduler, "chatty");
@@ -273,6 +670,62 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     ]);
     const direct = await scheduler.sendMessage(dot.id, "again");
     expect(direct.delivery).toBe("delivered");
+  });
+
+  it("keeps where a message came from in the log and answers it in the conversation, never to the guest", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "bridged");
+    const origin = { channel: "telegram", binding_id: "chb_1", chat_id: "4242", external_id: "77" } as const;
+    const fromChannel = await scheduler.sendMessage(dot.id, "from my phone", origin);
+    const fromApi = await scheduler.sendMessage(dot.id, "from the web");
+    await waitFor(async () => (await scheduler.conversation(dot.id)).length === 4, "both replies");
+    // The event log owns the fact.
+    const logged = (await db.events.list({ dotId: dot.id, types: ["user.message"] })).map((e) => e.data);
+    expect(logged).toEqual([
+      { message_id: fromChannel.message_id, text: "from my phone", origin },
+      { message_id: fromApi.message_id, text: "from the web" },
+    ]);
+    const conversation = await scheduler.conversation(dot.id);
+    expect(conversation.filter((m) => m.role === "user").map((m) => m.origin)).toEqual([origin, undefined]);
+    expect(conversation.some((m) => m.role === "assistant" && "origin" in m)).toBe(false);
+    // The guest still gets {text}: nothing in the Dot knows about a channel.
+    const received = driver.guestOf(dot.id).inbound.filter((e) => e.type === "user.message");
+    expect(received.map((e) => e.data)).toEqual([{ text: "from my phone" }, { text: "from the web" }]);
+  });
+
+  it("hands a channel message to the Dot once however often it is offered, and answers a repeat with the first", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "repeated");
+    const origin = { channel: "telegram", binding_id: "chb_1", chat_id: "4242", external_id: "77" } as const;
+    const first = await scheduler.sendMessage(dot.id, "from my phone", origin);
+    const again = await scheduler.sendMessage(dot.id, "from my phone", origin);
+    expect(again).toEqual({ message_id: first.message_id, event_id: first.event_id, delivery: "delivered" });
+    // The same id on another binding is another message.
+    const other = await scheduler.sendMessage(dot.id, "from my phone", { ...origin, binding_id: "chb_2" });
+    expect(other.message_id).not.toBe(first.message_id);
+    await scheduler.settle();
+    expect((await db.events.list({ dotId: dot.id, types: ["user.message"] })).map((e) => e.data.message_id)).toEqual([first.message_id, other.message_id]);
+    expect(driver.guestOf(dot.id).inbound.filter((e) => e.type === "user.message").map((e) => e.id)).toEqual([first.message_id, other.message_id]);
+    expect((await db.inbound.get(first.message_id))?.delivered_at).toBeTruthy();
+  });
+
+  it("refuses a message whose origin is not a channel chat, and logs nothing for it", async () => {
+    const { scheduler } = make();
+    const dot = await readyDot(scheduler, "strict");
+    const before = (await db.events.list({ dotId: dot.id })).length;
+    const bad = { channel: "sms", binding_id: "chb_1", chat_id: "1", external_id: "2" };
+    await expect(scheduler.sendMessage(dot.id, "hi", bad as never)).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+    await expect(scheduler.sendMessage(dot.id, "hi", { ...bad, channel: "telegram", extra: 1 } as never)).rejects.toMatchObject({ status: 400 });
+    expect((await db.events.list({ dotId: dot.id })).length).toBe(before);
+  });
+
+  it("leaves out an origin it cannot read in a stored message instead of failing the conversation", async () => {
+    const { scheduler } = make();
+    const dot = await readyDot(scheduler, "old-rows");
+    await scheduler.events.appendUserMessage(dot.id, { message_id: "msg_old", text: "odd", origin: { channel: "sms" } as never });
+    const [message] = await scheduler.conversation(dot.id);
+    expect(message).toMatchObject({ role: "user", text: "odd" });
+    expect("origin" in message!).toBe(false);
   });
 
   it("READY fails without an OpenRouter key and succeeds once one is set", async () => {
@@ -429,6 +882,54 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     await expect(scheduler.updateDot(dot.id, "name: Bad Name")).rejects.toMatchObject({ status: 400, code: "invalid_config" });
   });
 
+  it("PATCH made from an old read is a 409 dot_changed: it cannot undo an always-allow answered since, and nothing is saved", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "stale-form");
+    const guest = driver.guestOf(dot.id);
+    // The approval is asked (the Dot's status moves to WAITING_APPROVAL) BEFORE the form reads the Dot: what makes the
+    // save stale below is the always-allow alone.
+    const approvalId = guest.requestApproval(undefined);
+    await waitFor(async () => (await db.approvals.get(approvalId)) !== null && (await db.dots.get(dot.id))?.status === "WAITING_APPROVAL", "stored");
+    const loaded = await scheduler.requireDot(dot.id);
+    expect(loaded.config.permissions?.["browser.identity.delete"]).toBeUndefined();
+
+    // Another view answers "Always allow" while the form is open.
+    await scheduler.resolveApproval(approvalId, "approve", { always: true });
+    expect((await db.dots.get(dot.id))?.config.permissions["browser.identity.delete"]).toBe("allow");
+
+    const save = `${yaml("stale-form")}instructions: be brief\n`;
+    await expect(scheduler.updateDot(dot.id, save, loaded.config_version)).rejects.toMatchObject({ status: 409, code: "dot_changed" });
+    const stored = (await db.dots.get(dot.id))!;
+    expect(stored.config.permissions["browser.identity.delete"]).toBe("allow");
+    expect(stored.config.instructions).toBeUndefined();
+    expect(guest.config?.instructions).toBeUndefined();
+
+    // Read again, the save goes through, once; a save with no precondition is as it always was; a malformed one is a 400.
+    const fresh = await scheduler.requireDot(dot.id);
+    expect((await scheduler.updateDot(dot.id, save, fresh.config_version)).config.instructions).toBe("be brief");
+    await expect(scheduler.updateDot(dot.id, save, fresh.config_version)).rejects.toMatchObject({ status: 409, code: "dot_changed" });
+    expect((await scheduler.updateDot(dot.id, `${yaml("stale-form")}instructions: no precondition\n`)).config.instructions).toBe("no precondition");
+    await expect(scheduler.updateDot(dot.id, save, "2")).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+    await expect(scheduler.updateDot(dot.id, save, 0)).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+    await expect(scheduler.updateDot("missing-dot", save, fresh.config_version)).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("PATCH made from a read before a status change is saved: only a change of the config makes it a 409", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "status-moves");
+    const loaded = await scheduler.requireDot(dot.id);
+    // A turn of the Dot moves its status (and updated_at) while the form is open; its config is as it was read.
+    driver.guestOf(dot.id).emit("agent.state", { state: "EXECUTING" });
+    await waitFor(async () => (await db.dots.get(dot.id))?.status === "RUNNING", "the status to move");
+    const moved = (await db.dots.get(dot.id))!;
+    expect(Date.parse(moved.updated_at)).toBeGreaterThan(Date.parse(loaded.updated_at));
+    expect(moved.config_version).toBe(loaded.config_version);
+
+    const saved = await scheduler.updateDot(dot.id, `${yaml("status-moves")}instructions: after a turn\n`, loaded.config_version);
+    expect(saved.config.instructions).toBe("after a turn");
+    expect(saved.config_version).toBe(loaded.config_version + 1);
+  });
+
   it("reboot waits for the new boot and pushes the key again", async () => {
     const { scheduler, driver } = make();
     const dot = await readyDot(scheduler, "rebooter");
@@ -477,6 +978,142 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     await expect(scheduler.requireDot("goner")).rejects.toMatchObject({ status: 404 });
   });
 
+  it("events: filters by type and task, refuses a type no event has, and filters a deleted Dot's history by id", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "filtered");
+    const task = await scheduler.createTask(dot.id, { description: "look" });
+    await waitFor(async () => (await db.tasks.get(task.id))?.status === "COMPLETED", "task COMPLETED");
+    await scheduler.sendMessage(dot.id, "hello");
+    driver.guestOf(dot.id).emit("memory.written", { key: "a.md" });
+    await waitFor(async () => (await scheduler.listEvents(dot.id, { types: ["memory.written"] })).length === 1, "note stored");
+
+    expect(types(await scheduler.listEvents(dot.id, { types: ["user.message", "memory.written"] }))).toEqual(["user.message", "memory.written"]);
+    expect(types(await scheduler.listEvents(dot.id, { taskId: task.id }))).toEqual(
+      expect.arrayContaining(["task.created", "task.started", "task.completed"]),
+    );
+    expect((await scheduler.listEvents(dot.id, { taskId: task.id, types: ["task.completed"] })).map((e) => e.data.task_id)).toEqual([task.id]);
+    // An empty list is no filter; a name that is no event type is an error rather than a quiet Dot.
+    expect((await scheduler.listEvents(dot.id, { types: [] })).length).toBeGreaterThan(5);
+    await expect(scheduler.listEvents(dot.id, { types: ["task.completed", "task.done"] })).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+    await expect(scheduler.listEvents(dot.id, { taskId: "" })).rejects.toMatchObject({ status: 400 });
+
+    await scheduler.deleteDot("filtered");
+    await scheduler.settle();
+    expect(types(await scheduler.listEvents(dot.id, { taskId: task.id, types: ["task.completed"] }))).toEqual(["task.completed"]);
+  });
+
+  it("files: the path rule comes before the guest, the guest's refusals pass through, and a stopped computer is 409", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "filer");
+    const guest = driver.guestOf(dot.id);
+    guest.putFile("/home/dot/memory/a.md", "alpha");
+    const calls = guest.calls.length;
+
+    expect(await scheduler.listFiles(dot.id)).toMatchObject({ path: "/home/dot", entries: [{ name: "memory", type: "dir" }] });
+    expect(await scheduler.listFiles("filer", "memory")).toMatchObject({ path: "/home/dot/memory", entries: [{ name: "a.md", size: 5 }] });
+    const read = await scheduler.readFile(dot.id, "~/memory/a.md");
+    expect(read.path).toBe("/home/dot/memory/a.md");
+    expect(new TextDecoder().decode(read.content)).toBe("alpha");
+    expect(guest.calls.slice(calls)).toEqual(["listFiles", "listFiles", "readFile"]);
+
+    const before = guest.calls.length;
+    await expect(scheduler.readFile(dot.id, "/etc/passwd")).rejects.toMatchObject({ status: 400, code: "invalid_path" });
+    await expect(scheduler.listFiles(dot.id, "memory/../..")).rejects.toMatchObject({ status: 400, code: "invalid_path" });
+    await expect(scheduler.readFile(dot.id, undefined)).rejects.toMatchObject({ status: 400, code: "invalid_path" });
+    expect(guest.calls.length).toBe(before);
+
+    await expect(scheduler.readFile(dot.id, "memory/none.md")).rejects.toMatchObject({ status: 404, code: "not_found" });
+    guest.putFile("/home/dot/big", new Uint8Array(16 * 1024 * 1024 + 1));
+    await expect(scheduler.readFile(dot.id, "big")).rejects.toMatchObject({ status: 413, code: "file_too_large" });
+    // A guest that cannot be reached is the Dot's computer not answering, not the caller's fault.
+    guest.powerOff();
+    await expect(scheduler.readFile(dot.id, "memory/a.md")).rejects.toMatchObject({ status: 502, code: "guest_unavailable" });
+  });
+
+  it("files: a symbolic link under home that leads out of it is the guest's 403 outside_home, and one that stays is read", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "linker");
+    const guest = driver.guestOf(dot.id);
+    guest.putFile("/home/dot/documents/note.txt", "kept");
+    guest.putFile("/etc/invisible-dots/config.json", "token");
+    // The lexical rule lets all of these through (they name a path under home); the guest's real-path rule is what refuses.
+    guest.link("/home/dot/environ", "/proc/4242/environ");
+    guest.link("/home/dot/config", "/etc/invisible-dots/config.json");
+    guest.link("/home/dot/etc", "/etc");
+    guest.link("/home/dot/docs", "/home/dot/documents");
+
+    for (const path of ["environ", "config", "etc/invisible-dots/config.json", "/home/dot/environ"]) {
+      await expect(scheduler.readFile(dot.id, path), path).rejects.toMatchObject({ status: 403, code: "outside_home" });
+    }
+    await expect(scheduler.listFiles(dot.id, "etc")).rejects.toMatchObject({ status: 403, code: "outside_home" });
+    expect(new TextDecoder().decode((await scheduler.readFile(dot.id, "docs/note.txt")).content)).toBe("kept");
+    expect(await scheduler.listFiles(dot.id, "docs")).toMatchObject({ entries: [{ name: "note.txt", size: 4 }] });
+  });
+
+  it("automations: listed, paused and resumed, removed, with the guest's refusals passed through and a bad flag refused first", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "automator");
+    const guest = driver.guestOf(dot.id);
+    guest.putAutomation(automation());
+    guest.putAutomation(automation({ id: "job_2", name: "weekly", enabled: false, next_run_at_ms: null }));
+
+    expect((await scheduler.listAutomations("automator")).map((a) => [a.id, a.enabled])).toEqual([["job_1", true], ["job_2", false]]);
+    expect(await scheduler.setAutomationEnabled(dot.id, "job_1", false)).toMatchObject({ id: "job_1", enabled: false, next_run_at_ms: null });
+    expect(await scheduler.setAutomationEnabled(dot.id, "job_1", true)).toMatchObject({ enabled: true });
+    await scheduler.deleteAutomation(dot.id, "job_2");
+    expect((await scheduler.listAutomations(dot.id)).map((a) => a.id)).toEqual(["job_1"]);
+
+    // A flag that is not a boolean never reaches the guest; what the guest refuses passes through.
+    const calls = guest.calls.length;
+    for (const bad of [undefined, null, "true", 1]) {
+      await expect(scheduler.setAutomationEnabled(dot.id, "job_1", bad)).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+    }
+    expect(guest.calls.length).toBe(calls);
+    await expect(scheduler.deleteAutomation(dot.id, "job_2")).rejects.toMatchObject({ status: 404, code: "not_found" });
+    await expect(scheduler.setAutomationEnabled(dot.id, "nope", true)).rejects.toMatchObject({ status: 404, code: "not_found" });
+  });
+
+  it("tools: the engine's table with what is offered now; an unreachable computer is not an empty table", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "toolbox");
+    const guest = driver.guestOf(dot.id);
+
+    const tools = await scheduler.listTools("toolbox");
+    expect(tools.map((t) => [t.name, t.permission])).toEqual([
+      ["exec", "computer.exec"],
+      ["read_file", "files.read"],
+      ["write_file", "files.write"],
+      ["memory_search", "memory.read"],
+      ["memory_get", "memory.read"],
+      ["cron", "automations"],
+      ["browser_identity_list", "browser.identity.list"],
+      ["browser_identity_create", "browser.identity.create"],
+    ]);
+    // The config the host pushed has its defaults filled in: nothing is denied, so the model is offered every tool.
+    expect(tools.every((t) => t.offered)).toBe(true);
+    await scheduler.updateDot(dot.id, `${yaml("toolbox")}permissions:
+  automations: deny
+`);
+    await waitFor(async () => (await scheduler.listTools(dot.id)).some((t) => !t.offered), "config pushed");
+    expect((await scheduler.listTools(dot.id)).filter((t) => !t.offered).map((t) => t.name)).toEqual(["cron"]);
+
+    guest.powerOff();
+    await expect(scheduler.listTools(dot.id)).rejects.toMatchObject({ status: 502, code: "guest_unavailable" });
+    await expect(scheduler.listAutomations(dot.id)).rejects.toMatchObject({ status: 502, code: "guest_unavailable" });
+  });
+
+  it("automations and tools need a running computer", async () => {
+    const { scheduler } = make();
+    const dot = await readyDot(scheduler, "tool-sleeper");
+    await scheduler.stopComputer(dot.id);
+    await scheduler.settle();
+
+    await expect(scheduler.listAutomations(dot.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(scheduler.setAutomationEnabled(dot.id, "job_1", true)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(scheduler.deleteAutomation(dot.id, "job_1")).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(scheduler.listTools(dot.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+  });
+
   it("delete removes the Dot's own OpenRouter key and keeps the global one", async () => {
     const { scheduler } = make();
     const dot = await readyDot(scheduler, "keyed");
@@ -486,6 +1123,62 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     await scheduler.settle();
     expect(await db.secrets.get(dot.id, "openrouter_api_key")).toBeNull();
     expect(await db.secrets.get("global", "openrouter_api_key")).toBe("sk-or-test");
+  });
+
+  it("recovery: a stop that was interrupted is finished for the reason it was asked for", async () => {
+    const driver = new FakeDriver();
+    const first = make(driver).scheduler;
+    const byIdle = await readyDot(first, "cut-idle");
+    const byPerson = await readyDot(first, "cut-person");
+    const offByIdle = await readyDot(first, "cut-off");
+    await first.close();
+    open.splice(open.indexOf(first), 1);
+
+    // The control plane went down between STOPPING and the end of the stop: two VMs still run, one is already off.
+    await db.computers.setState(byIdle.id, "STOPPING", undefined, "idle");
+    await db.computers.setState(byPerson.id, "STOPPING", undefined, "user");
+    await db.computers.setState(offByIdle.id, "STOPPING", undefined, "idle");
+    driver.crash(offByIdle.id);
+
+    const { scheduler } = make(driver, { dispatchIntervalMs: 60_000, idleCheckIntervalMs: 60_000 });
+    await scheduler.start();
+    await scheduler.settle();
+    expect(await db.computers.get(byIdle.id)).toMatchObject({ state: "STOPPED", stop_reason: "idle" });
+    expect(await db.computers.get(byPerson.id)).toMatchObject({ state: "STOPPED", stop_reason: "user" });
+    expect(await db.computers.get(offByIdle.id)).toMatchObject({ state: "STOPPED", stop_reason: "idle" });
+  });
+
+  it("recovery: an idle stop that was interrupted is finished also when work came due meanwhile, and the computer is woken for it", async () => {
+    const driver = new FakeDriver();
+    const lifecycle = { healthPollMs: 5, readyTimeoutMs: 3_000, pumpRetryMs: 10, pumpMaxRetryMs: 50, automationWakeLeadMs: 60_000 };
+    const first = make(driver, { lifecycle }).scheduler;
+    const withAutomation = await readyDot(first, "cut-automation");
+    const withTask = await readyDot(first, "cut-task");
+    await first.close();
+    open.splice(open.indexOf(first), 1);
+
+    // Both were being put to sleep when the control plane went down; while it was down an automation came due for
+    // one and a task for the other.
+    await db.computers.setState(withAutomation.id, "STOPPING", undefined, "idle");
+    await db.computers.setState(withTask.id, "STOPPING", undefined, "idle");
+    const { scheduler, clock } = make(driver, { dispatchIntervalMs: 60_000, idleCheckIntervalMs: 60_000, lifecycle });
+    await db.computers.setNextAutomation(withAutomation.id, clock.now().getTime() - 1_000);
+    const task = await db.tasks.insert({ id: `task_cut${Date.now()}`, dotId: withTask.id, description: "came due while away" });
+
+    await scheduler.start();
+    await waitFor(async () => (await db.tasks.get(task.id))?.status === "COMPLETED", "the task ran");
+    await scheduler.settle();
+    // The pass that start() runs came before the stop was over; the next one wakes the computer for its automation.
+    await scheduler.pass();
+    await scheduler.settle();
+    // The stop was finished, not called off: a computer that runs is a computer that is READY and pumped.
+    for (const dot of [withAutomation, withTask]) {
+      expect(driver.calls.filter((c) => c === `stop:${dot.id}`)).toHaveLength(1);
+      expect(driver.calls.filter((c) => c === `start:${dot.id}`)).toHaveLength(2);
+      expect(await db.computers.get(dot.id)).toMatchObject({ state: "RUNNING", stop_reason: null });
+      expect((await db.dots.get(dot.id))?.status).toBe("READY");
+      expect(scheduler.lifecycle.isReady(dot.id)).toBe(true);
+    }
   });
 
   it("recovery: reattaches to running VMs, marks powered-off ones STOPPED and delivers undelivered tasks", async () => {
@@ -508,7 +1201,7 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     // Reattached through the recorded port: no second QEMU was spawned for the survivor.
     expect(driver.calls.filter((c) => c === `start:${alive.id}`)).toHaveLength(1);
     expect(scheduler.lifecycle.isReady(alive.id)).toBe(true);
-    expect(await db.computers.get(dead.id)).toMatchObject({ state: "STOPPED", guest_port: null, pid: null });
+    expect(await db.computers.get(dead.id)).toMatchObject({ state: "STOPPED", guest_port: null, pid: null, stop_reason: "exited" });
     expect((await db.dots.get(dead.id))?.status).toBe("IDLE");
     // Claimed before the restart, sent after it from the outbox: one run, one task.created.
     const runs = await db.tasks.runs(orphan.id);

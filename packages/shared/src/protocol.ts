@@ -4,9 +4,10 @@
  * the environment variables every component reads. The host filesystem (3.2)
  * is in paths.ts, which needs node:path and so stays out of the web client.
  */
+import { z } from "zod";
 import type { DotRuntimeConfig } from "./config.js";
-import type { ApprovalRequestedData } from "./events.js";
 import type { AgentState } from "./states.js";
+import { PERMISSIONS } from "./tools.js";
 
 /**
  * POSIX join without node:path, so the web client can import this module.
@@ -55,6 +56,8 @@ export const OPENROUTER_REFERER = "https://github.com/feder-cr/dots";
 export const OPENROUTER_TITLE = "invisible_dots";
 
 export const DEFAULT_LISTEN = "127.0.0.1:8787";
+/** Where `invisible-dots server` serves the web client (section 9.7). */
+export const DEFAULT_WEB_LISTEN = "127.0.0.1:3000";
 
 /** Environment variable names. */
 export const ENV = {
@@ -63,10 +66,18 @@ export const ENV = {
   /** The one directory QEMU is looked for in, when set (section 3.1). */
   QEMU_DIR: "INVISIBLE_DOTS_QEMU_DIR",
   LISTEN: "INVISIBLE_DOTS_LISTEN",
+  /** Where the web client listens when `invisible-dots server` starts it, as host:port. */
+  WEB_LISTEN: "INVISIBLE_DOTS_WEB_LISTEN",
+  /** Extra host names (comma separated) the web server may be reached by, besides loopback. */
+  WEB_ALLOWED_HOSTS: "INVISIBLE_DOTS_WEB_ALLOWED_HOSTS",
+  /** The pid of the `invisible-dots server` that started the web server, which exits once that process is gone. */
+  WEB_PARENT_PID: "INVISIBLE_DOTS_WEB_PARENT_PID",
   /** The API token itself, instead of the api.token file: the server's token, or the one a client sends. */
   TOKEN: "INVISIBLE_DOTS_TOKEN",
   /** Where clients (CLI, web server) reach the API. Default http://127.0.0.1:8787. */
   URL: "INVISIBLE_DOTS_URL",
+  /** `1` turns on the opt-in WhatsApp adapter (Baileys, an unofficial client with a risk of account bans; architecture 9.8). */
+  WHATSAPP: "INVISIBLE_DOTS_WHATSAPP",
   DATABASE_URL: "DATABASE_URL",
   /** Read by invisible-playwright-mcp, one value per browser identity (section 6). */
   MCP_HOME: "INVISIBLE_MCP_HOME",
@@ -96,19 +107,71 @@ export const GUEST_PATHS = {
   browsers: "/home/dot/browsers",
   /** The GeoIP database of the golden image (daijro/geoip-all-in-one, the release pins.json names), root's and read-only. */
   geoipDatabase: "/usr/local/share/invisible-dots/geoip-aio-all.mmdb",
+  /**
+   * The home of each browser identity's MCP server (`<mcpHomes>/<identity_id>`). Outside `/home/dot` on purpose: the
+   * server saves the proxy of the browser it opened, password included, in a session file under its home, and the
+   * file routes of the host read `/home/dot` and nothing else (architecture sections 4.2 and 6).
+   */
+  mcpHomes: "/var/lib/invisible-dots/mcp",
   runDir: "/run/invisible-dots",
   agentdSocket: "/run/invisible-dots/agentd.sock",
   /** The engine's API, in a directory of the engine's user dot cannot write (architecture 4.2). */
   agentSocket: "/run/invisible-dots-agent/agent.sock",
 } as const;
 
-/** Paths of one browser identity under a browsers root (default `/home/dot/browsers`). */
-export function identityPaths(identityId: string, browsersDir: string = GUEST_PATHS.browsers) {
+/** The most a read of one guest file through the host API returns (`GET /api/dots/:id/files`): 16 MiB. */
+export const MAX_HOST_FILE_BYTES = 16 * 1024 * 1024;
+
+/** The `error` code of a read refused for its size: by the host client when the file passes the limit it was given. */
+export const FILE_TOO_LARGE = "file_too_large";
+
+/** The longest path the host API takes for a guest file; Linux's own PATH_MAX. */
+const MAX_HOST_PATH_LENGTH = 4096;
+
+export type HomePathCheck = { ok: true; path: string } | { ok: false; problem: string };
+
+/**
+ * The one rule for which guest paths the host API reads (`/api/dots/:id/files` and `/files/list`): those under
+ * `/home/dot`. `raw` is an absolute path, a path relative to `/home/dot`, or `~` / `~/...` (which dot-agentd also
+ * resolves against home); the answer is the normalized absolute path that goes to dot-agentd, `.` and empty
+ * segments dropped. A `..` segment is refused rather than resolved, so a path never means more than it says.
+ * The check is lexical and only the early answer: the rule is dot-agentd's, which follows symbolic links and
+ * refuses (403 `outside_home`) a path whose real location is not under home.
+ */
+export function checkHomePath(raw: unknown): HomePathCheck {
+  if (typeof raw !== "string" || raw === "") return { ok: false, problem: "path must be a non-empty string" };
+  if (raw.length > MAX_HOST_PATH_LENGTH) return { ok: false, problem: `path is longer than ${MAX_HOST_PATH_LENGTH} characters` };
+  if (raw.includes("\0")) return { ok: false, problem: "path contains a NUL byte" };
+  const home = GUEST_PATHS.home.split("/").filter(Boolean);
+  let segments: string[];
+  if (raw === "~" || raw.startsWith("~/")) segments = [...home, ...raw.slice(1).split("/")];
+  else if (raw.startsWith("/")) segments = raw.split("/");
+  else segments = [...home, ...raw.split("/")];
+  const kept: string[] = [];
+  for (const segment of segments) {
+    if (segment === "..") return { ok: false, problem: 'path must not contain ".." segments' };
+    if (segment !== "" && segment !== ".") kept.push(segment);
+  }
+  if (!home.every((segment, i) => kept[i] === segment)) {
+    return { ok: false, problem: `path must be inside ${GUEST_PATHS.home}` };
+  }
+  return { ok: true, path: `/${kept.join("/")}` };
+}
+
+/**
+ * Paths of one browser identity: its directory and profile under a browsers root (default `/home/dot/browsers`), and
+ * the home of its MCP server under an MCP homes root (default `/var/lib/invisible-dots/mcp`, outside the home).
+ */
+export function identityPaths(
+  identityId: string,
+  browsersDir: string = GUEST_PATHS.browsers,
+  mcpHomesDir: string = GUEST_PATHS.mcpHomes,
+) {
   const root = join(browsersDir, identityId);
   return {
     root,
     profile: join(root, "profile"),
-    mcp: join(root, "mcp"),
+    mcp: join(mcpHomesDir, identityId),
   };
 }
 
@@ -168,6 +231,9 @@ export const AGENT_ROUTES = {
   browserIdentityFrame: (id: string) => `/browser-identities/${encodeURIComponent(id)}/frame`,
   /** `POST` (204): end the identity's browser, keep its profile. Closing a closed identity is not an error. */
   browserIdentityClose: (id: string) => `/browser-identities/${encodeURIComponent(id)}/close`,
+  automations: "/automations",
+  automation: (id: string) => `/automations/${encodeURIComponent(id)}`,
+  tools: "/tools",
   prepareSleep: "/prepare-sleep",
 } as const;
 
@@ -312,14 +378,15 @@ export interface PostEventAnswer {
   accepted: true;
 }
 
-/** A tool call parked until the user approves or rejects it. */
-export type PendingApproval = ApprovalRequestedData;
-
-/** `GET /state`. */
+/**
+ * `GET /state`. `pending_approval` is the id of the oldest tool call parked until the host's decision (the same
+ * id as `ApprovalRequestedData.approval_id` and the host's approval row), never the approval itself: the host
+ * holds the rest, and the engine's answer is the one place that says which approval the engine waits on.
+ */
 export interface AgentStateAnswer {
   state: AgentState;
   current_task_id: string | null;
-  pending_approval: PendingApproval | null;
+  pending_approval: string | null;
 }
 
 export const BROWSER_IDENTITY_STATUSES = ["available", "open", "archived"] as const;
@@ -347,6 +414,90 @@ export interface CreateBrowserIdentityRequest {
 /** `GET /browser-identities`. */
 export interface BrowserIdentityListAnswer {
   identities: BrowserIdentity[];
+}
+
+export const AUTOMATION_SCHEDULE_KINDS = ["at", "every", "cron"] as const;
+export type AutomationScheduleKind = (typeof AUTOMATION_SCHEDULE_KINDS)[number];
+
+export const AUTOMATION_RUN_STATUSES = ["ok", "error", "skipped"] as const;
+export type AutomationRunStatus = (typeof AUTOMATION_RUN_STATUSES)[number];
+
+// The shapes below are the one description of what the engine's `GET /automations` and `GET /tools` answer
+// (nanobot/dots/automations.py `automation_json`, permissions.py `tool_table`). The engine is Python and cannot
+// import them: its test writes what it answers into `invisible_engine_dots/tests/dots/wire_shapes.json`, and a
+// test of the host parses that file with these schemas, so a key renamed on either side fails a suite.
+
+/**
+ * The last moment an automation may run, in milliseconds since the epoch: 9999-12-31T23:59:59.999Z, the last one a
+ * Postgres timestamp and a JavaScript Date both hold. The engine refuses a schedule past it
+ * (`MAX_RUN_AT_MS` of nanobot/cron/types.py; the engine's wire-shapes test pins the two equal), so a time the host cannot
+ * store or show never reaches it.
+ */
+export const MAX_RUN_AT_MS = 253_402_300_799_999;
+
+/** When an automation runs: only the fields its kind uses are present. */
+export const automationScheduleSchema = z
+  .object({
+    kind: z.enum(AUTOMATION_SCHEDULE_KINDS),
+    /** `at`: the moment, in milliseconds since the epoch. */
+    at_ms: z.number().int().optional(),
+    /** `every`: the interval in milliseconds. */
+    every_ms: z.number().int().optional(),
+    /** `cron`: a cron expression, read in `tz` (the computer's zone when absent). */
+    expr: z.string().optional(),
+    tz: z.string().optional(),
+  })
+  .strict();
+export type AutomationSchedule = z.infer<typeof automationScheduleSchema>;
+
+/** One automation of a Dot: a job its cron tool made, as `GET /automations` lists it. Times are milliseconds since the epoch. */
+export const automationSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    enabled: z.boolean(),
+    schedule: automationScheduleSchema,
+    /** What the Dot is told when the automation runs. */
+    message: z.string(),
+    /** Null while the automation is paused or has no run left. */
+    next_run_at_ms: z.number().int().nonnegative().max(MAX_RUN_AT_MS).nullable(),
+    last_run_at_ms: z.number().int().nullable(),
+    last_status: z.enum(AUTOMATION_RUN_STATUSES).nullable(),
+    last_error: z.string().nullable(),
+    /** A one-time automation that removes itself after it ran. */
+    delete_after_run: z.boolean(),
+    created_at_ms: z.number().int(),
+  })
+  .strict();
+export type Automation = z.infer<typeof automationSchema>;
+
+/** `GET /automations`: every automation, paused ones too. */
+export interface AutomationListAnswer {
+  automations: Automation[];
+}
+
+/** `PATCH /automations/:id` body: the one thing the person changes. The answer is the automation. */
+export interface SetAutomationEnabledRequest {
+  enabled: boolean;
+}
+
+/** One tool of the Dot, as `GET /tools` shows it (the engine owns the table: nanobot/dots/permissions.py). */
+export const toolInfoSchema = z
+  .object({
+    name: z.string(),
+    /** The key of the Dot config's `permissions` the tool exercises. */
+    permission: z.enum(PERMISSIONS),
+    /** Whether the model is offered the tool now: its permission is not denied (and, for a memory tool, memory is on). */
+    offered: z.boolean(),
+    /** What the tool's schema tells the model it does. */
+    description: z.string(),
+  })
+  .strict();
+export type ToolInfo = z.infer<typeof toolInfoSchema>;
+
+/** `GET /tools`, in the engine's table order, which groups the tools by permission. */
+export interface ToolListAnswer {
+  tools: ToolInfo[];
 }
 
 /** Every error body, on the host API and in the guest (section 9.6). */
