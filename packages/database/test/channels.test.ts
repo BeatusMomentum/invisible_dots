@@ -4,7 +4,7 @@ import { isUniqueViolation, type Database } from "../src/index.js";
 import { createTestDatabase, testAdapters, type TestDatabase } from "../src/testing.js";
 
 const SETUP_TIMEOUT = 60_000;
-const settings = { approvals: true, notify_tasks: true };
+const settings = { approvals: true, notify_tasks: true, show_arguments: true };
 const yaml = (name: string) => `name: ${name}\ngoal: test goal\nmodel:\n  provider: openrouter\n  id: test/model\n`;
 
 describe.each(testAdapters())("channel repository on %s", { timeout: SETUP_TIMEOUT }, (kind) => {
@@ -45,16 +45,29 @@ describe.each(testAdapters())("channel repository on %s", { timeout: SETUP_TIMEO
     expect((await db.channels.bindingById(record.id))?.account).toBe("my_bot");
   });
 
+  it("one account serves one Dot: a second binding of the kind with the same account is a unique violation of the index that holds the rule", async () => {
+    const one = await db.dots.insert({ id: newId("dot"), config: parseDotConfig(yaml("chan-own-1")), status: "READY" });
+    const two = await db.dots.insert({ id: newId("dot"), config: parseDotConfig(yaml("chan-own-2")), status: "READY" });
+    await db.channels.createBinding({ id: newId("chb"), dotId: one.id, kind: "telegram", settings, eventCursor: 0, account: "shared_bot" });
+    const second = { id: newId("chb"), dotId: two.id, kind: "telegram" as const, settings, eventCursor: 0, account: "shared_bot" };
+    await expect(db.channels.createBinding(second)).rejects.toSatisfy((error) => isUniqueViolation(error, "channel_bindings_account_key"));
+    // A Dot's own second kind is another rule, and an unknown account (null) is shared by anyone.
+    await expect(db.channels.createBinding({ ...second, dotId: one.id })).rejects.toSatisfy((error) => isUniqueViolation(error) && !isUniqueViolation(error, "channel_bindings_account_key"));
+    expect(await db.channels.createBinding({ ...second, kind: "whatsapp" })).toMatchObject({ account: "shared_bot", kind: "whatsapp" });
+    const { account: _unused, ...unknown } = second;
+    expect(await db.channels.createBinding({ ...unknown, id: newId("chb"), kind: "whatsapp", dotId: one.id })).toMatchObject({ account: null });
+  });
+
   it("settings and enabled are stored; the status reports a change once; the cursor never moves back", async () => {
     const { record } = await binding("chan-two");
-    expect((await db.channels.setSettings(record.id, { approvals: false, notify_tasks: true }))?.settings).toEqual({ approvals: false, notify_tasks: true });
+    expect((await db.channels.setSettings(record.id, { approvals: false, notify_tasks: true, show_arguments: true }))?.settings).toEqual({ approvals: false, notify_tasks: true, show_arguments: true });
     expect((await db.channels.setEnabled(record.id, false))?.enabled).toBe(false);
 
     expect(await db.channels.setStatus(record.id, "connecting", null)).toBe(false);
-    expect(await db.channels.setStatus(record.id, "connected", null, "my_bot")).toBe(true);
-    expect(await db.channels.setStatus(record.id, "connected", null, "my_bot")).toBe(false);
+    expect(await db.channels.setStatus(record.id, "connected", null, "status_bot")).toBe(true);
+    expect(await db.channels.setStatus(record.id, "connected", null, "status_bot")).toBe(false);
     expect(await db.channels.setStatus(record.id, "error", "no network")).toBe(true);
-    expect(await db.channels.bindingById(record.id)).toMatchObject({ status: "error", status_detail: "no network", account: "my_bot" });
+    expect(await db.channels.bindingById(record.id)).toMatchObject({ status: "error", status_detail: "no network", account: "status_bot" });
 
     await db.channels.advanceCursor(record.id, 9);
     await db.channels.advanceCursor(record.id, 4);

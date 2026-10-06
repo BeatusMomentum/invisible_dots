@@ -9,6 +9,14 @@ export class DotNameTakenError extends Error {
   }
 }
 
+/** A config was saved against a version of the Dot that is no longer the current one (`updateConfig`). */
+export class DotChangedError extends Error {
+  constructor(readonly dotId: string) {
+    super(`Dot ${dotId} changed after it was read`);
+    this.name = "DotChangedError";
+  }
+}
+
 interface DotRow {
   id: string;
   name: string;
@@ -73,13 +81,23 @@ export class DotsRepository {
     return rows.map(toSummary);
   }
 
-  async updateConfig(id: string, config: DotConfig): Promise<DotRecord | null> {
+  /**
+   * Replace the config. With `expectedUpdatedAt` (the `updated_at` the caller read, a millisecond ISO string) the row
+   * is replaced only while it still has that value, so a save made from an old read cannot overwrite what was
+   * saved since (an "always allow", another PATCH): `DotChangedError` otherwise, and null when there is no such Dot.
+   */
+  async updateConfig(id: string, config: DotConfig, expectedUpdatedAt?: string): Promise<DotRecord | null> {
     try {
       const { rows } = await this.q.query<DotRow>(
-        "UPDATE dots SET name = $2, config = $3, updated_at = now() WHERE id = $1 RETURNING *",
-        [id, config.name, JSON.stringify(config)],
+        // The column has microseconds and the API says milliseconds (a driver rounds them, a cast truncates): the same
+        // instant is one a millisecond apart at most.
+        `UPDATE dots SET name = $2, config = $3, updated_at = now()
+          WHERE id = $1 AND ($4::timestamptz IS NULL OR abs(extract(epoch FROM (updated_at - $4::timestamptz))) < 0.001) RETURNING *`,
+        [id, config.name, JSON.stringify(config), expectedUpdatedAt ?? null],
       );
-      return rows[0] ? toRecord(rows[0]) : null;
+      if (rows[0]) return toRecord(rows[0]);
+      if (expectedUpdatedAt !== undefined && (await this.get(id))) throw new DotChangedError(id);
+      return null;
     } catch (error) {
       if (isUniqueViolation(error, "dots_name_key")) throw new DotNameTakenError(config.name);
       throw error;

@@ -4,9 +4,11 @@
  * the environment variables every component reads. The host filesystem (3.2)
  * is in paths.ts, which needs node:path and so stays out of the web client.
  */
+import { z } from "zod";
 import type { DotRuntimeConfig } from "./config.js";
 import type { ApprovalRequestedData } from "./events.js";
 import type { AgentState } from "./states.js";
+import { PERMISSIONS } from "./tools.js";
 
 /**
  * POSIX join without node:path, so the web client can import this module.
@@ -114,8 +116,8 @@ export type HomePathCheck = { ok: true; path: string } | { ok: false; problem: s
  * `/home/dot`. `raw` is an absolute path, a path relative to `/home/dot`, or `~` / `~/...` (which dot-agentd also
  * resolves against home); the answer is the normalized absolute path that goes to dot-agentd, `.` and empty
  * segments dropped. A `..` segment is refused rather than resolved, so a path never means more than it says.
- * The check is lexical: what the guest's own files route may open is up to the operating system, which runs it
- * as `dot`, and a symbolic link inside home leads wherever `dot` may go.
+ * The check is lexical and only the early answer: the rule is dot-agentd's, which follows symbolic links and
+ * refuses (403 `outside_home`) a path whose real location is not under home.
  */
 export function checkHomePath(raw: unknown): HomePathCheck {
   if (typeof raw !== "string" || raw === "") return { ok: false, problem: "path must be a non-empty string" };
@@ -354,37 +356,49 @@ export interface BrowserIdentityListAnswer {
 export const AUTOMATION_SCHEDULE_KINDS = ["at", "every", "cron"] as const;
 export type AutomationScheduleKind = (typeof AUTOMATION_SCHEDULE_KINDS)[number];
 
-/** When an automation runs: only the fields its kind uses are present. */
-export interface AutomationSchedule {
-  kind: AutomationScheduleKind;
-  /** `at`: the moment, in milliseconds since the epoch. */
-  at_ms?: number;
-  /** `every`: the interval in milliseconds. */
-  every_ms?: number;
-  /** `cron`: a cron expression, read in `tz` (the computer's zone when absent). */
-  expr?: string;
-  tz?: string;
-}
+export const AUTOMATION_RUN_STATUSES = ["ok", "error", "skipped"] as const;
+export type AutomationRunStatus = (typeof AUTOMATION_RUN_STATUSES)[number];
 
-export type AutomationRunStatus = "ok" | "error" | "skipped";
+// The shapes below are the one description of what the engine's `GET /automations` and `GET /tools` answer
+// (nanobot/dots/automations.py `automation_json`, permissions.py `tool_table`). The engine is Python and cannot
+// import them: its test writes what it answers into `invisible_engine_dots/tests/dots/wire_shapes.json`, and a
+// test of the host parses that file with these schemas, so a key renamed on either side fails a suite.
+
+/** When an automation runs: only the fields its kind uses are present. */
+export const automationScheduleSchema = z
+  .object({
+    kind: z.enum(AUTOMATION_SCHEDULE_KINDS),
+    /** `at`: the moment, in milliseconds since the epoch. */
+    at_ms: z.number().int().optional(),
+    /** `every`: the interval in milliseconds. */
+    every_ms: z.number().int().optional(),
+    /** `cron`: a cron expression, read in `tz` (the computer's zone when absent). */
+    expr: z.string().optional(),
+    tz: z.string().optional(),
+  })
+  .strict();
+export type AutomationSchedule = z.infer<typeof automationScheduleSchema>;
 
 /** One automation of a Dot: a job its cron tool made, as `GET /automations` lists it. Times are milliseconds since the epoch. */
-export interface Automation {
-  id: string;
-  name: string;
-  enabled: boolean;
-  schedule: AutomationSchedule;
-  /** What the Dot is told when the automation runs. */
-  message: string;
-  /** Null while the automation is paused or has no run left. */
-  next_run_at_ms: number | null;
-  last_run_at_ms: number | null;
-  last_status: AutomationRunStatus | null;
-  last_error: string | null;
-  /** A one-time automation that removes itself after it ran. */
-  delete_after_run: boolean;
-  created_at_ms: number;
-}
+export const automationSchema = z
+  .object({
+    id: z.string(),
+    name: z.string(),
+    enabled: z.boolean(),
+    schedule: automationScheduleSchema,
+    /** What the Dot is told when the automation runs. */
+    message: z.string(),
+    /** Null while the automation is paused or has no run left. */
+    next_run_at_ms: z.number().int().nullable(),
+    last_run_at_ms: z.number().int().nullable(),
+    last_status: z.enum(AUTOMATION_RUN_STATUSES).nullable(),
+    last_error: z.string().nullable(),
+    /** A one-time automation that removes itself after it ran. */
+    delete_after_run: z.boolean(),
+    created_at_ms: z.number().int(),
+  })
+  .strict();
+export type Automation = z.infer<typeof automationSchema>;
 
 /** `GET /automations`: every automation, paused ones too. */
 export interface AutomationListAnswer {
@@ -397,15 +411,18 @@ export interface SetAutomationEnabledRequest {
 }
 
 /** One tool of the Dot, as `GET /tools` shows it (the engine owns the table: nanobot/dots/permissions.py). */
-export interface ToolInfo {
-  name: string;
-  /** The key of the Dot config's `permissions` the tool exercises. */
-  permission: string;
-  /** Whether the model is offered the tool now: its permission is not denied (and, for a memory tool, memory is on). */
-  offered: boolean;
-  /** What the tool's schema tells the model it does. */
-  description: string;
-}
+export const toolInfoSchema = z
+  .object({
+    name: z.string(),
+    /** The key of the Dot config's `permissions` the tool exercises. */
+    permission: z.enum(PERMISSIONS),
+    /** Whether the model is offered the tool now: its permission is not denied (and, for a memory tool, memory is on). */
+    offered: z.boolean(),
+    /** What the tool's schema tells the model it does. */
+    description: z.string(),
+  })
+  .strict();
+export type ToolInfo = z.infer<typeof toolInfoSchema>;
 
 /** `GET /tools`, in the engine's table order, which groups the tools by permission. */
 export interface ToolListAnswer {

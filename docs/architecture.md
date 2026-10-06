@@ -590,6 +590,11 @@ sees the token, the key or the config; the call fails with
 | `POST /v1/system/poweroff` | | `202 { status: "powering_off" }` after starting `sudo -n systemctl poweroff` detached (the seed lets `dot` run exactly that without a password, section 4.1); `500 poweroff_failed` when it cannot be started. How the control plane stops a VM (section 3.4) |
 | `* /v1/agent/<rest>` | | reverse proxy to `unix:/run/invisible-dots-agent/agent.sock` at `/<rest>` |
 
+The three file routes are limited to home on the TCP port, the host's door:
+the path is resolved with every symbolic link followed and a real location not
+under home is a `403 outside_home`. On `agentd.sock` they take any path the
+Dot's user may open.
+
 The same routes, without `/v1/agent`, `/v1/proof` and `/v1/system/poweroff`,
 are served on `agentd.sock` for the engine (no token: section 4.2 says who can
 reach the socket), plus one route of that socket only:
@@ -1379,7 +1384,7 @@ SQL files applied in order at start.
 - `inbound_events(seq bigserial pk, id text unique, dot_id fk, type, data jsonb, ts, task_id, run_id, created_at, sent_at, delivered_at, dropped_at, drop_reason, failures int, last_error, retry_at)`: the outbox of host to guest events (section 9.2)
 - `secrets(scope text, name text, value_enc bytea, updated_at, pk(scope, name))`: `scope` is `global` or a dot id; no foreign key can cover that, so deleting a Dot deletes the secrets scoped to it in the same statement (`DotsRepository.delete`)
 
-- `channel_bindings(id text pk, dot_id fk cascade, kind 'telegram'|'whatsapp', enabled bool, settings jsonb, status, status_detail, account, event_cursor bigint, created_at)`, unique `(dot_id, kind)`: one Dot's link to one channel kind (section 9.8); `settings` is `{approvals, notify_tasks}` and never a credential; `account` is the channel's public name for the account (a bot's username); `event_cursor` is the id of the last event of the Dot the hub dealt with
+- `channel_bindings(id text pk, dot_id fk cascade, kind 'telegram'|'whatsapp', enabled bool, settings jsonb, status, status_detail, account, event_cursor bigint, created_at)`, unique `(dot_id, kind)`: one Dot's link to one channel kind (section 9.8), and unique `(kind, account)` where the account is known: one bot serves one Dot; `settings` is `{approvals, notify_tasks, show_arguments}` and never a credential; `account` is the channel's public name for the account (a bot's username); `event_cursor` is the id of the last event of the Dot the hub dealt with
 - `channel_peers(binding_id fk cascade, peer_id, chat_id, role 'owner'|'user', label, created_at, pk(binding_id, peer_id))`: the people allowed to talk through the binding, by the channel's stable id, with the chat they paired from
 - `channel_pairings(binding_id fk cascade, code_hash, expires_at, consumed_at, pk(binding_id, code_hash))`: one-time pairing codes, stored hashed
 - Where a channel message came from is in its `user.message` event (section 5.4), the one owner of that fact; there is no table of handled messages. An index on `events` by `(dot_id, data->>'message_id')` for `user.message` lets an answer find the message it answers
@@ -1490,7 +1495,7 @@ trimmed, and at least 16 characters.
 POST   /api/dots                     body: { config: <yaml string> | <object> }
 GET    /api/dots
 GET    /api/dots/:id
-PATCH  /api/dots/:id                 body: { config }   (pushed to the guest if running)
+PATCH  /api/dots/:id                 body: { config, expected_updated_at? }   (pushed to the guest if running; with `expected_updated_at`, the `updated_at` of the Dot as read, a Dot that changed since is a 409 `dot_changed` and nothing is saved)
 DELETE /api/dots/:id                 destroys the VM and its disk, then deletes the Dot, its rows and its own secrets
 
 POST   /api/dots/:id/messages        body: { text }
@@ -1513,7 +1518,7 @@ DELETE /api/dots/:id/browser-identities/:identityId
 
 GET    /api/dots/:id/channels        { channels: [{ kind, enabled, status, status_detail, account, settings, peers, created_at }], available: [kind] }; never a token; `available` is what this server runs (WhatsApp only when it was started with it, section 9.8)
 PUT    /api/dots/:id/channels/telegram  body: { token }   links the Dot to the bot (201), or gives the linked bot a new token (200); the token is checked with Telegram, stored encrypted, never returned
-PATCH  /api/dots/:id/channels/:kind  body: { settings?: { approvals?, notify_tasks? }, enabled? }   enabled false pauses the channel, its people and token stay
+PATCH  /api/dots/:id/channels/:kind  body: { settings?: { approvals?, notify_tasks?, show_arguments? }, enabled? }   enabled false pauses the channel, its people and token stay
 POST   /api/dots/:id/channels/whatsapp/link   202 the channel's record, waiting: starts linking WhatsApp (400 when the server does not run it, 409 `already_linked`)
 GET    /api/dots/:id/channels/whatsapp/qr   server-sent events of `ChannelLinkFrame` (`waiting`, `code`, then `linked` or `failed`, and the stream ends); never cached, never stored
 DELETE /api/dots/:id/channels/:kind  unlink: the channel stops, its token (WhatsApp: the linked device's keys) and its people are deleted
@@ -1582,9 +1587,14 @@ computer through dot-agentd's `GET /v1/files/list` and `GET /v1/files`, and
 only under `/home/dot`: `path` is absolute, relative to `/home/dot` or `~`, and
 the control plane normalizes it (`checkHomePath` in `packages/shared`) so the
 guest always gets an absolute one; a path outside home, or with any `..` segment,
-is a `400 invalid_path` without a call to the guest. The check is lexical:
-dot-agentd runs as `dot`, so what a symbolic link inside home may lead to is what
-`dot` may read anyway. A read is one buffered answer of at most 16 MiB; a larger
+is a `400 invalid_path` without a call to the guest. That check is lexical and
+only the early answer; the rule is dot-agentd's: its TCP listener (the host's
+door) resolves every path to its real location with the symbolic links followed
+and refuses one that is not under home, `403 outside_home`, which passes through
+(a link under home to `/proc/<pid>/environ`, where the browser server runs as `dot`
+with the proxy password in its environment, shows nothing). The same goes for the
+`PUT` and the listing of that listener; a link that stays in home works, one that
+leaves it lists as `other`. The engine's socket is not confined. A read is one buffered answer of at most 16 MiB; a larger
 file is a `413 file_too_large` and the host stops reading it as soon as it passes
 the limit. The bytes are the Dot's own (a model wrote them, perhaps after reading
 hostile text) and the web server answers from the page's origin, so the type is
@@ -1664,7 +1674,8 @@ and never given credentials; the others with `add`. The hub owns every policy:
   names, when that message came through this binding and its person is still
   paired; an answer that answers nothing (an automation's) goes to every owner's
   chat; an answer to a message from the web or another channel is not mirrored.
-  `task.completed` and `task.failed` go to the owners unless `notify_tasks` is off.
+  `task.completed`, `task.failed` and an answer that answers nothing go to the
+  owners unless `notify_tasks` is off.
   `agent.state` THINKING shows typing in the chat of the last message while the
   Dot has not answered it. Text is split at the adapter's `maxText` on paragraph,
   line and word boundaries. The cursor moves after a send succeeded (events that
@@ -1675,7 +1686,8 @@ and never given credentials; the others with `add`. The hub owns every policy:
 - **Approvals.** When the Dot asks (`approval.requested`) and the binding's
   `approvals` setting is on, every owner's chat gets a prompt: the tool, its
   permission, the reason and the arguments, each cut to 300 characters (the
-  arguments can hold private data, and a chat is read by a third party), with an
+  arguments can hold private data, and a chat is read by a third party; with
+  `show_arguments` off the prompt leaves them out), with an
   Approve and a Reject button. Only a paired owner, in their private chat, can
   answer; the button's id proves nothing, so the hub also checks that the
   approval belongs to the binding's own Dot and that approvals are still asked

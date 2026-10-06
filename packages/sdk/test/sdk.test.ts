@@ -36,6 +36,26 @@ describe("InvisibleDotsClient", () => {
     expect(seen[0]?.headers.get("authorization")).toBe("Bearer secret-token");
   });
 
+  it("updateDot sends the config, and the updated_at it was read at only when given", async () => {
+    const bodies: string[] = [];
+    const client = new InvisibleDotsClient({
+      baseUrl: "http://api.test",
+      token: "t",
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        bodies.push(`${request.method} ${new URL(request.url).pathname} ${await request.text()}`);
+        return new Response(JSON.stringify({ error: "dot_changed", message: "changed" }), { status: 409 });
+      },
+    });
+    await client.updateDot("a b", "name: a").catch(() => {});
+    const error = await client.updateDot("a b", { name: "a" }, "2026-10-06T10:00:00.123Z").catch((e: unknown) => e);
+    expect(error).toMatchObject({ status: 409, code: "dot_changed" });
+    expect(bodies).toEqual([
+      'PATCH /api/dots/a%20b {"config":"name: a"}',
+      'PATCH /api/dots/a%20b {"config":{"name":"a"},"expected_updated_at":"2026-10-06T10:00:00.123Z"}',
+    ]);
+  });
+
   it("automation and tool methods use the routes the API serves, ids encoded, and unwrap the answers", async () => {
     const seen: string[] = [];
     const client = new InvisibleDotsClient({
@@ -96,7 +116,7 @@ describe("InvisibleDotsClient", () => {
 
   it("channel methods send the method, path and body the API routes expect, with names and ids encoded", async () => {
     const seen: { method: string; url: string; body: string }[] = [];
-    const record = { kind: "telegram", enabled: true, status: "connected", status_detail: null, account: "b", settings: { approvals: true, notify_tasks: true }, peers: [], created_at: "now" };
+    const record = { kind: "telegram", enabled: true, status: "connected", status_detail: null, account: "b", settings: { approvals: true, notify_tasks: true, show_arguments: true }, peers: [], created_at: "now" };
     const client = new InvisibleDotsClient({
       baseUrl: "http://api.test",
       token: "t",

@@ -64,7 +64,7 @@ const channel = {
   status: "connected",
   status_detail: null,
   account: "dot_helper_bot",
-  settings: { approvals: true, notify_tasks: true },
+  settings: { approvals: true, notify_tasks: true, show_arguments: true },
   peers: [{ peer_id: "10", role: "owner", label: "Ann (@ann)", created_at: now }],
   created_at: now,
 };

@@ -60,6 +60,19 @@ describe.each(testAdapters())("approvals over a channel, with the real Scheduler
     expect((await db.channels.prompts((await db.channels.listBindings(dot.id))[0]!.id)).map((p) => p.chat_id)).toEqual(["10", "20"]);
   });
 
+  it("leaves the arguments out of the prompt and of its outcome when show_arguments is off", async () => {
+    const w = await world();
+    const { hub, dot, channel } = await linkedFake(w, ["10"]);
+    await hub.setSettings(dot.id, "telegram", { show_arguments: false });
+    const id = await ask(w, dot);
+    await waitFor(() => channel.prompts.length === 1, "the prompt");
+    const question = ["The Dot asks to use exec (permission browser.identity.delete).", "Reason: the tool needs approval"].join("\n");
+    expect(channel.prompts[0]!.text).toBe(question);
+    expect(await channel.press(id, "approve", "10")).toBe("Approved.");
+    await waitFor(() => channel.edits.length === 1, "the edit");
+    expect(channel.edits[0]!.text).toBe(`${question}\n\nApproved.`);
+  });
+
   it("approves from the chat: the guest gets the decision, the notice says so, and every prompt is edited to the outcome", async () => {
     const w = await world();
     const { dot, channel } = await linkedFake(w, ["10", "20"]);

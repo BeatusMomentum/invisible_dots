@@ -102,7 +102,10 @@ export class EventsRepository {
 
   async list(query: EventQuery = {}): Promise<StoredEvent[]> {
     const limit = Math.min(Math.max(query.limit ?? 500, 1), MAX_EVENT_PAGE);
-    // The task filter is added only when asked for: `$n IS NULL OR ...` would keep the planner off events_task_idx.
+    // The task filter is added only when asked for, so no plan has to serve a task id that may be NULL. The other
+    // filters are the `$n IS NULL OR ...` form: the statement is planned with its values known (it is never a
+    // prepared one that is reused), so those branches fold away and events_task_idx stays usable. The test of
+    // events in repositories.test.ts EXPLAINs the statement this builds, on both adapters.
     const params: unknown[] = [query.dotId ?? null, query.after ?? 0, query.types ? [...query.types] : null];
     let taskFilter = "";
     if (query.taskId !== undefined) {

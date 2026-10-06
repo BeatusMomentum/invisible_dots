@@ -284,6 +284,34 @@ describe.each(testAdapters())("migrate on %s", { timeout: SETUP_TIMEOUT }, (kind
     }
   });
 
+  it("0008 gives a binding made before it the setting it lacked, and keeps the ones it has", async () => {
+    const { db, dispose } = await emptyDb(kind);
+    const dir = await mkdtemp(join(tmpdir(), "idots-mig-"));
+    try {
+      const all = await loadMigrations();
+      const before = all.filter((m) => m.version < "0008");
+      expect(before.length).toBe(all.length - 1);
+      for (const m of before) await writeFile(join(dir, `${m.version}.sql`), m.sql);
+      await migrate(db, { dir });
+      await db.query("INSERT INTO dots (id, name, config, status) VALUES ('dot_a', 'a', '{}', 'READY'), ('dot_b', 'b', '{}', 'READY')");
+      const old = JSON.stringify({ approvals: false, notify_tasks: true });
+      await db.query(
+        `INSERT INTO channel_bindings (id, dot_id, kind, settings, status, event_cursor) VALUES ('chb_old', 'dot_a', 'telegram', $1::jsonb, 'connecting', 0),
+           ('chb_new', 'dot_b', 'telegram', $2::jsonb, 'connecting', 0)`,
+        [old, JSON.stringify({ approvals: true, notify_tasks: false, show_arguments: false })],
+      );
+      expect((await migrate(db)).applied).toEqual(all.slice(-1).map((m) => m.version));
+      const { rows } = await db.query<{ id: string; settings: unknown }>("SELECT id, settings FROM channel_bindings ORDER BY id");
+      expect(rows).toEqual([
+        { id: "chb_new", settings: { approvals: true, notify_tasks: false, show_arguments: false } },
+        { id: "chb_old", settings: { approvals: false, notify_tasks: true, show_arguments: true } },
+      ]);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+      await dispose();
+    }
+  });
+
   it("a failing migration is rolled back and named in the error", async () => {
     const { db, dispose } = await emptyDb(kind);
     const dir = await mkdtemp(join(tmpdir(), "idots-mig-"));

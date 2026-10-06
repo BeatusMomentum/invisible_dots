@@ -109,13 +109,20 @@ export class FakeGuest implements GuestApi {
   readonly identities = new Map<string, BrowserIdentity>();
   /** The files of the guest by absolute path; directories exist where a file is under them (and home always). */
   readonly files = new Map<string, { content: Uint8Array; mtime: Date }>();
+  /** Symbolic links of the guest: the absolute path of the link to its target (an absolute path). */
+  readonly links = new Map<string, string>();
   /** The automations of the Dot by id (its cron tool made them). */
   readonly automations = new Map<string, Automation>();
-  /** The tools the fake's engine has: the real table's shape, a few rows; `offered` follows the permissions of the config. */
+  /**
+   * The tools the fake's engine has: the real table's shape, a few rows; `offered` follows the permissions of the
+   * config, and for a `memory_` tool also its `memory.enabled`, as the engine's `offered_tools` does.
+   */
   readonly tools: Omit<ToolInfo, "offered">[] = [
     { name: "exec", permission: "computer.exec", description: "Run a shell command on the computer." },
     { name: "read_file", permission: "files.read", description: "Read a file." },
     { name: "write_file", permission: "files.write", description: "Write a file." },
+    { name: "memory_search", permission: "memory.read", description: "Search the Dot's memory notes." },
+    { name: "memory_get", permission: "memory.read", description: "Read a memory note." },
     { name: "cron", permission: "automations", description: "Schedule reminders and recurring tasks." },
   ];
   readonly calls: string[] = [];
@@ -260,8 +267,12 @@ export class FakeGuest implements GuestApi {
     this.openrouterKey = key;
   }
 
+  /** While set, `putConfig` waits for it (a slow push), and the config is stored when it resolves. */
+  configPushGate: Promise<void> | null = null;
+
   async putConfig(config: DotRuntimeConfig): Promise<void> {
     this.#reachable("putConfig");
+    await this.configPushGate;
     this.config = config;
   }
 
@@ -359,7 +370,10 @@ export class FakeGuest implements GuestApi {
   async listTools(): Promise<ToolListAnswer> {
     this.#reachable("listTools");
     const permissions: Record<string, string | undefined> = this.config?.permissions ?? {};
-    return { tools: this.tools.map((tool) => ({ ...tool, offered: this.config !== null && (permissions[tool.permission] === "allow" || permissions[tool.permission] === "ask") })) };
+    const memoryOn = this.config?.memory.enabled ?? true;
+    const offered = (tool: Omit<ToolInfo, "offered">): boolean =>
+      this.config !== null && (permissions[tool.permission] === "allow" || permissions[tool.permission] === "ask") && (memoryOn || !tool.name.startsWith("memory_"));
+    return { tools: this.tools.map((tool) => ({ ...tool, offered: offered(tool) })) };
   }
 
   /** Put a file in the guest's file system (the Dot wrote it). */
@@ -367,12 +381,36 @@ export class FakeGuest implements GuestApi {
     this.files.set(path, { content: typeof content === "string" ? new TextEncoder().encode(content) : content, mtime });
   }
 
+  /** A symbolic link at `path` leading to `target` (absolute). */
+  link(path: string, target: string): void {
+    this.links.set(path, target);
+  }
+
+  /**
+   * What dot-agentd's TCP listener does with a path: follow the symbolic links, and refuse (403 `outside_home`) a
+   * real location that is not under home. The host's file routes always reach the guest through that listener.
+   */
+  #realPath(path: string): string {
+    let real = path;
+    for (let hops = 0; ; hops++) {
+      if (hops > 40) throw new FakeGuestError(500, `${path}: too many levels of symbolic links`, "io_error");
+      const key = [...this.links.keys()].filter((link) => real === link || real.startsWith(`${link}/`)).sort((a, b) => b.length - a.length)[0];
+      if (key === undefined) break;
+      real = this.links.get(key)! + real.slice(key.length);
+    }
+    if (real !== GUEST_PATHS.home && !real.startsWith(`${GUEST_PATHS.home}/`)) {
+      throw new FakeGuestError(403, `the path leads outside ${GUEST_PATHS.home}`, "outside_home");
+    }
+    return real;
+  }
+
   #isDirectory(path: string): boolean {
     return path === GUEST_PATHS.home || [...this.files.keys()].some((file) => file.startsWith(`${path}/`));
   }
 
-  async readFile(path: string, options: { maxBytes?: number } = {}): Promise<Uint8Array> {
+  async readFile(asked: string, options: { maxBytes?: number } = {}): Promise<Uint8Array> {
     this.#reachable("readFile");
+    const path = this.#realPath(asked);
     if (this.#isDirectory(path)) throw new FakeGuestError(400, `${path} is a directory; use /v1/files/list`, "is_a_directory");
     const file = this.files.get(path);
     if (!file) throw new FakeGuestError(404, `open ${path}: no such file or directory`, "not_found");
@@ -382,8 +420,9 @@ export class FakeGuest implements GuestApi {
     return file.content;
   }
 
-  async listFiles(path: string): Promise<FileListAnswer> {
+  async listFiles(asked: string): Promise<FileListAnswer> {
     this.#reachable("listFiles");
+    const path = this.#realPath(asked);
     if (this.files.has(path)) throw new FakeGuestError(400, `${path} is not a directory`, "not_a_directory");
     if (!this.#isDirectory(path)) throw new FakeGuestError(404, `stat ${path}: no such file or directory`, "not_found");
     const entries = new Map<string, FileEntry>();

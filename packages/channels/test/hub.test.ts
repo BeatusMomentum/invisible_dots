@@ -86,11 +86,26 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
     await waitFor(() => channel.sent.length >= 2, "both results");
     expect(channel.texts()).toEqual(["Task completed: all done", "Task failed: it broke"]);
 
-    expect((await hub.setSettings(dot.id, "telegram", { notify_tasks: false })).settings).toEqual({ approvals: true, notify_tasks: false });
+    expect((await hub.setSettings(dot.id, "telegram", { notify_tasks: false })).settings).toEqual({ approvals: true, notify_tasks: false, show_arguments: true });
     dot.guest.emit("task.completed", { task_id: "task_3", summary: "silent" });
-    dot.guest.emit("message.assistant", { text: "marker" });
-    await waitFor(() => channel.texts().includes("marker"), "the marker");
-    expect(channel.texts()).toEqual(["Task completed: all done", "Task failed: it broke", "marker"]);
+    // The events of a Dot are dealt with in order: an answer to the person's own message, which is never switched off, marks the end.
+    await channel.receive({ text: "marker", peerId: "10", chatId: "10" });
+    await waitFor(() => channel.texts().includes("echo: marker"), "the marker");
+    expect(channel.texts()).toEqual(["Task completed: all done", "Task failed: it broke", "echo: marker"]);
+  });
+
+  it("sends an answer that answers nothing, such as an automation's, only while notify_tasks is on", async () => {
+    const w = await world();
+    const { hub, dot, channel } = await linkedFake(w, ["10"]);
+    await hub.setSettings(dot.id, "telegram", { notify_tasks: false });
+    dot.guest.emit("message.assistant", { text: "daily report" });
+    await channel.receive({ text: "marker", peerId: "10", chatId: "10" });
+    await waitFor(() => channel.texts().includes("echo: marker"), "the marker");
+    expect(channel.texts()).toEqual(["echo: marker"]);
+
+    await hub.setSettings(dot.id, "telegram", { notify_tasks: true });
+    dot.guest.emit("message.assistant", { text: "weekly report" });
+    await waitFor(() => channel.texts().includes("weekly report"), "the report");
   });
 
   it("shows typing in the chat that asked while the Dot thinks, not after the answer", async () => {
@@ -375,7 +390,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
     const dot = await w.dot();
     const added = await hub.add(dot.id, "telegram", { credentials: { telegram_bot_token: TOKEN }, settings: { notify_tasks: false } });
     expect(JSON.stringify(added)).not.toContain("SECRET-TOKEN-VALUE");
-    expect(added).toMatchObject({ kind: "telegram", enabled: true, settings: { approvals: true, notify_tasks: false }, peers: [] });
+    expect(added).toMatchObject({ kind: "telegram", enabled: true, settings: { approvals: true, notify_tasks: false, show_arguments: true }, peers: [] });
     expect(await db.secrets.get(dot.id, "telegram_bot_token")).toBe(TOKEN);
     const raw = await db.query<{ value_enc: Uint8Array }>("SELECT value_enc FROM secrets WHERE scope = $1", [dot.id]);
     expect(Buffer.from(raw.rows[0]!.value_enc).includes(Buffer.from("SECRET-TOKEN"))).toBe(false);
@@ -415,9 +430,10 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
   it("changes one setting and keeps the others", async () => {
     const w = await world();
     const { hub, dot } = await linkedFake(w, []);
-    expect((await hub.setSettings(dot.id, "telegram", { approvals: false })).settings).toEqual({ approvals: false, notify_tasks: true });
-    expect((await hub.setSettings(dot.id, "telegram", { notify_tasks: false })).settings).toEqual({ approvals: false, notify_tasks: false });
-    expect((await hub.list(dot.id))[0]!.settings).toEqual({ approvals: false, notify_tasks: false });
+    expect((await hub.setSettings(dot.id, "telegram", { approvals: false })).settings).toEqual({ approvals: false, notify_tasks: true, show_arguments: true });
+    expect((await hub.setSettings(dot.id, "telegram", { notify_tasks: false })).settings).toEqual({ approvals: false, notify_tasks: false, show_arguments: true });
+    expect((await hub.setSettings(dot.id, "telegram", { show_arguments: false })).settings).toEqual({ approvals: false, notify_tasks: false, show_arguments: false });
+    expect((await hub.list(dot.id))[0]!.settings).toEqual({ approvals: false, notify_tasks: false, show_arguments: false });
   });
 
   it("pauses a channel without losing its people, and a paused channel stays stopped across a restart", async () => {
@@ -464,7 +480,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
     const withBoth = await w.hub(new FakeChannelType());
     await withBoth.hub.add(other.id, "telegram");
     await withBoth.hub.close();
-    await db.channels.createBinding({ id: "chb_whatsapp_test", dotId: dot.id, kind: "whatsapp", settings: { approvals: true, notify_tasks: true }, eventCursor: 0 });
+    await db.channels.createBinding({ id: "chb_whatsapp_test", dotId: dot.id, kind: "whatsapp", settings: { approvals: true, notify_tasks: true, show_arguments: true }, eventCursor: 0 });
     const again = await w.hub(new FakeChannelType());
     await waitFor(() => again.type.channels.length === 1, "the telegram binding to start");
     expect((await again.hub.list(dot.id))[0]).toMatchObject({ kind: "whatsapp", status: "connecting" });

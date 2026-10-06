@@ -4,7 +4,7 @@
  * database, the VM layer or a guest happens here.
  */
 import { randomBytes } from "node:crypto";
-import { DotNameTakenError, GLOBAL_SCOPE, OPENROUTER_KEY_NAME, type Database } from "@invisible-dots/database";
+import { DotChangedError, DotNameTakenError, GLOBAL_SCOPE, OPENROUTER_KEY_NAME, type Database } from "@invisible-dots/database";
 import { EventLog, USER_MESSAGE_EVENT } from "@invisible-dots/events";
 import type {
   AcceptedAnswer,
@@ -262,7 +262,15 @@ export class Scheduler {
     return dot;
   }
 
-  async updateDot(idOrName: string, configInput: unknown): Promise<DotRecord> {
+  /**
+   * Replace the Dot's config. `expectedUpdatedAt` (the `updated_at` of the Dot as the caller read it) makes the save
+   * conditional: when the Dot changed since (the person answered "Always allow" in another view, another save), it is a
+   * 409 `dot_changed` and nothing is written, so a form opened before cannot silently undo what happened after.
+   */
+  async updateDot(idOrName: string, configInput: unknown, expectedUpdatedAt?: unknown): Promise<DotRecord> {
+    if (expectedUpdatedAt !== undefined && (typeof expectedUpdatedAt !== "string" || Number.isNaN(Date.parse(expectedUpdatedAt)))) {
+      throw new ControlPlaneError(400, "invalid_request", "expected_updated_at must be the updated_at of the Dot, an ISO timestamp");
+    }
     const current = await this.requireDot(idOrName);
     const config = this.#parseConfig(configInput);
     if (parseSize(config.computer.disk) < parseSize(current.config.computer.disk)) {
@@ -274,8 +282,11 @@ export class Scheduler {
     }
     let updated: DotRecord | null;
     try {
-      updated = await this.db.dots.updateConfig(current.id, config);
+      updated = await this.db.dots.updateConfig(current.id, config, expectedUpdatedAt === undefined ? undefined : new Date(expectedUpdatedAt as string).toISOString());
     } catch (error) {
+      if (error instanceof DotChangedError) {
+        throw new ControlPlaneError(409, "dot_changed", `Dot ${current.name} changed after you read it: read it again and apply the change to what it is now`);
+      }
       if (error instanceof DotNameTakenError) throw new ControlPlaneError(409, "name_taken", error.message);
       throw error;
     }
@@ -635,7 +646,10 @@ export class Scheduler {
    * `always` (an approval only) is "allow this from now on": in the same
    * transaction `permissions[<the approval's permission>]` becomes `allow` in
    * the Dot's config, and the config is pushed to the guest before the answer
-   * is delivered, so what the approved call does next is not asked again. An
+   * is delivered, so what the approved call does next is not asked again: the
+   * Dot's deliveries are held (`InboundDelivery.hold`) from before the commit
+   * until the push is over, so no flush overtakes it. A push that fails does
+   * not fail the answer; the guest gets the config on its next READY. An
    * answer that loses the race for the approval (409) changes nothing.
    */
   async resolveApproval(
@@ -655,6 +669,7 @@ export class Scheduler {
     }
     const existing = await this.db.approvals.get(id);
     if (!existing) throw notFound("approval", id);
+    // A pending approval stored before its permission was removed from PERMISSIONS: a config cannot name it any more.
     if (always && !isPermission(existing.permission)) {
       throw new ControlPlaneError(
         400,
@@ -668,27 +683,36 @@ export class Scheduler {
       ts: this.#clock.now().toISOString(),
       data: { approval_id: id, decision, ...(note !== undefined ? { note } : {}) },
     };
-    const { logged, resolved, reconfigured } = await this.db.transaction(async (tx) => {
-      // The event first: its insert takes the event-order lock (database events.ts).
-      const logged = await this.events.appendHostIn(tx, existing.dot_id, "approval.resolved", {
-        approval_id: id,
-        decision,
-        ...(note !== undefined ? { note } : {}),
-        ...(always ? { always } : {}),
+    // From its commit on, any flush may send the answer: the Dot's deliveries wait until the config that "always"
+    // changed has reached the guest, so the approved call's next use of the permission is not asked again.
+    const release = always ? this.inbound.hold(existing.dot_id) : undefined;
+    let resolved: ApprovalRecord;
+    try {
+      const stored = await this.db.transaction(async (tx) => {
+        // The event first: its insert takes the event-order lock (database events.ts).
+        const logged = await this.events.appendHostIn(tx, existing.dot_id, "approval.resolved", {
+          approval_id: id,
+          decision,
+          ...(note !== undefined ? { note } : {}),
+          ...(always ? { always } : {}),
+        });
+        const resolved = await tx.approvals.resolve(id, decision === "approve" ? "approved" : "rejected", note ?? null);
+        if (!resolved) {
+          const current = await tx.approvals.get(id);
+          throw new ControlPlaneError(409, "already_resolved", `approval ${id} is already ${current?.status ?? existing.status}`);
+        }
+        const reconfigured = always ? await tx.dots.setPermission(resolved.dot_id, resolved.permission, "allow") : null;
+        if (always && !reconfigured) throw notFound("Dot", resolved.dot_id);
+        if (resolved.task_id) await tx.tasks.transition(resolved.task_id, "RUNNING", { dotId: resolved.dot_id });
+        await tx.inbound.enqueue(resolved.dot_id, event);
+        return { logged, resolved, reconfigured };
       });
-      const resolved = await tx.approvals.resolve(id, decision === "approve" ? "approved" : "rejected", note ?? null);
-      if (!resolved) {
-        const current = await tx.approvals.get(id);
-        throw new ControlPlaneError(409, "already_resolved", `approval ${id} is already ${current?.status ?? existing.status}`);
-      }
-      const reconfigured = always ? await tx.dots.setPermission(resolved.dot_id, resolved.permission, "allow") : null;
-      if (always && !reconfigured) throw notFound("Dot", resolved.dot_id);
-      if (resolved.task_id) await tx.tasks.transition(resolved.task_id, "RUNNING", { dotId: resolved.dot_id });
-      await tx.inbound.enqueue(resolved.dot_id, event);
-      return { logged, resolved, reconfigured };
-    });
-    this.events.publish(logged);
-    if (reconfigured) await this.#configChanged(reconfigured);
+      resolved = stored.resolved;
+      this.events.publish(stored.logged);
+      if (stored.reconfigured) await this.#configChanged(stored.reconfigured);
+    } finally {
+      release?.();
+    }
     await this.#deliver(resolved.dot_id, event.id);
     return resolved;
   }

@@ -71,11 +71,13 @@ func TestFilesOverwriteKeepsModeAndLeavesNoTempFiles(t *testing.T) {
 	}
 }
 
+// The engine's socket takes absolute paths as they are: the Dot owns its whole
+// computer (the remote listener is limited to home, see files_confined_test.go).
 func TestFilesAbsoluteAndTildePaths(t *testing.T) {
 	f := newFixture(t)
 	other := t.TempDir()
 	abs := filepath.Join(other, "abs.txt")
-	resp := f.do(http.MethodPut, filesURL("/v1/files", abs), bytes.NewReader([]byte("A")))
+	resp := f.doLocal(http.MethodPut, filesURL("/v1/files", abs), bytes.NewReader([]byte("A")))
 	wantStatus(t, resp, http.StatusNoContent)
 	if raw, _ := os.ReadFile(abs); string(raw) != "A" {
 		t.Errorf("absolute path wrote %q", raw)

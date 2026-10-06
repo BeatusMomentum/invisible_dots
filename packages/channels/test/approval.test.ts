@@ -55,13 +55,13 @@ describe("the data of an approval button", () => {
 
 describe("what an approval prompt says", () => {
   it("names the tool, the permission, the reason and the arguments", () => {
-    expect(approvalPromptText(approval())).toBe(
+    expect(approvalPromptText(approval(), true)).toBe(
       ['The Dot asks to use exec (permission exec.run).', "Reason: the tool needs approval", 'Arguments: {"command":"ls -la"}'].join("\n"),
     );
   });
 
   it("cuts the arguments and the reason to the limit, and shows that they were cut", () => {
-    const text = approvalPromptText(approval({ arguments: { command: "x".repeat(2000) }, reason: "r".repeat(2000) }));
+    const text = approvalPromptText(approval({ arguments: { command: "x".repeat(2000) }, reason: "r".repeat(2000) }), true);
     const [, reason, args] = text.split("\n") as [string, string, string];
     expect(reason.slice("Reason: ".length)).toHaveLength(ARGUMENTS_MAX);
     expect(args.slice("Arguments: ".length)).toHaveLength(ARGUMENTS_MAX);
@@ -72,19 +72,26 @@ describe("what an approval prompt says", () => {
   });
 
   it("keeps a prompt on one line per fact: line breaks and runs of spaces in the arguments collapse", () => {
-    const text = approvalPromptText(approval({ arguments: { command: "a\n\n   b" }, reason: "line one\nline two" }));
+    const text = approvalPromptText(approval({ arguments: { command: "a\n\n   b" }, reason: "line one\nline two" }), true);
     expect(text.split("\n")).toEqual(["The Dot asks to use exec (permission exec.run).", "Reason: line one line two", 'Arguments: {"command":"a\\n\\n b"}']);
   });
 
   it("leaves out what is empty", () => {
-    expect(approvalPromptText(approval({ arguments: {}, reason: "" }))).toBe("The Dot asks to use exec (permission exec.run).");
+    expect(approvalPromptText(approval({ arguments: {}, reason: "" }), true)).toBe("The Dot asks to use exec (permission exec.run).");
+  });
+
+  it("leaves the arguments out, in the prompt and in the outcome, when the channel is set not to show them", () => {
+    const text = approvalPromptText(approval(), false);
+    expect(text).toBe(["The Dot asks to use exec (permission exec.run).", "Reason: the tool needs approval"].join("\n"));
+    expect(text).not.toContain("ls -la");
+    expect(approvalOutcomeText(approval({ status: "approved" }), false)).toBe(`${text}\n\nApproved.`);
   });
 
   it("says how an approval ended below the question it asked", () => {
-    const question = approvalPromptText(approval());
-    expect(approvalOutcomeText(approval({ status: "approved" }))).toBe(`${question}\n\nApproved.`);
-    expect(approvalOutcomeText(approval({ status: "rejected" }))).toBe(`${question}\n\nRejected.`);
-    expect(approvalOutcomeText(approval({ status: "expired" }))).toBe(`${question}\n\nNo longer needed: the task ended before anyone answered.`);
+    const question = approvalPromptText(approval(), true);
+    expect(approvalOutcomeText(approval({ status: "approved" }), true)).toBe(`${question}\n\nApproved.`);
+    expect(approvalOutcomeText(approval({ status: "rejected" }), true)).toBe(`${question}\n\nRejected.`);
+    expect(approvalOutcomeText(approval({ status: "expired" }), true)).toBe(`${question}\n\nNo longer needed: the task ended before anyone answered.`);
   });
 });
 

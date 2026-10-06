@@ -219,8 +219,7 @@ export class BindingRunner {
         return this.#answer(event);
       case "task.completed":
       case "task.failed": {
-        const binding = await this.#o.db.channels.bindingById(this.bindingId);
-        if (!binding?.settings.notify_tasks) return false;
+        if (!(await this.#notifies())) return false;
         const text =
           event.type === "task.completed"
             ? `Task completed: ${String(event.data.summary ?? "").trim() || "done"}`
@@ -247,19 +246,24 @@ export class BindingRunner {
   /**
    * The Dot's answer goes to the chat of the message it answers, when that message came through this
    * binding and the person is still paired; an answer that is not to a message (an automation's) goes to
-   * the owners. An answer to a message from the web or another channel is not mirrored here.
+   * the owners when `notify_tasks` is on. An answer to a message from the web or another channel is not mirrored here.
    */
   async #answer(event: StoredEvent): Promise<boolean | null> {
     const text = String(event.data.text ?? "");
     if (text.trim() === "") return false;
     const inReplyTo = event.data.in_reply_to;
-    if (typeof inReplyTo !== "string") return this.#toOwners(text);
+    if (typeof inReplyTo !== "string") return (await this.#notifies()) ? this.#toOwners(text) : false;
     const asked = await this.#o.events.userMessage(this.dotId, inReplyTo);
     const origin = asked ? parseMessageOrigin(asked.data.origin) : null;
     if (!origin || origin.binding_id !== this.bindingId) return false;
     if (this.activeChat === origin.chat_id) this.activeChat = null;
     if (!(await this.#o.db.channels.peerByChat(this.bindingId, origin.chat_id))) return false;
     return this.#deliver(origin.chat_id, text);
+  }
+
+  /** Whether what the Dot says on its own (task results, an automation's answer) goes to the owners' chats. */
+  async #notifies(): Promise<boolean> {
+    return (await this.#o.db.channels.bindingById(this.bindingId))?.settings.notify_tasks === true;
   }
 
   async #toOwners(text: string): Promise<boolean | null> {
@@ -285,7 +289,7 @@ export class BindingRunner {
     if (!binding?.settings.approvals) return false;
     const approval = await this.#o.db.approvals.get(approvalId);
     if (!approval || approval.status !== "pending") return false;
-    const text = approvalPromptText(approval);
+    const text = approvalPromptText(approval, binding.settings.show_arguments);
     const peers = await this.#o.db.channels.peers(this.bindingId);
     let sent = false;
     for (const chat of new Set(peers.filter((p) => p.role === "owner").map((p) => p.chat_id))) {
@@ -305,11 +309,13 @@ export class BindingRunner {
    * matter where the answer came from. True when a prompt was edited, null when stopped half way.
    */
   async #settle(approvalId: string): Promise<boolean | null> {
+    const binding = await this.#o.db.channels.bindingById(this.bindingId);
+    if (!binding) return false;
     const prompts = await this.#o.db.channels.prompts(this.bindingId, approvalId);
     if (prompts.length === 0) return false;
     const approval = await this.#o.db.approvals.get(approvalId);
     if (!approval || approval.status === "pending") return false;
-    const text = approvalOutcomeText(approval);
+    const text = approvalOutcomeText(approval, binding.settings.show_arguments);
     let edited = false;
     for (const prompt of prompts) {
       const done = await this.#retrying(async (channel) => {

@@ -65,13 +65,20 @@ export interface ChannelHubOptions {
   pairingTtlMs?: number;
 }
 
-export const DEFAULT_CHANNEL_SETTINGS: ChannelSettings = { approvals: true, notify_tasks: true };
+export const DEFAULT_CHANNEL_SETTINGS: ChannelSettings = { approvals: true, notify_tasks: true, show_arguments: true };
 
 const DEFAULT_LIMITS: ChannelLimits = { burst: 10, perMinute: 20, maxChars: 8_000 };
 const STATUS_DETAIL_MAX = 300;
 const LABEL_MAX = 64;
 
 const SETTING_KEYS = Object.keys(DEFAULT_CHANNEL_SETTINGS);
+
+/** The unique index that holds the rule "one account serves one Dot" (migration 0008). */
+const ACCOUNT_KEY = "channel_bindings_account_key";
+
+function accountInUse(kind: ChannelKind, account: string | null): ControlPlaneError {
+  return new ControlPlaneError(409, "account_in_use", `${kind} account "${account}" is already linked to another Dot: use one account per Dot`);
+}
 
 const NEEDS_RELINK_DETAIL = "The channel has to be linked again.";
 
@@ -194,6 +201,7 @@ export class ChannelHub {
         return created;
       });
     } catch (error) {
+      if (isUniqueViolation(error, ACCOUNT_KEY)) throw accountInUse(kind, account);
       if (isUniqueViolation(error)) throw new ControlPlaneError(409, "channel_exists", `Dot "${dot.name}" already has a ${kind} channel`);
       throw error;
     }
@@ -280,6 +288,7 @@ export class ChannelHub {
     } catch (error) {
       // Nothing changed: the channel goes on with the credentials it had.
       if (binding.enabled && this.#state === "started") this.#run(binding);
+      if (isUniqueViolation(error, ACCOUNT_KEY)) throw accountInUse(kind, account);
       throw error;
     }
     if (updated.enabled && this.#state === "started") this.#run(updated);
@@ -379,11 +388,15 @@ export class ChannelHub {
     }
   }
 
-  /** An account (a bot) serves one Dot: two pollers on one bot take turns failing. */
+  /**
+   * An account (a bot) serves one Dot: two pollers on one bot take turns failing. This is the early, readable
+   * answer; the rule itself is the unique index `channel_bindings_account_key`, which a request that races
+   * past this check meets (`accountInUse`).
+   */
   async #assertAccountFree(kind: ChannelKind, account: string | null, dotId: string): Promise<void> {
     if (account === null) return;
     const other = (await this.#o.db.channels.listBindings()).find((b) => b.kind === kind && b.account === account && b.dot_id !== dotId);
-    if (other) throw new ControlPlaneError(409, "account_in_use", `${kind} account "${account}" is already linked to another Dot: use one account per Dot`);
+    if (other) throw accountInUse(kind, account);
   }
 
   async #binding(dotIdOrName: string, kind: ChannelKind): Promise<ChannelBindingRecord> {

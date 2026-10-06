@@ -117,9 +117,10 @@ func (s *Server) routes(remote bool) *http.ServeMux {
 	mux.HandleFunc("GET /v1/health", s.handleHealth)
 	mux.HandleFunc("GET /v1/system", s.handleSystem)
 	mux.HandleFunc("POST /v1/exec", s.handleExec)
-	mux.HandleFunc("GET /v1/files", s.handleFileGet)
-	mux.HandleFunc("PUT /v1/files", s.handleFilePut)
-	mux.HandleFunc("GET /v1/files/list", s.handleFileList)
+	files := fileRoutes{s: s, confined: remote}
+	mux.HandleFunc("GET /v1/files", files.get)
+	mux.HandleFunc("PUT /v1/files", files.put)
+	mux.HandleFunc("GET /v1/files/list", files.list)
 	mux.HandleFunc("GET /v1/screenshot", s.handleScreenshot)
 	if !remote {
 		// The engine's commands for the model; the host has no use for them.

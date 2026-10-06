@@ -13,7 +13,7 @@ import { FakeWhatsAppConnector, type FakeWhatsAppConnection } from "../src/testi
 const ANN = "393331112222@s.whatsapp.net";
 const ANN_LID = "99887766554433@lid";
 
-const binding = { id: "chb_1", dot_id: "dot_1", kind: "whatsapp", enabled: true, settings: { approvals: true, notify_tasks: true }, status: "connecting", status_detail: null, account: null, event_cursor: 0, created_at: "now" } as ChannelBindingRecord;
+const binding = { id: "chb_1", dot_id: "dot_1", kind: "whatsapp", enabled: true, settings: { approvals: true, notify_tasks: true, show_arguments: true }, status: "connecting", status_detail: null, account: null, event_cursor: 0, created_at: "now" } as ChannelBindingRecord;
 const noSecrets = { get: async () => null, putAll: async () => {} };
 
 const stops: (() => Promise<unknown>)[] = [];

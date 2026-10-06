@@ -159,6 +159,14 @@ describe("GuestClient", () => {
     expect(missing).toMatchObject({ status: 404, code: "not_found" });
   });
 
+  it("passes the guest's outside_home refusal of a file path on", async () => {
+    const { port } = await serve((_req, res) => json(res, 403, { error: "outside_home", message: "the path leads outside /home/dot" }));
+    const client = new GuestClient(port, TOKEN);
+    expect(await client.readFile("environ").catch((e: unknown) => e)).toMatchObject({ name: "GuestRequestError", status: 403, code: "outside_home" });
+    expect(await client.listFiles("etc").catch((e: unknown) => e)).toMatchObject({ status: 403, code: "outside_home" });
+    expect(await client.writeFile("etc/x", "y").catch((e: unknown) => e)).toMatchObject({ status: 403, code: "outside_home" });
+  });
+
   it("turns error bodies into GuestRequestError", async () => {
     const { port } = await serve((_req, res) => json(res, 409, { error: "computer_busy", message: "try later" }));
     const error = await new GuestClient(port, TOKEN).state().catch((e: unknown) => e);

@@ -346,6 +346,30 @@ check "GET /tools names the permission each tool exercises" "api $A/tools | jq -
 check "GET /automations through dot-agentd lists none for a Dot that made none" "[ \"\$(api $A/automations)\" = '{\"automations\":[]}' ]"
 check "pausing or removing an automation that is not there is a 404 not_found" "[ \"\$(api -o /dev/null -w '%{http_code}' -X PATCH -H 'content-type: application/json' -d '{\"enabled\":false}' $A/automations/none)\" = 404 ] && [ \"\$(api -o /dev/null -w '%{http_code}' -X DELETE $A/automations/none)\" = 404 ]"
 check "a PATCH of an automation whose body is not {enabled: bool} is a 400" "[ \"\$(api -o /dev/null -w '%{http_code}' -X PATCH -H 'content-type: application/json' -d '{\"enabled\":\"yes\"}' $A/automations/none)\" = 400 ]"
+# The host reads the Dot's files through the TCP port, which is limited to /home/dot with every symbolic link followed.
+# A link a page could make the Dot stage must not show the proxy password in /proc/<pid>/environ of the browser server
+# (it runs as dot), nor the Dot's token. The engine's socket takes any path dot can open.
+su -s /bin/bash dot -c 'printf hello > /home/dot/hello.txt; ln -s /home/dot/hello.txt /home/dot/hello-link; ln -s /proc/self/environ /home/dot/environ-link; ln -s /etc/invisible-dots/config.json /home/dot/config-link; ln -s /etc /home/dot/etc-link'
+files_get() { api -w '\n%{http_code}' --get --data-urlencode "path=$1" http://127.0.0.1:1024/v1/files; }
+files_list() { api -w '\n%{http_code}' --get --data-urlencode "path=$1" http://127.0.0.1:1024/v1/files/list; }
+reads_hello() { local out; out=$(files_get "$1"); [ "$(printf '%s\n' "$out" | tail -n 1)" = 200 ] && [ "$(printf '%s\n' "$out" | head -n 1)" = hello ]; }
+refuses_outside_home() {
+  local p out
+  for p in "$@"; do
+    out=$(files_get "$p")
+    [ "$(printf '%s\n' "$out" | tail -n 1)" = 403 ] || { echo "no 403 for $p: $out"; return 1; }
+    printf '%s\n' "$out" | grep -q '"error":"outside_home"' || { echo "not outside_home for $p: $out"; return 1; }
+  done
+}
+lists_links_as_other() {
+  [ "$(files_list etc-link | tail -n 1)" = 403 ] || return 1
+  files_list . | head -n 1 | jq -e '([.entries[]|select(.name=="environ-link" or .name=="etc-link" or .name=="config-link")|.type]|sort)==["other","other","other"] and ([.entries[]|select(.name=="hello-link")|.type]==["file"])' >/dev/null
+}
+engine_socket_reads_link() { [ "$(curl -sS --unix-socket /run/invisible-dots/agentd.sock -o /dev/null -w '%{http_code}' 'http://agentd/v1/files?path=config-link')" = 200 ]; }
+check "the TCP port reads a file under home, also through a link that stays in home" "reads_hello hello.txt && reads_hello hello-link"
+check "the TCP port refuses a link under home to /proc/<pid>/environ, to the token file and to /etc, and a path outside home (403 outside_home)" "refuses_outside_home environ-link config-link etc-link/hostname /proc/self/environ /etc/hostname ../../etc/hostname"
+check "the TCP port refuses to list a directory behind a link out of home, and lists such a link as other" "lists_links_as_other"
+check "the engine's socket still reads through such a link (the Dot owns its computer)" "engine_socket_reads_link"
 # A call of a tool the model was not offered (the stand-in makes it anyway) never runs: the turn's
 # registry holds only the offered tools, so the call fails as an unknown tool before the gate is asked
 # (design: an unknown tool never reaches the gate; tool.called reports it with decision allow, ok false).

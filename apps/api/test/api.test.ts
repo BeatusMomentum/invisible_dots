@@ -261,6 +261,14 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     await expect(api.listFiles(dot.id, "memory/missing")).rejects.toMatchObject({ status: 404, code: "not_found" });
     await expect(api.readFile(dot.id, "memory")).rejects.toMatchObject({ status: 400, code: "is_a_directory" });
     await expect(api.listFiles(dot.id, "notes.txt")).rejects.toMatchObject({ status: 400, code: "not_a_directory" });
+
+    // A link under home that leads out of it passes the path rule and is the guest's 403, with nothing of the target in the answer.
+    guest.putFile("/proc/4242/environ", "PROXY_PASSWORD=hunter2");
+    guest.link("/home/dot/environ", "/proc/4242/environ");
+    const leak = await raw("files", `?path=${encodeURIComponent("environ")}`);
+    expect(leak.status).toBe(403);
+    expect(await leak.json()).toMatchObject({ error: "outside_home" });
+    await expect(api.readFile(dot.id, "environ")).rejects.toMatchObject({ status: 403, code: "outside_home" });
   });
 
   it("files: a read says what it is, so the page never runs a Dot's file; a large one is refused", async () => {
@@ -349,7 +357,7 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
 
     // Tools: the table, and what the model is offered follows the permissions the config pushed.
     const none = await api.listTools(dot.id);
-    expect(none.map((t) => t.name)).toEqual(["exec", "read_file", "write_file", "cron"]);
+    expect(none.map((t) => t.name)).toEqual(["exec", "read_file", "write_file", "memory_search", "memory_get", "cron"]);
     // The pushed config has the defaults filled in, none of them deny: every tool is offered.
     expect(none.every((t) => t.offered)).toBe(true);
     await api.updateDot(dot.id, `${yaml("automations")}permissions:
@@ -363,6 +371,8 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
       exec: true,
       read_file: true,
       write_file: false,
+      memory_search: true,
+      memory_get: true,
       cron: false,
     });
   });
@@ -535,6 +545,11 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     const updated = await api.updateDot(dot.id, `${yaml("to-patch")}instructions: short answers\n`);
     expect(updated.config.instructions).toBe("short answers");
     expect(driver.guestOf(dot.id).config?.instructions).toBe("short answers");
+    // A save from an old read is a 409 over the wire, and a malformed read is a 400.
+    const body = `${yaml("to-patch")}instructions: from a stale form\n`;
+    await expect(api.updateDot(dot.id, body, dot.updated_at)).rejects.toMatchObject({ status: 409, code: "dot_changed" });
+    expect((await api.updateDot(dot.id, body, updated.updated_at)).config.instructions).toBe("from a stale form");
+    await expect(api.updateDot(dot.id, body, "not a date")).rejects.toMatchObject({ status: 400, code: "invalid_request" });
 
     expect(await api.setOpenRouterKey("sk-or-rotated", "to-patch")).toEqual({ pushed: 1 });
     expect(driver.guestOf(dot.id).openrouterKey).toBe("sk-or-rotated");

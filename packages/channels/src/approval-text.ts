@@ -17,12 +17,12 @@ function cut(text: string, max: number): string {
   return flat.length <= max ? flat : `${flat.slice(0, max - MORE.length).trimEnd()}${MORE}`;
 }
 
-export function approvalPromptText(approval: ApprovalRecord): string {
+export function approvalPromptText(approval: ApprovalRecord, showArguments: boolean): string {
   const lines = [`The Dot asks to use ${approval.tool} (permission ${approval.permission}).`];
   const reason = cut(approval.reason, ARGUMENTS_MAX);
   if (reason !== "") lines.push(`Reason: ${reason}`);
   const args = cut(JSON.stringify(approval.arguments), ARGUMENTS_MAX);
-  if (args !== "{}") lines.push(`Arguments: ${args}`);
+  if (showArguments && args !== "{}") lines.push(`Arguments: ${args}`);
   return lines.join("\n");
 }
 
@@ -34,11 +34,11 @@ const OUTCOMES: Record<ApprovalRecord["status"], string> = {
 };
 
 /** The prompt as it reads once the approval is settled: the question stays, the answer is added. */
-export function approvalOutcomeText(approval: ApprovalRecord): string {
-  return `${approvalPromptText(approval)}\n\n${OUTCOMES[approval.status]}`;
+export function approvalOutcomeText(approval: ApprovalRecord, showArguments: boolean): string {
+  return `${approvalPromptText(approval, showArguments)}\n\n${OUTCOMES[approval.status]}`;
 }
 
-/** How many trailing characters of an approval id the words of a text answer carry: the random part of the id, 30 bits. */
+/** How many trailing characters of an approval id the words of a text answer carry: the tail of a UUIDv4 in hex, 24 bits. */
 const SHORT_ID_LENGTH = 6;
 
 /** What a person types after `yes` or `no` on a channel without buttons: short, and shaped so that an ordinary message is not taken for it. */

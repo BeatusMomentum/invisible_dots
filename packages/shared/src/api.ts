@@ -143,12 +143,14 @@ export interface PutOpenRouterSecretRequest {
   dot_id?: string;
 }
 
-/** What a channel sends to the person without being asked (decisions of 2026-10-05: replies and approvals always, task results switchable). */
+/** What a channel sends to the person without being asked (decisions of 2026-10-05: replies to the person's own messages always, the rest switchable). */
 export interface ChannelSettings {
   /** Approvals are asked in the chat, with Approve and Reject buttons, for the paired owner. */
   approvals: boolean;
-  /** `task.completed` and `task.failed` are sent to the owner's chat. */
+  /** What the Dot says on its own goes to the owner's chat: `task.completed` and `task.failed`, and an answer that answers no message (an automation's). */
   notify_tasks: boolean;
+  /** An approval prompt in the chat shows the tool's arguments (cut to 300 characters). Off, it shows the tool and the reason only. */
+  show_arguments: boolean;
 }
 
 export interface ChannelPeerRecord {

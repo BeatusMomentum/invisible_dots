@@ -149,7 +149,8 @@ describe.each(testAdapters())("channel routes of the control-plane API (%s)", { 
   it("changes settings and pauses and resumes the channel, and refuses what is not a setting", async () => {
     const dot = await readyDot();
     await api.putTelegramChannel(dot.id, BOT_TOKEN);
-    expect((await api.patchChannel(dot.id, "telegram", { settings: { notify_tasks: false } })).settings).toEqual({ approvals: true, notify_tasks: false });
+    expect((await api.patchChannel(dot.id, "telegram", { settings: { notify_tasks: false } })).settings).toEqual({ approvals: true, notify_tasks: false, show_arguments: true });
+    expect((await api.patchChannel(dot.id, "telegram", { settings: { show_arguments: false } })).settings).toEqual({ approvals: true, notify_tasks: false, show_arguments: false });
     const paused = await api.patchChannel(dot.id, "telegram", { enabled: false });
     expect(paused).toMatchObject({ enabled: false, settings: { approvals: true, notify_tasks: false } });
     await waitFor(() => !bots.polling(BOT_TOKEN), "polling to stop");
@@ -162,7 +163,7 @@ describe.each(testAdapters())("channel routes of the control-plane API (%s)", { 
       expect(refused.status, JSON.stringify(body)).toBe(400);
       expect(refused.json).toMatchObject({ error: "invalid_request" });
     }
-    expect((await api.channels(dot.id))[0]!.settings).toEqual({ approvals: false, notify_tasks: false });
+    expect((await api.channels(dot.id))[0]!.settings).toEqual({ approvals: false, notify_tasks: false, show_arguments: false });
   });
 
   it("unlinks: the channel stops, its token and people are deleted, and it is gone for a second try", async () => {

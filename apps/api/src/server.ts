@@ -192,9 +192,10 @@ export function buildServer(options: ServerOptions): FastifyInstance {
 
   app.get<{ Params: Params }>("/api/dots/:id", async (request) => scheduler.requireDot(request.params.id));
 
-  app.patch<{ Params: Params }>("/api/dots/:id", async (request) =>
-    scheduler.updateDot(request.params.id, bodyOf(request).config),
-  );
+  app.patch<{ Params: Params }>("/api/dots/:id", async (request) => {
+    const { config, expected_updated_at } = bodyOf(request);
+    return scheduler.updateDot(request.params.id, config, expected_updated_at);
+  });
 
   app.delete<{ Params: Params }>("/api/dots/:id", async (request, reply) => {
     return reply.code(202).send(await scheduler.deleteDot(request.params.id));

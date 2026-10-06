@@ -1,6 +1,7 @@
 import { newId, parseDotConfig, vmName, type OutboundEvent } from "@invisible-dots/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { DotNameTakenError, TransactionMisuseError, type Database, type Repositories } from "../src/index.js";
+import { DotChangedError, DotNameTakenError, TransactionMisuseError, type Database, type Repositories } from "../src/index.js";
+import { EventsRepository } from "../src/events.js";
 import { createTestDatabase, testAdapters, type TestDatabase } from "../src/testing.js";
 
 const SETUP_TIMEOUT = 60_000;
@@ -37,7 +38,7 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect(again.applied).toEqual([]);
     expect(again.alreadyApplied).toContain("0001_initial");
     const { rows } = await db.query<{ version: string }>("SELECT version FROM schema_migrations ORDER BY version");
-    expect(rows.map((r) => r.version)).toEqual(["0001_initial", "0002_inbound_events", "0003_task_spend", "0004_channels", "0005_channel_prompts", "0006_inbound_by_event", "0007_events_task"]);
+    expect(rows.map((r) => r.version)).toEqual(["0001_initial", "0002_inbound_events", "0003_task_spend", "0004_channels", "0005_channel_prompts", "0006_inbound_by_event", "0007_events_task", "0008_channel_account_and_arguments"]);
   });
 
   it("dots: unique names, resolve by id or name, status with error", async () => {
@@ -68,6 +69,25 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     await db.query("UPDATE dots SET config = config - 'permissions' WHERE id = $1", [dot.id]);
     expect((await db.dots.setPermission(dot.id, "automations", "allow"))?.config.permissions).toEqual({ automations: "allow" });
     expect(await db.dots.setPermission("dot_missing", "automations", "allow")).toBeNull();
+  });
+
+  it("dots: updateConfig with the updated_at that was read saves once; an older one is DotChangedError and writes nothing", async () => {
+    const dot = await seedDot(db, "alpha-stale");
+    const read = dot.updated_at;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const next = { ...dot.config, instructions: "first" };
+    const saved = await db.dots.updateConfig(dot.id, next, read);
+    expect(saved?.config.instructions).toBe("first");
+    // The row has microseconds, the read has milliseconds: the same read is stale only once something was saved after it.
+    await expect(db.dots.updateConfig(dot.id, { ...dot.config, instructions: "second" }, read)).rejects.toBeInstanceOf(DotChangedError);
+    // The precondition tells instants a millisecond apart or more.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await db.dots.setPermission(dot.id, "computer.exec", "allow");
+    await expect(db.dots.updateConfig(dot.id, { ...dot.config, instructions: "third" }, saved!.updated_at)).rejects.toBeInstanceOf(DotChangedError);
+    expect((await db.dots.get(dot.id))?.config).toEqual({ ...next, permissions: { ...dot.config.permissions, "computer.exec": "allow" } });
+    expect(await db.dots.updateConfig("dot_missing", dot.config, read)).toBeNull();
+    // Without a precondition it replaces, as it always did.
+    expect((await db.dots.updateConfig(dot.id, { ...dot.config, instructions: "plain" }))?.config.instructions).toBe("plain");
   });
 
   it("computers: token stored encrypted, process recorded and cleared, cursor only moves forward", async () => {
@@ -141,17 +161,30 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect(types(await db.events.list({ dotId: dot.id, taskId: "task_a", after: started!.id }))).toEqual(["tool.called", "task.completed"]);
     expect(types(await db.events.list({ dotId: dot.id, taskId: "task_a", limit: 2 }))).toEqual(["task.started", "tool.called"]);
 
-    // Among many events of other kinds the planner takes events_task_idx for the query list() builds.
+    // Among many events of other kinds the planner takes events_task_idx for the statement list() really issues: it is
+    // captured from the repository, with every filter that can go with the task.
     await db.query(
       `INSERT INTO events (dot_id, type, data, source) SELECT $1, 'agent.state', '{"state":"IDLE"}'::jsonb, 'host' FROM generate_series(1, 6000)`,
       [dot.id],
     );
     await db.query("ANALYZE events");
-    const plan = await db.query<Record<string, string>>(
-      `EXPLAIN SELECT * FROM events WHERE dot_id = $1 AND id > $2 AND data->>'task_id' = $3 ORDER BY id LIMIT 100`,
-      [dot.id, 0, "task_a"],
-    );
-    expect(plan.rows.map((r) => Object.values(r)[0]).join("\n")).toContain("events_task_idx");
+    const issued: { sql: string; params: readonly unknown[] }[] = [];
+    const recording = new EventsRepository({
+      async query<R>(sql: string, params: readonly unknown[] = []) {
+        issued.push({ sql, params });
+        return db.query<R>(sql, params);
+      },
+    });
+    for (const query of [
+      { dotId: dot.id, taskId: "task_a" },
+      { dotId: dot.id, taskId: "task_a", after: 0, types: ["tool.called", "task.completed"], limit: 100 },
+    ]) {
+      issued.length = 0;
+      await recording.list(query);
+      expect(issued).toHaveLength(1);
+      const plan = await db.query<Record<string, string>>(`EXPLAIN ${issued[0]!.sql}`, issued[0]!.params);
+      expect(plan.rows.map((r) => Object.values(r)[0]).join("\n"), JSON.stringify(query)).toContain("events_task_idx");
+    }
   });
 
   it("events: the spend of a Dot sums the events that end a unit of spend, from a moment on", async () => {

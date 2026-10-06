@@ -8,8 +8,8 @@ import type { Database } from "@invisible-dots/database";
 import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-dots/database/testing";
 import type { Logger } from "@invisible-dots/scheduler";
 import { waitFor } from "@invisible-dots/scheduler/testing";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { TelegramChannelType } from "../src/index.js";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { DEFAULT_CHANNEL_SETTINGS, TelegramChannelType } from "../src/index.js";
 import { FakeBotApi } from "../src/testing.js";
 import { makeWorlds, quiet, type World } from "./world.js";
 
@@ -292,6 +292,28 @@ describe.each(testAdapters())("the hub with the real Telegram adapter (%s)", { t
     bots.say(other, "from the second bot", ANN);
     await waitFor(() => bots.sent(other, 10).length === 1, "an answer through the second bot");
     expect((await userMessages(dot.id)).map((e) => e.data.text)).toEqual(["from the first bot", "from the second bot"]);
+  });
+
+  it("refuses as account_in_use a bot that another Dot takes between the check and the insert, and stores nothing", async () => {
+    const w = await world();
+    bots.addBot(TOKEN, "dot_helper_bot");
+    const { hub } = await w.hub(telegram());
+    const one = await w.dot();
+    const two = await w.dot();
+    // The check finds the account free; the other request's binding lands before this one's insert.
+    const listBindings = db.channels.listBindings.bind(db.channels);
+    const spy = vi.spyOn(db.channels, "listBindings").mockImplementationOnce(async (...args) => {
+      const seen = await listBindings(...args);
+      await db.channels.createBinding({ id: "chb_rival", dotId: two.id, kind: "telegram", settings: DEFAULT_CHANNEL_SETTINGS, eventCursor: 0, account: "dot_helper_bot" });
+      return seen;
+    });
+    try {
+      await expect(hub.add(one.id, "telegram", { credentials: { telegram_bot_token: TOKEN } })).rejects.toMatchObject({ status: 409, code: "account_in_use" });
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await db.channels.listBindings()).map((b) => b.id)).toEqual(["chb_rival"]);
+    expect(await db.secrets.get(one.id, "telegram_bot_token")).toBeNull();
   });
 
   it("refuses a token Telegram does not accept, a malformed one and a bot another Dot uses, and stores nothing", async () => {
