@@ -191,15 +191,26 @@ def _shown_word(word: str) -> str:
     if any(char.isspace() for char in inner):
         return _mask_word(word)
     quote = word[0] if quoted else ""
-    url = _URL.fullmatch(inner)
-    if url:
-        scheme, authority, rest = url.groups()
-        shown = scheme + authority.rpartition("@")[2] + _QUERY_VALUE.sub(lambda m: m.group(1) + _MASK, rest)
+    shown = shown_url(inner)
+    if shown is not None:
         return f"{quote}{shown}{quote}"
     _, colon, after = inner.partition(":")
     if colon and after and not _PORT_OR_PATH.fullmatch(after):
         return _mask_word(word)
     return word
+
+
+def shown_url(text: str) -> str | None:
+    """The URL without the user and the password of its authority and with the values of its query masked.
+
+    Only the URL's own parts decide, never the characters in it: a quote or a space in a path stays what it is.
+    None when the text is no URL.
+    """
+    url = _URL.fullmatch(text)
+    if url is None:
+        return None
+    scheme, authority, rest = url.groups()
+    return scheme + authority.rpartition("@")[2] + _QUERY_VALUE.sub(lambda m: m.group(1) + _MASK, rest)
 
 
 def clip(text: str, limit: int) -> str:
@@ -316,9 +327,14 @@ def identity_target(params: Mapping[str, Any]) -> str | None:
     return _identity(params) or None
 
 
+def _shown_navigation(url: str) -> str:
+    """The address a person approves: `shown_url`; a text that is no URL is masked whole."""
+    return shown_url(url) or _MASK
+
+
 def browser_navigate_target(params: Mapping[str, Any]) -> str | None:
     url = _string(params, "url")
-    return _on_identity(params, _shown_word(url) if url else None)
+    return _on_identity(params, _shown_navigation(url) if url else None)
 
 
 def browser_selector_target(params: Mapping[str, Any]) -> str | None:
@@ -369,7 +385,7 @@ def navigate_arguments(params: Mapping[str, Any]) -> dict[str, Any]:
     shown = dict(params)
     url = shown.get("url")
     if isinstance(url, str) and url.strip():
-        shown["url"] = _shown_word(url.strip())
+        shown["url"] = _shown_navigation(url.strip())
     return shown
 
 

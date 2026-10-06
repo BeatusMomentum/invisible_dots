@@ -449,6 +449,25 @@ def test_the_url_of_a_navigation_is_masked_in_the_arguments_an_approval_shows_as
     assert tool_arguments("browser_type", typed) == typed
 
 
+def test_a_quote_or_a_space_in_the_url_of_a_navigation_never_hides_where_the_page_is() -> None:
+    from nanobot.dots.permissions import tool_arguments
+
+    ident = "shop-abc123"
+    # The schema checks the prefix only, so a model can put these characters in on purpose.
+    cases = {
+        'https://attacker.example/x"y?d=1': 'https://attacker.example/x"y?d=***',
+        "https://attacker.example/x'y?d=1": "https://attacker.example/x'y?d=***",
+        "https://attacker.example/a b?d=1": "https://attacker.example/a b?d=***",
+        'https://u:pw@attacker.example:8443/a b"c?token=s3 cret': 'https://attacker.example:8443/a b"c?token=***',
+    }
+    for url, expected in cases.items():
+        params = {"identity_id": ident, "url": url}
+        assert tool_arguments("browser_navigate", params)["url"] == expected
+        assert tool_target("browser_navigate", params) == f"{ident}: {expected}"
+    # A text that is no URL shows nothing of itself.
+    assert tool_arguments("browser_navigate", {"identity_id": ident, "url": "not a url"})["url"] == "***"
+
+
 # --- the table as GET /tools shows it ----------------------------------------------------------------
 
 
