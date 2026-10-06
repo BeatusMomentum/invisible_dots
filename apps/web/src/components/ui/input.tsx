@@ -1,3 +1,4 @@
+// Derived from shadcn/ui apps/v4/registry/new-york-v4/ui/input.tsx at 0e3abd65, MIT; changed: the import of cn is relative; the surface is the background token with no dark override; no file-input or selection styles; aria-invalid uses the danger token.
 import * as React from "react";
 import { cn } from "../../lib/utils";
 

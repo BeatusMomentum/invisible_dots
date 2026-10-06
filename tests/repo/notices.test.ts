@@ -54,6 +54,12 @@ describe("copied code and its notices", () => {
     ).toBe(true);
   });
 
+  // The notice says "the primitives in components/ui/ and lib/utils.ts were generated from shadcn/ui": a file added
+  // there without its header would be covered by the notice and checked by nothing above.
+  it.each(sourceFiles().filter((path) => path.startsWith("apps/web/src/components/ui/") || path === "apps/web/src/lib/utils.ts"))("%s, which the shadcn/ui notice covers, carries its Derived from header", (path) => {
+    expect(derivedHeader(path), `${path} has no "Derived from" comment`).not.toBeNull();
+  });
+
   it.each(derived.map((d) => [d.path, d.header]))("%s names its commit, its license and what it changed", (_path, header) => {
     expect(header).toMatch(/ at [0-9a-f]{7,40}, (?:MIT|Apache-2\.0|BSD-[23]-Clause|ISC); changed: \S.+\.$/);
   });

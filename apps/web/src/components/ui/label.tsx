@@ -1,3 +1,4 @@
+// Derived from shadcn/ui apps/v4/registry/new-york-v4/ui/label.tsx at 0e3abd65, MIT; changed: the import of cn is relative; a plain label element in place of the Radix primitive; no group or peer disabled styles.
 import * as React from "react";
 import { cn } from "../../lib/utils";
 
