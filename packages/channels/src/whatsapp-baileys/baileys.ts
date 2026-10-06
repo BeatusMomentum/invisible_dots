@@ -54,6 +54,15 @@ const SILENT_LOGGER = {
   error() {},
 };
 
+/**
+ * The content of a text message. Without `linkPreview: null` Baileys fetches the first link of a text from this
+ * machine (the control plane) to attach a preview, so a link in an approval prompt or a Dot's message would be
+ * requested, query and all, before anyone approved it. Nothing a Dot names is fetched on its behalf.
+ */
+export function textContent(text: string): { text: string; linkPreview: null } {
+  return { text, linkPreview: null };
+}
+
 /** What a Baileys message is to the channel. Null for one that has no id or no chat, which no one could answer. */
 export function toIncoming(message: WAMessage, lib: Pick<Baileys, "normalizeMessageContent">): WhatsAppIncoming | null {
   const { id, remoteJid, remoteJidAlt, fromMe } = message.key;
@@ -144,7 +153,7 @@ export class BaileysConnector implements WhatsAppConnector {
   }
 }
 
-class BaileysConnection implements WhatsAppConnection {
+export class BaileysConnection implements WhatsAppConnection {
   constructor(
     private readonly socket: WASocket,
     private readonly auth: AuthStore,
@@ -152,13 +161,13 @@ class BaileysConnection implements WhatsAppConnection {
   ) {}
 
   async sendText(chat: string, text: string): Promise<string> {
-    const sent = await this.socket.sendMessage(chat, { text });
+    const sent = await this.socket.sendMessage(chat, textContent(text));
     if (!sent?.key.id) throw new Error("WhatsApp did not say it took the message");
     return sent.key.id;
   }
 
   async editText(chat: string, id: string, text: string): Promise<void> {
-    await this.socket.sendMessage(chat, { text, edit: { remoteJid: chat, id, fromMe: true } });
+    await this.socket.sendMessage(chat, { ...textContent(text), edit: { remoteJid: chat, id, fromMe: true } });
   }
 
   async markRead(message: { chat: string; id: string }): Promise<void> {

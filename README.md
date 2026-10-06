@@ -660,7 +660,10 @@ it, and to whom:
   reads, under your key. Requests carry the headers
   `HTTP-Referer: https://github.com/feder-cr/dots` and `X-Title: invisible_dots`.
 - **Telegram and WhatsApp** carry the messages and approval prompts of a
-  linked channel, and can read them.
+  linked channel, and can read them. Link previews are off, so neither
+  service fetches a link of a message on its own (an approval prompt shows
+  the address a call is about to open); a person who taps a link opens it
+  themselves.
 - **The sites a Dot visits** see its browser, through the identity's proxy
   when it has one.
 - **Publishers of what the images are made of** (Ubuntu, Node, uv, the Python

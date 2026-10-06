@@ -2306,6 +2306,14 @@ and never given credentials; the others with `add`. The hub owns every policy:
   recording it sends it again. An approval over a chat is as strong as the
   person's Telegram account; switching `approvals` off keeps the answer in the
   app.
+- **No link previews.** Nothing a Dot names is fetched on its behalf, by this
+  process or by a messaging service: the Dot's only way to the web is its own
+  browser (section 8.3). An approval prompt shows the URL a call is about to open,
+  query included, so a preview would send that URL to Telegram's crawler (or, with
+  Baileys, request it from this machine) before anybody approved it. Every Telegram message and edit says `link_preview_options.is_disabled`,
+  and every WhatsApp text and edit `linkPreview: null`; the adapters' tests assert
+  it against the fake Bot API (which records a link it would have fetched) and the
+  library's own content builder.
 - **Answers in words.** A channel without buttons (`approvalByText`: WhatsApp)
   ends its prompt with `Reply "yes ap-xxxxxx" to approve or "no ap-xxxxxx" to
   reject`, where the token is the last six characters of the approval's id. The

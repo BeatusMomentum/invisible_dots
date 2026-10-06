@@ -3,6 +3,7 @@
  * policies are tested with the hub (hub-telegram.test.ts); here is only what the adapter itself decides.
  */
 import { waitFor } from "@invisible-dots/scheduler/testing";
+import { Api } from "grammy";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   ChannelCredentialsError,
@@ -241,6 +242,26 @@ describe("Telegram adapter", { timeout: 30_000 }, () => {
     await channel.typing?.("77");
     expect(api.sent(TOKEN)).toEqual([{ chat_id: "77", text: "a *plain* <text> message\nwith two lines" }]);
     expect(api.actions(TOKEN)).toEqual([{ chat_id: "77", action: "typing" }]);
+  });
+
+  it("never lets Telegram preview a link: a text, an approval prompt (the URL a call will open) and the edit of it all turn the preview off", async () => {
+    fresh();
+    const { channel } = await running(recorder().sink);
+    const url = "https://example.com/search?q=the+secret+of+the+task";
+    await channel.sendText("77", `Look at ${url}`);
+    const ref = await channel.sendApproval("77", { approvalId: "appr_links", text: `The Dot asks to open ${url}` });
+    await channel.editApproval("77", ref, `The Dot asked to open ${url}\n\nApproved.`);
+    expect(api.sent(TOKEN, 77)).toHaveLength(1);
+    expect(api.prompts(TOKEN, 77)[0]!.edits).toBe(1);
+    expect(api.linksFetched(TOKEN)).toEqual([]);
+  });
+
+  it("the fake does preview the link of a call that does not say no, so the test above can fail", async () => {
+    fresh();
+    const raw = new Api(TOKEN, { apiRoot: api.apiRoot });
+    await raw.sendMessage(77, "see https://example.com/a?b=c");
+    await raw.sendMessage(77, "see https://example.com/d", { link_preview_options: { is_disabled: true } });
+    expect(api.linksFetched(TOKEN)).toEqual(["https://example.com/a?b=c"]);
   });
 
   it("tells the hub whether sending again can work: not after a block, after a 429 only once the wait is over", async () => {

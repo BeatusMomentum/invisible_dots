@@ -11,6 +11,9 @@
  * - One consumer per bot token: a second poller makes Telegram answer 409, reported as such.
  * - The token is in every request URL, so no message made here carries a URL, and errors say what happened
  *   in words only.
+ * - No message has a link preview: Telegram's servers would fetch the first link of a message (an approval prompt
+ *   shows the URL a call is about to open, query and all) before anyone approves it. Nothing a Dot names is fetched
+ *   on its behalf.
  */
 import { Api, GrammyError, HttpError } from "grammy";
 import type { CallbackQuery, Message, Update } from "grammy/types";
@@ -44,6 +47,9 @@ const START_ALONE = /^\/start(?:@\w+)?\s*$/i;
 
 const REFUSED_TOKEN =
   "Telegram refused the bot token: it is wrong, or it was revoked in @BotFather. Paste a current token.";
+
+/** Every message and edit turns the link preview off (see the header). */
+const NO_LINK_PREVIEW = { link_preview_options: { is_disabled: true } } as const;
 
 /** The Telegram error codes after which sending the same message again cannot work. */
 const FINAL_SEND_CODES = new Set([400, 403, 404]);
@@ -123,7 +129,7 @@ class TelegramChannel implements Channel {
 
   async sendText(chatId: string, text: string): Promise<void> {
     try {
-      await this.#api.sendMessage(chatId, text);
+      await this.#api.sendMessage(chatId, text, NO_LINK_PREVIEW);
     } catch (error) {
       throw this.#sendError(error, "sendMessage");
     }
@@ -147,7 +153,7 @@ class TelegramChannel implements Channel {
       throw new ChannelSendError(error instanceof Error ? error.message : String(error), { retryable: false });
     }
     try {
-      const sent = await this.#api.sendMessage(chatId, prompt.text, { reply_markup: { inline_keyboard: keyboard } });
+      const sent = await this.#api.sendMessage(chatId, prompt.text, { ...NO_LINK_PREVIEW, reply_markup: { inline_keyboard: keyboard } });
       return String(sent.message_id);
     } catch (error) {
       throw this.#sendError(error, "sendMessage");
@@ -156,7 +162,7 @@ class TelegramChannel implements Channel {
 
   async editApproval(chatId: string, ref: string, text: string): Promise<void> {
     try {
-      await this.#api.editMessageText(chatId, Number(ref), text, { reply_markup: { inline_keyboard: [] } });
+      await this.#api.editMessageText(chatId, Number(ref), text, { ...NO_LINK_PREVIEW, reply_markup: { inline_keyboard: [] } });
     } catch (error) {
       if (error instanceof GrammyError && EDIT_NOTHING_TO_DO.test(error.description)) return;
       throw this.#sendError(error, "editMessageText");

@@ -7,7 +7,7 @@
  */
 import type { WAMessage } from "baileys";
 import { describe, expect, it } from "vitest";
-import { BaileysConnector, endOf, toIncoming } from "../src/whatsapp-baileys/baileys.js";
+import { BaileysConnection, BaileysConnector, endOf, textContent, toIncoming } from "../src/whatsapp-baileys/baileys.js";
 import { isDirectJid, lidOf, phoneOf } from "../src/whatsapp-baileys/jid.js";
 import type { WhatsAppEnd, WhatsAppEvents, WhatsAppIncoming } from "../src/whatsapp-baileys/port.js";
 
@@ -76,6 +76,44 @@ describe("reading a Baileys message", () => {
     expect(toIncoming({ key: { remoteJid: "393331112222@s.whatsapp.net" }, message: { conversation: "no id" } } as WAMessage, lib)).toBeNull();
     expect(toIncoming({ key: { id: "E1" }, message: { conversation: "no chat" } } as WAMessage, lib)).toBeNull();
     expect(toIncoming({ key: { remoteJid: "393331112222@s.whatsapp.net", id: "E2" } } as WAMessage, lib)?.content).toEqual({ kind: "none" });
+  });
+});
+
+describe("what is sent", () => {
+  /** Baileys' own content builder, with a `getUrlInfo` that records the links it was asked to preview (the real one fetches them, from this machine). */
+  async function previewed(content: { text: string; linkPreview?: null }): Promise<string[]> {
+    const lib: Baileys = await baileys;
+    const fetched: string[] = [];
+    const getUrlInfo = async (url: string) => {
+      fetched.push(url);
+      return undefined;
+    };
+    await lib.generateWAMessageContent(content, { getUrlInfo, upload: async () => ({}) as never } as never);
+    return fetched;
+  }
+
+  it("never has Baileys fetch a link of a text: an approval prompt or a Dot's message is not requested from here", async () => {
+    const text = "The Dot asks to open https://example.com/search?q=the+secret";
+    expect(await previewed(textContent(text))).toEqual([]);
+    // Without the setting, the same text is fetched by the library: the check above can fail.
+    expect(await previewed({ text })).toEqual(["https://example.com/search?q=the+secret"]);
+  });
+
+  it("is sent, and edited, with the preview off", async () => {
+    const calls: unknown[][] = [];
+    const socket = {
+      sendMessage: async (...args: unknown[]) => {
+        calls.push(args);
+        return { key: { id: "WA1" } };
+      },
+    };
+    const connection = new BaileysConnection(socket as never, {} as never, () => {});
+    expect(await connection.sendText("393331112222@s.whatsapp.net", "open https://example.com/?q=1")).toBe("WA1");
+    await connection.editText("393331112222@s.whatsapp.net", "WA1", "opened https://example.com/?q=1");
+    expect(calls).toEqual([
+      ["393331112222@s.whatsapp.net", { text: "open https://example.com/?q=1", linkPreview: null }],
+      ["393331112222@s.whatsapp.net", { text: "opened https://example.com/?q=1", linkPreview: null, edit: { remoteJid: "393331112222@s.whatsapp.net", id: "WA1", fromMe: true } }],
+    ]);
   });
 });
 

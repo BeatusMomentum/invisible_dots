@@ -5,7 +5,9 @@
  * Telegram's observable behaviour where the adapter depends on it: a long poll that waits for an update,
  * an offset that confirms what came before it, a 409 for a second poller (Telegram ends the older poll),
  * a 409 while a webhook is set, a 401 for an unknown or revoked token, a 429 with `retry_after`, a 403 for
- * a person who blocked the bot. The real grammY client points at it with `apiRoot`; nothing is mocked.
+ * a person who blocked the bot, and the link preview: Telegram's servers fetch the first link of a message to show a
+ * preview unless the call says `link_preview_options.is_disabled`, so a link in a message that did not say so is
+ * recorded as one Telegram fetched (`linksFetched`). The real grammY client points at it with `apiRoot`; nothing is mocked.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -66,6 +68,8 @@ interface FakeBot {
   poll: Poll | null;
   webhook: string | null;
   sent: { chat_id: string; text: string }[];
+  /** The links Telegram's servers fetched to preview a message (or an edit of one) that did not disable the preview, in order. */
+  linksFetched: string[];
   /** Messages sent with an inline keyboard (an approval prompt), by message id. */
   prompts: Map<number, FakePrompt>;
   /** Callback queries made and not yet answered. */
@@ -84,6 +88,14 @@ interface Injection {
   method: string;
   answer: FakeAnswer | "drop";
   remaining: number;
+}
+
+/** What Telegram does with the links of a message: it fetches the first one for a preview unless the call turned that off. */
+function previewed(bot: FakeBot, body: Record<string, unknown>): void {
+  const options = body.link_preview_options as { is_disabled?: boolean } | undefined;
+  if (options?.is_disabled === true) return;
+  const first = /https?:\/\/\S+/.exec(String(body.text));
+  if (first) bot.linksFetched.push(first[0]);
 }
 
 export class FakeBotApi {
@@ -135,6 +147,7 @@ export class FakeBotApi {
       poll: null,
       webhook: null,
       sent: [],
+      linksFetched: [],
       prompts: new Map(),
       queries: new Set(),
       answers: [],
@@ -215,6 +228,11 @@ export class FakeBotApi {
     return this.#bot(token).sent.filter((m) => chatId === undefined || m.chat_id === String(chatId));
   }
 
+  /** The links Telegram would have fetched on its own to preview what the bot sent: none when every message turned the preview off. */
+  linksFetched(token: string): string[] {
+    return [...this.#bot(token).linksFetched];
+  }
+
   /** The prompts the bot sent (messages with Approve and Reject buttons), oldest first, as they read now. */
   prompts(token: string, chatId?: number | string): FakePrompt[] {
     return [...this.#bot(token).prompts.values()].filter((p) => chatId === undefined || p.chat_id === String(chatId));
@@ -229,6 +247,7 @@ export class FakeBotApi {
   clearSent(token: string): void {
     const bot = this.#bot(token);
     bot.sent.length = 0;
+    bot.linksFetched.length = 0;
     bot.prompts.clear();
     bot.answers.length = 0;
     bot.actions.length = 0;
@@ -337,6 +356,7 @@ export class FakeBotApi {
         const messageId = this.#messageIds++;
         const keyboard = keyboardOf(body.reply_markup);
         if (keyboard === "invalid") return fail(res, { error_code: 400, description: "Bad Request: reply markup is invalid" });
+        previewed(bot, body);
         if (keyboard.length > 0) bot.prompts.set(messageId, { message_id: messageId, chat_id: chatId, text, buttons: keyboard, edits: 0 });
         else bot.sent.push({ chat_id: chatId, text });
         return reply(res, 200, { ok: true, result: { message_id: messageId, date: Math.floor(Date.now() / 1000), chat: { id: Number(chatId), type: "private" }, text } });
@@ -351,6 +371,7 @@ export class FakeBotApi {
         if (text === prompt.text && keyboard.length === prompt.buttons.length) {
           return fail(res, { error_code: 400, description: "Bad Request: message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message" });
         }
+        previewed(bot, body);
         prompt.text = text;
         prompt.buttons = keyboard;
         prompt.edits++;
