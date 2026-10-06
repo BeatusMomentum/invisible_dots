@@ -28,8 +28,16 @@ What stays visible is a secret written as a bare positional word (`echo hunter2`
 that starts like a path, which cannot be told from a name; the full command stays behind the
 approval, not here.
 
+A browser call names the identity it acts on and then what it acted on: a URL (as a command's URLs
+are shown), a selector, a key that is a name and not a character, a direction or the coordinates of a
+click. The text of `browser_type` is never in one, and neither is a character sent as a key.
+
 `permissions.tool_target` cuts every target at `TOOL_TARGET_MAX` characters (the host's schema refuses
 more); `exec` cuts earlier, at `EXEC_TARGET_MAX`.
+
+The table also says, per tool, which function states what of the arguments leaves the guest in an
+`approval.requested`, which a person decides on: the arguments as they are, except that the proxy of
+`browser_identity_create` has its password replaced.
 """
 
 from __future__ import annotations
@@ -37,6 +45,8 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from typing import Any
+
+from nanobot.dots.identity_rules import redact_proxy
 
 # The longest first line of a command shown, the ellipsis included.
 EXEC_TARGET_MAX = 120
@@ -65,6 +75,17 @@ _SECRET_PART = re.compile(
     r"pass|secret|token|credential|key|cookie|bearer|header|^(?:auth|authorization|user|username|login|pw|pwd|jwt)$"
 )
 _SCHEME_WORDS = frozenset({"bearer", "basic"})
+# What a key of `browser_press_key` may be to be shown: a key that is a name (the list below, F1 to F12),
+# alone or after modifiers (Control+Shift+Tab), or a shortcut (Control+a). A character, or any other word,
+# is what a person typed.
+_KEY_NAMES = frozenset(
+    {
+        "Enter", "Tab", "Escape", "Backspace", "Delete", "Insert", "Home", "End", "PageUp", "PageDown",
+        "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space", "ContextMenu",
+        *(f"F{n}" for n in range(1, 13)),
+    }
+)
+_MODIFIERS = frozenset({"Control", "Alt", "Meta", "ControlOrMeta", "Shift"})
 
 
 def redact_command(line: str) -> str:
@@ -260,3 +281,81 @@ def exec_session_target(params: Mapping[str, Any]) -> str | None:
 def no_target(params: Mapping[str, Any]) -> str | None:
     """For a tool that acts on nothing in particular (it lists)."""
     return None
+
+
+def _identity(params: Mapping[str, Any]) -> str:
+    return _string(params, "identity_id")
+
+
+def _on_identity(params: Mapping[str, Any], detail: str | None) -> str | None:
+    """`<identity id>: <detail>`, or the id alone; None without an identity."""
+    identity = _identity(params)
+    if not identity:
+        return None
+    return f"{identity}: {detail}" if detail else identity
+
+
+def identity_name_target(params: Mapping[str, Any]) -> str | None:
+    """`browser_identity_create`: the name the identity is given, never its proxy."""
+    return _string(params, "name") or None
+
+
+def identity_target(params: Mapping[str, Any]) -> str | None:
+    return _identity(params) or None
+
+
+def browser_navigate_target(params: Mapping[str, Any]) -> str | None:
+    url = _string(params, "url")
+    return _on_identity(params, _shown_word(url) if url else None)
+
+
+def browser_selector_target(params: Mapping[str, Any]) -> str | None:
+    """A selector names a place on a page; the text of `browser_type` or the value of a choice is left out."""
+    return _on_identity(params, _string(params, "selector") or None)
+
+
+def browser_click_at_target(params: Mapping[str, Any]) -> str | None:
+    x, y = params.get("x"), params.get("y")
+    if isinstance(x, int) and isinstance(y, int) and not isinstance(x, bool) and not isinstance(y, bool):
+        return _on_identity(params, f"at {x},{y}")
+    return _on_identity(params, None)
+
+
+def _shown_key(key: str) -> str | None:
+    *modifiers, last = key.split("+")
+    if any(part not in _MODIFIERS for part in modifiers):
+        return None
+    if last in _KEY_NAMES:
+        return key
+    # A letter or a digit after Control, Alt or Meta is a shortcut (Shift alone types it).
+    if len(last) == 1 and last.isalnum() and any(part != "Shift" for part in modifiers):
+        return key
+    return None
+
+
+def browser_press_key_target(params: Mapping[str, Any]) -> str | None:
+    return _on_identity(params, _shown_key(_string(params, "key")))
+
+
+def browser_scroll_target(params: Mapping[str, Any]) -> str | None:
+    direction = _string(params, "direction")
+    return _on_identity(params, direction if direction in ("up", "down") else None)
+
+
+def browser_identity_only_target(params: Mapping[str, Any]) -> str | None:
+    """A browser call with nothing to name but the identity it acted on."""
+    return _on_identity(params, None)
+
+
+def all_arguments(params: Mapping[str, Any]) -> dict[str, Any]:
+    """The arguments of a call that carries nothing to hide: as they are."""
+    return dict(params)
+
+
+def identity_create_arguments(params: Mapping[str, Any]) -> dict[str, Any]:
+    """The arguments of `browser_identity_create` with the password of its proxy replaced."""
+    shown = dict(params)
+    proxy = shown.get("proxy")
+    if isinstance(proxy, str) and proxy:
+        shown["proxy"] = redact_proxy(proxy)
+    return shown

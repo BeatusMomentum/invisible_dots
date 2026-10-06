@@ -9,7 +9,7 @@ import { chmod, copyFile, mkdir, readFile, rm, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { writeIso } from "@invisible-dots/iso";
 import { hostPaths, replaceFile, type HostPaths } from "@invisible-dots/shared";
-import { BUILDER_ENGINE_BUILD, BUILDER_ENGINE_LOCK, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_USER_DATA, defaultAssetRoot, readGuestAsset } from "./assets.js";
+import { BUILDER_BROWSER_BUILD, BUILDER_ENGINE_BUILD, BUILDER_ENGINE_LOCK, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_USER_DATA, defaultAssetRoot, readGuestAsset } from "./assets.js";
 import { fetchVerified, sha256File, type Fetch, type FetchVerifiedOptions } from "./download.js";
 import { acquireLock, type Lock } from "./lock.js";
 import { manifestPathFor, writeManifest, type GoldenManifest } from "./manifest.js";
@@ -95,13 +95,14 @@ export async function buildGoldenImage(options: GoldenBuildOptions): Promise<Gol
   const pythonLock = await readGuestAsset(assetRoot, BUILDER_PYTHON_LOCK);
   const python = parsePythonLock(pythonLock.toString("utf8"));
   const engineBuild = await readGuestAsset(assetRoot, BUILDER_ENGINE_BUILD);
+  const browserBuild = await readGuestAsset(assetRoot, BUILDER_BROWSER_BUILD);
   const engineLock = await readGuestAsset(assetRoot, BUILDER_ENGINE_LOCK);
   parseHashedLock(engineLock.toString("utf8"), BUILDER_ENGINE_LOCK);
   // The disk size is an input: the same pins at another size are another image.
   // The locks are too, so a changed transitive dependency is another image, and
-  // so is the script that builds the engine's environment. The engine's own
+  // so are the scripts that build the engine's environment and the browser. The engine's own
   // source is not: it travels on the runtime disk (section 3.3).
-  const digest = inputsDigest([JSON.stringify(base), JSON.stringify(pins), userData, provision, pythonLock, diskSize, engineLock, engineBuild]);
+  const digest = inputsDigest([JSON.stringify(base), JSON.stringify(pins), userData, provision, pythonLock, diskSize, engineLock, engineBuild, browserBuild]);
 
   await mkdir(paths.imagesDir, { recursive: true });
   let version: string;
@@ -130,7 +131,7 @@ export async function buildGoldenImage(options: GoldenBuildOptions): Promise<Gol
   try {
     return await buildLocked(
       { ...options, log, paths, base, pins, diskSize, now, lock },
-      { version, image, manifest, digest, userData, provision, pythonLock, python, engineLock, engineBuild },
+      { version, image, manifest, digest, userData, provision, pythonLock, python, engineLock, engineBuild, browserBuild },
     );
   } finally {
     await lock.release();
@@ -159,6 +160,7 @@ interface Target {
   python: PythonLock;
   engineLock: Buffer;
   engineBuild: Buffer;
+  browserBuild: Buffer;
 }
 
 async function buildLocked(options: GoldenBuildOptions & Resolved, target: Target): Promise<GoldenBuildResult> {
@@ -207,6 +209,7 @@ async function buildLocked(options: GoldenBuildOptions & Resolved, target: Targe
         uvTarball,
         engineLock: target.engineLock,
         engineBuild: target.engineBuild,
+        browserBuild: target.browserBuild,
       }),
       { volumeId: SEED_VOLUME_ID, timestamp: options.now() },
     );

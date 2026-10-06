@@ -223,6 +223,19 @@ export class InvisibleDotsClient {
     await this.#json("DELETE", `/api/dots/${enc(idOrName)}/browser-identities/${enc(identityId)}`);
   }
 
+  /** JPEG bytes of an open identity's window (409 `not_open` when it is closed, 503 `busy` while a call holds it). */
+  async getIdentityFrame(idOrName: string, identityId: string): Promise<Uint8Array<ArrayBuffer>> {
+    const response = await this.#send("GET", `/api/dots/${enc(idOrName)}/browser-identities/${enc(identityId)}/frame`, {
+      accept: "image/jpeg",
+    });
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  /** End an identity's browser and keep its profile. Closing a closed identity is not an error. */
+  async closeIdentity(idOrName: string, identityId: string): Promise<void> {
+    await this.#json("POST", `/api/dots/${enc(idOrName)}/browser-identities/${enc(identityId)}/close`);
+  }
+
   // Approvals
 
   async listApprovals(status?: ApprovalStatus): Promise<ApprovalRecord[]> {

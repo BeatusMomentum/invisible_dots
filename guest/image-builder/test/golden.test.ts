@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { hostPaths, type HostPaths } from "@invisible-dots/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { BUILDER_ENGINE_BUILD, BUILDER_ENGINE_LOCK, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_USER_DATA, defaultAssetRoot } from "../src/assets.js";
+import { BUILDER_BROWSER_BUILD, BUILDER_ENGINE_BUILD, BUILDER_ENGINE_LOCK, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_USER_DATA, defaultAssetRoot } from "../src/assets.js";
 import { buildGoldenImage, GOLDEN_DEFAULTS, GoldenBuildError, type GoldenBuildOptions } from "../src/golden.js";
 import { readManifest, verifyImage, type GoldenManifest } from "../src/manifest.js";
 import type { BaseImagePin, GuestPins } from "../src/pins.js";
@@ -170,7 +170,7 @@ describe("buildGoldenImage", () => {
   /** A copy of the guest files the digest reads, for a test that changes one of them. */
   async function assetCopy(): Promise<string> {
     const assetRoot = join(home, "assets");
-    for (const relative of [BUILDER_USER_DATA, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_ENGINE_LOCK, BUILDER_ENGINE_BUILD]) {
+    for (const relative of [BUILDER_USER_DATA, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_ENGINE_LOCK, BUILDER_ENGINE_BUILD, BUILDER_BROWSER_BUILD]) {
       await mkdir(join(assetRoot, dirname(relative)), { recursive: true });
       await copyFile(join(defaultAssetRoot(), relative), join(assetRoot, relative));
     }
@@ -196,6 +196,17 @@ describe("buildGoldenImage", () => {
     const first = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }).opts);
     const assetRoot = await assetCopy();
     const scriptPath = join(assetRoot, BUILDER_ENGINE_BUILD);
+    await writeFile(scriptPath, `${await readFile(scriptPath, "utf8")}# changed\n`);
+
+    const second = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }, { assetRoot }).opts);
+    expect(second.created).toBe(true);
+    expect(second.version).not.toBe(first.version);
+  });
+
+  it("builds a new version when only the script that builds the browser changes", async () => {
+    const first = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }).opts);
+    const assetRoot = await assetCopy();
+    const scriptPath = join(assetRoot, BUILDER_BROWSER_BUILD);
     await writeFile(scriptPath, `${await readFile(scriptPath, "utf8")}# changed\n`);
 
     const second = await buildGoldenImage(options({ console: OK_CONSOLE, exit: 0 }, { assetRoot }).opts);

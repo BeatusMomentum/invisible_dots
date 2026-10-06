@@ -102,7 +102,8 @@ invisible_engine_dots/
                    every other command). What it carries: nanobot's tool-calling turn runner,
                    chat completions to OpenRouter and no other provider, the tools of the
                    permission table (section 8.8), nanobot's cron service and its MCP client
-                   (no server is configured). The Dot's own layer, the contract of sections 5.3
+                   (which serves only the Dot's browsers, `invisible-playwright-mcp`, through
+                   the `BrowserManager`). The Dot's own layer, the contract of sections 5.3
                    to 5.4, is `nanobot/dots/`. Its own pytest suite runs in CI's `engine` job
                    (`.github/workflows/tests.yml`, Linux only: unix sockets)
 virtualization/
@@ -439,11 +440,12 @@ too, and listen on port 1024 in its place; a process that does so receives what
 the host sends there, the key included. Closing that needs dot-agentd under a
 user of its own.
 
-There is no long-running browser service. The agent starts one
-`invisible-playwright-mcp` process per launched browser identity (section 6),
-with an allowlist of its own environment (`allowlistedEnvironment()`, the same
-filter as QEMU's on the host) plus the variables of section 6. The engine of
-section 8.8 does not start browsers yet.
+There is no long-running browser service. The engine's `BrowserManager`
+starts one `invisible-playwright-mcp` process per launched browser identity
+(section 6), through `dot-agentd relay`, so the process runs as `dot` and not
+as `dotengine`: its environment is the one the relay builds for `dot` (none of
+the engine's variables, never the OpenRouter key) plus the variables of
+section 6. The engine closes them with the rest of its work (section 8.8).
 
 `dot` may run exactly one command as root, `/usr/bin/systemctl poweroff`
 without a password, which is what dot-agentd starts when the host stops the
@@ -470,7 +472,6 @@ because cloud-init adds no group to a user that exists already.
   browsers/<identity_id>/
     profile/                        the browser profile
     mcp/                            INVISIBLE_MCP_HOME for that identity's server
-    metadata.json                   id, name, createdAt, lastUsedAt, status, proxy (optional)
 /run/invisible-dots/                dot:dotengine 2750
   agentd.sock                       dot-agentd's local API for the engine (dot:dotengine 0660)
 /run/invisible-dots-agent/          dotengine:dot 2750
@@ -601,8 +602,8 @@ It runs the program as `dot`, without a shell, in its own process group, on a
 pseudo-terminal when asked (a new session whose controlling terminal it is).
 The process lives exactly as long as the connection: a caller that goes away
 takes the whole group with it. Its client is `dot-agentd relay [--socket P]
-[--cwd DIR] [--tty] [--env NAME=VALUE]... -- PROGRAM [ARGS...]`, which copies
-its own standard input and output through and exits with the program's code
+[--cwd DIR] [--tty] [--env NAME=VALUE]... [--env-from NAME]... -- PROGRAM
+[ARGS...]`, which copies its own standard input and output through and exits with the program's code
 (128 plus the signal number when a signal ended it); with `--tty` and a
 terminal on its input it puts that terminal in raw mode and forwards its size
 changes. The engine runs the model's every command through it, and reads and
@@ -629,17 +630,33 @@ command detached into another session outlives it.
 
 | method and path | body | answer |
 |---|---|---|
-| `GET /health` | | `{ status: "ok"\|"starting", state: AgentState, openrouter_configured: bool, browser: { identities: n, open: n } }` |
+| `GET /health` | | `{ status: "ok"\|"starting", state: AgentState, openrouter_configured: bool, browser: { identities: n, open: n }, checks }`; `identities` is the number of rows and `open` the number of identities with a live browser |
 | `POST /secrets` | `{ openrouter_api_key }` | `204` |
 | `PUT /config` | `DotRuntimeConfig` (section 7) | `204`, validated, persisted in the engine's database (`dots_kv`) and projected onto the engine's settings in process (section 8.8); a config that does not validate is `400 invalid_config` |
 | `POST /events` | `InboundEvent` | `202 { accepted: true }` |
 | `GET /events/stream` | `?after=<seq>` | `text/event-stream`, one SSE message per outbound event, `id: <seq>` |
 | `GET /state` | | `{ state, current_task_id, pending_approval }` |
-| `GET /browser-identities` | | `{ identities: BrowserIdentity[] }` (the engine: always empty, it has no browser yet) |
-| `POST /browser-identities` | `{ name, proxy? }` | `201 BrowserIdentity` (the engine: `501 not_implemented`) |
-| `GET /browser-identities/:id` | | `BrowserIdentity` (the engine: `404`) |
-| `DELETE /browser-identities/:id` | | `204` (the engine: `501 not_implemented`) |
+| `GET /browser-identities` | | `{ identities: BrowserIdentity[] }`, oldest first, the proxy with its password replaced |
+| `POST /browser-identities` | `{ name, proxy? }` | `201 BrowserIdentity`; `400 invalid` (name or proxy), `409 limit` (`max_identities`) |
+| `GET /browser-identities/:id` | | `BrowserIdentity`; `404 not_found` |
+| `DELETE /browser-identities/:id` | | `204` after the identity's browser is closed and its directory removed; `404 not_found` |
+| `GET /browser-identities/:id/frame` | | `200 image/jpeg` (`Cache-Control: no-store`), one frame of the identity's window, taken with the server's `browser_watch`; `404 not_found`; `409 not_open` when the identity is closed; `503 busy` when a call of the Dot held the identity for longer than 5 seconds; `502 frame_failed` (the server has no page to show) or `crashed` |
+| `POST /browser-identities/:id/close` | | `204` after the identity's browser is closed through `browser_close` and its server has ended; the profile stays. Closing a closed identity is a `204` too; `404 not_found` |
 | `POST /prepare-sleep` | | `204` after the state is flushed and browser sessions are closed; the agent then starts no new work. A model request in flight is abandoned; a tool in flight gets up to 20 seconds to finish and record its result, then is aborted (section 8.7). A `POST /secrets` (the READY procedure of a VM whose stop failed, so no shutdown followed) lifts that, and so does a new inbound event |
+
+The identity routes and the model's identity tools are one code path, the
+`BrowserManager` (section 6), so its limits hold for both. A route answers an
+error as `{ error: <code>, message }` with the status of its code: `invalid`
+400, `not_found` 404, `limit` and `not_open` 409, `busy` 503, `launch_failed`,
+`crashed` and `frame_failed` 502. The engine has no route that launches an
+identity: only the model's tools open a browser, so `browser.identity.launch`
+alone decides whether one starts. The host may look at an open identity (the
+frame) and close it (or delete it); these are the owner's actions, not the Dot's, so
+no permission of the Dot applies to them. A frame is no use of the identity: it does
+not move it in the least-recently-used order, does not touch `last_used_at`,
+and never reopens a browser the server lost (that is `not_open`); it waits for
+the call in flight on the identity at most 5 seconds, so a page that asks for a
+frame every two seconds cannot hold a browser open or starve the model.
 
 Outbound events are written to an outbox table in the Dot's database before
 they are streamed, with a monotonically increasing `seq`. The host stores the
@@ -780,7 +797,13 @@ The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
   process that is gone. The proxy is stored as given, password included, in
   the engine's database (`dotengine`'s state directory, 0700, which the model
   cannot read); everything shown to a model, a person, an event or a log has
-  the password replaced.
+  the password replaced. The browser's own process is the one exception, by
+  decision: it runs as `dot` with the proxy in its environment, so the `dot`
+  user, and the model through `exec`, can read the proxy of an identity whose
+  browser is open from that process's `/proc/<pid>/environ`. The proxy is never
+  on a command line, which every user of the VM can read: the engine tells the
+  relay the variable's name (`--env-from`) and the relay reads the value from
+  its own environment, which only `dotengine` can read.
 - The fingerprint seed of an identity is stored by the browser layer in the
   profile itself (`profile/.stealth-identity.json`). invisible_dots never stores
   or passes a seed: the first launch of a profile picks one and every later
@@ -802,8 +825,37 @@ The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
 - At most `browser.identities.max_open` identities are open at once (default
   3, roughly 0.8 GB of memory each). Launching one more closes the least
   recently used. At most `browser.identities.max_identities` exist.
-- Closing a session stops the process; the profile stays on disk. Deleting an
-  identity removes its directory.
+- Launching is explicit. A browser action on an identity that is not open does
+  not launch it: it fails with "identity <id> is not open; call
+  browser_identity_launch first". Each permission therefore decides only its own
+  action, and `browser.identity.launch: deny` cannot be got round by navigating.
+  The first launch of a machine can take minutes while the engine downloads the
+  browser; the launch asks again (2 s doubling to 30 s) for up to 15 minutes.
+  A launch waits only for its own browser: a config change, a close, a delete or
+  a create of another identity does not wait for it, and neither does the
+  answer of `PUT /config`, which closes the browsers beyond a lower `max_open`
+  (least recently used first) after it has answered. A close, a delete or a
+  launch of an identity that is still opening waits for that launch to finish.
+- Closing a session asks the browser to close first (up to 30 s, so Firefox
+  flushes its profile), then stops the process; the profile stays on disk.
+  Deleting an identity closes it and removes its directory. The engine closes
+  every open browser on prepare-sleep and on SIGTERM.
+- The only browser of a Dot is `invisible-playwright-mcp`: no tool of the
+  engine browses any other way, and the engine and the image carry no other
+  browser, browser library, or web fetch or search tool.
+- Screenshots. `browser_screenshot` and `computer_screenshot` return an image
+  the model looks at. The transcript, the outbox and the events never hold its
+  bytes: the tool's stored result is its text and `[screenshot, 1280x720, not
+  stored]`, and the engine adds the newest three images of a turn to each model
+  request in one user message after the last tool message. A later turn
+  replays the placeholder; the model takes another screenshot when it wants one.
+- Secrets in the arguments. The proxy password has no place in anything shown:
+  `approval.requested` carries `browser_identity_create`'s proxy with the
+  password replaced (the parked call keeps the real one, so the approved call
+  runs as asked), and no `target` of `tool.called` holds typed text. The
+  `text` of `browser_type` stays in the arguments of an approval when
+  `browser.act` is set to `ask`: whether a field is a password cannot be known
+  from the arguments, so a person approving typing sees what is typed.
 
 ## 7. Dot configuration
 
@@ -946,34 +998,33 @@ does not know.
 | `memory_search` | `memory.read` | keyword search over the memory notes (offered only when `memory.enabled`) |
 | `memory_get` | `memory.read` | reads one memory note (offered only when `memory.enabled`) |
 | `cron` | `automations` | adds, lists and removes the Dot's own scheduled automations |
+| `computer_screenshot` | `computer.screenshot` | takes a screenshot of the Dot's whole desktop and shows it to the model (no arguments) |
+| `browser_identity_list` | `browser.identity.list` | lists the browser identities with their status (open or available), their proxy with its password replaced, and the two limits |
+| `browser_identity_create` | `browser.identity.create` | makes an identity, closed: `name`, `proxy?` (offered only when `managed_by_dot`) |
+| `browser_identity_delete` | `browser.identity.delete` | closes an identity and deletes it with its profile: `identity_id` (offered only when `managed_by_dot`) |
+| `browser_identity_launch` | `browser.identity.launch` | opens the browser of an identity, closing the least recently used one at `max_open`: `identity_id` |
+| `browser_identity_close` | `browser.identity.close` | closes the browser of an identity, keeping its profile: `identity_id` |
+| `browser_navigate` | `browser.navigate` | loads an `http://` or `https://` URL and no other (`file:`, `about:`, `view-source:`, `data:` and `javascript:` are refused, so the permission to navigate is not a permission to read files): `identity_id, url` |
+| `browser_snapshot` | `browser.read` | lists the interactive elements of the page with selectors and coordinates: `identity_id` |
+| `browser_read_text` | `browser.read` | reads the text of the page or of one element: `identity_id, selector?` |
+| `browser_screenshot` | `browser.read` | takes a screenshot of the page and shows it to the model: `identity_id` |
+| `browser_click` | `browser.act` | clicks the element a selector names: `identity_id, selector` |
+| `browser_click_at` | `browser.act` | clicks a point of the viewport: `identity_id, x, y` |
+| `browser_type` | `browser.act` | fills a field, replacing what it held: `identity_id, selector, text` |
+| `browser_press_key` | `browser.act` | presses a key or a shortcut: `identity_id, key` |
+| `browser_select_option` | `browser.act` | chooses an option of a select element by value: `identity_id, selector, value` |
+| `browser_scroll` | `browser.act` | scrolls one screen: `identity_id, direction` (`up` is PageUp, `down` is PageDown) |
+| `browser_back` | `browser.act` | goes back in the history (Alt+Left): `identity_id` |
+| `browser_forward` | `browser.act` | goes forward in the history (Alt+Right): `identity_id` |
+| `browser_reload` | `browser.act` | reloads the page (F5): `identity_id` |
 
-Planned for the browser phase, which the engine does not carry yet (section
-8.8): the screenshot of the Dot's desktop and the browser identity tools. They
-take the permissions below and an `identity_id`, and the model never sees the
-MCP server's own tool names.
-
-| tool | permission | arguments |
-|---|---|---|
-| `computer_screenshot` | `computer.screenshot` | none (the image is sent to the model) |
-| `browser_identity_list` | `browser.identity.list` | none |
-| `browser_identity_create` | `browser.identity.create` | `name, proxy?` |
-| `browser_identity_delete` | `browser.identity.delete` | `identity_id` |
-| `browser_identity_launch` | `browser.identity.launch` | `identity_id` |
-| `browser_identity_close` | `browser.identity.close` | `identity_id` |
-| `browser_navigate` | `browser.navigate` | `identity_id, url` |
-| `browser_snapshot` | `browser.read` | `identity_id` |
-| `browser_read_text` | `browser.read` | `identity_id, selector?` |
-| `browser_click` | `browser.act` | `identity_id, selector` |
-| `browser_click_at` | `browser.act` | `identity_id, x, y` |
-| `browser_type` | `browser.act` | `identity_id, selector, text` |
-| `browser_press_key` | `browser.act` | `identity_id, key` |
-| `browser_scroll` | `browser.act` | `identity_id, direction: "up"\|"down"` (PageUp / PageDown) |
-| `browser_back` / `browser_forward` / `browser_reload` | `browser.act` | `identity_id` (Alt+Left, Alt+Right, F5) |
-| `browser_screenshot` | `browser.read` | `identity_id` (the image is sent to the model) |
-
-Browser actions on an identity that is not open launch it first. When
-`managed_by_dot` is false, the `browser_identity_create` and
-`browser_identity_delete` tools are not offered at all.
+The browser tools are served by the `BrowserManager` and so by
+`invisible-playwright-mcp`, the only browser of a Dot; each takes an
+`identity_id`, and the model never sees the MCP server's own tool names. A
+browser action on an identity that is not open does not launch it, it says so
+(section 6). When `managed_by_dot` is false, `browser_identity_create` and
+`browser_identity_delete` are not offered at all. A screenshot is shown to the
+model and not stored (section 6).
 
 The tool calls of one response run one at a time, in the order the model
 gave them. Only the response's `tool_calls` count: a call written in the
@@ -1070,13 +1121,16 @@ starts it again. What it guarantees:
   without its result, which the provider would refuse on every later turn.
 - Stopping: `POST /prepare-sleep` and SIGTERM abandon a model request in
   flight and give a tool in flight up to 20 seconds to finish and commit its
-  result, which leaves 10 of systemd's `TimeoutStopSec=30` to checkpoint the
-  database. A tool cut at the grace keeps its intent, and the next entry of its
-  unit reports it as interrupted. Measured in the engine smoke, with a task's
-  `sleep 70` still running at SIGTERM and the event stream connected: the
+  result, then close the open browsers: at most 4 s on SIGTERM, which leaves about
+  6 of systemd's `TimeoutStopSec=30` to checkpoint the database, and up to a
+  browser's own 30 s close on prepare-sleep, which only the host's 60 s bound (20 s
+  grace, 5 s cancel wait and 30 s stay inside it). A tool cut at
+  the grace keeps its intent, and the next entry of its unit reports it as
+  interrupted. Measured in the engine smoke before the browsers existed, with a
+  task's `sleep 70` still running at SIGTERM and the event stream connected: the
   process exited 20.4 s after the signal, 9.6 s inside the limit (the 20 s
-  grace, then the checkpoint, the exec sessions, the MCP client and aiohttp's
-  cleanup in 0.4 s).
+  grace, then the checkpoint, the exec sessions and aiohttp's cleanup in
+  0.4 s); with no browser open the close takes no time.
 - A task that was running when the engine stopped is started again with a note
   that the previous attempt was interrupted, and fails once it has been started
   three times (`stopped: the task was interrupted 3 times`). A start the engine
@@ -1239,9 +1293,13 @@ state.
   the tools a Dot may use, the permission each exercises and how to build it;
   the registry holds exactly those, and each turn works on a view of it that
   holds the offered ones, so a denied tool is not even seen, and the gate
-  decides every call by the same table. nanobot's MCP client is wired in with
-  no server configured; the tools of a server would register on the registry
-  and still be neither offered nor allowed until the table names them.
+  decides every call by the same table. The table also says which arguments
+  of a call an `approval.requested` may carry (all of them, but for the proxy
+  password of `browser_identity_create`) and which tools exist only while the
+  Dot manages its browser identities itself (`browser.identities.managed_by_dot`).
+  The engine has no MCP server of its own to configure: the one server it runs
+  is `invisible-playwright-mcp`, and only through the `BrowserManager`, on a
+  registry no turn sees.
 - Browser identities. `BrowserManager` (`nanobot/dots/browser.py`) owns the
   identities (their rows in `dots_browser_identities`, their directories under
   `/home/dot/browsers`, made and removed as dot through the Computer) and one
@@ -1255,9 +1313,28 @@ state.
   lives is opened again once and the call repeated; a process that ended (the
   client reports it instead of reconnecting, because a restarted process has
   lost its browser) is a crash: the identity is closed, `browser.identity.closed`
-  is emitted once and the call fails with `crashed`. A close calls
+  is emitted once and the call fails with `crashed`. The manager hears of the end
+  when it happens, from the client's transport, so a process that dies while idle
+  is closed at once, frees its slot of `max_open`, and the next action says
+  `not_open`; a file never claims an open browser for a process that is gone. Text
+  a page tool returns, and its errors, have the proxy in its redacted form. A close calls
   `browser_close` first, so Firefox flushes its profile, then ends the process.
   Every `browser.identity.*` event commits with the row change it describes.
+  The model's identity and page tools (`browser_tools.py`) and the routes of
+  section 5.3 are the callers; a config that arrives applies `max_open` and
+  `max_identities` to the manager at once (a lower `max_open` closes the excess
+  open browsers, least recently used first), and the manager starts with the
+  host schema's defaults (3 and 20) until it does. A page tool names the one
+  tool of the MCP server it calls (`PAGE_TOOLS`) and the manager adds
+  `browser: "main"` to every call.
+- Images. A tool's image is shown to the model and kept out of the stored
+  transcript (`images.py`): the tool message holds its text and
+  `[screenshot, WxH, not stored]`, the images of the turn go to a per-turn
+  buffer that keeps the newest three, and the runner asks that buffer for the
+  messages of each model request, which adds them in one user message after
+  the last tool message. That message is made for the request and never stored.
+  nanobot's MCP client returns the image blocks of a server only when it is
+  made for them (the browser's is), and every other caller still gets text.
 - Approvals. `ask` inside a turn stores the call with its full arguments in
   `dots_approvals` (`pending`), emits `approval.requested` and records the
   decision `park`, in one transaction; the model gets a result saying the call
@@ -1291,6 +1368,10 @@ state.
   seconds, in which the tool's result commits and the next iteration abandons
   the turn, and is cancelled at the deadline (its intent stays, and the next
   start reports it interrupted); the attempt of a cut task is given back; the
+  open browsers are closed (up to 4 seconds in all on SIGTERM and up to 30 on
+  prepare-sleep, with no turn left to call one; a close that outlasts the wait
+  keeps running as its own task, and a browser still open when the process
+  exits is ended with it); the
   WAL is checkpointed. The API (`server.py`) answers the host's `prepare-sleep`
   to its end even when the host hangs up.
 - Removed from nanobot (everything since the import is in
@@ -1300,9 +1381,6 @@ state.
   SSRF guard), subagents, skills, the web tools, image and document reading,
   the usage telemetry, the configuration files and every provider but
   OpenRouter.
-- Not yet: the browser identities in the engine's API and tools (`GET` lists
-  none, `POST` and `DELETE` answer `501`; `BrowserManager` exists and is tested
-  but nothing calls it) and the screenshot tool.
 
 ## 9. Control plane
 
@@ -1480,6 +1558,8 @@ GET    /api/dots/:id/browser-identities
 POST   /api/dots/:id/browser-identities
 GET    /api/dots/:id/browser-identities/:identityId
 DELETE /api/dots/:id/browser-identities/:identityId
+GET    /api/dots/:id/browser-identities/:identityId/frame     image/jpeg, only while the identity is open (409 not_open, 503 busy, 502 frame_failed or crashed: the engine's own answers pass through)
+POST   /api/dots/:id/browser-identities/:identityId/close     204; the browser ends, the profile stays
 
 GET    /api/approvals                ?status=pending|approved|rejected|expired
 POST   /api/approvals/:id/approve    body: { note? }

@@ -13,6 +13,8 @@ export const SEED_PYTHON_LOCK = "mcp-requirements.lock";
 /** The engine's lock and the script that builds its Python environment from it, on the builder seed. */
 export const SEED_ENGINE_LOCK = "engine-requirements.lock";
 export const SEED_ENGINE_BUILD = "build-engine-env.sh";
+/** The script that builds the Dot's browser from the MCP lock, on the builder seed. */
+export const SEED_BROWSER_BUILD = "build-browser-env.sh";
 
 export interface BuilderSeedInput {
   version: string;
@@ -28,6 +30,8 @@ export interface BuilderSeedInput {
   /** builder/engine-requirements.lock and builder/build-engine-env.sh, as read. */
   engineLock: Uint8Array;
   engineBuild: Uint8Array;
+  /** builder/build-browser-env.sh, as read. */
+  browserBuild: Uint8Array;
 }
 
 /**
@@ -47,6 +51,7 @@ export function pinsEnv(pins: GuestPins, python: PythonLock): string {
     ["PYTHON_LOCK", SEED_PYTHON_LOCK],
     ["ENGINE_LOCK", SEED_ENGINE_LOCK],
     ["ENGINE_BUILD", SEED_ENGINE_BUILD],
+    ["BROWSER_BUILD", SEED_BROWSER_BUILD],
     ["APT_PACKAGES", pins.apt_packages.join(" ")],
   ];
   return values
@@ -73,5 +78,6 @@ export function builderSeedEntries(input: BuilderSeedInput): IsoEntry[] {
     { path: downloadFileName(input.pins.uv), file: input.uvTarball },
     { path: SEED_ENGINE_LOCK, data: input.engineLock },
     { path: SEED_ENGINE_BUILD, data: input.engineBuild },
+    { path: SEED_BROWSER_BUILD, data: input.browserBuild },
   ];
 }

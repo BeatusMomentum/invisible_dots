@@ -33,7 +33,7 @@ def calls(*tool_calls: ToolCallRequest, text: str | None = None, cost: float | N
     return LLMResponse(content=text, tool_calls=list(tool_calls), finish_reason="tool_calls", cost_usd=cost)
 
 
-def call(call_id: str, name: str, **arguments: Any) -> ToolCallRequest:
+def call(call_id: str, name: str, /, **arguments: Any) -> ToolCallRequest:
     return ToolCallRequest(id=call_id, name=name, arguments=arguments)
 
 

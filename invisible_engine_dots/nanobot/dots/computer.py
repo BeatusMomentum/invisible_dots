@@ -6,6 +6,7 @@ import asyncio
 import os
 import posixpath
 import signal
+from collections.abc import Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import Protocol
@@ -100,6 +101,10 @@ class Computer(Protocol):
         """Run a program with argv directly (no shell)."""
         ...
 
+    async def screenshot(self) -> bytes:
+        """The Dot's whole desktop as a PNG."""
+        ...
+
     def relay_argv(
         self,
         argv: list[str],
@@ -107,17 +112,27 @@ class Computer(Protocol):
         cwd: str | None = None,
         tty: bool = False,
         env: dict[str, str] | None = None,
+        secrets: Mapping[str, str] | None = None,
     ) -> list[str]:
         """Wrap argv in dot-agentd relay command.
 
         env is added to the program's environment inside the VM (dot-agentd's
         --env), in the order given. It is not the environment of the relay
         process itself, which spawn_env decides.
+
+        secrets are added to it too, but their values never reach the command
+        line, which every user of the VM can read in /proc: only the names do
+        (--env-from), and the relay reads each value from its own environment,
+        which only its owner can read. The caller hands the same mapping to
+        spawn_env.
         """
         ...
 
-    def spawn_env(self, *, tty: bool = False) -> dict[str, str]:
-        """Environment passed to local subprocesses spawning the relay."""
+    def spawn_env(self, *, tty: bool = False, secrets: Mapping[str, str] | None = None) -> dict[str, str]:
+        """Environment passed to local subprocesses spawning the relay.
+
+        secrets are the values the relay forwards by name (relay_argv's secrets).
+        """
         ...
 
 
@@ -183,6 +198,7 @@ class AgentdComputer:
         cwd: str | None = None,
         tty: bool = False,
         env: dict[str, str] | None = None,
+        secrets: Mapping[str, str] | None = None,
     ) -> list[str]:
         cmd = [self.agentd_bin, "relay", "--socket", self.agentd_socket]
         if tty:
@@ -191,14 +207,17 @@ class AgentdComputer:
             cmd.extend(["--cwd", cwd])
         for name, value in (env or {}).items():
             cmd.extend(["--env", f"{name}={value}"])
+        for name in secrets or {}:
+            cmd.extend(["--env-from", name])
         cmd.append("--")
         cmd.extend(argv)
         return cmd
 
-    def spawn_env(self, *, tty: bool = False) -> dict[str, str]:
+    def spawn_env(self, *, tty: bool = False, secrets: Mapping[str, str] | None = None) -> dict[str, str]:
         env = {"PATH": RELAY_PATH}
         if tty:
             env["TERM"] = os.environ.get("TERM", "xterm-256color")
+        env.update(secrets or {})
         return env
 
     async def read_bytes(self, path: str, *, max_bytes: int | None = None) -> bytes | None:
@@ -272,6 +291,12 @@ class AgentdComputer:
             if e.name == base:
                 return e
         return None
+
+    async def screenshot(self) -> bytes:
+        resp = await self._get_client().get("/v1/screenshot")
+        if 200 <= resp.status_code < 300:
+            return resp.content
+        raise ComputerError("GET /v1/screenshot", resp.status_code)
 
     async def run(
         self,

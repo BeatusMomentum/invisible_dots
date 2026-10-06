@@ -100,6 +100,10 @@ export class FakeGuest implements GuestApi {
   readonly calls: string[] = [];
   pendingApproval: { approval_id: string; task_id?: string } | null = null;
   onInbound: InboundHandler = completeEverything;
+  /** While set, a frame of an open identity answers 503 `busy`, as when a call of the Dot holds the browser. */
+  identityBusy = false;
+  /** While set, a frame of an open identity answers 502 with this code, as when the engine's browser fails. */
+  identityFault: "frame_failed" | "crashed" | "launch_failed" | null = null;
   /** When set, `postEvent` fails with it once. */
   failNextPost: Error | null = null;
   boots = 0;
@@ -146,6 +150,18 @@ export class FakeGuest implements GuestApi {
 
   #wake(): void {
     for (const w of [...this.#wakers]) w();
+  }
+
+  #openIdentities(): BrowserIdentity[] {
+    return [...this.identities.values()].filter((identity) => identity.status === "open");
+  }
+
+  /** The Dot opens an identity's browser (the engine does it for a tool call; the host only observes it). */
+  launchIdentity(id: string): void {
+    const identity = this.identities.get(id);
+    if (!identity) throw new Error(`no identity ${id}`);
+    this.identities.set(id, { ...identity, status: "open", lastUsedAt: new Date().toISOString() });
+    this.emit("browser.identity.launched", { identity_id: id, name: identity.name });
   }
 
   #reachable(what: string): void {
@@ -214,7 +230,7 @@ export class FakeGuest implements GuestApi {
         status: "ok",
         state: this.agentState,
         openrouter_configured: this.openrouterKey !== null,
-        browser: { identities: this.identities.size, open: 0 },
+        browser: { identities: this.identities.size, open: this.#openIdentities().length },
         checks: { ...this.checks },
       },
       uptime_s: uptime,
@@ -306,6 +322,28 @@ export class FakeGuest implements GuestApi {
     if (!identity) throw new FakeGuestError(404, `identity ${id} not found`, "not_found");
     this.identities.delete(id);
     this.emit("browser.identity.deleted", { identity_id: id, name: identity.name });
+  }
+
+  async getBrowserIdentityFrame(id: string): Promise<Uint8Array> {
+    this.#reachable("getBrowserIdentityFrame");
+    const identity = this.identities.get(id);
+    if (!identity) throw new FakeGuestError(404, `no browser identity "${id}"`, "not_found");
+    if (identity.status !== "open") {
+      throw new FakeGuestError(409, `identity ${id} is not open; call browser_identity_launch first`, "not_open");
+    }
+    if (this.identityBusy) throw new FakeGuestError(503, `browser identity "${id}" is busy with a call; ask again in a moment`, "busy");
+    if (this.identityFault) throw new FakeGuestError(502, `browser identity "${id}" failed: ${this.identityFault}`, this.identityFault);
+    // The JPEG markers of an empty image: enough for a content check.
+    return Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]);
+  }
+
+  async closeBrowserIdentity(id: string): Promise<void> {
+    this.#reachable("closeBrowserIdentity");
+    const identity = this.identities.get(id);
+    if (!identity) throw new FakeGuestError(404, `no browser identity "${id}"`, "not_found");
+    if (identity.status !== "open") return;
+    this.identities.set(id, { ...identity, status: "available" });
+    this.emit("browser.identity.closed", { identity_id: id, name: identity.name });
   }
 
   async prepareSleep(): Promise<void> {

@@ -35,6 +35,10 @@ export interface GuestApi {
   createBrowserIdentity(body: CreateBrowserIdentityRequest): Promise<BrowserIdentity>;
   getBrowserIdentity(id: string): Promise<BrowserIdentity>;
   deleteBrowserIdentity(id: string): Promise<void>;
+  /** The JPEG of an open identity's window; 409 `not_open` when it is closed, 503 `busy` while a call holds it. */
+  getBrowserIdentityFrame(id: string): Promise<Uint8Array>;
+  /** End the identity's browser and keep its profile; closing a closed identity is not an error. */
+  closeBrowserIdentity(id: string): Promise<void>;
   prepareSleep(timeoutMs?: number): Promise<void>;
   screenshot(): Promise<Uint8Array>;
   /**

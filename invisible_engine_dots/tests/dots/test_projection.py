@@ -89,6 +89,18 @@ def test_the_memory_tools_are_offered_only_while_memory_is_enabled(config_body: 
     assert "read_file" in disabled.offered_tools
 
 
+def test_the_tools_that_make_and_delete_identities_follow_managed_by_dot(
+    config_body: Callable[..., dict[str, Any]],
+) -> None:
+    permissions = {"browser.identity.create": "allow", "browser.identity.delete": "ask", "browser.identity.launch": "allow"}
+    managed = settings(parse_runtime_config(config_body(permissions=permissions)))
+    assert managed.offered_tools == ("browser_identity_create", "browser_identity_delete", "browser_identity_launch")
+
+    identities = {"managed_by_dot": False, "max_identities": 20, "max_open": 3}
+    unmanaged = settings(parse_runtime_config(config_body(permissions=permissions, browser={"identities": identities})))
+    assert unmanaged.offered_tools == ("browser_identity_launch",)
+
+
 def test_offers_nothing_outside_the_permission_table(make_config: Callable[..., DotRuntimeConfig]) -> None:
     everything = {permission: "allow" for permission in {e.permission for e in TOOL_PERMISSIONS.values()}}
     assert set(settings(make_config(everything)).offered_tools) == set(TOOL_PERMISSIONS)

@@ -25,6 +25,8 @@ export const BUILDER_PYTHON_LOCK = "builder/mcp-requirements.lock";
 export const BUILDER_ENGINE_LOCK = "builder/engine-requirements.lock";
 /** Builds the engine's Python environment inside the builder VM; the same script builds it in a Linux container. */
 export const BUILDER_ENGINE_BUILD = "builder/build-engine-env.sh";
+/** Builds the Dot's browser (the MCP server's environment, the engine, the GeoIP file) inside the builder VM; the browser smoke runs the same script. */
+export const BUILDER_BROWSER_BUILD = "builder/build-browser-env.sh";
 export const RUNTIME_INSTALL = "runtime/install.sh";
 export const RUNTIME_DESKTOP = "runtime/dot-desktop.sh";
 /** The guest units, in the order install.sh enables them. */
@@ -35,7 +37,7 @@ export function unitAsset(name: (typeof GUEST_UNITS)[number]): string {
 }
 
 /** Every guest file, for checks that apply to all of them. */
-export const GUEST_ASSETS: readonly string[] = [BUILDER_USER_DATA, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_ENGINE_LOCK, BUILDER_ENGINE_BUILD, RUNTIME_INSTALL, RUNTIME_DESKTOP, ...GUEST_UNITS.map(unitAsset)];
+export const GUEST_ASSETS: readonly string[] = [BUILDER_USER_DATA, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_ENGINE_LOCK, BUILDER_ENGINE_BUILD, BUILDER_BROWSER_BUILD, RUNTIME_INSTALL, RUNTIME_DESKTOP, ...GUEST_UNITS.map(unitAsset)];
 
 /**
  * Reads a guest file and refuses one a Windows checkout turned into CRLF:

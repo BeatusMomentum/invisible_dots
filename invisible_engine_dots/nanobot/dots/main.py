@@ -20,8 +20,8 @@ from loguru import logger
 
 import nanobot
 from nanobot.agent.tools.exec_session import ExecSessionManager
-from nanobot.agent.tools.mcp import MCPProvider
 from nanobot.cron.service import CronService
+from nanobot.dots.browser import BrowserManager
 from nanobot.dots.checks import DEFAULT_BROWSER_COMMAND, DEFAULT_NETWORK_TARGET, create_guest_checks
 from nanobot.dots.computer import (
     DEFAULT_AGENTD_BIN,
@@ -43,6 +43,10 @@ DEFAULT_STATE_DIR = "/home/dotengine/state"
 UPSTREAM_COMMIT = "f75470e7"
 # How often work that waits is looked at again, in seconds.
 RETRY_INTERVAL_S = 5.0
+# The browser limits until the host pushes the config, which replaces them at once: the defaults of
+# the host's schema (`browser.identities` in packages/shared config.ts).
+DEFAULT_MAX_OPEN = 3
+DEFAULT_MAX_IDENTITIES = 20
 
 REFUSAL = "invisible-dots-engine runs only the Dot's engine; it takes no command (only --version)"
 
@@ -127,14 +131,20 @@ async def serve(environment: Environment, stop: asyncio.Event) -> None:
         computer = AgentdComputer(environment.agentd_bin, environment.agentd_socket, environment.workspace)
         exec_sessions = ExecSessionManager()
         cron = CronService(state_dir / "cron" / "jobs.json")
-        registry = build_registry(ToolDeps(computer, exec_sessions, cron))
-        # No MCP server is configured yet: its tools would register on the registry and still be
-        # neither offered nor allowed, because the permission table does not name them.
-        mcp = MCPProvider({}, registry)
+        # The Dot's one browser: invisible-playwright-mcp, one process per open identity, run as `dot`.
+        browser = BrowserManager(
+            store=store,
+            computer=computer,
+            mcp_command=environment.mcp_command,
+            max_open=DEFAULT_MAX_OPEN,
+            max_identities=DEFAULT_MAX_IDENTITIES,
+        )
+        registry = build_registry(ToolDeps(computer, exec_sessions, cron, browser))
         engine = Engine(
             store=store,
             computer=computer,
             base_registry=registry,
+            browser=browser,
             providers=OpenRouterProviders(),
             key_holder=key_holder,
             workspace=environment.workspace,
@@ -151,8 +161,8 @@ async def serve(environment: Environment, stop: asyncio.Event) -> None:
         await server.listen(environment.agent_socket)
         retry: asyncio.Task[None] | None = None
         try:
-            await mcp.connect()
             engine.start()
+            engine.apply_browser_limits()
             await cron.start()
             retry = asyncio.get_running_loop().create_task(_retry(engine))
             await stop.wait()
@@ -160,14 +170,13 @@ async def serve(environment: Environment, stop: asyncio.Event) -> None:
         finally:
             if retry is not None:
                 retry.cancel()
-            # Stop accepting, then close the streams, then stop the engine: nothing new is taken
-            # while the turns in flight end.
+            # Stop accepting, then close the streams, then stop the engine (which closes the open
+            # browsers once the turns in flight have ended): nothing new is taken meanwhile.
             await server.stop_accepting()
             server.close_streams()
             await engine.stop()
             cron.stop()
             await exec_sessions.close_all()
-            await mcp.aclose()
             await server.close()
             await computer.aclose()
     finally:

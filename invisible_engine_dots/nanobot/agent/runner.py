@@ -101,6 +101,10 @@ class AgentRunSpec:
     injection_callback: InjectionCallback | None = None
     provider_state: ProviderConversationState | None = None
     events: EventSink = NO_EVENTS
+    # Given the messages of a model request, returns the ones to send. For what the model must see
+    # and the transcript must not keep (a screenshot): the result is made for that request, never stored
+    # and never part of the history the next request starts from.
+    request_attachments: Callable[[list[dict[str, Any]]], list[dict[str, Any]]] | None = None
 
 
 @dataclass(slots=True)
@@ -695,7 +699,7 @@ class AgentRunner:
         tools: list[dict[str, Any]] | None,
     ) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
-            "messages": messages,
+            "messages": spec.request_attachments(messages) if spec.request_attachments else messages,
             "tools": tools,
             "model": spec.runtime.model,
         }

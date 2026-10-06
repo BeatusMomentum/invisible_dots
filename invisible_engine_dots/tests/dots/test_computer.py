@@ -85,6 +85,40 @@ def test_relay_argv_passes_env_as_repeated_env_flags_in_order() -> None:
     ]
 
 
+def test_relay_argv_names_a_secret_and_never_holds_its_value() -> None:
+    comp = AgentdComputer(agentd_bin="/x/agentd", agentd_socket="/s.sock")
+    secrets = {"PROXY": "http://user:hunter2@proxy.test:8080"}
+
+    argv = comp.relay_argv(["server"], env={"A": "1"}, secrets=secrets)
+
+    assert argv == [
+        "/x/agentd", "relay", "--socket", "/s.sock", "--env", "A=1", "--env-from", "PROXY", "--", "server",
+    ]
+    assert "hunter2" not in " ".join(argv)
+    assert comp.spawn_env(secrets=secrets) == {"PATH": RELAY_PATH, **secrets}
+    assert "--env-from" not in comp.relay_argv(["true"], secrets={})
+
+
+@pytest.mark.asyncio
+async def test_a_secret_reaches_the_program_through_the_relays_environment_and_not_its_command_line(
+    tmp_path: Path,
+) -> None:
+    computer, log = _computer_with_fake_relay(tmp_path)
+    secrets = {"PROXY": "http://user:hunter2@proxy.test:8080"}
+    argv = computer.relay_argv(
+        [sys.executable, "-c", "import os; print(os.environ['PROXY'])"], secrets=secrets
+    )
+    process = await asyncio.create_subprocess_exec(
+        *argv, env=computer.spawn_env(secrets=secrets), stdout=asyncio.subprocess.PIPE
+    )
+    out, _ = await process.communicate()
+
+    assert process.returncode == 0
+    assert out.decode().strip() == secrets["PROXY"]
+    (record,) = _relay_records(log)
+    assert record["env_from"] == ["PROXY"] and "hunter2" not in json.dumps(record)
+
+
 def test_relay_argv_without_env_has_no_env_flag() -> None:
     comp = AgentdComputer()
     assert "--env" not in comp.relay_argv(["true"])

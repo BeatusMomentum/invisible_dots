@@ -18,10 +18,14 @@ sections 4 and 5.2). It serves:
   (powering the VM off is the control plane's decision), plus `POST /v1/proc`,
   the process route the engine runs the model's commands through.
 
-`dot-agentd relay [--socket P] [--cwd DIR] [--tty] [--env NAME=VALUE]... --
-PROGRAM [ARGS...]` is the client of `POST /v1/proc`: it runs the program as
-`dot`, copies its own stdin, stdout and stderr through, and exits with the
-program's code (128 + the signal number for a signal).
+`dot-agentd relay [--socket P] [--cwd DIR] [--tty] [--env NAME=VALUE]...
+[--env-from NAME]... -- PROGRAM [ARGS...]` is the client of `POST /v1/proc`: it
+runs the program as `dot`, copies its own stdin, stdout and stderr through, and
+exits with the program's code (128 + the signal number for a signal).
+`--env-from NAME` adds to the program's environment the variable `NAME` of the
+relay's own environment (exit 2 when it is not set): a secret goes this way,
+because a command line is readable by every user of the machine in `/proc` and
+an environment only by its owner.
 
 ## Build
 

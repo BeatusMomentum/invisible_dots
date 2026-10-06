@@ -13,7 +13,7 @@ import asyncio
 import json
 import os
 import signal
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
@@ -85,6 +85,13 @@ class Env:
 
     def event_types(self) -> list[str]:
         return [row["type"] for row in self.events()]
+
+
+async def _until(condition: Callable[[], bool], timeout_s: float = 10.0) -> None:
+    """Wait for something the manager does by itself."""
+    async with asyncio.timeout(timeout_s):
+        while not condition():
+            await asyncio.sleep(0.02)
 
 
 @pytest.fixture
@@ -258,14 +265,18 @@ async def test_starts_the_server_as_dot_through_the_relay_with_the_environment_o
     assert start["cwd"] == str(root)
 
     # The one spawn of the program is the relay's: the working directory, the variables in the order of
-    # the table and then the program, which is what runs it as dot in the guest.
+    # the table and then the program, which is what runs it as dot in the guest. The proxy, which has a
+    # password, is not among the variables of the command line: the relay is told its name and reads the
+    # value from its own environment.
     relay = [json.loads(line) for line in env.relay_log.read_text(encoding="utf-8").splitlines()]
     mcp_runs = [entry for entry in relay if entry["program"] == [str(env.mcp_bin)]]
     assert len(mcp_runs) == 1
     assert mcp_runs[0]["cwd"] == str(root)
     assert [pair.partition("=")[0] for pair in mcp_runs[0]["env"]] == [
-        BROWSER_ENV[name] for name in ("MCP_HOME", "MCP_SESSION_ID", "PROFILE_DIR", "HEADLESS", "DISPLAY", "PROXY")
+        BROWSER_ENV[name] for name in ("MCP_HOME", "MCP_SESSION_ID", "PROFILE_DIR", "HEADLESS", "DISPLAY")
     ]
+    assert mcp_runs[0]["env_from"] == [BROWSER_ENV["PROXY"]]
+    assert "user:pw" not in json.dumps(mcp_runs[0])
     assert not mcp_runs[0]["tty"]
 
 
@@ -332,6 +343,21 @@ async def test_what_the_server_says_of_the_proxy_reaches_the_caller_redacted(env
 
     assert "http://user:***@proxy.test:8080" in failed.value.message
     assert "s3cret" not in failed.value.message
+
+
+async def test_what_a_page_tool_returns_of_the_proxy_is_redacted_in_results_and_in_errors(env: Env) -> None:
+    manager = env.manager()
+    identity = await manager.create("echo pages", "http://user:s3cret@proxy.test:8080")
+    write_control(env.mcp_home(identity.id), echo_proxy_on_pages=True)
+    await manager.launch(identity.id)
+
+    failed = await manager.call_tool(identity.id, "browser_navigate", {"url": "https://example.org/"})
+    read = await manager.call_tool(identity.id, "browser_read_text", {})
+
+    assert result_is_error(failed) and not result_is_error(read)
+    for result in (failed, read):
+        assert "http://user:***@proxy.test:8080" in result_text(result)
+        assert "s3cret" not in result_text(result)
 
 
 async def test_reports_a_command_that_cannot_be_started_without_its_arguments(env: Env) -> None:
@@ -443,7 +469,7 @@ async def test_a_process_that_exited_is_a_crash_closed_once_and_launched_again_o
     await manager.launch(identity.id)
 
     with pytest.raises(BrowserIdentityError, match="exited during browser_navigate") as crashed:
-        await manager.call_tool(identity.id, "browser_navigate", {"url": "crash://now"})
+        await manager.call_tool(identity.id, "browser_navigate", {"url": "https://crash.test/now"})
 
     assert crashed.value.code == "crashed"
     assert not manager.is_open(identity.id)
@@ -465,24 +491,30 @@ async def test_a_process_that_exited_is_a_crash_closed_once_and_launched_again_o
     assert env.event_types().count("browser.identity.launched") == 2
 
 
-async def test_a_process_that_died_between_calls_is_found_by_the_next_call_and_by_a_close(env: Env) -> None:
-    manager = env.manager()
-    a = await manager.create("idle a")
-    b = await manager.create("idle b")
+async def test_a_process_that_dies_while_idle_closes_its_identity_at_once_and_frees_its_slot(env: Env) -> None:
+    manager = env.manager(max_open=2)
+    a, b, c = [await manager.create(name) for name in ("idle a", "idle b", "idle c")]
     await manager.launch(a.id)
     await manager.launch(b.id)
-    for identity in (a, b):
-        [start] = [entry for entry in env.record(identity.id) if entry["kind"] == "start"]
-        os.kill(start["pid"], signal.SIGKILL)
+    [start] = [entry for entry in env.record(a.id) if entry["kind"] == "start"]
 
-    with pytest.raises(BrowserIdentityError) as crashed:
+    os.kill(start["pid"], signal.SIGKILL)
+    # No call and no close: the manager finds out by itself.
+    await _until(lambda: not manager.is_open(a.id))
+
+    assert manager.open_count == 1 and manager.is_open(b.id)
+    assert env.event_types().count("browser.identity.closed") == 1
+    # The dead identity no longer holds a slot, so opening another closes nothing that lives.
+    await manager.launch(c.id)
+    assert [manager.is_open(i.id) for i in (a, b, c)] == [False, True, True]
+    with pytest.raises(BrowserIdentityError) as next_action:
         await manager.call_tool(a.id, "browser_status")
-    await manager.close(b.id)
-
-    assert crashed.value.code == "crashed"
-    assert manager.open_count == 0
+    assert next_action.value.code == "not_open"
+    await manager.close(a.id)
     closed = [event["data"]["identity_id"] for event in env.events() if event["type"] == "browser.identity.closed"]
-    assert sorted(closed) == sorted([a.id, b.id])
+    assert closed == [a.id]
+    after = manager.get(a.id)
+    assert after is not None and after.status == "available"
 
 
 async def test_reopens_the_browser_once_when_the_server_says_it_is_gone(env: Env) -> None:
@@ -528,18 +560,18 @@ async def test_set_limits_closes_only_the_sessions_beyond_a_lower_max_open_and_c
     for identity in (a, b, c):
         await manager.launch(identity.id)
 
-    await manager.set_limits(1, 3)
+    manager.set_limits(1, 3)
 
     assert manager.limits == (1, 3)
     assert [manager.is_open(i.id) for i in (a, b, c)] == [False, False, True]
     with pytest.raises(BrowserIdentityError, match="max_identities 3"):
         await manager.create("d")
-    await manager.set_limits(2, 4)
+    manager.set_limits(2, 4)
     await manager.launch(a.id)
     assert manager.open_count == 2
     assert (await manager.create("d")).name == "d"
     with pytest.raises(ValueError, match="max_open"):
-        await manager.set_limits(0, 4)
+        manager.set_limits(0, 4)
     assert manager.limits == (2, 4)
 
 
@@ -548,7 +580,7 @@ async def test_a_lower_max_identities_deletes_nothing(env: Env) -> None:
     for name in "abc":
         await manager.create(name)
 
-    await manager.set_limits(1, 1)
+    manager.set_limits(1, 1)
 
     assert len(manager.list_identities()) == 3
 
@@ -674,6 +706,144 @@ async def test_a_delete_waits_for_a_launch_in_flight_and_then_closes_what_it_ope
     assert not (env.browsers / identity.id).exists() and manager.open_count == 0
 
 
+async def start_slow_launch(env: Env, manager: BrowserManager, name: str) -> tuple[str, asyncio.Task[Any]]:
+    """A launch that is still waiting for the engine's download: the identity's id and the launch's task."""
+    identity = await manager.create(name)
+    write_control(env.mcp_home(identity.id), download_answers=100_000)
+    launching = asyncio.create_task(manager.launch(identity.id))
+    await env.until_recorded(identity.id, "call", "browser_open")
+    return identity.id, launching
+
+
+async def stop_launch(launching: asyncio.Task[Any]) -> None:
+    launching.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await launching
+
+
+async def test_a_launch_in_flight_holds_up_no_other_identity_and_no_config_change(env: Env) -> None:
+    manager = env.manager(max_open=3, open_retry_initial_s=0.05, open_retry_max_s=0.05)
+    other = await manager.create("other")
+    spare = await manager.create("spare")
+    await manager.launch(other.id)
+    slow_id, launching = await start_slow_launch(env, manager, "slow")
+
+    async with asyncio.timeout(10):
+        manager.set_limits(3, 30)
+        await manager.close(other.id)
+        await manager.delete(spare.id)
+        fresh = await manager.create("fresh")
+
+    assert not launching.done()
+    assert manager.get(spare.id) is None and manager.get(fresh.id) is not None
+    assert not manager.is_open(slow_id) and not manager.is_open(other.id)
+    await stop_launch(launching)
+    assert manager.open_count == 0
+
+
+async def test_a_lower_max_open_answers_at_once_and_closes_the_excess_in_the_background(env: Env) -> None:
+    manager = env.manager(max_open=3)
+    a, b, c = [await manager.create(name) for name in "abc"]
+    for identity in (a, b, c):
+        await manager.launch(identity.id)
+
+    manager.set_limits(1, 20)
+
+    # Nothing has been closed yet, but only c counts as open and the others cannot be used.
+    assert [manager.is_open(i.id) for i in (a, b, c)] == [False, False, True]
+    assert env.event_types().count("browser.identity.closed") == 0
+    with pytest.raises(BrowserIdentityError) as refused:
+        await manager.call_tool(a.id, "browser_status")
+    assert refused.value.code == "not_open"
+    await manager.close_all()
+    assert sorted(
+        event["data"]["identity_id"] for event in env.events() if event["type"] == "browser.identity.closed"
+    ) == sorted([a.id, b.id, c.id])
+    for identity in (a, b):
+        assert env.record(identity.id)[-1]["kind"] == "exit"
+
+
+async def test_a_lower_max_open_closes_a_browser_that_is_still_opening_once_it_has_opened(env: Env) -> None:
+    manager = env.manager(max_open=2, open_retry_initial_s=0.05, open_retry_max_s=0.05)
+    identity = await manager.create("late")
+    write_control(env.mcp_home(identity.id), download_answers=3)
+    launching = asyncio.create_task(manager.launch(identity.id))
+    await asyncio.sleep(0.1)
+    other = await manager.create("other")
+    await manager.launch(other.id)
+
+    manager.set_limits(1, 20)
+    await launching
+    await manager.close_all()
+
+    assert env.event_types().count("browser.identity.launched") == 2
+    assert sorted(
+        event["data"]["identity_id"] for event in env.events() if event["type"] == "browser.identity.closed"
+    ) == sorted([identity.id, other.id])
+
+
+async def test_two_launches_of_one_identity_start_one_browser_and_share_the_outcome(env: Env) -> None:
+    manager = env.manager(open_retry_initial_s=0.05, open_retry_max_s=0.05)
+    identity = await manager.create("shared")
+    write_control(env.mcp_home(identity.id), download_answers=2)
+
+    first, second = await asyncio.gather(manager.launch(identity.id), manager.launch(identity.id))
+
+    assert first.status == second.status == "open"
+    assert len([entry for entry in env.record(identity.id) if entry["kind"] == "start"]) == 1
+    assert env.event_types().count("browser.identity.launched") == 1
+
+    broken = await manager.create("broken")
+    write_control(env.mcp_home(broken.id), fail_open=True)
+    outcomes = await asyncio.gather(manager.launch(broken.id), manager.launch(broken.id), return_exceptions=True)
+
+    assert all(isinstance(o, BrowserIdentityError) and o.code == "launch_failed" for o in outcomes)
+    assert len([entry for entry in env.record(broken.id) if entry["kind"] == "start"]) == 1
+    assert manager.open_count == 1
+
+
+async def test_a_launch_of_an_identity_that_is_being_deleted_is_not_found(env: Env) -> None:
+    manager = env.manager()
+    identity = await manager.create("going")
+    await manager.launch(identity.id)
+
+    deleting = asyncio.create_task(manager.delete(identity.id))
+    await asyncio.sleep(0)
+    with pytest.raises(BrowserIdentityError) as launch:
+        await manager.launch(identity.id)
+    with pytest.raises(BrowserIdentityError) as again:
+        await manager.delete(identity.id)
+    await deleting
+
+    assert launch.value.code == again.value.code == "not_found"
+    assert not (env.browsers / identity.id).exists() and manager.get(identity.id) is None
+    assert env.event_types().count("browser.identity.deleted") == 1
+
+
+async def test_a_close_that_raises_still_ends_the_process_and_leaves_the_identity_launchable(
+    env: Env, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    manager = env.manager()
+    identity = await manager.create("fragile")
+    await manager.launch(identity.id)
+    request = manager._request
+
+    async def failing(session: Any, tool: str, arguments: Any) -> Any:
+        if tool == "browser_close":
+            raise ConnectionError("the pipe is gone")
+        return await request(session, tool, arguments)
+
+    monkeypatch.setattr(manager, "_request", failing)
+    await manager.close(identity.id)
+    monkeypatch.undo()
+
+    assert not manager.is_open(identity.id)
+    assert env.event_types().count("browser.identity.closed") == 1
+    assert env.record(identity.id)[-1]["kind"] == "exit"
+    await asyncio.wait_for(manager.launch(identity.id), 30)
+    assert manager.is_open(identity.id)
+
+
 async def test_calls_on_one_identity_run_one_at_a_time(env: Env) -> None:
     manager = env.manager()
     identity = await manager.create("serial")
@@ -757,3 +927,117 @@ async def test_the_event_listener_of_the_store_hears_the_identity_events(env: En
 
     remove()
     assert heard == [1]
+
+
+# ---------------------------------------------------------------------------
+# The frame the UI shows
+# ---------------------------------------------------------------------------
+
+
+async def test_a_frame_is_the_jpeg_of_the_servers_watch_and_asks_nothing_else(env: Env) -> None:
+    manager = env.manager()
+    identity = await manager.create("watched")
+    await manager.launch(identity.id)
+
+    mime, data = await manager.frame(identity.id)
+
+    assert mime == "image/jpeg"
+    assert data.startswith(b"\xff\xd8\xff") and data.endswith(b"\xff\xd9")
+    assert [name for name, _ in env.calls(identity.id)] == ["browser_open", "browser_watch"]
+    assert env.calls(identity.id)[-1][1] == {"browser": "main"}
+
+
+async def test_a_frame_is_not_a_use_so_a_page_that_polls_cannot_keep_a_browser_open(env: Env) -> None:
+    manager = env.manager(max_open=2)
+    a, b, c = [await manager.create(name) for name in "abc"]
+    await manager.launch(a.id)
+    await manager.launch(b.id)
+    used_before = manager.get(a.id)
+    assert used_before is not None and used_before.last_used_at is not None
+
+    for _ in range(3):
+        await manager.frame(a.id)
+    used_after = manager.get(a.id)
+    await manager.launch(c.id)
+
+    # a is still the least recently used, in spite of the frames, so it is the one that closed.
+    assert [manager.is_open(i.id) for i in (a, b, c)] == [False, True, True]
+    assert used_after is not None and used_after.last_used_at == used_before.last_used_at
+
+
+async def test_a_frame_of_a_closed_or_unknown_identity_is_refused_and_launches_nothing(env: Env) -> None:
+    manager = env.manager()
+    identity = await manager.create("shut")
+
+    with pytest.raises(BrowserIdentityError) as closed:
+        await manager.frame(identity.id)
+    with pytest.raises(BrowserIdentityError) as unknown:
+        await manager.frame("nobody-abc123")
+    with pytest.raises(BrowserIdentityError) as escaping:
+        await manager.frame("../x")
+
+    assert closed.value.code == "not_open"
+    assert closed.value.message == f"identity {identity.id} is not open; call browser_identity_launch first"
+    assert unknown.value.code == escaping.value.code == "not_found"
+    assert manager.open_count == 0 and env.record(identity.id) == []
+
+
+async def test_a_frame_waits_for_the_call_in_flight_only_so_long_and_then_says_busy(env: Env) -> None:
+    manager = env.manager(frame_wait_s=0.05)
+    identity = await manager.create("occupied")
+    await manager.launch(identity.id)
+
+    call = asyncio.create_task(manager.call_tool(identity.id, "browser_navigate", {"url": "slow://x"}))
+    await asyncio.sleep(0.1)
+    with pytest.raises(BrowserIdentityError) as busy:
+        await manager.frame(identity.id)
+    await call
+    waited = await manager.frame(identity.id)
+
+    assert busy.value.code == "busy"
+    assert waited[0] == "image/jpeg"
+    names = [name for name, _ in env.calls(identity.id)]
+    assert names == ["browser_open", "browser_navigate", "browser_watch"]
+
+
+async def test_a_frame_does_not_open_a_browser_the_server_lost(env: Env) -> None:
+    manager = env.manager()
+    identity = await manager.create("lost for the frame")
+    write_control(env.mcp_home(identity.id), lose_browser_always=True)
+    await manager.launch(identity.id)
+
+    with pytest.raises(BrowserIdentityError) as lost:
+        await manager.frame(identity.id)
+
+    assert lost.value.code == "not_open"
+    assert [name for name, _ in env.calls(identity.id)] == ["browser_open", "browser_watch"]
+    assert manager.is_open(identity.id)
+
+
+async def test_a_frame_the_server_cannot_give_is_a_frame_failure_with_its_reason(env: Env) -> None:
+    manager = env.manager()
+    identity = await manager.create("no page")
+    write_control(env.mcp_home(identity.id), fail_watch=True)
+    await manager.launch(identity.id)
+
+    with pytest.raises(BrowserIdentityError) as failed:
+        await manager.frame(identity.id)
+
+    assert failed.value.code == "frame_failed"
+    assert "no page to watch" in failed.value.message
+    assert manager.is_open(identity.id)
+
+
+async def test_a_frame_finds_a_process_that_died_and_closes_the_identity_once(env: Env) -> None:
+    manager = env.manager()
+    identity = await manager.create("dead for the frame")
+    await manager.launch(identity.id)
+    [start] = [entry for entry in env.record(identity.id) if entry["kind"] == "start"]
+    os.kill(start["pid"], signal.SIGKILL)
+
+    with pytest.raises(BrowserIdentityError) as crashed:
+        await manager.frame(identity.id)
+
+    assert crashed.value.code == "crashed"
+    assert not manager.is_open(identity.id)
+    assert env.event_types().count("browser.identity.closed") == 1
