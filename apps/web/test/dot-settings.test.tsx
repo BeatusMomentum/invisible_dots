@@ -112,7 +112,7 @@ describe("the settings of a Dot", () => {
   it("has a section for each part of the config, and a danger zone last", async () => {
     await renderSettings();
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings).toEqual(["General", "Model", "Permissions and tools", "Computer", "Browser", "Memory", "Limits", "Danger zone"]);
+    expect(headings).toEqual(["General", "Model", "Permissions and tools", "Computer", "Browser", "Memory", "Limits", "VM proxy", "Danger zone"]);
   });
 });
 
