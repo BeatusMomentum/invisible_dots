@@ -186,10 +186,16 @@ echo "desktop screenshot: $(identify /tmp/shot-screen.png 2>&1 | cut -c1-120)"
 check "GET /v1/screenshot answers a PNG of the whole desktop" "[ \"\$(cat /tmp/shot-screen.code)\" = 200 ] && png_is /tmp/shot-screen.png && [ \"\$(identify -format '%w x %h' /tmp/shot-screen.png)\" = '1920 x 1080' ]"
 check "it is not blank: the page the browser shows is in it" "[ \"\$(magenta_pixels /tmp/shot-screen.png)\" -gt 50000 ]"
 
+# --- the host's frame of the identity's window (the server's browser_watch) ---
+api -o /tmp/frame.jpg -w '%{http_code}' "$A/browser-identities/$ID/frame" > /tmp/frame.code
+echo "frame of the identity: $(identify /tmp/frame.jpg 2>&1 | cut -c1-120)"
+check "GET /browser-identities/:id/frame answers a JPEG of the identity's window, not a blank one" "[ \"\$(cat /tmp/frame.code)\" = 200 ] && [ \"\$(identify -format '%m' /tmp/frame.jpg[0] 2>/dev/null)\" = JPEG ] && [ \"\$(identify -format '%w' /tmp/frame.jpg[0])\" -ge 200 ] && [ \"\$(convert /tmp/frame.jpg -format %k info:)\" -gt 2 ]"
+
 # --- close and relaunch: the profile keeps its seed and what a page stored ---
 check "the model has a page store a value in the profile (localStorage, key close)" "tool_turn 20 browser_navigate '{\"identity_id\":\"$ID\",\"url\":\"$PAGES/store.html?k=close\"}' && tool_turn 21 browser_read_text '{\"identity_id\":\"$ID\"}' && sent_to_model 'stored before: nothing'"
 check "the model closes the identity: Firefox and its server end" "tool_turn 10 browser_identity_close '{\"identity_id\":\"$ID\"}' && closed $ID && gone_within 20 \"$FIREFOX\" && [ -z \"\$(session_pids $ID)\" ]"
 check "/health counts one identity, none open" "health_is 1 0"
+check "the frame of the closed identity is 409 not_open, and the host's close of it is a 204 that changes nothing" "[ \"\$(api -o /dev/null -w '%{http_code}' $A/browser-identities/$ID/frame)\" = 409 ] && [ \"\$(api -o /dev/null -w '%{http_code}' -X POST $A/browser-identities/$ID/close)\" = 204 ] && health_is 1 0"
 echo "profile after the model's close:"; ls -la "$BROWSERS/$ID/profile" | grep -i 'lock' || echo "  (no lock file)"
 check "the profile still has its seed file, unchanged by the close" "[ \"\$(seed_of $ID)\" = '$SEED1' ]"
 check "the model launches it again" "tool_turn 11 browser_identity_launch '{\"identity_id\":\"$ID\"}' && launched_times $ID 2"

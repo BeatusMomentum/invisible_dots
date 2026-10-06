@@ -57,6 +57,7 @@ def write_control(mcp_home: Path, **control: Any) -> None:
     lose_browser_once: the first page action after opening reports the browser gone, as after a Firefox crash.
     lose_browser_always: every page action does.
     refuse_close: `browser_close` fails.
+    fail_watch: `browser_watch` fails the way the real server does when the browser has no page.
 
 A `browser_navigate` to `crash://now` ends the process without an answer, like a server killed in the
 middle of a call; to `slow://...` it answers after 0.3 s. Each call is recorded when it arrives
@@ -148,6 +149,8 @@ async def _serve() -> None:
         if name == "browser_take_screenshot" or name == "browser_click_at":
             return image(PNG, "image/png")
         if name == "browser_watch":
+            if control.get("fail_watch"):
+                return text(f"the {role} browser has no page to watch", error=True)
             return image(JPEG, "image/jpeg")
         if name == "browser_click":
             return text(f"clicked {args['selector']}")

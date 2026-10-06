@@ -16,6 +16,8 @@ describe("protocol constants", () => {
     expect(GUEST_PATHS.agentdSocket).toBe("/run/invisible-dots/agentd.sock");
     expect(vmName("dot_abc")).toBe("invisible-dot-dot_abc");
     expect(AGENT_ROUTES.browserIdentity("a b")).toBe("/browser-identities/a%20b");
+    expect(AGENT_ROUTES.browserIdentityFrame("a b")).toBe("/browser-identities/a%20b/frame");
+    expect(AGENT_ROUTES.browserIdentityClose("a b")).toBe("/browser-identities/a%20b/close");
   });
 
   it("lays out an identity directory", () => {

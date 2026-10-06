@@ -24,7 +24,13 @@ from loguru import logger
 from nanobot.dots.browser import BrowserIdentity, BrowserIdentityError, ErrorCode
 from nanobot.dots.checks import GuestCheckRunner
 from nanobot.dots.engine import Engine, EngineStopped
-from nanobot.dots.protocol import AGENT_ROUTES, DotsConfigError, InvalidEvent, parse_inbound_event
+from nanobot.dots.protocol import (
+    AGENT_ROUTES,
+    BROWSER_IDENTITY_ACTIONS,
+    DotsConfigError,
+    InvalidEvent,
+    parse_inbound_event,
+)
 from nanobot.dots.secrets import KeyHolder
 from nanobot.dots.store import iso_from_ms
 
@@ -53,14 +59,16 @@ def _allow(method: str, *allowed: str) -> None:
 
 
 # The HTTP status of each way a browser identity request can fail. `not_open` is an action on a closed
-# identity, which only the Dot's tools make; the routes never raise it.
+# identity: the Dot's tools make it, and so does a frame of one.
 _IDENTITY_STATUS: dict[ErrorCode, int] = {
     "invalid": 400,
     "not_found": 404,
     "limit": 409,
     "not_open": 409,
+    "busy": 503,
     "launch_failed": 502,
     "crashed": 502,
+    "frame_failed": 502,
 }
 
 
@@ -295,10 +303,26 @@ class AgentServer:
             return _json_response(201, _identity_json(created))
 
         if path.startswith(f"{identities_route}/"):
-            # Decoded once: the percent sign of "a%2541" is the id's own.
-            identity_id = unquote(path[len(identities_route) + 1 :])
-            if identity_id == "" or "/" in identity_id:
+            # The id is the segment before the action, decoded once: the percent sign of "a%2541" is the id's own.
+            raw_id, _, action = path[len(identities_route) + 1 :].partition("/")
+            identity_id = unquote(raw_id)
+            if identity_id == "" or "/" in identity_id or (action and action not in BROWSER_IDENTITY_ACTIONS):
                 raise HttpError(404, "not_found", f"no route {method} {path}")
+            if action == "frame":
+                _allow(method, "GET")
+                try:
+                    media_type, jpeg = await browser.frame(identity_id)
+                except BrowserIdentityError as error:
+                    raise _identity_error(error) from None
+                # A frame is live: nothing may keep it.
+                return web.Response(body=jpeg, content_type=media_type, headers={"Cache-Control": "no-store"})
+            if action == "close":
+                _allow(method, "POST")
+                try:
+                    await browser.close(identity_id)
+                except BrowserIdentityError as error:
+                    raise _identity_error(error) from None
+                return web.Response(status=204)
             if method == "GET":
                 found = browser.get(identity_id)
                 if found is None:

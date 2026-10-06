@@ -58,6 +58,7 @@ class EngineHarness:
         *,
         key: bool = True,
         stop_grace_s: float = 0.05,
+        browser: dict[str, Any] | None = None,
     ) -> None:
         self.tmp_path = tmp_path
         self.store = store
@@ -70,14 +71,15 @@ class EngineHarness:
         workspace.mkdir(parents=True, exist_ok=True)
         self.computer = LocalComputer(tmp_path, workspace)
         self.stop_grace_s = stop_grace_s
+        self.browser_options = browser or {}
         self.engines: list[Engine] = []
-        self.browser = make_browser_manager(tmp_path, store, self.computer)
+        self.browser = make_browser_manager(tmp_path, store, self.computer, **self.browser_options)
         self.engine = self.new_engine()
 
     def new_engine(self) -> Engine:
         """An engine on the same store, as a restarted process has: nothing in memory."""
         # A restarted process has no browser open: the manager is new, the rows are the store's.
-        self.browser = make_browser_manager(self.tmp_path, self.store, self.computer)
+        self.browser = make_browser_manager(self.tmp_path, self.store, self.computer, **self.browser_options)
         registry = build_registry(
             ToolDeps(
                 computer=self.computer,

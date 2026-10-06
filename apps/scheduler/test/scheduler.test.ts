@@ -364,6 +364,42 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     await expect(scheduler.screenshot(dot.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
   });
 
+  it("an identity's frame and close go to the running guest: not_open, busy and not_found pass through", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "watcher");
+    const guest = driver.guestOf(dot.id);
+    const identity = await scheduler.createIdentity(dot.id, { name: "Shop" });
+
+    await expect(scheduler.identityFrame(dot.id, identity.id)).rejects.toMatchObject({ status: 409, code: "not_open" });
+    await expect(scheduler.identityFrame(dot.id, "missing-abc123")).rejects.toMatchObject({ status: 404, code: "not_found" });
+    guest.launchIdentity(identity.id);
+    expect([...(await scheduler.identityFrame(dot.id, identity.id)).slice(0, 2)]).toEqual([0xff, 0xd8]);
+    guest.identityBusy = true;
+    await expect(scheduler.identityFrame(dot.id, identity.id)).rejects.toMatchObject({ status: 503, code: "busy" });
+    guest.identityBusy = false;
+
+    await scheduler.closeIdentity(dot.id, identity.id);
+    expect((await scheduler.getIdentity(dot.id, identity.id)).status).toBe("available");
+    await expect(scheduler.identityFrame(dot.id, identity.id)).rejects.toMatchObject({ status: 409, code: "not_open" });
+    // Closing a closed identity is not an error; an unknown one is a 404.
+    await scheduler.closeIdentity(dot.id, identity.id);
+    await expect(scheduler.closeIdentity(dot.id, "missing-abc123")).rejects.toMatchObject({ status: 404, code: "not_found" });
+
+    await scheduler.lifecycle.stop(dot.id, "user");
+    await expect(scheduler.identityFrame(dot.id, identity.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(scheduler.closeIdentity(dot.id, identity.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+  });
+
+  it("a guest that does not answer a frame is a 502, not a pass-through", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "silent");
+    const identity = await scheduler.createIdentity(dot.id, { name: "Shop" });
+    driver.guestOf(dot.id).launchIdentity(identity.id);
+    driver.guestOf(dot.id).powerOff();
+
+    await expect(scheduler.identityFrame(dot.id, identity.id)).rejects.toMatchObject({ status: 502, code: "guest_unavailable" });
+  });
+
   it("PATCH pushes the new config to a READY guest and refuses a shrinking disk", async () => {
     const { scheduler, driver } = make();
     const dot = await readyDot(scheduler, "patchy");

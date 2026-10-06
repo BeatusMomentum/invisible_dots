@@ -28,6 +28,11 @@ AGENT_ROUTES = {
     "prepare_sleep": "/prepare-sleep",
 }
 
+# What follows `/browser-identities/<id>/` for what the host does to one identity: `frame` (GET) is the JPEG of
+# its window, `close` (POST) ends its browser. AGENT_ROUTES of packages/shared has them as
+# `browserIdentityFrame(id)` and `browserIdentityClose(id)`.
+BROWSER_IDENTITY_ACTIONS = ("frame", "close")
+
 INBOUND_EVENT_TYPES = (
     "user.message",
     "task.created",

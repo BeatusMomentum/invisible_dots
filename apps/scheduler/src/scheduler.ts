@@ -487,14 +487,18 @@ export class Scheduler {
     return { dotId: dot.id, guest: await this.lifecycle.guest(dot.id) };
   }
 
-  /** Run a guest call and turn its failure into an API error: the guest's own 4xx passes through. */
+  /**
+   * Run a guest call and turn its failure into an API error: the guest's own 4xx passes through, and so does the
+   * engine's 503 `busy` (a frame asked while a call holds the browser), which is an answer and not a silence.
+   */
   async #guestCall<T>(dotId: string, what: string, call: () => Promise<T>): Promise<T> {
     try {
       return await call();
     } catch (error) {
       const status = guestErrorStatus(error);
-      if (status >= 400 && status < 500 && status !== 401) {
-        throw new ControlPlaneError(status, guestErrorCode(error) ?? "guest_error", errorMessage(error));
+      const code = guestErrorCode(error);
+      if ((status >= 400 && status < 500 && status !== 401) || (status === 503 && code === "busy")) {
+        throw new ControlPlaneError(status, code ?? "guest_error", errorMessage(error));
       }
       this.#log.warn("guest call failed", { dotId, what, error: errorMessage(error) });
       throw new ControlPlaneError(502, "guest_unavailable", `${what}: the Dot's computer did not answer: ${errorMessage(error)}`);
@@ -531,6 +535,17 @@ export class Scheduler {
   async deleteIdentity(idOrName: string, identityId: string): Promise<void> {
     const { dotId, guest } = await this.#runningGuest(idOrName);
     await this.#guestCall(dotId, "delete a browser identity", () => guest.deleteBrowserIdentity(identityId));
+  }
+
+  /** The JPEG of an open identity's window: 409 `not_open` when it is closed, 503 `busy` while a call holds it. */
+  async identityFrame(idOrName: string, identityId: string): Promise<Uint8Array> {
+    const { dotId, guest } = await this.#runningGuest(idOrName);
+    return this.#guestCall(dotId, "get the frame of a browser identity", () => guest.getBrowserIdentityFrame(identityId));
+  }
+
+  async closeIdentity(idOrName: string, identityId: string): Promise<void> {
+    const { dotId, guest } = await this.#runningGuest(idOrName);
+    await this.#guestCall(dotId, "close a browser identity", () => guest.closeBrowserIdentity(identityId));
   }
 
   // Approvals

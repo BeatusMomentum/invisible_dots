@@ -98,7 +98,8 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     if (error instanceof ControlPlaneError) {
       const body: Record<string, unknown> = { error: error.code, message: error.message };
       if (error.details !== undefined) body.details = error.details;
-      if (error.status >= 500) log.error("request failed", { method: request.method, url: request.url, error: error.message });
+      // A busy browser is the answer a polling page expects, not a failure.
+      if (error.status >= 500 && error.code !== "busy") log.error("request failed", { method: request.method, url: request.url, error: error.message });
       return reply.code(error.status).send(body);
     }
     const e = error as { statusCode?: number; code?: string; message?: string };
@@ -216,6 +217,16 @@ export function buildServer(options: ServerOptions): FastifyInstance {
 
   app.delete<{ Params: Params }>("/api/dots/:id/browser-identities/:identityId", async (request, reply) => {
     await scheduler.deleteIdentity(request.params.id, request.params.identityId);
+    return reply.code(204).send();
+  });
+
+  app.get<{ Params: Params }>("/api/dots/:id/browser-identities/:identityId/frame", async (request, reply) => {
+    const jpeg = await scheduler.identityFrame(request.params.id, request.params.identityId);
+    return reply.code(200).header("content-type", "image/jpeg").header("cache-control", "no-store").send(Buffer.from(jpeg));
+  });
+
+  app.post<{ Params: Params }>("/api/dots/:id/browser-identities/:identityId/close", async (request, reply) => {
+    await scheduler.closeIdentity(request.params.id, request.params.identityId);
     return reply.code(204).send();
   });
 

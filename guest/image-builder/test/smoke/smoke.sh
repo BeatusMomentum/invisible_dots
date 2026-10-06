@@ -426,6 +426,16 @@ check "the restarted engine answers /health (browser closed by SIGTERM)" "wait_h
 
 # A delete from the host while the identity is open closes it first.
 check "the model launches the proxy identity" "tool_turn 11 browser_identity_launch '{\"identity_id\":\"$ID5\"}' && wait_fakes 1 && health_is 4 1"
+# The host's two actions on one identity: a frame of its window (only while it is open) and closing its browser.
+status_of() { api -o "${2:-/dev/null}" -w '%{http_code}' "${@:3}" "$1"; } # url, output file, curl arguments
+closed_total() { grep '^data: ' $STREAM | sed 's/^data: //' | jq -s "[.[] | select(.type==\"browser.identity.closed\" and .data.identity_id==\"$1\")] | length"; } # id
+wait_closed_total() { for _ in $(seq 1 30); do [ "$(closed_total "$1")" = "$2" ] && return 0; sleep 1; done; return 1; } # id, n
+check "GET /browser-identities/:id/frame answers a JPEG of the open identity, 409 not_open for a closed one, 404 for an unknown one" "[ \"\$(status_of $A/browser-identities/$ID5/frame /tmp/frame-5.jpg)\" = 200 ] && [ \"\$(head -c 3 /tmp/frame-5.jpg | od -An -tx1 | tr -d ' \n')\" = ffd8ff ] && [ \"\$(status_of $A/browser-identities/$ID1/frame)\" = 409 ] && [ \"\$(status_of $A/browser-identities/nobody-abc123/frame)\" = 404 ]"
+check "the frame was the server's browser_watch with the browser role main, and it launched nothing" "call_seen $ID5 browser_watch '.args.browser==\"main\"' && wait_fakes 1 && health_is 4 1"
+CLOSED_BEFORE=$(closed_total $ID5)
+check "POST /browser-identities/:id/close answers 204: the browser is closed, the server ends, closed is emitted once, the profile stays" "[ \"\$(status_of $A/browser-identities/$ID5/close /dev/null -X POST)\" = 204 ] && wait_fakes 0 && wait_closed_total $ID5 $((CLOSED_BEFORE + 1)) && [ -d $BROWSERS/$ID5/profile ] && [ \"\$(api $A/browser-identities/$ID5 | jq -r .status)\" = available ] && health_is 4 0"
+check "closing a closed identity answers 204 and emits nothing; an unknown one is 404" "[ \"\$(status_of $A/browser-identities/$ID5/close /dev/null -X POST)\" = 204 ] && [ \"\$(status_of $A/browser-identities/nobody-abc123/close /dev/null -X POST)\" = 404 ] && [ \"\$(closed_total $ID5)\" = $((CLOSED_BEFORE + 1)) ]"
+check "the model launches it again, so the delete below meets an open identity" "tool_turn 12 browser_identity_launch '{\"identity_id\":\"$ID5\"}' && wait_fakes 1 && health_is 4 1"
 check "DELETE /browser-identities/:id of the open identity answers 204" "[ \"\$(api -o /dev/null -w '%{http_code}' -X DELETE $A/browser-identities/$ID5)\" = 204 ]"
 check "its browser was closed, then it was deleted: closed, then deleted" "wait_event $STREAM '.type==\"browser.identity.deleted\" and .data.identity_id==\"$ID5\"' && grep '^data: ' $STREAM | sed 's/^data: //' | jq -s -e '[.[] | select(.data.identity_id==\"$ID5\" and (.type==\"browser.identity.closed\" or .type==\"browser.identity.deleted\")) | .type] | .[-2:] == [\"browser.identity.closed\",\"browser.identity.deleted\"]' >/dev/null"
 check "its server ended, its directory is gone, /health counts three identities, none open" "wait_fakes 0 && [ ! -e $BROWSERS/$ID5 ] && health_is 3 0"
@@ -498,7 +508,7 @@ check "the host received every event exactly once across the crash (no loss, no 
 check "event ids are unique" "[ \"\$(grep '^data: ' $ALL | sed 's/^data: //' | jq -r .id | sort | uniq -d | wc -l)\" = 0 ]"
 check "tool.called for t2 appears once as interrupted" "[ \"\$(grep '^data: ' $ALL | sed 's/^data: //' | jq -c 'select(.type==\"tool.called\" and .data.task_id==\"t2\" and .data.interrupted==true)' | wc -l)\" = 1 ]"
 check "agent.started eight times in all (eight starts)" "[ \"\$(grep '^data: ' $ALL | sed 's/^data: //' | jq -c 'select(.type==\"agent.started\")' | wc -l)\" = 8 ]"
-check "the browser identity events are all in the stream, each once: five created, launched seven times, closed four times and deleted twice" "grep '^data: ' $ALL | sed 's/^data: //' | jq -s -e '([.[] | select(.type==\"browser.identity.created\")] | length) == 5 and ([.[] | select(.type==\"browser.identity.deleted\")] | length) == 2 and ([.[] | select(.type==\"browser.identity.launched\")] | length) == 7 and ([.[] | select(.type==\"browser.identity.closed\")] | length) == 4' >/dev/null"
+check "the browser identity events are all in the stream, each once: five created, launched eight times, closed five times and deleted twice" "grep '^data: ' $ALL | sed 's/^data: //' | jq -s -e '([.[] | select(.type==\"browser.identity.created\")] | length) == 5 and ([.[] | select(.type==\"browser.identity.deleted\")] | length) == 2 and ([.[] | select(.type==\"browser.identity.launched\")] | length) == 8 and ([.[] | select(.type==\"browser.identity.closed\")] | length) == 5' >/dev/null"
 check "the proxy password is in no event of the whole stream" "no_proxy_password_in $ALL"
 echo "event types: $(grep '^data: ' $ALL | sed 's/^data: //' | jq -r .type | sort | uniq -c | tr '\n' ' ')"
 

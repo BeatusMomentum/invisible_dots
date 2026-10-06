@@ -135,6 +135,13 @@ describe("the vendored nanobot fork", () => {
       ),
     );
     expect(engineRoutes).toEqual(sharedRoutes);
+    // The routes of one identity are functions of its id, so the table above cannot carry them: the engine
+    // names what follows the id, and each name is a route of packages/shared.
+    const actions = tuple("BROWSER_IDENTITY_ACTIONS");
+    const identityActions = Object.entries(AGENT_ROUTES)
+      .filter(([name]) => name.startsWith("browserIdentity") && name !== "browserIdentity")
+      .map(([, route]) => (route as (id: string) => string)("x").replace("/browser-identities/x/", ""));
+    expect(actions).toEqual(identityActions);
 
     expect(/^TASK_CANCELLED_EVENT = "([^"]+)"/m.exec(protocol)?.[1]).toBe(TASK_CANCELLED_SYSTEM_EVENT);
     // The longest `target` of a `tool.called`: the engine cuts to it, the host's schema refuses more.

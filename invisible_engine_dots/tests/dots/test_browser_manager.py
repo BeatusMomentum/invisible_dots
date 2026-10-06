@@ -749,3 +749,117 @@ async def test_the_event_listener_of_the_store_hears_the_identity_events(env: En
 
     remove()
     assert heard == [1]
+
+
+# ---------------------------------------------------------------------------
+# The frame the UI shows
+# ---------------------------------------------------------------------------
+
+
+async def test_a_frame_is_the_jpeg_of_the_servers_watch_and_asks_nothing_else(env: Env) -> None:
+    manager = env.manager()
+    identity = await manager.create("watched")
+    await manager.launch(identity.id)
+
+    mime, data = await manager.frame(identity.id)
+
+    assert mime == "image/jpeg"
+    assert data.startswith(b"\xff\xd8\xff") and data.endswith(b"\xff\xd9")
+    assert [name for name, _ in env.calls(identity.id)] == ["browser_open", "browser_watch"]
+    assert env.calls(identity.id)[-1][1] == {"browser": "main"}
+
+
+async def test_a_frame_is_not_a_use_so_a_page_that_polls_cannot_keep_a_browser_open(env: Env) -> None:
+    manager = env.manager(max_open=2)
+    a, b, c = [await manager.create(name) for name in "abc"]
+    await manager.launch(a.id)
+    await manager.launch(b.id)
+    used_before = manager.get(a.id)
+    assert used_before is not None and used_before.last_used_at is not None
+
+    for _ in range(3):
+        await manager.frame(a.id)
+    used_after = manager.get(a.id)
+    await manager.launch(c.id)
+
+    # a is still the least recently used, in spite of the frames, so it is the one that closed.
+    assert [manager.is_open(i.id) for i in (a, b, c)] == [False, True, True]
+    assert used_after is not None and used_after.last_used_at == used_before.last_used_at
+
+
+async def test_a_frame_of_a_closed_or_unknown_identity_is_refused_and_launches_nothing(env: Env) -> None:
+    manager = env.manager()
+    identity = await manager.create("shut")
+
+    with pytest.raises(BrowserIdentityError) as closed:
+        await manager.frame(identity.id)
+    with pytest.raises(BrowserIdentityError) as unknown:
+        await manager.frame("nobody-abc123")
+    with pytest.raises(BrowserIdentityError) as escaping:
+        await manager.frame("../x")
+
+    assert closed.value.code == "not_open"
+    assert closed.value.message == f"identity {identity.id} is not open; call browser_identity_launch first"
+    assert unknown.value.code == escaping.value.code == "not_found"
+    assert manager.open_count == 0 and env.record(identity.id) == []
+
+
+async def test_a_frame_waits_for_the_call_in_flight_only_so_long_and_then_says_busy(env: Env) -> None:
+    manager = env.manager(frame_wait_s=0.05)
+    identity = await manager.create("occupied")
+    await manager.launch(identity.id)
+
+    call = asyncio.create_task(manager.call_tool(identity.id, "browser_navigate", {"url": "slow://x"}))
+    await asyncio.sleep(0.1)
+    with pytest.raises(BrowserIdentityError) as busy:
+        await manager.frame(identity.id)
+    await call
+    waited = await manager.frame(identity.id)
+
+    assert busy.value.code == "busy"
+    assert waited[0] == "image/jpeg"
+    names = [name for name, _ in env.calls(identity.id)]
+    assert names == ["browser_open", "browser_navigate", "browser_watch"]
+
+
+async def test_a_frame_does_not_open_a_browser_the_server_lost(env: Env) -> None:
+    manager = env.manager()
+    identity = await manager.create("lost for the frame")
+    write_control(env.mcp_home(identity.id), lose_browser_always=True)
+    await manager.launch(identity.id)
+
+    with pytest.raises(BrowserIdentityError) as lost:
+        await manager.frame(identity.id)
+
+    assert lost.value.code == "not_open"
+    assert [name for name, _ in env.calls(identity.id)] == ["browser_open", "browser_watch"]
+    assert manager.is_open(identity.id)
+
+
+async def test_a_frame_the_server_cannot_give_is_a_frame_failure_with_its_reason(env: Env) -> None:
+    manager = env.manager()
+    identity = await manager.create("no page")
+    write_control(env.mcp_home(identity.id), fail_watch=True)
+    await manager.launch(identity.id)
+
+    with pytest.raises(BrowserIdentityError) as failed:
+        await manager.frame(identity.id)
+
+    assert failed.value.code == "frame_failed"
+    assert "no page to watch" in failed.value.message
+    assert manager.is_open(identity.id)
+
+
+async def test_a_frame_finds_a_process_that_died_and_closes_the_identity_once(env: Env) -> None:
+    manager = env.manager()
+    identity = await manager.create("dead for the frame")
+    await manager.launch(identity.id)
+    [start] = [entry for entry in env.record(identity.id) if entry["kind"] == "start"]
+    os.kill(start["pid"], signal.SIGKILL)
+
+    with pytest.raises(BrowserIdentityError) as crashed:
+        await manager.frame(identity.id)
+
+    assert crashed.value.code == "crashed"
+    assert not manager.is_open(identity.id)
+    assert env.event_types().count("browser.identity.closed") == 1

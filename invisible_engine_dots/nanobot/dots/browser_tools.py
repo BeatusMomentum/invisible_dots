@@ -28,6 +28,7 @@ from nanobot.dots.browser import (
     BrowserManager,
     result_is_error,
     result_text,
+    split_result,
 )
 from nanobot.dots.computer import Computer, ComputerError
 from nanobot.dots.identity_rules import IDENTITY_ID_MAX
@@ -41,7 +42,6 @@ _IDENTITY_ID = {
     "description": "The id of a browser identity, as browser_identity_list shows it.",
 }
 _OPEN_FIRST = " The identity must be open (browser_identity_launch)."
-_DATA_URL = "data:"
 
 
 @dataclass(frozen=True)
@@ -374,21 +374,6 @@ class BrowserIdentityCloseTool(_IdentityActionTool):
         except BrowserIdentityError as error:
             return _error(error)
         return f"The browser of identity {identity_id} is closed; its profile is kept."
-
-
-def split_result(result: Any) -> tuple[str, list[tuple[str, str]]]:
-    """A tool result of the MCP client as its text and its images, each as (media type, base64 data)."""
-    if isinstance(result, str):
-        return str(result), []
-    images: list[tuple[str, str]] = []
-    for block in result:
-        if not isinstance(block, Mapping) or block.get("type") != "image_url":
-            continue
-        url = (block.get("image_url") or {}).get("url", "")
-        header, _, data = url.partition(",")
-        if url.startswith(_DATA_URL) and data:
-            images.append((header[len(_DATA_URL) :].split(";")[0], data))
-    return result_text(result), images
 
 
 class BrowserPageTool(_BrowserTool):

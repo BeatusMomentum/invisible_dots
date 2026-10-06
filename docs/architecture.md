@@ -640,14 +640,23 @@ command detached into another session outlives it.
 | `POST /browser-identities` | `{ name, proxy? }` | `201 BrowserIdentity`; `400 invalid` (name or proxy), `409 limit` (`max_identities`) |
 | `GET /browser-identities/:id` | | `BrowserIdentity`; `404 not_found` |
 | `DELETE /browser-identities/:id` | | `204` after the identity's browser is closed and its directory removed; `404 not_found` |
+| `GET /browser-identities/:id/frame` | | `200 image/jpeg` (`Cache-Control: no-store`), one frame of the identity's window, taken with the server's `browser_watch`; `404 not_found`; `409 not_open` when the identity is closed; `503 busy` when a call of the Dot held the identity for longer than 5 seconds; `502 frame_failed` (the server has no page to show) or `crashed` |
+| `POST /browser-identities/:id/close` | | `204` after the identity's browser is closed through `browser_close` and its server has ended; the profile stays. Closing a closed identity is a `204` too; `404 not_found` |
 | `POST /prepare-sleep` | | `204` after the state is flushed and browser sessions are closed; the agent then starts no new work. A model request in flight is abandoned; a tool in flight gets up to 20 seconds to finish and record its result, then is aborted (section 8.7). A `POST /secrets` (the READY procedure of a VM whose stop failed, so no shutdown followed) lifts that, and so does a new inbound event |
 
 The identity routes and the model's identity tools are one code path, the
 `BrowserManager` (section 6), so its limits hold for both. A route answers an
 error as `{ error: <code>, message }` with the status of its code: `invalid`
-400, `not_found` 404, `limit` 409, `launch_failed` and `crashed` 502. The
-engine has no route that launches or closes an identity: only the model's
-tools (and a delete) open or close a browser.
+400, `not_found` 404, `limit` and `not_open` 409, `busy` 503, `launch_failed`,
+`crashed` and `frame_failed` 502. The engine has no route that launches an
+identity: only the model's tools open a browser, so `browser.identity.launch`
+alone decides whether one starts. The host may look at an open identity (the
+frame) and close it (or delete it); these are the owner's actions, not the Dot's, so
+no permission of the Dot applies to them. A frame is no use of the identity: it does
+not move it in the least-recently-used order, does not touch `last_used_at`,
+and never reopens a browser the server lost (that is `not_open`); it waits for
+the call in flight on the identity at most 5 seconds, so a page that asks for a
+frame every two seconds cannot hold a browser open or starve the model.
 
 Outbound events are written to an outbox table in the Dot's database before
 they are streamed, with a monotonically increasing `seq`. The host stores the
@@ -1530,6 +1539,8 @@ GET    /api/dots/:id/browser-identities
 POST   /api/dots/:id/browser-identities
 GET    /api/dots/:id/browser-identities/:identityId
 DELETE /api/dots/:id/browser-identities/:identityId
+GET    /api/dots/:id/browser-identities/:identityId/frame     image/jpeg, only while the identity is open (409 not_open, 503 busy)
+POST   /api/dots/:id/browser-identities/:identityId/close     204; the browser ends, the profile stays
 
 GET    /api/approvals                ?status=pending|approved|rejected|expired
 POST   /api/approvals/:id/approve    body: { note? }

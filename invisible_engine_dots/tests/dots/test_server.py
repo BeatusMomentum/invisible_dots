@@ -18,6 +18,7 @@ import aiohttp
 import pytest
 from fakes.dot_config import ALLOW_ALL, runtime_config_body
 from fakes.engine_harness import EngineHarness, user_message
+from fakes.fake_mcp_server import write_control
 from fakes.scripted_provider import call, calls, says
 from loguru import logger
 
@@ -37,8 +38,12 @@ async def fixed_checks() -> GuestChecks:
 @dataclass
 class Answer:
     status: int
-    text: str
+    body: bytes
     headers: Any
+
+    @property
+    def text(self) -> str:
+        return self.body.decode("utf-8")
 
     @property
     def json(self) -> Any:
@@ -55,7 +60,7 @@ class Api:
     async def call(self, method: str, path: str, body: Any = None, headers: dict[str, str] | None = None) -> Answer:
         data = body if isinstance(body, (str, bytes)) or body is None else json.dumps(body)
         async with self.session.request(method, BASE + path, data=data, headers=headers) as response:
-            return Answer(response.status, await response.text(), response.headers)
+            return Answer(response.status, await response.read(), response.headers)
 
     async def read_stream(self, path: str, count: int, headers: dict[str, str] | None = None) -> list[dict[str, Any]]:
         """Read the event stream until `count` events arrived; every frame's id line must be its event's seq."""
@@ -86,9 +91,10 @@ async def make_api(make_engine: MakeEngine) -> AsyncIterator[Callable[..., Any]]
         started: bool = True,
         key: bool = True,
         stop_grace_s: float = 0.05,
+        browser: dict[str, Any] | None = None,
         **options: Any,
     ) -> Api:
-        h = make_engine(script, key=key, stop_grace_s=stop_grace_s)
+        h = make_engine(script, key=key, stop_grace_s=stop_grace_s, browser=browser)
         if started:
             h.engine.start()
         # A short directory: a unix socket path has a small limit that pytest's tmp_path can exceed.
@@ -562,6 +568,98 @@ class TestBrowserIdentities:
         assert api.h.types().count("browser.identity.closed") == 1
         # The profile is kept: the identity is still there, closed.
         assert (await api.call("GET", f"/browser-identities/{identity['id']}")).json["status"] == "available"
+
+
+class TestBrowserIdentityActions:
+    async def test_a_frame_is_the_jpeg_of_an_open_identity_and_changes_nothing(self, make_api: Callable[..., Any]) -> None:
+        api: Api = await make_api()
+        identity = (await api.call("POST", "/browser-identities", {"name": "live"})).json
+        await api.h.browser.launch(identity["id"])
+        events = len(api.h.events())
+
+        frame = await api.call("GET", f"/browser-identities/{identity['id']}/frame")
+
+        assert frame.status == 200
+        assert frame.headers["Content-Type"] == "image/jpeg"
+        assert frame.headers["Cache-Control"] == "no-store"
+        assert frame.body.startswith(b"\xff\xd8\xff") and frame.body.endswith(b"\xff\xd9")
+        assert len(api.h.events()) == events
+        assert (await api.call("GET", f"/browser-identities/{identity['id']}")).json["status"] == "open"
+
+    async def test_a_frame_of_a_closed_identity_is_409_not_open_and_of_an_unknown_one_404(
+        self, make_api: Callable[..., Any]
+    ) -> None:
+        api: Api = await make_api()
+        identity = (await api.call("POST", "/browser-identities", {"name": "shut"})).json
+
+        closed = await api.call("GET", f"/browser-identities/{identity['id']}/frame")
+        unknown = await api.call("GET", "/browser-identities/nobody-abc123/frame")
+
+        assert (closed.status, closed.json["error"]) == (409, "not_open")
+        assert closed.json["message"] == f"identity {identity['id']} is not open; call browser_identity_launch first"
+        assert (unknown.status, unknown.json["error"]) == (404, "not_found")
+        assert api.h.browser.open_count == 0
+
+    async def test_a_frame_that_finds_the_identity_busy_is_503_busy_after_the_wait(
+        self, make_api: Callable[..., Any]
+    ) -> None:
+        api: Api = await make_api(browser={"frame_wait_s": 0.05})
+        identity = (await api.call("POST", "/browser-identities", {"name": "busy"})).json
+        await api.h.browser.launch(identity["id"])
+
+        call = asyncio.create_task(api.h.browser.call_tool(identity["id"], "browser_navigate", {"url": "slow://x"}))
+        await asyncio.sleep(0.1)
+        busy = await api.call("GET", f"/browser-identities/{identity['id']}/frame")
+        await call
+
+        assert (busy.status, busy.json["error"]) == (503, "busy")
+        assert (await api.call("GET", f"/browser-identities/{identity['id']}/frame")).status == 200
+
+    async def test_a_frame_the_server_cannot_give_is_502_frame_failed(self, make_api: Callable[..., Any]) -> None:
+        api: Api = await make_api()
+        identity = (await api.call("POST", "/browser-identities", {"name": "blank"})).json
+        write_control(api.h.tmp_path / "browsers" / identity["id"] / "mcp", fail_watch=True)
+        await api.h.browser.launch(identity["id"])
+
+        failed = await api.call("GET", f"/browser-identities/{identity['id']}/frame")
+
+        assert (failed.status, failed.json["error"]) == (502, "frame_failed")
+        assert "no page to watch" in failed.json["message"]
+
+    async def test_close_ends_the_browser_keeps_the_profile_and_is_idempotent(self, make_api: Callable[..., Any]) -> None:
+        api: Api = await make_api()
+        identity = (await api.call("POST", "/browser-identities", {"name": "closing"})).json
+        await api.h.browser.launch(identity["id"])
+
+        closed = await api.call("POST", f"/browser-identities/{identity['id']}/close")
+        again = await api.call("POST", f"/browser-identities/{identity['id']}/close")
+
+        assert (closed.status, again.status) == (204, 204)
+        assert (await api.call("GET", f"/browser-identities/{identity['id']}")).json["status"] == "available"
+        assert (api.h.tmp_path / "browsers" / identity["id"] / "profile").is_dir()
+        assert api.h.types().count("browser.identity.closed") == 1
+        assert (await api.call("POST", "/browser-identities/nobody-abc123/close")).status == 404
+
+    async def test_an_action_names_the_one_method_it_takes_and_nothing_else_is_a_route(
+        self, make_api: Callable[..., Any]
+    ) -> None:
+        api: Api = await make_api()
+        identity = (await api.call("POST", "/browser-identities", {"name": "routes"})).json
+        base = f"/browser-identities/{identity['id']}"
+
+        post = await api.call("POST", f"{base}/frame")
+        get = await api.call("GET", f"{base}/close")
+
+        assert (post.status, post.json["message"]) == (405, "POST is not allowed here; use GET")
+        assert (get.status, get.json["message"]) == (405, "GET is not allowed here; use POST")
+        for path in (f"{base}/launch", f"{base}/frame/x", "/browser-identities/a%2Fb/frame"):
+            assert (await api.call("GET", path)).status == 404, path
+
+    async def test_a_trailing_slash_on_an_action_is_the_same_route(self, make_api: Callable[..., Any]) -> None:
+        api: Api = await make_api()
+        identity = (await api.call("POST", "/browser-identities", {"name": "slash"})).json
+
+        assert (await api.call("POST", f"/browser-identities/{identity['id']}/close/")).status == 204
 
 
 class TestStateAndTheRest:

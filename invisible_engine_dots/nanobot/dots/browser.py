@@ -27,6 +27,7 @@ decides alone whether a browser starts. An identity whose process ended (`crashe
 from __future__ import annotations
 
 import asyncio
+import base64
 import posixpath
 import re
 import sqlite3
@@ -63,17 +64,21 @@ _OPENED = re.compile(r"\bbrowser is open\b", re.IGNORECASE)
 # What the server answers when its browser closed under it while the process lives on (Firefox crashed).
 _BROWSER_LOST = re.compile(r"\bbrowser is (?:gone|not open)\b", re.IGNORECASE)
 
-CLOSE_TIMEOUT_S = 30.0
+_DATA_URL = "data:"
 
-ErrorCode = Literal["not_found", "invalid", "limit", "not_open", "launch_failed", "crashed"]
+CLOSE_TIMEOUT_S = 30.0
+# How long a frame waits for the identity's call in flight before it gives up with `busy`.
+FRAME_WAIT_S = 5.0
+
+ErrorCode = Literal["not_found", "invalid", "limit", "not_open", "busy", "launch_failed", "crashed", "frame_failed"]
 
 
 class BrowserIdentityError(Exception):
     """A failure whose message is meant to be shown as it is, to the model or in an API answer.
 
     `not_found`, `invalid` (a bad name or proxy, or an archived identity) and `limit` are the caller's;
-    `not_open` is an action on an identity that is not open; `launch_failed` and `crashed` are the
-    browser's.
+    `not_open` is an action on an identity that is not open; `busy` is a frame that found the identity
+    in the middle of a call; `launch_failed`, `crashed` and `frame_failed` are the browser's.
     """
 
     def __init__(self, code: ErrorCode, message: str) -> None:
@@ -125,6 +130,21 @@ def result_is_error(result: Any) -> bool:
     return isinstance(result, ToolResult) and result.is_error
 
 
+def split_result(result: Any) -> tuple[str, list[tuple[str, str]]]:
+    """A tool result of the MCP client as its text and its images, each as (media type, base64 data)."""
+    if isinstance(result, str):
+        return str(result), []
+    images: list[tuple[str, str]] = []
+    for block in result:
+        if not isinstance(block, Mapping) or block.get("type") != "image_url":
+            continue
+        url = (block.get("image_url") or {}).get("url", "")
+        header, _, data = url.partition(",")
+        if url.startswith(_DATA_URL) and data:
+            images.append((header[len(_DATA_URL) :].split(";")[0], data))
+    return result_text(result), images
+
+
 def _check_limits(max_open: int, max_identities: int) -> None:
     for name, value in (("max_open", max_open), ("max_identities", max_identities)):
         if not isinstance(value, int) or isinstance(value, bool) or value < 1:
@@ -149,6 +169,7 @@ class BrowserManager:
         open_retry_max_s: float = 30.0,
         request_timeout_s: int = 120,
         close_timeout_s: float = CLOSE_TIMEOUT_S,
+        frame_wait_s: float = FRAME_WAIT_S,
     ) -> None:
         _check_limits(max_open, max_identities)
         if not mcp_command.strip():
@@ -165,6 +186,7 @@ class BrowserManager:
         self._open_retry_max_s = open_retry_max_s
         self._request_timeout_s = request_timeout_s
         self._close_timeout_s = close_timeout_s
+        self._frame_wait_s = frame_wait_s
         # Open identities, least recently used first (a dict keeps insertion order).
         self._sessions: dict[str, _Session] = {}
         self._lock = asyncio.Lock()
@@ -340,6 +362,52 @@ class BrowserManager:
                     "the identity is closed, launch it again",
                 )
             return result
+
+    async def frame(self, identity_id: str) -> tuple[str, bytes]:
+        """One frame of the open identity's window, as `(media type, bytes)`: what the UI shows of a browser.
+
+        This only looks. It does not count as a use (the LRU order and `last_used_at` stay as they were, so
+        a page that polls cannot keep a browser open), and it never opens a browser the server lost: that
+        is `not_open`, because opening is the decision of `browser_identity_launch`. It waits at most
+        `frame_wait_s` for the call in flight on the identity and then says `busy`.
+        """
+        self._require(identity_id)
+        session = self._sessions.get(identity_id)
+        if session is None:
+            raise self._not_open(identity_id)
+        try:
+            await asyncio.wait_for(session.calls.acquire(), timeout=self._frame_wait_s)
+        except asyncio.TimeoutError:
+            raise BrowserIdentityError(
+                "busy", f'browser identity "{identity_id}" is busy with a call; ask again in a moment'
+            ) from None
+        try:
+            if self._sessions.get(identity_id) is not session:
+                raise self._not_open(identity_id)
+            result = await self._request(session, "browser_watch", {})
+            if session.terminated:
+                await self._process_ended(session)
+                raise BrowserIdentityError(
+                    "crashed",
+                    f'the browser process of identity "{identity_id}" exited; the identity is closed, launch it again',
+                )
+        finally:
+            session.calls.release()
+        text = _scrub(result_text(result), session.proxy)
+        if result_is_error(result):
+            if _BROWSER_LOST.search(text):
+                raise self._not_open(identity_id)
+            raise BrowserIdentityError("frame_failed", f'no frame of identity "{identity_id}": {text}')
+        _, images = split_result(result)
+        if not images:
+            raise BrowserIdentityError("frame_failed", f'no frame of identity "{identity_id}": the server sent no image')
+        mime, data = images[0]
+        try:
+            return mime, base64.b64decode(data, validate=True)
+        except ValueError:
+            raise BrowserIdentityError(
+                "frame_failed", f'no frame of identity "{identity_id}": the image is damaged'
+            ) from None
 
     # ------------------------------------------------------------------
     # Internals
