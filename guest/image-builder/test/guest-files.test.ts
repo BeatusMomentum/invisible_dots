@@ -32,7 +32,7 @@ const bashUsable = bashCanRead(join(root, "runtime", "dot-desktop.sh"));
 
 describe("guest files", () => {
   it("lists every guest script", () => {
-    expect([...scripts].sort()).toEqual(["builder/build-browser-env.sh", "builder/build-engine-env.sh", "builder/provision.sh", "runtime/dot-desktop.sh", "runtime/install.sh"]);
+    expect([...scripts].sort()).toEqual(["builder/build-browser-env.sh", "builder/build-engine-env.sh", "builder/provision.sh", "runtime/dot-desktop.sh", "runtime/dot-install.sh", "runtime/install.sh"]);
   });
 
   it.each(GUEST_ASSETS)("%s is LF-only ASCII and says nothing about vsock or libvirt", (path) => {
@@ -262,8 +262,9 @@ describe("guest units", () => {
     expect(install).toContain("d /run/invisible-dots-agent 2750 dotengine dotagentd -");
     expect(install).not.toMatch(/d \/run\/invisible-dots(-agent)? 2750 [a-z]+ dot( |\\n)/);
     expect(install).toContain("install -d -o dotengine -g dotengine -m 0700 /home/dotengine/state");
-    // No sudoers rule and no config directory are written: the engine's config lives in its database.
-    expect(install).not.toMatch(/visudo|NOPASSWD|sudoers\.d|\/etc\/invisible-dots\/[a-z]+\//);
+    // One sudo rule, dot's, for dot-install and nothing else; no config directory: the engine's config lives in its database.
+    expect(install.match(/NOPASSWD: .*/g)).toEqual(["NOPASSWD: /usr/local/sbin/dot-install\\n' > /etc/sudoers.d/dot-install.new"]);
+    expect(install).not.toMatch(/dotengine ALL=|dotagentd ALL=|\/etc\/invisible-dots\/[a-z]+\//);
     expect(text("builder/user-data.yaml")).toMatch(/- name: dotengine\n[\s\S]*?groups: \[dot\]/);
   });
 

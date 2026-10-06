@@ -92,7 +92,7 @@ describe("the builder seed", () => {
 
     // The real writer accepts it under the label NoCloud looks for.
     const summary = await writeIso(join(dir, "seed.iso"), entries, { volumeId: SEED_VOLUME_ID });
-    expect(summary.files).toBe(11);
+    expect(summary.files).toBe(10);
     const image = await readFile(join(dir, "seed.iso"));
     // Primary volume descriptor at sector 16: the label at offset 40.
     expect(image.toString("latin1", 16 * 2048 + 40, 16 * 2048 + 46)).toBe("cidata");
