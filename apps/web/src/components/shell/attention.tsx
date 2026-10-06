@@ -6,6 +6,7 @@ import type { HealthResponse } from "@invisible-dots/sdk";
 import { api } from "../../lib/api";
 import { attentionByDot, needsYouCount, NO_ATTENTION, withTitlePrefix, type DotAttention } from "../../lib/attention";
 import { readDismissed, writeDismissed } from "../../lib/dismissed";
+import { loadRelinks, type ChannelRelink, type RelinkRead } from "../../lib/channels";
 import { loadFailedTasks, recentFailures, type FailedTasks } from "../../lib/failed-tasks";
 import { applyLiveEvent, dismissRestart, dotIdFromPath, liveOf, markRead, type LiveDot, type LiveDots } from "../../lib/dot-live";
 import { faviconHref } from "../../lib/favicon";
@@ -17,6 +18,7 @@ import { useResource, type Resource } from "../ui";
 const DOT_EVENTS = ["dot.created", "dot.updated", "dot.deleted", "computer.state", "computer.started", "computer.stopped"];
 const APPROVAL_EVENTS = ["approval.requested", "approval.resolved", "task.cancelled", "task.completed", "task.failed"];
 const FAILED_TASK_EVENTS = ["task.failed"];
+const CHANNEL_EVENTS = ["channel.status"];
 const HEALTH_INTERVAL_MS = 30_000;
 
 interface ShellData {
@@ -25,10 +27,12 @@ interface ShellData {
   /** The control plane's answer, asked every 30 seconds and again on `health.reload()` (after a key is saved). */
   health: Resource<HealthResponse>;
   attention: ReadonlyMap<string, DotAttention>;
-  /** What needs the person, across every Dot: waiting approvals, Dots in ERROR and failed tasks. The number on the rail's Inbox entry. */
+  /** What needs the person, across every Dot: waiting approvals, Dots in ERROR, failed tasks and channels to link again. The number on the rail's Inbox entry. */
   needsYou: number;
   /** Tasks that failed in the last 24 hours and are not dismissed, newest first; and how many Dots' tasks could not be read. */
   failedTasks: { tasks: readonly Task[]; unread: number; loading: boolean };
+  /** Channels that need linking again, and how many Dots' channels could not be read. */
+  relinks: { items: readonly ChannelRelink[]; unread: number; loading: boolean };
   /** Take a failed task out of the Inbox (remembered in this browser). */
   dismissFailedTask: (taskId: string) => void;
   live: LiveDots;
@@ -38,8 +42,9 @@ interface ShellData {
 const Context = createContext<ShellData | null>(null);
 
 /**
- * What every signed-in page shares: the Dots, the approvals that wait, the tasks that failed lately, what the live stream says about each Dot, and
- * whether the control plane answers. The rail, the Dot header, the document title, the favicon and the setup pages
+ * What every signed-in page shares: the Dots, the approvals that wait, the tasks that failed lately, the channels that
+ * need linking again, what the live stream says about each Dot, and whether the control plane answers. The rail, the
+ * Dot header, the document title, the favicon and the setup pages
  * all read it, so they agree and the control plane is asked once, not once per component.
  */
 export function AttentionProvider({ children }: { children: ReactNode }) {
@@ -48,6 +53,7 @@ export function AttentionProvider({ children }: { children: ReactNode }) {
   const health = useResource(() => api.health(), "shell:health");
   const dotIds = (dots.data ?? []).map((dot) => dot.id).join(",");
   const failed = useResource<FailedTasks>(() => loadFailedTasks(api, dots.data ?? []), `shell:failed:${dotIds}`);
+  const channels = useResource<RelinkRead>(() => loadRelinks(api, dots.data ?? []), `shell:channels:${dotIds}`);
   const reloadHealth = health.reload;
   useEffect(() => {
     const timer = setInterval(reloadHealth, HEALTH_INTERVAL_MS);
@@ -56,6 +62,7 @@ export function AttentionProvider({ children }: { children: ReactNode }) {
   useLiveRefresh(dots.reload, DOT_EVENTS);
   useLiveRefresh(approvals.reload, APPROVAL_EVENTS);
   useLiveRefresh(failed.reload, FAILED_TASK_EVENTS);
+  useLiveRefresh(channels.reload, CHANNEL_EVENTS);
 
   const openDotId = dotIdFromPath(usePathname() ?? "");
   const [live, setLive] = useState<LiveDots>({});
@@ -81,14 +88,19 @@ export function AttentionProvider({ children }: { children: ReactNode }) {
   const recent = useMemo(() => recentFailures(failed.data?.tasks ?? [], dismissed, now * 60_000), [failed.data, dismissed, now]);
   const failedTasks = useMemo(() => ({ tasks: recent, unread: failed.data?.unread ?? 0, loading: failed.data === undefined && failed.error === null }), [recent, failed.data, failed.error]);
 
-  const attention = useMemo(() => attentionByDot(dots.data ?? [], approvals.data ?? [], recent), [dots.data, approvals.data, recent]);
+  const relinks = useMemo(
+    () => ({ items: channels.data?.relinks ?? [], unread: channels.data?.unread ?? 0, loading: channels.data === undefined && channels.error === null }),
+    [channels.data, channels.error],
+  );
+
+  const attention = useMemo(() => attentionByDot(dots.data ?? [], approvals.data ?? [], recent, relinks.items), [dots.data, approvals.data, recent, relinks.items]);
   const needsYou = needsYouCount(attention);
   useTitleAndFavicon(needsYou);
 
   const dismiss = useCallback((dotId: string) => setLive((current) => dismissRestart(current, dotId)), []);
   const value = useMemo<ShellData>(
-    () => ({ dots, approvals, health, attention, needsYou, failedTasks, dismissFailedTask, live, dismissRestart: dismiss }),
-    [dots, approvals, health, attention, needsYou, failedTasks, dismissFailedTask, live, dismiss],
+    () => ({ dots, approvals, health, attention, needsYou, failedTasks, relinks, dismissFailedTask, live, dismissRestart: dismiss }),
+    [dots, approvals, health, attention, needsYou, failedTasks, relinks, dismissFailedTask, live, dismiss],
   );
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

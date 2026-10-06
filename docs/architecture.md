@@ -1896,7 +1896,11 @@ answered statuses with `order=desc` and `limit=50`, and "Show older answers" ask
 for the next page with `before` the last id it holds, so the newest answer is
 listed however many approvals the Dots have asked for. A live refresh reads the
 newest page again and keeps the older rows it reaches (when more was answered in
-between than a page holds, the older rows are dropped and read again on request). Channels needing a relink join "Needs you" with the channels page.
+between than a page holds, the older rows are dropped and read again on request).
+A channel that needs the person (its login was refused: a revoked Telegram token, a WhatsApp device removed on the phone; one the person paused does not count) is a
+card under "Channels to link again" with what the host says and a link to the Channels page, counts in the Inbox's number, the title and the favicon, and marks
+the Dot in the rail and its Channels tab. The shell reads each Dot's `GET /api/dots/:id/channels` for it and again on `channel.status`; a Dot whose channels
+cannot be read is counted and said, not hidden.
 
 The Computer page (`/dots/<id>/computer`) has four views, named in the address
 (`?view=screen|browser|files|usage`, Screen when it says nothing; the old
@@ -1967,6 +1971,18 @@ person does not create one here: an automation is the Dot's act and the
 `automations` permission asks by default, so the empty list says how one comes to
 be by what the config does with that permission. The list is read again when the
 cron tool is called, after a decision on an approval and when a run ends.
+
+The Channels page (`/dots/<id>/channels`) is one card per channel the server runs (`available` in `GET /api/dots/:id/channels`): Telegram always,
+WhatsApp only when the server was started with `INVISIBLE_DOTS_WHATSAPP=1`. Telegram not connected asks for the bot's token (a password field, sent once over
+`PUT .../channels/telegram`, emptied at once and never read back); connected, the card shows the bot, pairs a chat (`POST .../pairing`: a link that opens the
+chat with the code ready, its QR code, the words to type, and the ten minutes counting down; the panel closes when `channel.peer.paired` arrives), lists the
+people paired with a Revoke each, and has the three switches of the channel's settings (approvals here, tell me when a task ends, show what the Dot wants to
+run), each saved as it is flipped, a Pause and a Disconnect that says the token and the people go. A refused token shows "Telegram needs a new token" with
+the field to replace it, the people staying paired. WhatsApp first says that the client is unofficial and can get the number banned, then links by scanning:
+the page follows `GET .../whatsapp/qr` (the frames of `ChannelLinkFrame`, reduced to one view by `lib/channel-link.ts`), draws each code itself as an SVG
+from the QR modules (`qrcode`, dark on light in either theme), and ends linked with the number, or failed with the host's reason and "Link again"; a link
+already going on when the page opens is followed, and Cancel removes the channel the start made. The page follows `channel.status` and
+`channel.peer.paired` live. The browser tests run the real Telegram and WhatsApp adapters against the hub's own fakes (`FakeBotApi`, `FakeWhatsAppConnector`).
 
 The Activity page (`/dots/<id>/activity`; the old `/timeline` address redirects
 to it) is the whole event log of the Dot as readable lines, for the person who

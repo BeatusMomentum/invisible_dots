@@ -1,9 +1,10 @@
 "use client";
 
-import { AlertCircleIcon, CheckCircle2Icon, XCircleIcon } from "lucide-react";
+import { AlertCircleIcon, CheckCircle2Icon, UnplugIcon, XCircleIcon } from "lucide-react";
 import Link from "next/link";
 import { useMemo, type ReactNode } from "react";
 import { askOfRecord, type ApprovalAsk } from "../../lib/approval-view";
+import { CHANNEL_LABELS, type ChannelRelink } from "../../lib/channels";
 import { formatDate } from "../../lib/format";
 import { matchesFilters, waitingOrder } from "../../lib/inbox";
 import { relativeTime } from "../../lib/time";
@@ -93,17 +94,38 @@ function FailedTaskCard({ task, dotName, onDismiss }: { task: Task; dotName: str
   );
 }
 
+/** A channel whose login was refused: what the host says, and the page where it is done again. */
+function RelinkCard({ relink, dotName }: { relink: ChannelRelink; dotName: string }) {
+  const name = CHANNEL_LABELS[relink.kind];
+  return (
+    <article aria-label={`${name} of ${dotName} needs linking again`} className="flex flex-wrap items-center gap-3 rounded-lg border bg-card p-3 text-card-foreground">
+      <UnplugIcon aria-hidden="true" className="size-4 shrink-0 text-warn" />
+      <div className="min-w-0 flex-1 basis-56">
+        <p className="text-sm font-medium">
+          <span className="text-muted-foreground">{dotName}: </span>
+          {name} needs linking again
+        </p>
+        {relink.detail ? <p className="line-clamp-3 text-xs break-words text-muted-foreground">{relink.detail}</p> : null}
+      </div>
+      <Button asChild variant="outline" size="xs">
+        <Link href={`/dots/${encodeURIComponent(relink.dot_id)}/channels`}>Open channels</Link>
+      </Button>
+    </article>
+  );
+}
+
 function Key({ children }: { children: string }) {
   return <kbd className="rounded border px-1 font-mono">{children}</kbd>;
 }
 
 /**
  * What needs the person (S6): the approvals that wait, oldest first, each answerable where it stands; Dots in an error
- * state; tasks that failed in the last day. An approval that was answered here stays in its place as a receipt until the
- * person leaves, so that nothing jumps away under the pointer. Keys: j and k move, a allows once, d denies.
+ * state; tasks that failed in the last day; channels that need linking again. An approval that was answered here
+ * stays in its place as a receipt until the person leaves, so that nothing jumps away under the pointer. Keys: j and k
+ * move, a allows once, d denies.
  */
 export function NeedsYou({ filter }: { filter: Filter }) {
-  const { dots, approvals, attention, failedTasks, dismissFailedTask } = useShell();
+  const { dots, approvals, attention, failedTasks, relinks, dismissFailedTask } = useShell();
   const answers = useApprovalAnswers();
   const names = useMemo(() => new Map((dots.data ?? []).map((dot) => [dot.id, dot.name])), [dots.data]);
 
@@ -118,12 +140,13 @@ export function NeedsYou({ filter }: { filter: Filter }) {
   const otherThings = filter.permission === null;
   const broken = otherThings ? (dots.data ?? []).filter((dot) => attention.get(dot.id)?.error != null && (filter.dotId === null || dot.id === filter.dotId)) : [];
   const failed = otherThings ? failedTasks.tasks.filter((task) => filter.dotId === null || task.dot_id === filter.dotId) : [];
+  const unlinked = otherThings ? relinks.items.filter((relink) => filter.dotId === null || relink.dot_id === filter.dotId) : [];
   const waitingCount = asks.filter((ask) => !answers.settled.has(ask.id)).length;
 
   const keys = useInboxKeys(asks, answers, true);
   const loading = (approvals.data === undefined && !approvals.error) || (dots.data === undefined && !dots.error);
-  // "Nothing needs you" is said only once everything has been read, failed tasks included: the approvals do not wait for them.
-  const empty = !loading && !failedTasks.loading && asks.length === 0 && broken.length === 0 && failed.length === 0;
+  // "Nothing needs you" is said only once everything has been read, failed tasks and channels included: the approvals do not wait for them.
+  const empty = !loading && !failedTasks.loading && !relinks.loading && asks.length === 0 && broken.length === 0 && failed.length === 0 && unlinked.length === 0;
 
   return (
     <div className="space-y-6">
@@ -166,6 +189,18 @@ export function NeedsYou({ filter }: { filter: Filter }) {
         </Section>
       ) : null}
 
+      {unlinked.length > 0 ? (
+        <Section id="inbox-channels" title="Channels to link again" count={unlinked.length}>
+          <ul className="space-y-2">
+            {unlinked.map((relink) => (
+              <li key={`${relink.dot_id}:${relink.kind}`}>
+                <RelinkCard relink={relink} dotName={names.get(relink.dot_id) ?? relink.dot_id} />
+              </li>
+            ))}
+          </ul>
+        </Section>
+      ) : null}
+
       {failed.length > 0 ? (
         <Section id="inbox-failed" title="Tasks that failed in the last 24 hours" count={failed.length}>
           <ul className="space-y-2">
@@ -184,6 +219,16 @@ export function NeedsYou({ filter }: { filter: Filter }) {
           <AlertTitle>Some failed tasks may be missing</AlertTitle>
           <AlertDescription>
             <p>The tasks of {failedTasks.unread === 1 ? "one Dot" : `${failedTasks.unread} Dots`} could not be read.</p>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {relinks.unread > 0 && otherThings ? (
+        <Alert>
+          <AlertCircleIcon />
+          <AlertTitle>Some channels may be missing</AlertTitle>
+          <AlertDescription>
+            <p>The channels of {relinks.unread === 1 ? "one Dot" : `${relinks.unread} Dots`} could not be read.</p>
           </AlertDescription>
         </Alert>
       ) : null}

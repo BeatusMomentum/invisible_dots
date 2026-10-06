@@ -11,11 +11,9 @@ import { relativeTime } from "../../lib/time";
 import type { BrowserIdentity } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { ConfirmDialog } from "../confirm-dialog";
-import { TONE_CLASS } from "../dot/tone";
+import { TONE_CLASS, TONE_DOT } from "../dot/tone";
 import { useAction } from "../ui";
 import { Button } from "../ui/button";
-
-const DOT_CLASS = { ok: "bg-ok", warn: "bg-warn", error: "bg-danger", info: "bg-info", neutral: "bg-muted-foreground" } as const;
 
 /** The marker of a browser the Dot is working in at this moment. */
 export function UsingNow() {
@@ -31,7 +29,7 @@ function StatusChip({ identity }: { identity: BrowserIdentity }) {
   const { label, tone } = identityStatus(identity.status);
   return (
     <span className={cn("inline-flex w-fit items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium", TONE_CLASS[tone])}>
-      <span aria-hidden="true" className={cn("size-1.5 rounded-full", DOT_CLASS[tone])} />
+      <span aria-hidden="true" className={cn("size-1.5 rounded-full", TONE_DOT[tone])} />
       <span className="sr-only">Status: </span>
       {label}
     </span>

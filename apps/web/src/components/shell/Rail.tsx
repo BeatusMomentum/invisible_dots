@@ -1,10 +1,11 @@
 "use client";
 
-import { HomeIcon, InboxIcon, PlusIcon, SettingsIcon } from "lucide-react";
+import { HomeIcon, InboxIcon, PlusIcon, SettingsIcon, UnplugIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
 import { ringState } from "../../lib/attention";
+import { CHANNEL_LABELS } from "../../lib/channels";
 import { dotIdFromPath, liveOf } from "../../lib/dot-live";
 import { cn } from "../../lib/utils";
 import { StreamIndicator } from "../events";
@@ -112,6 +113,7 @@ export function Rail({ onNavigate }: { onNavigate?: () => void }) {
           const dotAttention = attention.get(dot.id);
           const dotLive = liveOf(live, dot.id);
           const approvals = dotAttention?.pendingApprovals ?? 0;
+          const relinks = dotAttention?.relinks ?? [];
           const ring = ringState({ status: dot.status, computerState: dot.computer_state, agentState: dotLive.agent, pendingApprovals: approvals });
           return (
             <Link
@@ -127,6 +129,7 @@ export function Rail({ onNavigate }: { onNavigate?: () => void }) {
               <DotAvatar id={dot.id} name={dot.name} ring={ring} size="sm" />
               <span className="min-w-0 flex-1 truncate">{dot.name}</span>
               {dotLive.unread ? <span role="img" aria-label="New reply" className="size-2 shrink-0 rounded-full bg-primary" /> : null}
+              {relinks.length > 0 ? <UnplugIcon role="img" aria-label={`${relinks.map((relink) => CHANNEL_LABELS[relink.kind]).join(" and ")} needs linking again`} className="size-3.5 shrink-0 text-warn" /> : null}
               <CountBadge count={approvals} label="waiting" />
             </Link>
           );

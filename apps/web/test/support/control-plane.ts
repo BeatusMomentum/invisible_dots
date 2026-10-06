@@ -3,7 +3,7 @@
  * sends, answered from memory, and `/api/stream` as a live SSE body the test pushes events into. `install()` puts
  * it behind the global `fetch`, which is where the web client's SDK looks.
  */
-import { COMPUTER_STOPPED, computerIsUp, MAX_EVENT_PAGE, type ApprovalRecord, type Automation, type BrowserIdentity, type ComputerAnswer, type DoctorCheck, type DotConfig, type DotSummary, type StoredEvent, type SystemAnswer, type ToolInfo } from "@invisible-dots/shared/browser";
+import { COMPUTER_STOPPED, computerIsUp, MAX_EVENT_PAGE, type ApprovalRecord, type Automation, type BrowserIdentity, type ChannelKind, type ChannelLinkFrame, type ChannelRecord, type ChannelSettings, type ComputerAnswer, type DoctorCheck, type DotConfig, type DotSummary, type StoredEvent, type SystemAnswer, type ToolInfo } from "@invisible-dots/shared/browser";
 import type { TaskRecord } from "@invisible-dots/sdk";
 import { vi } from "vitest";
 
@@ -36,6 +36,21 @@ export function approvalRecord(id: string, dotId: string, change: Partial<Approv
     note: null,
     created_at: "2026-01-01T00:00:00Z",
     resolved_at: null,
+    ...change,
+  };
+}
+
+export function channelRecord(kind: ChannelKind, change: Partial<ChannelRecord> = {}): ChannelRecord {
+  const settings: ChannelSettings = { approvals: true, notify_tasks: true, show_arguments: false };
+  return {
+    kind,
+    enabled: true,
+    status: "connected",
+    status_detail: null,
+    account: kind === "telegram" ? "fake_bot" : "15550001111",
+    settings,
+    peers: [],
+    created_at: "2026-01-01T00:00:00Z",
     ...change,
   };
 }
@@ -90,6 +105,20 @@ export class FakeControlPlane {
   automationActions: string[] = [];
   /** Answer an automation's pause, resume or delete with this error instead of doing it. */
   failAutomation: { status: number; error: string; message: string } | null = null;
+  /** The channels `GET /api/dots/:id/channels` lists, by Dot id. */
+  channels: Record<string, ChannelRecord[]> = {};
+  /** The kinds of channel the server can run, as `GET .../channels` says. */
+  channelsAvailable: ChannelKind[] = ["telegram"];
+  /** Every change of a channel as "METHOD kind sub body", in order (a token is never written here). */
+  channelActions: string[] = [];
+  /** Answer the channel routes that change something with this error instead of doing it. */
+  failChannel: { status: number; error: string; message: string } | null = null;
+  /** Answer `GET .../channels` with this error instead of the list. */
+  failChannels: { status: number; error: string; message: string } | null = null;
+  /** The code `POST .../pairing` makes next, and how long it lasts. */
+  pairing = { code: "K7M2QX9P", expiresInMs: 600_000 };
+  /** The token of every `PUT .../channels/telegram`, as the browser sent it. */
+  sentTokens: string[] = [];
   /** The body of every `PATCH /api/dots/:id`, as the browser sent it. */
   updates: Array<{ config: unknown; expected_config_version?: number }> = [];
   /** Answer `PATCH /api/dots/:id` with this error instead of saving. */
@@ -164,6 +193,8 @@ export class FakeControlPlane {
   /** Answer `POST /api/dots` with this error instead of 201. */
   failCreate: { status: number; error: string; message: string; details?: unknown } | null = null;
   #stream: ReadableStreamDefaultController<Uint8Array> | null = null;
+  /** The WhatsApp link streams that are open, by Dot id. */
+  #links = new Map<string, ReadableStreamDefaultController<Uint8Array>>();
   #nextEventId = 1;
 
   /** `fetch` as the browser would have it: the routes of this class and nothing else. */
@@ -193,6 +224,30 @@ export class FakeControlPlane {
 
   get streamOpen(): boolean {
     return this.#stream !== null;
+  }
+
+  /** Whether a page follows the WhatsApp link of this Dot (`GET .../channels/whatsapp/qr` is open). */
+  linkOpen(dotId: string): boolean {
+    return this.#links.has(dotId);
+  }
+
+  /** The connection of the WhatsApp link ends without a last frame: the server went away. */
+  dropLink(dotId: string): void {
+    const link = this.#links.get(dotId);
+    if (!link) throw new Error(`nothing follows the WhatsApp link of ${dotId}`);
+    this.#links.delete(dotId);
+    link.close();
+  }
+
+  /** A frame of the WhatsApp link, to the page that follows it; a last frame (`linked`, `failed`) ends the stream, as the host's does. */
+  linkFrame(dotId: string, frame: ChannelLinkFrame): void {
+    const link = this.#links.get(dotId);
+    if (!link) throw new Error(`nothing follows the WhatsApp link of ${dotId}`);
+    link.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(frame)}\n\n`));
+    if (frame.state === "linked" || frame.state === "failed") {
+      this.#links.delete(dotId);
+      link.close();
+    }
   }
 
   async #answer(url: string, init?: RequestInit): Promise<Response> {
@@ -424,6 +479,75 @@ export class FakeControlPlane {
         }
         Object.assign(found, { enabled: body.enabled, next_run_at_ms: body.enabled ? Date.now() + 60_000 : null });
         return json(found);
+      }
+      if (rest === "channels" && method === "GET") {
+        if (this.failChannels) return json({ error: this.failChannels.error, message: this.failChannels.message }, this.failChannels.status);
+        return json({ channels: this.channels[record.id] ?? [], available: this.channelsAvailable });
+      }
+      const channel = /^channels\/(telegram|whatsapp)(?:\/(pairing|link|qr|peers\/([^/]+)))?$/.exec(rest);
+      if (channel) {
+        const kind = channel[1] as ChannelKind;
+        const sub = channel[2] ?? "";
+        const list = (this.channels[record.id] ??= []);
+        const found = list.find((c) => c.kind === kind);
+        if (sub === "qr" && method === "GET") {
+          return new Response(
+            new ReadableStream<Uint8Array>({
+              start: (controller) => {
+                this.#links.set(record.id, controller);
+                init?.signal?.addEventListener("abort", () => {
+                  if (this.#links.get(record.id) === controller) this.#links.delete(record.id);
+                  try {
+                    controller.close();
+                  } catch {
+                    // already closed
+                  }
+                });
+              },
+            }),
+            { headers: { "content-type": "text/event-stream" } },
+          );
+        }
+        const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+        const isToken = sub === "" && method === "PUT";
+        this.channelActions.push(`${method} ${kind}${sub ? ` ${sub}` : ""}${init?.body && !isToken ? ` ${JSON.stringify(body)}` : ""}`);
+        if (this.failChannel) return json({ error: this.failChannel.error, message: this.failChannel.message }, this.failChannel.status);
+        const announce = (next: ChannelRecord) => this.push(record.id, "channel.status", { kind, status: next.status });
+        if (isToken && kind === "telegram") {
+          this.sentTokens.push(String(body.token));
+          const next = found ?? channelRecord("telegram");
+          if (!found) list.push(next);
+          Object.assign(next, { status: "connected", status_detail: null });
+          announce(next);
+          return json(next, found ? 200 : 201);
+        }
+        if (sub === "link" && method === "POST") {
+          const next = found ?? channelRecord(kind, { status: "connecting", account: null });
+          if (!found) list.push(next);
+          Object.assign(next, { status: "connecting", status_detail: null });
+          return json(next, 202);
+        }
+        if (!found) return json({ error: "not_found", message: `Dot has no ${kind} channel` }, 404);
+        if (sub === "" && method === "PATCH") {
+          if (body.settings) Object.assign(found.settings, body.settings);
+          if (typeof body.enabled === "boolean") found.enabled = body.enabled;
+          return json(found);
+        }
+        if (sub === "" && method === "DELETE") {
+          this.channels[record.id] = list.filter((c) => c !== found);
+          return new Response(null, { status: 204 });
+        }
+        if (sub === "pairing" && method === "POST") {
+          const message = kind === "telegram" ? `/start ${this.pairing.code}` : `pair ${this.pairing.code}`;
+          const deepLink = kind === "telegram" ? `https://t.me/${found.account}?start=${this.pairing.code}` : `https://wa.me/${found.account}?text=${encodeURIComponent(message)}`;
+          return json({ code: this.pairing.code, deep_link: deepLink, message, expires_at: new Date(Date.now() + this.pairing.expiresInMs).toISOString() }, 201);
+        }
+        if (channel[3] && method === "DELETE") {
+          const peer = decodeURIComponent(channel[3]);
+          if (!found.peers.some((p) => p.peer_id === peer)) return json({ error: "not_found", message: `no peer ${peer}` }, 404);
+          found.peers = found.peers.filter((p) => p.peer_id !== peer);
+          return new Response(null, { status: 204 });
+        }
       }
       if (rest === "tools") return this.tools === null ? json({ error: "computer_stopped", message: "the computer is STOPPED" }, 409) : json({ tools: this.tools });
       if (rest === "usage") return json({ dot_id: record.id, since: searchParams.get("since"), spent_usd: searchParams.get("since") ? this.spentUsd : this.spentTotalUsd });

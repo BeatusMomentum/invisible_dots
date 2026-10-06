@@ -9,6 +9,15 @@ export const TONE_CLASS: Record<Tone, string> = {
   neutral: "bg-muted text-muted-foreground",
 };
 
+/** The fill of the small dot in front of a state chip's word, by tone. */
+export const TONE_DOT: Record<Tone, string> = {
+  ok: "bg-ok",
+  warn: "bg-warn",
+  error: "bg-danger",
+  info: "bg-info",
+  neutral: "bg-muted-foreground",
+};
+
 /** The edge of a row of a log, by tone: a colored line down its left side, the only place the tone shows. */
 export const TONE_EDGE: Record<Tone, string> = {
   ok: "border-l-ok",

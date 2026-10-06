@@ -8,7 +8,7 @@ import { DotEventScope, EventStreamProvider } from "../src/components/events";
 import { AttentionProvider } from "../src/components/shell/attention";
 import { Toaster } from "../src/components/ui/sonner";
 import { stubMatchMedia } from "./support/browser";
-import { approvalRecord, dotRecord, FakeControlPlane } from "./support/control-plane";
+import { approvalRecord, channelRecord, dotRecord, FakeControlPlane } from "./support/control-plane";
 
 let pathname = "/dots/d1/chat";
 vi.mock("next/navigation", () => ({ usePathname: () => pathname, useRouter: () => ({ push() {}, replace() {} }) }));
@@ -168,12 +168,27 @@ describe("the tab bar", () => {
     await renderDot();
     const tabs = within(screen.getByRole("navigation", { name: "Dot sections" }));
     expect(tabs.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual(
-      ["chat", "tasks", "computer", "memory", "activity", "settings"].map((slug) => "/dots/d1/" + slug),
+      ["chat", "tasks", "computer", "memory", "channels", "activity", "settings"].map((slug) => "/dots/d1/" + slug),
     );
     expect(tabs.getByRole("link", { name: "Tasks" }).getAttribute("aria-current")).toBe("page");
     expect(tabs.getByRole("link", { name: "Chat" }).getAttribute("aria-current")).toBeNull();
     // Approvals are the Inbox's, filtered to the Dot: the tab bar has no Approvals tab.
     expect(tabs.queryByRole("link", { name: /Approvals/ })).toBeNull();
+  });
+
+  it("marks the Channels tab while a channel of the Dot needs linking again, and only then", async () => {
+    plane.dots = [dotRecord("d1"), dotRecord("d2")];
+    plane.channels = { d1: [channelRecord("telegram", { status: "needs_relink" })], d2: [channelRecord("telegram")] };
+    await renderDot();
+    const tabs = within(screen.getByRole("navigation", { name: "Dot sections" }));
+    expect(await tabs.findByLabelText("needs linking again")).toBeTruthy();
+    expect(within(tabs.getByRole("link", { name: /Channels/ })).getByLabelText("needs linking again")).toBeTruthy();
+    expect(tabs.getAllByLabelText("needs linking again")).toHaveLength(1);
+    cleanup();
+
+    await renderDot("d2");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(within(screen.getByRole("navigation", { name: "Dot sections" })).queryByLabelText("needs linking again")).toBeNull();
   });
 });
 

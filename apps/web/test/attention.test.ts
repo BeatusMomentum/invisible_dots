@@ -23,8 +23,8 @@ describe("the attention model", () => {
         { dot_id: "gone", status: "pending" },
       ],
     );
-    expect(map.get("a")).toEqual({ pendingApprovals: 2, error: null, failedTasks: 0 });
-    expect(map.get("b")).toEqual({ pendingApprovals: 0, error: null, failedTasks: 0 });
+    expect(map.get("a")).toEqual({ pendingApprovals: 2, error: null, failedTasks: 0, relinks: [] });
+    expect(map.get("b")).toEqual({ pendingApprovals: 0, error: null, failedTasks: 0, relinks: [] });
     expect(map.has("gone")).toBe(false);
     expect(needsYouCount(map)).toBe(2);
   });
@@ -36,15 +36,34 @@ describe("the attention model", () => {
     expect(needsYouCount(map)).toBe(2);
   });
 
+  it("counts the channels that need linking again, per Dot, with what the host says, and ignores those of a Dot it does not know", () => {
+    const map = attentionByDot(
+      [dot("a"), dot("b")],
+      [],
+      [],
+      [
+        { dot_id: "a", kind: "telegram", detail: "Telegram refused the token" },
+        { dot_id: "a", kind: "whatsapp", detail: null },
+        { dot_id: "gone", kind: "telegram", detail: null },
+      ],
+    );
+    expect(map.get("a")?.relinks).toEqual([
+      { kind: "telegram", detail: "Telegram refused the token" },
+      { kind: "whatsapp", detail: null },
+    ]);
+    expect(map.get("b")?.relinks).toEqual([]);
+    expect(needsYouCount(map)).toBe(2);
+  });
+
   it("carries the reason of a Dot in ERROR, and a stand-in reason when the record has none", () => {
     const map = attentionByDot([dot("a", "ERROR", "the disk is full"), dot("b", "ERROR")], []);
     expect(map.get("a")?.error).toBe("the disk is full");
     expect(map.get("b")?.error).toBe("The Dot is in an error state");
   });
 
-  it("counts what needs the person: waiting approvals, Dots in ERROR and failed tasks, each once", () => {
-    const map = attentionByDot([dot("a"), dot("b", "ERROR", "x")], [{ dot_id: "a", status: "pending" }], [{ dot_id: "b" }]);
-    expect(needsYouCount(map)).toBe(3);
+  it("counts what needs the person: waiting approvals, Dots in ERROR, failed tasks and channels to link again, each once", () => {
+    const map = attentionByDot([dot("a"), dot("b", "ERROR", "x")], [{ dot_id: "a", status: "pending" }], [{ dot_id: "b" }], [{ dot_id: "a", kind: "telegram", detail: null }]);
+    expect(needsYouCount(map)).toBe(4);
     expect(needsYouCount(attentionByDot([dot("a")], []))).toBe(0);
   });
 

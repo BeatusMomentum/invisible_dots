@@ -2,7 +2,8 @@
  * The real control plane and the real web server, for the browser tests: `startServer` of apps/api in this process
  * on a temporary INVISIBLE_DOTS_HOME (PGlite), with FakeDriver for the VM layer, so a test can drive what a Dot's
  * computer does (`driver.guestOf(id)`); and `next start` of the built web client as a child, pointed at it.
- * Only `next build` has to have run before.
+ * The channels run for real too, on what the hub's own tests use: the Telegram adapter talks to a Bot API server of this
+ * process (`bots`) and the WhatsApp adapter to a connection a test plays (`whatsapp`). Only `next build` has to have run before.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -11,6 +12,8 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startServer, type RunningServer } from "@invisible-dots/api";
+import { TelegramChannelType, WhatsAppChannelType } from "@invisible-dots/channels";
+import { FakeBotApi, FakeWhatsAppConnector } from "@invisible-dots/channels/testing";
 import { FakeDriver, waitUntilSettledReady } from "@invisible-dots/scheduler/testing";
 import { InvisibleDotsClient, type DotRecord } from "@invisible-dots/sdk";
 import { ENV, type DoctorCheck } from "@invisible-dots/shared";
@@ -27,6 +30,10 @@ export interface Harness {
   /** The control plane behind it. */
   control: RunningServer;
   driver: FakeDriver;
+  /** The Bot API the Telegram adapter polls: a test makes bots, writes to them as a person and reads what they sent. */
+  bots: FakeBotApi;
+  /** The WhatsApp connection of every Dot, played by a test: `whatsapp.current` is the newest. */
+  whatsapp: FakeWhatsAppConnector;
   /** The control plane's SDK client, signed in with its token. */
   api: InvisibleDotsClient;
   /** The token the login page asks for. */
@@ -77,6 +84,8 @@ export interface HarnessOptions {
 export async function startHarness({ withKey = true }: HarnessOptions = {}): Promise<Harness> {
   const home = await mkdtemp(join(tmpdir(), "idots-e2e-"));
   const driver = new FakeDriver();
+  const bots = await FakeBotApi.start();
+  const whatsapp = new FakeWhatsAppConnector();
   const host = {
     images: [ok("golden-image", "golden image", "golden-1.qcow2 matches its manifest"), ok("runtime-image", "runtime ISO", "runtime-1.iso matches its manifest")],
   };
@@ -85,6 +94,7 @@ export async function startHarness({ withKey = true }: HarnessOptions = {}): Pro
     listen: "127.0.0.1:0",
     logger: quiet,
     driver,
+    channelTypes: [new TelegramChannelType({ apiRoot: bots.apiRoot, pollSeconds: 1 }), new WhatsAppChannelType({ connector: () => whatsapp, pauseMs: () => 0 })],
     doctor: { ...healthyDoctor().deps, images: async () => host.images },
     // Quick polls, so a Dot is READY in milliseconds; the slow background loops are not needed.
     scheduler: {
@@ -109,6 +119,7 @@ export async function startHarness({ withKey = true }: HarnessOptions = {}): Pro
   const close = async () => {
     next.kill();
     await control.close();
+    await bots.close();
     await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
   };
   try {
@@ -126,6 +137,8 @@ export async function startHarness({ withKey = true }: HarnessOptions = {}): Pro
     home,
     control,
     driver,
+    bots,
+    whatsapp,
     host,
     api,
     token: control.token,

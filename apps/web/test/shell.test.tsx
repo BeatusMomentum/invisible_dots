@@ -6,7 +6,7 @@ import AppLayout from "../src/app/(app)/layout";
 import LoginLayout from "../src/app/login/layout";
 import LoginPage from "../src/app/login/page";
 import { stubMatchMedia } from "./support/browser";
-import { approvalRecord, dotRecord, FakeControlPlane, taskRecord } from "./support/control-plane";
+import { approvalRecord, channelRecord, dotRecord, FakeControlPlane, taskRecord } from "./support/control-plane";
 
 let pathname = "/";
 vi.mock("next/navigation", () => ({ usePathname: () => pathname, useRouter: () => ({ push() {}, replace() {} }) }));
@@ -272,6 +272,24 @@ describe("what the live stream changes in the rail", () => {
     plane.tasks = [taskRecord("t1", { dot_id: "d2", status: "FAILED", error: "no luck", finished_at: new Date().toISOString() })];
     act(() => plane.push("d2", "task.failed", { task_id: "t1", error: "no luck" }));
     await waitFor(() => expect(within(screen.getByRole("link", { name: /^Inbox/ })).getByLabelText("1 need you")).toBeTruthy());
+  });
+
+  it("marks the Dot whose channel needs linking again, counts it for the Inbox, and clears both when it is linked", async () => {
+    plane.dots = [dotRecord("d1", { name: "fares" }), dotRecord("d2", { name: "mailer" })];
+    plane.channels = { d2: [channelRecord("telegram", { status: "needs_relink", status_detail: "revoked" })] };
+    renderShell();
+    const dots = within(await screen.findByRole("navigation", { name: "Dots" }));
+    expect(await dots.findByLabelText("Telegram needs linking again")).toBeTruthy();
+    expect(within(dots.getByRole("link", { name: /mailer/ })).getByLabelText("Telegram needs linking again")).toBeTruthy();
+    expect(within(dots.getByRole("link", { name: /fares/ })).queryByLabelText(/needs linking again/)).toBeNull();
+    expect(within(screen.getByRole("link", { name: /^Inbox/ })).getByLabelText("1 need you")).toBeTruthy();
+    await waitFor(() => expect(document.title).toBe("(1) Dots - invisible_dots"));
+
+    // The person gives a new token: the host says so, and the shell reads the channels again.
+    plane.channels = { d2: [channelRecord("telegram")] };
+    act(() => plane.push("d2", "channel.status", { kind: "telegram", status: "connected" }));
+    await waitFor(() => expect(screen.queryByLabelText(/needs linking again/)).toBeNull());
+    await waitFor(() => expect(screen.queryByLabelText(/need you/)).toBeNull());
   });
 
   it("puts the prefix back when the page writes a new title", async () => {

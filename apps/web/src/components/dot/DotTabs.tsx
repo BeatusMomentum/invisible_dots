@@ -3,16 +3,15 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "../../lib/utils";
+import { useDotAttention } from "../shell/attention";
 
-/**
- * The tabs that exist today. A later step adds its entry (channels) in the same commit that adds the page, so no tab
- * ever leads nowhere.
- */
+/** The tabs of a Dot's page, each the address of a page that exists. */
 export const DOT_TABS = [
   { slug: "chat", label: "Chat" },
   { slug: "tasks", label: "Tasks" },
   { slug: "computer", label: "Computer" },
   { slug: "memory", label: "Memory" },
+  { slug: "channels", label: "Channels" },
   { slug: "activity", label: "Activity" },
   { slug: "settings", label: "Settings" },
 ] as const;
@@ -21,6 +20,7 @@ export const DOT_TABS = [
 export function DotTabs({ dotId }: { dotId: string }) {
   const path = usePathname() ?? "";
   const base = `/dots/${encodeURIComponent(dotId)}`;
+  const relinks = useDotAttention(dotId).relinks.length;
 
   return (
     <nav aria-label="Dot sections" className="-mx-4 mt-4 overflow-x-auto border-b px-4 md:mx-0 md:px-0">
@@ -39,6 +39,7 @@ export function DotTabs({ dotId }: { dotId: string }) {
                 )}
               >
                 {tab.label}
+                {tab.slug === "channels" && relinks > 0 ? <span role="img" aria-label="needs linking again" className="size-2 rounded-full bg-warn" /> : null}
               </Link>
             </li>
           );

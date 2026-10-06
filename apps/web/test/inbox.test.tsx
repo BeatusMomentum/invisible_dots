@@ -11,7 +11,7 @@ import { InboxView } from "../src/components/inbox/InboxView";
 import { AttentionProvider } from "../src/components/shell/attention";
 import { inboxHref, parseInboxQuery, type InboxQuery } from "../src/lib/inbox";
 import { stubMatchMedia } from "./support/browser";
-import { approvalRecord, dotRecord, FakeControlPlane, taskRecord } from "./support/control-plane";
+import { approvalRecord, channelRecord, dotRecord, FakeControlPlane, taskRecord } from "./support/control-plane";
 
 const router = { push: vi.fn(), replace: vi.fn() };
 vi.mock("next/navigation", () => ({
@@ -120,6 +120,47 @@ describe("Needs you", () => {
     expect(screen.getByText("The tasks of one Dot could not be read.")).toBeTruthy();
     // What could be read is still there.
     expect(screen.getByRole("article", { name: "Failed: Send the digest" })).toBeTruthy();
+  });
+
+  it("adds the channels that need linking again, with what the host says and the page where it is done", async () => {
+    plane.channels = {
+      d1: [channelRecord("telegram", { status: "needs_relink", status_detail: "Telegram refused the token: it was revoked." }), channelRecord("whatsapp")],
+      d2: [channelRecord("telegram", { enabled: false, status: "needs_relink" })],
+    };
+    await renderInbox();
+    const card = await screen.findByRole("article", { name: "Telegram of fares needs linking again" });
+    expect(within(card).getByText("Telegram refused the token: it was revoked.")).toBeTruthy();
+    expect(within(card).getByRole("link", { name: "Open channels" }).getAttribute("href")).toBe("/dots/d1/channels");
+    expect(screen.getByRole("heading", { name: /Channels to link again/ }).textContent).toContain("1");
+    // A channel the person paused is theirs to resume, and one that is connected needs nothing.
+    expect(screen.queryByRole("article", { name: /mailer/ })).toBeNull();
+    expect(screen.queryByRole("article", { name: /WhatsApp/ })).toBeNull();
+    expect(within(screen.getByRole("navigation", { name: "Inbox sections" })).getByLabelText("1 need you")).toBeTruthy();
+  });
+
+  it("leaves the channels out of a permission filter, and keeps only one Dot's when a Dot is chosen", async () => {
+    plane.channels = { d1: [channelRecord("telegram", { status: "needs_relink" })], d2: [channelRecord("telegram", { status: "needs_relink" })] };
+    await renderInbox({ dot: "d2" });
+    await screen.findByRole("article", { name: "Telegram of mailer needs linking again" });
+    expect(screen.queryByRole("article", { name: "Telegram of fares needs linking again" })).toBeNull();
+    cleanup();
+
+    await renderInbox({ permission: "files.write" });
+    await screen.findByText("Nothing needs you");
+    expect(screen.queryByRole("article", { name: /needs linking again/ })).toBeNull();
+  });
+
+  it("says that some channels may be missing when a Dot's channels could not be read", async () => {
+    const real = plane.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => (String(input) === "/api/dots/d2/channels" ? Response.json({ error: "down", message: "down" }, { status: 502 }) : real(input, init))),
+    );
+    plane.channels = { d1: [channelRecord("telegram", { status: "needs_relink" })] };
+    await renderInbox();
+    expect(await screen.findByText("Some channels may be missing")).toBeTruthy();
+    expect(screen.getByText("The channels of one Dot could not be read.")).toBeTruthy();
+    expect(screen.getByRole("article", { name: "Telegram of fares needs linking again" })).toBeTruthy();
   });
 
   it("says that nothing needs the person when nothing does, and loads without flashing that before it knows", async () => {

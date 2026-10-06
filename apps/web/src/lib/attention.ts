@@ -1,11 +1,8 @@
 /**
  * What needs the person, per Dot, and how that is drawn. One function owns it, and the rail badges, the
  * avatar ring, the document title and the favicon all read it, so they can never disagree.
- *
- * One part of the design's attention model has no data to read yet and is left out on purpose, not stubbed: a
- * channel that needs relinking (step W12, with the channels API).
  */
-import { computerIsUp, type AgentState, type DotState, type VmState } from "@invisible-dots/shared/browser";
+import { computerIsUp, type AgentState, type ChannelKind, type DotState, type VmState } from "@invisible-dots/shared/browser";
 
 export interface DotAttention {
   /** Approvals of this Dot that wait for an answer. */
@@ -14,9 +11,18 @@ export interface DotAttention {
   error: string | null;
   /** Tasks of this Dot that failed in the last 24 hours and that the person has not dismissed. */
   failedTasks: number;
+  /** Channels of this Dot whose login only the person can redo (a revoked Telegram token, a WhatsApp device removed on the phone). */
+  relinks: readonly DotRelink[];
 }
 
-export const NO_ATTENTION: DotAttention = { pendingApprovals: 0, error: null, failedTasks: 0 };
+/** A channel of one Dot that needs linking again. */
+export interface DotRelink {
+  kind: ChannelKind;
+  /** What the host says went wrong; null when it says nothing. */
+  detail: string | null;
+}
+
+export const NO_ATTENTION: DotAttention = { pendingApprovals: 0, error: null, failedTasks: 0, relinks: [] };
 
 /** The parts of a Dot record the model reads. */
 export interface AttentionDot {
@@ -36,11 +42,21 @@ export interface AttentionTask {
   dot_id: string;
 }
 
-/** Per Dot id; a Dot with nothing waiting is in the map with NO_ATTENTION. */
-export function attentionByDot(dots: readonly AttentionDot[], approvals: readonly AttentionApproval[], failedTasks: readonly AttentionTask[] = []): Map<string, DotAttention> {
-  const byDot = new Map<string, DotAttention>();
+/** The part of a channel that needs linking again that the model reads. */
+export interface AttentionRelink extends DotRelink {
+  dot_id: string;
+}
+
+/** Per Dot id; a Dot with nothing waiting is in the map with NO_ATTENTION's numbers. */
+export function attentionByDot(
+  dots: readonly AttentionDot[],
+  approvals: readonly AttentionApproval[],
+  failedTasks: readonly AttentionTask[] = [],
+  relinks: readonly AttentionRelink[] = [],
+): Map<string, DotAttention> {
+  const byDot = new Map<string, Omit<DotAttention, "relinks"> & { relinks: DotRelink[] }>();
   for (const dot of dots) {
-    byDot.set(dot.id, { pendingApprovals: 0, error: dot.status === "ERROR" ? (dot.error ?? "The Dot is in an error state") : null, failedTasks: 0 });
+    byDot.set(dot.id, { pendingApprovals: 0, error: dot.status === "ERROR" ? (dot.error ?? "The Dot is in an error state") : null, failedTasks: 0, relinks: [] });
   }
   for (const approval of approvals) {
     const entry = byDot.get(approval.dot_id);
@@ -50,16 +66,18 @@ export function attentionByDot(dots: readonly AttentionDot[], approvals: readonl
     const entry = byDot.get(task.dot_id);
     if (entry) entry.failedTasks++;
   }
+  for (const relink of relinks) byDot.get(relink.dot_id)?.relinks.push({ kind: relink.kind, detail: relink.detail });
   return byDot;
 }
 
 /**
- * Things that need the person: waiting approvals, Dots in ERROR and tasks that failed lately. It is the number on the
- * rail's Inbox entry, in the title prefix and on the favicon, and the Inbox lists exactly that many things.
+ * Things that need the person: waiting approvals, Dots in ERROR, tasks that failed lately and channels to link again.
+ * It is the number on the rail's Inbox entry, in the title prefix and on the favicon, and the Inbox lists exactly that
+ * many things.
  */
 export function needsYouCount(attention: ReadonlyMap<string, DotAttention>): number {
   let total = 0;
-  for (const entry of attention.values()) total += entry.pendingApprovals + entry.failedTasks + (entry.error === null ? 0 : 1);
+  for (const entry of attention.values()) total += entry.pendingApprovals + entry.failedTasks + entry.relinks.length + (entry.error === null ? 0 : 1);
   return total;
 }
 

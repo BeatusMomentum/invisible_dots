@@ -119,9 +119,10 @@ by hash in `guest/image-builder/builder/engine-requirements.lock`, each under
 its own license. The runtime disk carries the fork's own source with its
 `LICENSE` and `UPSTREAM.md` (`/opt/invisible-dots/engine/` in the guest).
 
-One file of the web client derives from nanobot's web UI instead (the
+Two files of the web client derive from nanobot's web UI instead (the
 `webui/` of the upstream repository at commit 9dc0aba, under the same license
-as above): `apps/web/src/components/chat/activity-step.tsx`. Its first comment
+as above): `apps/web/src/components/chat/activity-step.tsx` and
+`apps/web/src/components/channels/qr-connect.tsx`. The first comment of each
 says what was changed.
 
 ## shadcn/ui
