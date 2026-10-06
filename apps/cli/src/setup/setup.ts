@@ -4,15 +4,14 @@
  * rest of doctor's list (images, the web client, the OpenRouter key) has its own commands,
  * which setup names at the end instead of running.
  */
-import { allOk, runDoctor, type CheckId, type CheckResult, type DoctorDeps } from "../doctor/checks.js";
+import type { DoctorCheck, DoctorCheckId } from "@invisible-dots/shared";
+import { allOk, runDoctor, STORE_OPENROUTER_KEY, WEB_BUILD_COMMAND, type DoctorDeps } from "@invisible-dots/vm-manager";
 import { renderReport } from "../doctor/render.js";
-import { STORE_OPENROUTER_KEY } from "../commands.js";
 import { EXIT } from "../exit.js";
-import { WEB_BUILD_COMMAND } from "../web.js";
 import { installHostPrerequisites, setupRefusal, type InstallDeps, type InstallOutcome, type InstallRequest } from "./install.js";
 
 /** The checks setup is responsible for; it succeeds when these are ok. */
-export const SETUP_CHECKS: readonly CheckId[] = ["qemu", "qemu-img", "accelerator", "accelerator-probe"];
+export const SETUP_CHECKS: readonly DoctorCheckId[] = ["qemu", "qemu-img", "accelerator", "accelerator-probe"];
 
 export interface SetupDeps {
   doctor: DoctorDeps;
@@ -22,17 +21,17 @@ export interface SetupDeps {
   installPrerequisites?: (request: InstallRequest, deps: InstallDeps) => Promise<InstallOutcome>;
 }
 
-function byId(results: readonly CheckResult[]): Map<CheckId, CheckResult> {
+function byId(results: readonly DoctorCheck[]): Map<DoctorCheckId, DoctorCheck> {
   return new Map(results.map((r) => [r.id, r]));
 }
 
-function setupReady(results: readonly CheckResult[]): boolean {
+function setupReady(results: readonly DoctorCheck[]): boolean {
   const checks = byId(results);
   return SETUP_CHECKS.every((id) => checks.get(id)?.status === "ok");
 }
 
 /** What is left after QEMU and the accelerator, as the commands that do it. */
-export function nextSteps(results: readonly CheckResult[]): string[] {
+export function nextSteps(results: readonly DoctorCheck[]): string[] {
   const checks = byId(results);
   const steps: string[] = [];
   if (checks.get("golden-image")?.status !== "ok" || checks.get("runtime-image")?.status !== "ok") steps.push("invisible-dots image build");
@@ -62,7 +61,7 @@ export async function runSetup(deps: SetupDeps): Promise<number> {
   out(`${renderReport(before)}\n`);
 
   const checks = byId(before);
-  const status = (id: CheckId) => checks.get(id)?.status;
+  const status = (id: DoctorCheckId) => checks.get(id)?.status;
   const request = {
     installQemu: status("qemu") !== "ok" || status("qemu-img") !== "ok",
     enableAccelerator: status("accelerator") === "missing",
@@ -106,7 +105,7 @@ export async function runSetup(deps: SetupDeps): Promise<number> {
   return finish(before, out);
 }
 
-function finish(results: readonly CheckResult[], out: (text: string) => void): number {
+function finish(results: readonly DoctorCheck[], out: (text: string) => void): number {
   if (allOk(results)) {
     out("this host is ready: invisible-dots server\n");
   } else {

@@ -24,9 +24,11 @@ disk lay them out. This smoke does, in one Linux container, with no QEMU:
   stops a task and a chat turn and still holds after a crash, the `spent_usd` the
   events of tasks and chat answers carry, the `target` of `tool.called` (the command with
   its credential masked, a token flag and a `curl -U` proxy login alike, the path a file tool wrote and none of the content), the tools offered
-  for each permission map, the summary of an outgrown thread going to the
+  for each permission map (and `GET /tools` through `dot-agentd` saying the same, with `GET /automations` and its refusals), the summary of an outgrown thread going to the
   `models.summary` model with no tool in the request, the text sent to the model, the key reaching no file,
-  log or process environment, the browser seams (below), and the engine refusing to start on a lock that is not
+  log or process environment, the browser seams (below), the host's file routes (the TCP port) refusing a symbolic link
+  under home that leads to `/proc/<pid>/environ`, the token file or `/etc` while the engine's socket
+  still follows it, and the engine refusing to start on a lock that is not
   the golden image's or on a key in a dotenv file.
 
 ## The browser seams

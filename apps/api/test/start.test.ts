@@ -8,10 +8,12 @@ import { existsSync } from "node:fs";
 import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FakeDriver } from "@invisible-dots/scheduler/testing";
+import { FakeChannelType } from "@invisible-dots/channels/testing";
+import { FakeDriver, waitFor } from "@invisible-dots/scheduler/testing";
 import { InvisibleDotsClient } from "@invisible-dots/sdk";
-import { permissionBitsEnforced } from "@invisible-dots/shared";
+import { newId, parseDotConfig, permissionBitsEnforced } from "@invisible-dots/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { healthyDoctor } from "../../vm-manager/test/doctor-fakes.js";
 import { startServer, STOP_SIGNALS, untilStopSignal, type RunningServer, type StartServerOptions } from "../src/index.js";
 
 const quiet = { debug() {}, info() {}, warn() {}, error() {} };
@@ -104,6 +106,56 @@ describe("startServer on an empty INVISIBLE_DOTS_HOME", { timeout: 120_000 }, ()
     await expect(stat(server.paths.serverLockPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
+  it("serves the host report: the machine's rows, this home's images, and the OpenRouter row from its own Scheduler", async () => {
+    // The machine (QEMU, the accelerator, the disk) is faked; the images, the home and the key are this server's own.
+    const { findQemu, run, accelerator, acceleratorAccess, freeSpace } = healthyDoctor().deps;
+    const server = await start({ doctor: { findQemu, run, accelerator, acceleratorAccess, freeSpace } });
+    const api = new InvisibleDotsClient({ baseUrl: server.url, token: server.token });
+
+    const before = await api.doctor();
+    expect(before.checks.map((c) => c.id)).toEqual(["node", "qemu", "qemu-img", "accelerator", "accelerator-probe", "disk", "golden-image", "runtime-image", "openrouter"]);
+    expect(before.ok).toBe(false);
+    const row = (id: string) => before.checks.find((c) => c.id === id);
+    expect(row("qemu")?.status).toBe("ok");
+    expect(row("golden-image")).toMatchObject({ status: "missing", detail: `none in ${server.paths.imagesDir}`, fix: "invisible-dots image build" });
+    expect(row("runtime-image")?.status).toBe("missing");
+    expect(row("openrouter")).toMatchObject({ status: "missing", detail: "no key stored", fix: "invisible-dots secret openrouter" });
+
+    await api.setOpenRouterKey("sk-or-first");
+    expect((await api.doctor()).checks.find((c) => c.id === "openrouter")).toEqual({ id: "openrouter", label: "OpenRouter key", status: "ok", detail: "stored" });
+  });
+
+  it("runs one host report at a time: requests that arrive while it runs share its answer", async () => {
+    // The accelerator probe is the slow row; the onboarding checklist asks again and again.
+    const base = healthyDoctor().deps;
+    let probes = 0;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const acceleratorAccess = async () => {
+      probes += 1;
+      await gate;
+      return base.acceleratorAccess();
+    };
+    const server = await start({ doctor: { ...base, acceleratorAccess } });
+    const api = new InvisibleDotsClient({ baseUrl: server.url, token: server.token });
+
+    const together = Promise.all([api.doctor(), api.doctor(), api.doctor()]);
+    await waitFor(() => probes === 1, "the first request to start the probe");
+    // Time for the other two requests to reach the server while the probe is held.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    release();
+    const [first, second, third] = await together;
+    expect(probes).toBe(1);
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+
+    // Once it has answered, the next request runs it again.
+    await api.doctor();
+    expect(probes).toBe(2);
+  });
+
   it("a restart keeps the token, the key and the data", async () => {
     const first = await start();
     await first.db.secrets.put("global", "openrouter_api_key", "sk-or-kept");
@@ -114,6 +166,25 @@ describe("startServer on an empty INVISIBLE_DOTS_HOME", { timeout: 120_000 }, ()
     expect(second.created).toEqual({ apiToken: false, masterKey: false });
     expect(second.token).toBe(token);
     expect(await second.db.secrets.openRouterKey("dot_none")).toBe("sk-or-kept");
+  });
+
+  it("starts the channels stored in the database with the server and stops them when it closes", async () => {
+    const first = await start({ channelTypes: [new FakeChannelType()] });
+    const dotId = newId("dot");
+    await first.db.dots.insert({
+      id: dotId,
+      config: parseDotConfig("name: channeled\ngoal: test goal\nmodel:\n  provider: openrouter\n  id: test/model\n"),
+      status: "DISABLED",
+    });
+    await first.channels.add(dotId, "telegram");
+    await stopped(first);
+
+    const type = new FakeChannelType();
+    const second = await start({ channelTypes: [type] });
+    const channel = await waitFor(() => type.channels.at(-1)?.sink && type.channels.at(-1), "the stored channel to run");
+    expect(await second.channels.list(dotId)).toHaveLength(1);
+    await stopped(second);
+    expect(channel.sink).toBeNull();
   });
 
   it("refuses a second server on the same home while the first runs", async () => {

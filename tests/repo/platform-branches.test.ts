@@ -56,12 +56,10 @@ const ALLOWED: Record<string, { owner: string; lines: string[] }> = {
   },
   "apps/cli/src/setup/install.ts": {
     owner:
-      "checkAcceleratorAccess(), installHostPrerequisites() and setupRefusal(): how doctor reads and setup enables the accelerator and installs QEMU, and that setup refuses root where there is one",
+      "installHostPrerequisites() and setupRefusal(): how setup enables the accelerator and installs QEMU, and that setup refuses root where there is one",
     lines: [
       "return process.getuid?.() === 0;",
       'if (deps.platform === "linux" && deps.isRoot) {',
-      'if (deps.platform === "linux") return checkKvmDevice(deps);',
-      'if (deps.platform === "win32") return checkHypervisorPlatform(deps);',
       'if (deps.platform === "linux") return installOnLinux(request, deps);',
       'if (deps.platform === "win32") return installOnWindows(request, deps);',
       "const elevatedDir = win32.join(programData, `invisible-dots-setup-${deps.uniqueName()}`);",
@@ -69,9 +67,14 @@ const ALLOWED: Record<string, { owner: string; lines: string[] }> = {
       "const text = await deps.readText(win32.join(elevatedDir, ELEVATED_RESULT_FILE)).catch(() => undefined);",
     ],
   },
-  "apps/cli/src/host.ts": {
-    owner: "installDeps(): hands the host's platform to setup/install.ts, which is where it is read",
-    lines: ["platform: process.platform,"],
+  "apps/vm-manager/src/accelerator-access.ts": {
+    owner:
+      "checkAcceleratorAccess() and hostAccessDeps(): how doctor (the CLI's and the API's) and setup read the accelerator's host side, /dev/kvm or the HypervisorPlatform feature, and the one place that hands this host's platform to it",
+    lines: [
+      "platform: process.platform,",
+      'if (deps.platform === "linux") return checkKvmDevice(deps);',
+      'if (deps.platform === "win32") return checkHypervisorPlatform(deps);',
+    ],
   },
   "packages/shared/src/files.ts": {
     owner: "permissionBitsEnforced() and restrictToOwner(): a private file is chmod 0600 on Linux and an owner-only ACL on Windows",

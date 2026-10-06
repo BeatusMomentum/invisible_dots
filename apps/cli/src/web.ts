@@ -8,9 +8,7 @@
 import { stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { allowlistedEnvironment, BASE_CHILD_ENV_VARS, ENV } from "@invisible-dots/shared";
-import { startProcess, type StartedProcess, type StartProcessOptions } from "@invisible-dots/vm-manager";
-
-export const WEB_BUILD_COMMAND = "npm run build --workspace @invisible-dots/web";
+import { startProcess, WEB_BUILD_COMMAND, type StartedProcess, type StartProcessOptions, type WebBuild } from "@invisible-dots/vm-manager";
 
 /**
  * Where `npm run build --workspace @invisible-dots/web` leaves the server
@@ -20,13 +18,6 @@ export const WEB_BUILD_COMMAND = "npm run build --workspace @invisible-dots/web"
  */
 const ENTRY = ["apps", "web", ".next", "standalone", "apps", "web", "server.js"] as const;
 const STATIC = ["apps", "web", ".next", "standalone", "apps", "web", ".next", "static"] as const;
-
-export interface WebBuild {
-  /** The server script `node` runs. */
-  entry: string;
-  /** The first file or directory of the build that does not exist; undefined when the build is complete. */
-  missing: string | undefined;
-}
 
 export async function locateWebBuild(repoRoot: string): Promise<WebBuild> {
   const entry = join(repoRoot, ...ENTRY);

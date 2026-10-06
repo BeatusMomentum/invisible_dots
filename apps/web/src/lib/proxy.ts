@@ -192,7 +192,15 @@ export function checkRequestOrigin(input: OriginCheckInput, env: Env = process.e
 const FORWARDED_REQUEST_HEADERS = ["accept", "content-type", "last-event-id"];
 
 /** Response headers passed back to the browser. Length and encoding are dropped: fetch already decoded the body. */
-const FORWARDED_RESPONSE_HEADERS = ["content-type", "cache-control", "content-disposition", "retry-after"];
+const FORWARDED_RESPONSE_HEADERS = [
+  "content-type",
+  "cache-control",
+  "content-disposition",
+  "retry-after",
+  // A Dot's file is served under these (apps/api/src/file-types.ts); dropped here, the browser would sniff it and run it.
+  "x-content-type-options",
+  "content-security-policy",
+];
 
 export function forwardRequestHeaders(incoming: Headers, token: string): Headers {
   const out = new Headers();

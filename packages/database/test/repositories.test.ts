@@ -1,6 +1,7 @@
 import { newId, parseDotConfig, vmName, type OutboundEvent } from "@invisible-dots/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { DotNameTakenError, TransactionMisuseError, type Database, type Repositories } from "../src/index.js";
+import { DotChangedError, DotNameTakenError, TransactionMisuseError, type Database, type Repositories } from "../src/index.js";
+import { EventsRepository } from "../src/events.js";
 import { createTestDatabase, testAdapters, type TestDatabase } from "../src/testing.js";
 
 const SETUP_TIMEOUT = 60_000;
@@ -41,6 +42,10 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
       "0001_initial",
       "0002_inbound_events",
       "0003_task_spend",
+      "0004_channels",
+      "0005_channel_prompts",
+      "0006_events_task",
+      "0007_dot_config_version",
       "0008_orphaned_secrets",
       "0009_removed_config_names",
     ]);
@@ -58,6 +63,49 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect(errored?.error).toBe("boom");
     expect((await db.dots.setStatus(dot.id, "READY"))?.error).toBeNull();
     expect((await db.dots.list()).map((d) => d.name)).toContain("alpha");
+  });
+
+  it("dots: setPermission changes one permission and nothing else, also when the config has none", async () => {
+    const dot = await seedDot(db, "alpha-permissions");
+    const before = dot.config;
+    const first = await db.dots.setPermission(dot.id, "computer.exec", "allow");
+    expect(first?.config).toEqual({ ...before, permissions: { "computer.exec": "allow" } });
+    const second = await db.dots.setPermission(dot.id, "files.write", "ask");
+    expect(second?.config.permissions).toEqual({ "computer.exec": "allow", "files.write": "ask" });
+    expect((await db.dots.setPermission(dot.id, "computer.exec", "deny"))?.config.permissions).toEqual({ "computer.exec": "deny", "files.write": "ask" });
+    expect((await db.dots.get(dot.id))?.config).toEqual({ ...before, permissions: { "computer.exec": "deny", "files.write": "ask" } });
+    expect(Date.parse(second!.updated_at)).toBeGreaterThanOrEqual(Date.parse(first!.updated_at));
+
+    await db.query("UPDATE dots SET config = config - 'permissions' WHERE id = $1", [dot.id]);
+    expect((await db.dots.setPermission(dot.id, "automations", "allow"))?.config.permissions).toEqual({ automations: "allow" });
+    expect(await db.dots.setPermission("dot_missing", "automations", "allow")).toBeNull();
+  });
+
+  it("dots: updateConfig with the config_version that was read saves once; an older one is DotChangedError and writes nothing", async () => {
+    const dot = await seedDot(db, "alpha-stale");
+    expect(dot.config_version).toBe(1);
+    const next = { ...dot.config, instructions: "first" };
+    const saved = await db.dots.updateConfig(dot.id, next, dot.config_version);
+    expect(saved).toMatchObject({ config_version: 2 });
+    expect(saved?.config.instructions).toBe("first");
+    await expect(db.dots.updateConfig(dot.id, { ...dot.config, instructions: "second" }, dot.config_version)).rejects.toBeInstanceOf(DotChangedError);
+    // An "always allow" is a save of the config too.
+    const allowed = await db.dots.setPermission(dot.id, "computer.exec", "allow");
+    expect(allowed?.config_version).toBe(3);
+    await expect(db.dots.updateConfig(dot.id, { ...dot.config, instructions: "third" }, saved!.config_version)).rejects.toBeInstanceOf(DotChangedError);
+    expect((await db.dots.get(dot.id))?.config).toEqual({ ...next, permissions: { ...dot.config.permissions, "computer.exec": "allow" } });
+    expect(await db.dots.updateConfig("dot_missing", dot.config, 1)).toBeNull();
+    // Without a precondition it replaces, as it always did.
+    expect((await db.dots.updateConfig(dot.id, { ...dot.config, instructions: "plain" }))?.config.instructions).toBe("plain");
+  });
+
+  it("dots: a status change moves updated_at but not config_version, so it never makes a save from an old read stale", async () => {
+    const dot = await seedDot(db, "alpha-status");
+    const running = await db.dots.setStatus(dot.id, "RUNNING");
+    expect(running).toMatchObject({ status: "RUNNING", config_version: dot.config_version });
+    expect(Date.parse(running!.updated_at)).toBeGreaterThanOrEqual(Date.parse(dot.updated_at));
+    const saved = await db.dots.updateConfig(dot.id, { ...dot.config, instructions: "after a status change" }, dot.config_version);
+    expect(saved).toMatchObject({ config_version: dot.config_version + 1, status: "RUNNING" });
   });
 
   it("computers: token stored encrypted, process recorded and cleared, cursor only moves forward", async () => {
@@ -103,6 +151,58 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect(await db.events.list({ dotId: dot.id, types: ["computer.state"] })).toHaveLength(1);
     expect((await db.events.tail(dot.id, 1))[0]?.id).toBe(host.id);
     expect(await db.events.latestId()).toBeGreaterThanOrEqual(host.id);
+  });
+
+  it("events: one task's events come by data.task_id, with the other filters, and the index serves the query", async () => {
+    const dot = await seedDot(db, "taskwise");
+    const other = await seedDot(db, "taskless");
+    let seq = 0;
+    const guest = (id: string, type: OutboundEvent["type"], data: Record<string, unknown>) =>
+      db.events.insertGuest(id, outbound(++seq, type, data));
+    const started = await guest(dot.id, "task.started", { task_id: "task_a" });
+    await guest(dot.id, "task.started", { task_id: "task_b" });
+    await guest(dot.id, "tool.called", { task_id: "task_a", tool: "exec", permission: "exec.run", decision: "allow", ok: true, duration_ms: 3 });
+    await guest(dot.id, "tool.called", { tool: "exec", permission: "exec.run", decision: "allow", ok: true, duration_ms: 3 });
+    await guest(dot.id, "task.completed", { task_id: "task_a", summary: "done" });
+    await guest(other.id, "task.started", { task_id: "task_a" });
+    await db.events.insertHost(dot.id, "task.cancelled", { task_id: "task_b" });
+
+    const types = (events: { type: string }[]) => events.map((e) => e.type);
+    expect(types(await db.events.list({ dotId: dot.id, taskId: "task_a" }))).toEqual(["task.started", "tool.called", "task.completed"]);
+    expect(types(await db.events.list({ dotId: dot.id, taskId: "task_b" }))).toEqual(["task.started", "task.cancelled"]);
+    // The task id is matched whole, in this Dot, and an event without one belongs to no task.
+    expect(await db.events.list({ dotId: dot.id, taskId: "task" })).toEqual([]);
+    expect(await db.events.list({ dotId: dot.id, taskId: "" })).toEqual([]);
+    expect((await db.events.list({ dotId: other.id, taskId: "task_a" })).map((e) => e.dot_id)).toEqual([other.id]);
+    // With the other filters, and the limit counts the filtered events.
+    expect(types(await db.events.list({ dotId: dot.id, taskId: "task_a", types: ["tool.called", "task.completed"] }))).toEqual(["tool.called", "task.completed"]);
+    expect(types(await db.events.list({ dotId: dot.id, taskId: "task_a", after: started!.id }))).toEqual(["tool.called", "task.completed"]);
+    expect(types(await db.events.list({ dotId: dot.id, taskId: "task_a", limit: 2 }))).toEqual(["task.started", "tool.called"]);
+
+    // Among many events of other kinds the planner takes events_task_idx for the statement list() really issues: it is
+    // captured from the repository, with every filter that can go with the task.
+    await db.query(
+      `INSERT INTO events (dot_id, type, data, source) SELECT $1, 'agent.state', '{"state":"IDLE"}'::jsonb, 'host' FROM generate_series(1, 6000)`,
+      [dot.id],
+    );
+    await db.query("ANALYZE events");
+    const issued: { sql: string; params: readonly unknown[] }[] = [];
+    const recording = new EventsRepository({
+      async query<R>(sql: string, params: readonly unknown[] = []) {
+        issued.push({ sql, params });
+        return db.query<R>(sql, params);
+      },
+    });
+    for (const query of [
+      { dotId: dot.id, taskId: "task_a" },
+      { dotId: dot.id, taskId: "task_a", after: 0, types: ["tool.called", "task.completed"], limit: 100 },
+    ]) {
+      issued.length = 0;
+      await recording.list(query);
+      expect(issued).toHaveLength(1);
+      const plan = await db.query<Record<string, string>>(`EXPLAIN ${issued[0]!.sql}`, issued[0]!.params);
+      expect(plan.rows.map((r) => Object.values(r)[0]).join("\n"), JSON.stringify(query)).toContain("events_task_idx");
+    }
   });
 
   it("events: the spend of a Dot sums the events that end a unit of spend, from a moment on", async () => {
@@ -337,6 +437,24 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect((await db.approvals.list({ status: "pending", dotId: dot.id })).map((a) => a.id)).toEqual([data.approval_id]);
     expect((await db.approvals.resolve(data.approval_id, "approved", "fine"))?.note).toBe("fine");
     expect(await db.approvals.resolve(data.approval_id, "rejected", null)).toBeNull();
+  });
+
+  it("approvals: found by the end of their id, in lowercase, within one Dot, resolved ones included", async () => {
+    const dot = await seedDot(db, "foxtrot-suffix");
+    const other = await seedDot(db, "foxtrot-other");
+    const data = (id: string) => ({ approval_id: id, tool: "exec", permission: "browser.identity.delete" as const, arguments: {}, reason: "test" });
+    await db.approvals.insertRequested(dot.id, data("apr_aaaaaaaaaaaaaaaaaaaaaaaaaa9bntc"));
+    await db.approvals.insertRequested(dot.id, data("apr_bbbbbbbbbbbbbbbbbbbbbbbbbb9bntc"));
+    await db.approvals.insertRequested(dot.id, data("apr_cccccccccccccccccccccccccccccc"));
+    await db.approvals.insertRequested(other.id, data("apr_dddddddddddddddddddddddddd9bntc"));
+    await db.approvals.resolve("apr_aaaaaaaaaaaaaaaaaaaaaaaaaa9bntc", "approved", null);
+    const found = await db.approvals.endingWith(dot.id, "9BNTC");
+    expect(found.map((a) => [a.id.slice(0, 5), a.status])).toEqual([
+      ["apr_a", "approved"],
+      ["apr_b", "pending"],
+    ]);
+    expect(await db.approvals.endingWith(dot.id, "zzzzz")).toEqual([]);
+    expect((await db.approvals.endingWith(other.id, "9bntc")).map((a) => a.id)).toEqual(["apr_dddddddddddddddddddddddddd9bntc"]);
   });
 
   it("secrets: encrypted at rest, per-Dot key wins over the global one", async () => {

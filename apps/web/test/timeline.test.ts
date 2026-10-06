@@ -67,6 +67,22 @@ describe("describeEvent", () => {
       .toMatchObject({ title: "Rejected", detail: "apr_1 - no", tone: "warn" });
   });
 
+  it("describes the channel events by their kind and status", () => {
+    expect(describeEvent(event(12, "channel.status", { kind: "telegram", status: "connected" }, "host"))).toMatchObject({
+      title: "Channel status",
+      detail: "telegram connected",
+      tone: "ok",
+    });
+    expect(describeEvent(event(13, "channel.status", { kind: "whatsapp", status: "needs_relink" }, "host")).tone).toBe("warn");
+    expect(describeEvent(event(14, "channel.status", { kind: "telegram", status: "connecting" }, "host")).tone).toBe("neutral");
+    expect(
+      describeEvent(event(15, "channel.status", { kind: "telegram", status: "error", detail: "bot token revoked" }, "host")),
+    ).toMatchObject({ detail: "telegram error - bot token revoked", tone: "error" });
+    expect(
+      describeEvent(event(16, "channel.peer.paired", { kind: "telegram", peer_id: "4242", label: "Ada" }, "host")),
+    ).toMatchObject({ title: "Person paired", detail: "Ada on telegram", tone: "ok" });
+  });
+
   it("falls back to the raw data for an unknown type and tolerates missing fields", () => {
     expect(describeEvent(event(9, "something.new", { a: 1 })).detail).toBe('{"a":1}');
     expect(describeEvent(event(10, "task.progress", {})).detail).toBe("");

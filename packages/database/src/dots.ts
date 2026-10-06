@@ -1,4 +1,4 @@
-import type { DotConfig, DotState, VmState } from "@invisible-dots/shared";
+import type { DotConfig, DotState, PermissionDecision, VmState } from "@invisible-dots/shared";
 import type { DotRecord, DotSummary } from "@invisible-dots/shared";
 import { isUniqueViolation, isoRequired, type Queryable } from "./rows.js";
 
@@ -9,12 +9,21 @@ export class DotNameTakenError extends Error {
   }
 }
 
+/** A config was saved against a version of the Dot that is no longer the current one (`updateConfig`). */
+export class DotChangedError extends Error {
+  constructor(readonly dotId: string) {
+    super(`Dot ${dotId} changed after it was read`);
+    this.name = "DotChangedError";
+  }
+}
+
 interface DotRow {
   id: string;
   name: string;
   config: DotConfig;
   status: DotState;
   error: string | null;
+  config_version: number;
   created_at: Date;
   updated_at: Date;
   computer_state?: VmState | null;
@@ -27,6 +36,7 @@ function toRecord(row: DotRow): DotRecord {
     config: row.config,
     status: row.status,
     error: row.error,
+    config_version: row.config_version,
     created_at: isoRequired(row.created_at),
     updated_at: isoRequired(row.updated_at),
   };
@@ -73,17 +83,42 @@ export class DotsRepository {
     return rows.map(toSummary);
   }
 
-  async updateConfig(id: string, config: DotConfig): Promise<DotRecord | null> {
+  /**
+   * Replace the config. With `expectedVersion` (the `config_version` the caller read) the row is replaced only while
+   * it still has that version, so a save made from an old read cannot overwrite what was saved since (an "always
+   * allow", another PATCH): `DotChangedError` otherwise, and null when there is no such Dot. The status of the Dot
+   * moves all the time and is no part of this: only a save of the config changes the version.
+   */
+  async updateConfig(id: string, config: DotConfig, expectedVersion?: number): Promise<DotRecord | null> {
     try {
       const { rows } = await this.q.query<DotRow>(
-        "UPDATE dots SET name = $2, config = $3, updated_at = now() WHERE id = $1 RETURNING *",
-        [id, config.name, JSON.stringify(config)],
+        `UPDATE dots SET name = $2, config = $3, config_version = config_version + 1, updated_at = now()
+          WHERE id = $1 AND ($4::integer IS NULL OR config_version = $4::integer) RETURNING *`,
+        [id, config.name, JSON.stringify(config), expectedVersion ?? null],
       );
-      return rows[0] ? toRecord(rows[0]) : null;
+      if (rows[0]) return toRecord(rows[0]);
+      if (expectedVersion !== undefined && (await this.get(id))) throw new DotChangedError(id);
+      return null;
     } catch (error) {
       if (isUniqueViolation(error, "dots_name_key")) throw new DotNameTakenError(config.name);
       throw error;
     }
+  }
+
+  /**
+   * Set one permission in the Dot's config, in ONE statement that touches no other key: a PATCH or a second approval
+   * running at the same time cannot be lost to a read-modify-write.
+   */
+  async setPermission(id: string, permission: string, decision: PermissionDecision): Promise<DotRecord | null> {
+    const { rows } = await this.q.query<DotRow>(
+      `UPDATE dots
+          SET config = jsonb_set(config, '{permissions}', COALESCE(config->'permissions', '{}'::jsonb) || jsonb_build_object($2::text, $3::text), true),
+              config_version = config_version + 1,
+              updated_at = now()
+        WHERE id = $1 RETURNING *`,
+      [id, permission, decision],
+    );
+    return rows[0] ? toRecord(rows[0]) : null;
   }
 
   /** Set the status; `error` is cleared unless given, so a stale reason never outlives its ERROR. */

@@ -8,18 +8,10 @@
  * the UAC prompt, and no argument needs quoting rules beyond PowerShell's own.
  */
 
+import { encodeCommand, HYPERVISOR_PLATFORM_FEATURE, powershellArgs } from "@invisible-dots/vm-manager";
+
 /** dism's "succeeded, restart required". */
 export const RESTART_REQUIRED_EXIT_CODE = 3010;
-
-/** The Windows optional feature WHPX needs. */
-export const HYPERVISOR_PLATFORM_FEATURE = "HypervisorPlatform";
-
-/**
- * Read without administrator rights, unlike Get-WindowsOptionalFeature.
- * InstallState: 1 enabled, 2 disabled, 3 absent; no output when Windows does
- * not list the feature at all.
- */
-export const HYPERVISOR_PLATFORM_STATE_SCRIPT = `(Get-CimInstance -ClassName Win32_OptionalFeature -Filter "Name='${HYPERVISOR_PLATFORM_FEATURE}'").InstallState`;
 
 /**
  * A PowerShell single-quoted string literal. PowerShell also treats the
@@ -27,20 +19,6 @@ export const HYPERVISOR_PLATFORM_STATE_SCRIPT = `(Get-CimInstance -ClassName Win
  */
 export function psQuote(value: string): string {
   return `'${value.replace(/['\u2018\u2019\u201A\u201B]/g, "$&$&")}'`;
-}
-
-export function encodeCommand(script: string): string {
-  return Buffer.from(script, "utf16le").toString("base64");
-}
-
-/** Windows PowerShell 5.1 by absolute path: it ships with every Windows, and PATH could point anywhere. */
-export function powershellPath(env: Record<string, string | undefined>): string {
-  const systemRoot = env.SystemRoot ?? env.SYSTEMROOT ?? "C:\\Windows";
-  return `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
-}
-
-export function powershellArgs(script: string): string[] {
-  return ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodeCommand(script)];
 }
 
 export interface ElevatedScriptOptions {

@@ -112,6 +112,23 @@ describe("header forwarding", () => {
     expect(out.get("last-event-id")).toBe("9");
   });
 
+  it("passes on how a Dot's file is served, so the browser neither sniffs nor runs it", () => {
+    const out = forwardResponseHeaders(
+      new Headers({
+        "content-type": "text/plain; charset=utf-8",
+        "content-disposition": 'inline; filename="a.html"',
+        "x-content-type-options": "nosniff",
+        "content-security-policy": "default-src 'none'; sandbox",
+        "set-cookie": "x=1",
+      }),
+    );
+    expect(out.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(out.get("content-disposition")).toBe('inline; filename="a.html"');
+    expect(out.get("x-content-type-options")).toBe("nosniff");
+    expect(out.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+    expect(out.get("set-cookie")).toBeNull();
+  });
+
   it("marks event streams as not transformable", () => {
     const out = forwardResponseHeaders(new Headers({ "content-type": "text/event-stream", "content-length": "5" }));
     expect(out.get("cache-control")).toBe("no-cache, no-transform");

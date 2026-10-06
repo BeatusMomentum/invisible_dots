@@ -465,6 +465,29 @@ class TestTheEngineServed:
 
         assert jobs.exists()
 
+    async def test_the_automations_route_serves_the_jobs_of_that_same_service(self, served: Served) -> None:
+        jobs = Path(served.environment.state_dir) / "cron" / "jobs.json"
+        for _ in range(100):
+            if jobs.exists():
+                break
+            await asyncio.sleep(0.02)
+        job = {
+            "id": "j1",
+            "name": "daily",
+            "enabled": True,
+            "schedule": {"kind": "every", "everyMs": 3_600_000},
+            "payload": {"kind": "agent_turn", "message": "go"},
+            "state": {},
+        }
+        jobs.write_text(json.dumps({"version": 1, "jobs": [job]}), encoding="utf-8")
+
+        status, text = await served.call("GET", "/automations")
+        assert status == 200 and [row["id"] for row in json.loads(text)["automations"]] == ["j1"]
+        assert (await served.call("PATCH", "/automations/j1", {"enabled": False}))[0] == 200
+        assert json.loads(jobs.read_text(encoding="utf-8"))["jobs"][0]["enabled"] is False
+        assert (await served.call("DELETE", "/automations/j1"))[0] == 204
+        assert json.loads((await served.call("GET", "/automations"))[1]) == {"automations": []}
+
     async def test_stopping_closes_the_socket_and_the_database(self, served: Served) -> None:
         socket_path = Path(served.environment.agent_socket)
         assert socket_path.exists()

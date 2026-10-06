@@ -166,8 +166,8 @@ describe("the e2e run's contract with the product", () => {
   });
 
   it("requires exactly the doctor checks the CLI has", () => {
-    const source = read("apps/cli/src/doctor/checks.ts");
-    const union = source.slice(source.indexOf("export type CheckId ="), source.indexOf(";", source.indexOf("export type CheckId =")));
+    const source = read("packages/shared/src/api.ts");
+    const union = source.slice(source.indexOf("export type DoctorCheckId ="), source.indexOf(";", source.indexOf("export type DoctorCheckId =")));
     const ids = [...union.matchAll(/"([a-z-]+)"/g)].map((m) => m[1]!);
     expect([...DOCTOR_CHECKS].sort()).toEqual([...ids].sort());
   });

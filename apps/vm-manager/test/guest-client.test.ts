@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { GUEST_UNPROVEN, type HealthAnswer, type OutboundEvent } from "@invisible-dots/shared";
+import { FILE_TOO_LARGE, GUEST_UNPROVEN, type HealthAnswer, type OutboundEvent } from "@invisible-dots/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import { GuestClient, GuestHealthTimeoutError, GuestRequestError, guestProof, waitForGuestHealth } from "../src/index.js";
 
@@ -159,6 +159,42 @@ describe("GuestClient", () => {
     expect(seen.every((s) => s.auth === `Bearer ${TOKEN}`)).toBe(true);
   });
 
+  it("calls the automation and tool routes with the id as one encoded path segment", async () => {
+    const row = { id: "job 1", name: "n", enabled: false };
+    const { port, seen } = await serve((req, res) => {
+      switch (`${req.method} ${req.url}`) {
+        case "GET /v1/agent/automations":
+          return json(res, 200, { automations: [row] });
+        case "PATCH /v1/agent/automations/job%201":
+          return json(res, 200, row);
+        case "DELETE /v1/agent/automations/job%201":
+          return res.writeHead(204).end();
+        case "GET /v1/agent/tools":
+          return json(res, 200, { tools: [{ name: "exec", permission: "computer.exec", offered: true, description: "Run." }] });
+        default:
+          return json(res, 404, { error: "not_found", message: req.url });
+      }
+    });
+    const client = new GuestClient(port, TOKEN);
+
+    expect(await client.listAutomations()).toEqual({ automations: [row] });
+    expect(await client.setAutomationEnabled("job 1", false)).toEqual(row);
+    await client.deleteAutomation("job 1");
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["exec"]);
+    expect(JSON.parse(seen[1]!.body)).toEqual({ enabled: false });
+    expect(seen.map((s) => s.auth)).toEqual(Array(4).fill(`Bearer ${TOKEN}`));
+    const missing = await client.deleteAutomation("nope").catch((e: unknown) => e);
+    expect(missing).toMatchObject({ status: 404, code: "not_found" });
+  });
+
+  it("passes the guest's outside_home refusal of a file path on", async () => {
+    const { port } = await serve((_req, res) => json(res, 403, { error: "outside_home", message: "the path leads outside /home/dot" }));
+    const client = new GuestClient(port, TOKEN);
+    expect(await client.readFile("environ").catch((e: unknown) => e)).toMatchObject({ name: "GuestRequestError", status: 403, code: "outside_home" });
+    expect(await client.listFiles("etc").catch((e: unknown) => e)).toMatchObject({ status: 403, code: "outside_home" });
+    expect(await client.writeFile("etc/x", "y").catch((e: unknown) => e)).toMatchObject({ status: 403, code: "outside_home" });
+  });
+
   it("turns error bodies into GuestRequestError", async () => {
     const { port } = await serve((_req, res) => json(res, 409, { error: "computer_busy", message: "try later" }));
     const error = await new GuestClient(port, TOKEN).state().catch((e: unknown) => e);
@@ -288,6 +324,48 @@ describe("GuestClient transport", () => {
     expect(client.address).toBe(`127.0.0.1:${port}`);
     expect((await client.getBrowserIdentity("a b")).name).toBe("a");
     expect(seen[0]!.url).toBe("/v1/agent/browser-identities/a%20b");
+  });
+
+  describe("readFile with a size limit", () => {
+    it("returns a file within the limit, whole", async () => {
+      const { port } = await serve((req, res) => res.writeHead(200).end(Buffer.alloc(100, 7)));
+      expect(await new GuestClient(port, TOKEN).readFile("a", { maxBytes: 100 })).toEqual(Buffer.alloc(100, 7));
+    });
+
+    it("refuses a file whose announced length is over it, before reading it", async () => {
+      const { port } = await serve((req, res) => {
+        res.writeHead(200, { "content-length": 101 });
+        res.write(Buffer.alloc(10));
+        // The rest is never sent: a client that waited for it would run into the test's timeout.
+      });
+      const error = await new GuestClient(port, TOKEN).readFile("a", { maxBytes: 100 }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(GuestRequestError);
+      expect(error).toMatchObject({ status: 413, code: FILE_TOO_LARGE });
+      expect((error as Error).message).toContain("larger than 100 bytes");
+    });
+
+    it("stops reading a body of unannounced length once it passes the limit", async () => {
+      const { port } = await serve((req, res) => {
+        // Chunked: no content-length, so only the running count can tell.
+        res.writeHead(200);
+        res.write(Buffer.alloc(60));
+        res.write(Buffer.alloc(60));
+        res.write(Buffer.alloc(60));
+      });
+      const error = await new GuestClient(port, TOKEN).readFile("a", { maxBytes: 100 }).catch((e: unknown) => e);
+      expect(error).toMatchObject({ status: 413, code: FILE_TOO_LARGE });
+    });
+
+    it("keeps the guest's own error for a failed read, whatever the limit", async () => {
+      const { port } = await serve((req, res) => json(res, 404, { error: "not_found", message: "no such file: " + "x".repeat(300) }));
+      const error = await new GuestClient(port, TOKEN).readFile("a", { maxBytes: 10 }).catch((e: unknown) => e);
+      expect(error).toMatchObject({ status: 404, code: "not_found" });
+    });
+
+    it("reads without a limit as before", async () => {
+      const { port } = await serve((req, res) => res.writeHead(200).end(Buffer.alloc(5000, 1)));
+      expect((await new GuestClient(port, TOKEN).readFile("a")).length).toBe(5000);
+    });
   });
 
   it("names the guest port when nothing listens there", async () => {

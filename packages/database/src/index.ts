@@ -1,4 +1,5 @@
 export * from "./approvals.js";
+export * from "./channels.js";
 export * from "./computers.js";
 export * from "./crypto.js";
 export * from "./database.js";

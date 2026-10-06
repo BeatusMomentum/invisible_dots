@@ -5,20 +5,28 @@
  * memory only (lost on every reboot and every agent restart), `agent.started`
  * at every start of the agent, inbound events accepted once per id, an
  * outbox with monotonically increasing `seq` replayed after a cursor, and
- * browser identities under the same rules as the real agent's.
+ * browser identities under the same rules as the real agent's, and a small
+ * file system (`putFile`) served through the files routes with the real
+ * daemon's errors, automations (`putAutomation`) and a small tool table.
  */
 import {
   checkIdentityRequest,
+  FILE_TOO_LARGE,
+  GUEST_PATHS,
   IdentityRequestError,
   newId,
   newIdentityId,
   pollGuestHealth,
   type AgentState,
   type AgentStateAnswer,
+  type Automation,
+  type AutomationListAnswer,
   type BrowserIdentity,
   type BrowserIdentityListAnswer,
   type CreateBrowserIdentityRequest,
   type DotRuntimeConfig,
+  type FileEntry,
+  type FileListAnswer,
   type GuestChecks,
   type HealthAnswer,
   type InboundEvent,
@@ -26,6 +34,8 @@ import {
   type OutboundEventDataMap,
   type OutboundEventType,
   type SystemAnswer,
+  type ToolInfo,
+  type ToolListAnswer,
   type VmState,
 } from "@invisible-dots/shared";
 import type {
@@ -97,6 +107,27 @@ export class FakeGuest implements GuestApi {
   readonly outbox: OutboundEvent[] = [];
   readonly inbound: InboundEvent[] = [];
   readonly identities = new Map<string, BrowserIdentity>();
+  /** The files of the guest by absolute path; directories exist where a file is under them (and home always). */
+  readonly files = new Map<string, { content: Uint8Array; mtime: Date }>();
+  /** Symbolic links of the guest: the absolute path of the link to its target (an absolute path). */
+  readonly links = new Map<string, string>();
+  /** The automations of the Dot by id (its cron tool made them). */
+  readonly automations = new Map<string, Automation>();
+  /**
+   * The tools the fake's engine has: the real table's shape, a few rows; `offered` follows the permissions of the
+   * config, for a `memory_` tool also its `memory.enabled`, and for a tool that creates an identity also
+   * `browser.identities.managed_by_dot`, as the engine's `offered_tools` does.
+   */
+  readonly tools: Omit<ToolInfo, "offered">[] = [
+    { name: "exec", permission: "computer.exec", description: "Run a shell command on the computer." },
+    { name: "read_file", permission: "files.read", description: "Read a file." },
+    { name: "write_file", permission: "files.write", description: "Write a file." },
+    { name: "memory_search", permission: "memory.read", description: "Search the Dot's memory notes." },
+    { name: "memory_get", permission: "memory.read", description: "Read a memory note." },
+    { name: "cron", permission: "automations", description: "Schedule reminders and recurring tasks." },
+    { name: "browser_identity_list", permission: "browser.identity.list", description: "List the browser identities." },
+    { name: "browser_identity_create", permission: "browser.identity.create", description: "Create a browser identity." },
+  ];
   readonly calls: string[] = [];
   pendingApproval: { approval_id: string; task_id?: string } | null = null;
   onInbound: InboundHandler = completeEverything;
@@ -255,8 +286,12 @@ export class FakeGuest implements GuestApi {
     this.openrouterKey = key;
   }
 
+  /** While set, `putConfig` waits for it (a slow push), and the config is stored when it resolves. */
+  configPushGate: Promise<void> | null = null;
+
   async putConfig(config: DotRuntimeConfig): Promise<void> {
     this.#reachable("putConfig");
+    await this.configPushGate;
     this.config = config;
   }
 
@@ -344,6 +379,107 @@ export class FakeGuest implements GuestApi {
     if (identity.status !== "open") return;
     this.identities.set(id, { ...identity, status: "available" });
     this.emit("browser.identity.closed", { identity_id: id, name: identity.name });
+  }
+
+  /** Give the Dot an automation (its cron tool made it). */
+  putAutomation(automation: Automation): void {
+    this.automations.set(automation.id, automation);
+  }
+
+  async listAutomations(): Promise<AutomationListAnswer> {
+    this.#reachable("listAutomations");
+    return { automations: [...this.automations.values()] };
+  }
+
+  async setAutomationEnabled(id: string, enabled: boolean): Promise<Automation> {
+    this.#reachable("setAutomationEnabled");
+    const automation = this.automations.get(id);
+    if (!automation) throw new FakeGuestError(404, `no automation "${id}"`, "not_found");
+    if (automation.enabled !== enabled) {
+      const next = { ...automation, enabled, next_run_at_ms: enabled ? Date.now() + 60_000 : null };
+      this.automations.set(id, next);
+      return next;
+    }
+    return automation;
+  }
+
+  async deleteAutomation(id: string): Promise<void> {
+    this.#reachable("deleteAutomation");
+    if (!this.automations.delete(id)) throw new FakeGuestError(404, `no automation "${id}"`, "not_found");
+  }
+
+  async listTools(): Promise<ToolListAnswer> {
+    this.#reachable("listTools");
+    const permissions: Record<string, string | undefined> = this.config?.permissions ?? {};
+    const memoryOn = this.config?.memory.enabled ?? true;
+    const managed = this.config?.browser.identities.managed_by_dot ?? true;
+    const offered = (tool: Omit<ToolInfo, "offered">): boolean =>
+      this.config !== null &&
+      (permissions[tool.permission] === "allow" || permissions[tool.permission] === "ask") &&
+      (memoryOn || !tool.name.startsWith("memory_")) &&
+      (managed || tool.name !== "browser_identity_create");
+    return { tools: this.tools.map((tool) => ({ ...tool, offered: offered(tool) })) };
+  }
+
+  /** Put a file in the guest's file system (the Dot wrote it). */
+  putFile(path: string, content: string | Uint8Array, mtime: Date = new Date()): void {
+    this.files.set(path, { content: typeof content === "string" ? new TextEncoder().encode(content) : content, mtime });
+  }
+
+  /** A symbolic link at `path` leading to `target` (absolute). */
+  link(path: string, target: string): void {
+    this.links.set(path, target);
+  }
+
+  /**
+   * What dot-agentd's TCP listener does with a path: follow the symbolic links, and refuse (403 `outside_home`) a
+   * real location that is not under home. The host's file routes always reach the guest through that listener.
+   */
+  #realPath(path: string): string {
+    let real = path;
+    for (let hops = 0; ; hops++) {
+      if (hops > 40) throw new FakeGuestError(500, `${path}: too many levels of symbolic links`, "io_error");
+      const key = [...this.links.keys()].filter((link) => real === link || real.startsWith(`${link}/`)).sort((a, b) => b.length - a.length)[0];
+      if (key === undefined) break;
+      real = this.links.get(key)! + real.slice(key.length);
+    }
+    if (real !== GUEST_PATHS.home && !real.startsWith(`${GUEST_PATHS.home}/`)) {
+      throw new FakeGuestError(403, `the path leads outside ${GUEST_PATHS.home}`, "outside_home");
+    }
+    return real;
+  }
+
+  #isDirectory(path: string): boolean {
+    return path === GUEST_PATHS.home || [...this.files.keys()].some((file) => file.startsWith(`${path}/`));
+  }
+
+  async readFile(asked: string, options: { maxBytes?: number } = {}): Promise<Uint8Array> {
+    this.#reachable("readFile");
+    const path = this.#realPath(asked);
+    if (this.#isDirectory(path)) throw new FakeGuestError(400, `${path} is a directory; use /v1/files/list`, "is_a_directory");
+    const file = this.files.get(path);
+    if (!file) throw new FakeGuestError(404, `open ${path}: no such file or directory`, "not_found");
+    if (options.maxBytes !== undefined && file.content.length > options.maxBytes) {
+      throw new FakeGuestError(413, `the answer is larger than ${options.maxBytes} bytes`, FILE_TOO_LARGE);
+    }
+    return file.content;
+  }
+
+  async listFiles(asked: string): Promise<FileListAnswer> {
+    this.#reachable("listFiles");
+    const path = this.#realPath(asked);
+    if (this.files.has(path)) throw new FakeGuestError(400, `${path} is not a directory`, "not_a_directory");
+    if (!this.#isDirectory(path)) throw new FakeGuestError(404, `stat ${path}: no such file or directory`, "not_found");
+    const entries = new Map<string, FileEntry>();
+    for (const [file, { content, mtime }] of this.files) {
+      if (!file.startsWith(`${path}/`)) continue;
+      const [name, ...rest] = file.slice(path.length + 1).split("/");
+      const modified = mtime.toISOString();
+      const known = entries.get(name!);
+      if (rest.length > 0) entries.set(name!, { name: name!, type: "dir", size: 0, mtime: known && known.mtime > modified ? known.mtime : modified });
+      else entries.set(name!, { name: name!, type: "file", size: content.length, mtime: modified });
+    }
+    return { entries: [...entries.values()].sort((a, b) => (a.name < b.name ? -1 : 1)) };
   }
 
   async prepareSleep(): Promise<void> {

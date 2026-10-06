@@ -1,51 +1,43 @@
 /**
  * The CLI's platform split (architecture section 1.1), and the only place in
- * apps/cli that asks which operating system it runs on. Two things differ
- * because the operating systems make sameness impossible:
- *
- * - how the accelerator's host side is checked: /dev/kvm opened read-write
- *   on Linux, the HypervisorPlatform optional feature on Windows;
- * - how QEMU and the accelerator are installed: the distribution's package
- *   with sudo on Linux, one UAC prompt on Windows that enables the feature
- *   and runs the official QEMU installer silently.
+ * apps/cli that asks which operating system it runs on: how QEMU and the
+ * accelerator are installed, the distribution's package with sudo on Linux,
+ * one UAC prompt on Windows that enables the HypervisorPlatform feature and
+ * runs the official QEMU installer silently. How the accelerator is READ
+ * (/dev/kvm, the feature state) is the vm-manager's `checkAcceleratorAccess`,
+ * which the API's doctor route runs too.
  *
  * Everything else `setup` and `doctor` do is the same code on both hosts.
  */
 // The Windows branch builds Windows paths whatever host the tests run on.
 import { win32 } from "node:path";
-import type { CheckResult, Runner } from "../doctor/checks.js";
 import { ENV } from "@invisible-dots/shared";
-import { firstLine, MIN_QEMU_VERSION_TEXT, officialQemuDir } from "@invisible-dots/vm-manager";
+import {
+  checkKvmDevice,
+  firstLine,
+  HYPERVISOR_PLATFORM_FEATURE,
+  MIN_QEMU_VERSION_TEXT,
+  officialQemuDir,
+  powershellArgs,
+  powershellPath,
+  UNSUPPORTED_FIX,
+  type AccessDeps,
+} from "@invisible-dots/vm-manager";
 import {
   ELEVATED_RESULT_FILE,
   elevatedSetupScript,
   type ElevatedScriptOptions,
   elevationLauncherScript,
-  HYPERVISOR_PLATFORM_FEATURE,
-  HYPERVISOR_PLATFORM_STATE_SCRIPT,
   parseElevatedResult,
-  powershellArgs,
-  powershellPath,
   RESTART_REQUIRED_EXIT_CODE,
   UNSAFE_WORK_DIR_EXIT_CODE,
 } from "./powershell.js";
 import { installerFileName, type WindowsQemuPin } from "./qemu-pin.js";
 
-export const KVM_DEVICE = "/dev/kvm";
 export const APT_PACKAGES = ["qemu-system-x86", "qemu-utils"] as const;
-export const USERMOD_COMMAND = "sudo usermod -aG kvm $USER";
 
 /** The UAC prompt waits for a person, and the installer copies a few hundred MiB. */
 const ELEVATED_TIMEOUT_MS = 60 * 60 * 1000;
-const FEATURE_QUERY_TIMEOUT_MS = 60_000;
-
-export interface AccessDeps {
-  platform: NodeJS.Platform;
-  env: Record<string, string | undefined>;
-  run: Runner;
-  /** Opens a path read-write and closes it again; rejects with the errno error. */
-  openReadWrite(path: string): Promise<void>;
-}
 
 export interface InstallDeps extends AccessDeps {
   log(line: string): void;
@@ -102,72 +94,6 @@ export type InstallOutcome =
   /** The person has to run something setup does not run itself. */
   | { kind: "manual"; lines: string[] }
   | { kind: "failed"; lines: string[] };
-
-const UNSUPPORTED_FIX = "run invisible_dots on Linux or Windows (x86-64)";
-
-/** The host side of the accelerator, before QEMU is asked to use it (doctor's "accelerator" check). */
-export async function checkAcceleratorAccess(deps: AccessDeps): Promise<CheckResult> {
-  if (deps.platform === "linux") return checkKvmDevice(deps);
-  if (deps.platform === "win32") return checkHypervisorPlatform(deps);
-  return {
-    id: "accelerator",
-    label: "accelerator",
-    status: "failed",
-    detail: `${deps.platform} hosts are not supported`,
-    fix: UNSUPPORTED_FIX,
-  };
-}
-
-async function checkKvmDevice(deps: AccessDeps): Promise<CheckResult> {
-  const base = { id: "accelerator", label: "accelerator" } as const;
-  try {
-    await deps.openReadWrite(KVM_DEVICE);
-    return { ...base, status: "ok", detail: `${KVM_DEVICE} opens read-write` };
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") {
-      return {
-        ...base,
-        status: "missing",
-        detail: `${KVM_DEVICE} does not exist`,
-        fix: "enable hardware virtualization (Intel VT-x or AMD-V) in the firmware settings, then: sudo modprobe kvm_intel (or kvm_amd)",
-      };
-    }
-    if (code === "EACCES" || code === "EPERM") {
-      return {
-        ...base,
-        status: "missing",
-        detail: `${KVM_DEVICE} exists but this user cannot open it read-write`,
-        fix: `${USERMOD_COMMAND}, then log out and in again (a new login is needed for the group to apply)`,
-      };
-    }
-    return { ...base, status: "failed", detail: `opening ${KVM_DEVICE} failed: ${(error as Error).message}`, fix: "check the kvm kernel module (dmesg | grep -i kvm)" };
-  }
-}
-
-async function checkHypervisorPlatform(deps: AccessDeps): Promise<CheckResult> {
-  const base = { id: "accelerator", label: "accelerator" } as const;
-  const answer = await deps.run(powershellPath(deps.env), powershellArgs(HYPERVISOR_PLATFORM_STATE_SCRIPT), { timeoutMs: FEATURE_QUERY_TIMEOUT_MS });
-  if (answer.code !== 0) {
-    const why = answer.timedOut ? "timed out" : (answer.startError?.message ?? (firstLine(answer.stderr) || `exit code ${answer.code}`));
-    return { ...base, status: "failed", detail: `cannot read the ${HYPERVISOR_PLATFORM_FEATURE} feature state: ${why}` };
-  }
-  const state = answer.stdout.trim();
-  if (state === "1") return { ...base, status: "ok", detail: `the ${HYPERVISOR_PLATFORM_FEATURE} feature is enabled` };
-  if (state === "2") {
-    return {
-      ...base,
-      status: "missing",
-      detail: `the ${HYPERVISOR_PLATFORM_FEATURE} feature is disabled`,
-      fix: "invisible-dots setup (enables it with one administrator prompt; a restart follows)",
-    };
-  }
-  const detail =
-    state === ""
-      ? `this Windows does not list the ${HYPERVISOR_PLATFORM_FEATURE} feature`
-      : `the ${HYPERVISOR_PLATFORM_FEATURE} feature is in state ${state} (3 means its files were removed from this Windows)`;
-  return { ...base, status: "failed", detail, fix: "use a Windows 10 or 11 edition that offers Windows Hypervisor Platform" };
-}
 
 /** Installs what doctor found missing, the way this host installs things. */
 export async function installHostPrerequisites(request: InstallRequest, deps: InstallDeps): Promise<InstallOutcome> {

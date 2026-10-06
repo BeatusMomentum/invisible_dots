@@ -30,6 +30,8 @@ export interface EventQuery {
   after?: number;
   /** Only these types. */
   types?: readonly string[];
+  /** Only the events of this task (`data.task_id`). */
+  taskId?: string;
   /** At most this many, oldest first (default 500). */
   limit?: number;
 }
@@ -67,6 +69,22 @@ export class EventsRepository {
   }
 
   /**
+   * Store a `user.message`. One that came through a channel is identified by its Dot, its binding and
+   * the channel's own message id (`events_user_message_origin_key`): a redelivery of the same message is
+   * not stored again and null comes back, in the same statement and so in the same transaction as the
+   * row it would have been, which is what makes a redelivery after any failure harmless.
+   */
+  async insertUserMessage(dotId: string, data: Record<string, unknown>): Promise<StoredEvent | null> {
+    const { rows } = await this.q.query<EventRow>(
+      `INSERT INTO events (dot_id, type, data, source) SELECT $1::text, 'user.message', $2::jsonb, 'host' ${LOCKED}
+       ON CONFLICT (dot_id, (data->'origin'->>'binding_id'), (data->'origin'->>'external_id'))
+         WHERE type = 'user.message' AND data->'origin' IS NOT NULL DO NOTHING RETURNING *`,
+      [dotId, JSON.stringify(data)],
+    );
+    return rows[0] ? toStored(rows[0]) : null;
+  }
+
+  /**
    * Store a guest event. The guest replays from the cursor after every
    * reconnect, so the same `seq` can arrive twice: the second copy is
    * dropped and null comes back.
@@ -84,16 +102,47 @@ export class EventsRepository {
 
   async list(query: EventQuery = {}): Promise<StoredEvent[]> {
     const limit = Math.min(Math.max(query.limit ?? 500, 1), MAX_EVENT_PAGE);
+    // The task filter is added only when asked for, so no plan has to serve a task id that may be NULL. The other
+    // filters are the `$n IS NULL OR ...` form: the statement is planned with its values known (it is never a
+    // prepared one that is reused), so those branches fold away and events_task_idx stays usable. The test of
+    // events in repositories.test.ts EXPLAINs the statement this builds, on both adapters.
+    const params: unknown[] = [query.dotId ?? null, query.after ?? 0, query.types ? [...query.types] : null];
+    let taskFilter = "";
+    if (query.taskId !== undefined) {
+      params.push(query.taskId);
+      taskFilter = `AND data->>'task_id' = $${params.length}`;
+    }
+    params.push(limit);
     const { rows } = await this.q.query<EventRow>(
       `SELECT * FROM events
         WHERE ($1::text IS NULL OR dot_id = $1)
           AND id > $2
           AND ($3::text[] IS NULL OR type = ANY($3))
+          ${taskFilter}
         ORDER BY id
-        LIMIT $4`,
-      [query.dotId ?? null, query.after ?? 0, query.types ? [...query.types] : null, limit],
+        LIMIT $${params.length}`,
+      params,
     );
     return rows.map(toStored);
+  }
+
+  /** The `user.message` event whose data carries this message id, or null. */
+  async userMessage(dotId: string, messageId: string): Promise<StoredEvent | null> {
+    const { rows } = await this.q.query<EventRow>(
+      "SELECT * FROM events WHERE dot_id = $1 AND type = 'user.message' AND data->>'message_id' = $2 LIMIT 1",
+      [dotId, messageId],
+    );
+    return rows[0] ? toStored(rows[0]) : null;
+  }
+
+  /** The `user.message` of the Dot that came through this binding as the channel's own message `externalId`, or null. */
+  async userMessageOfOrigin(dotId: string, bindingId: string, externalId: string): Promise<StoredEvent | null> {
+    const { rows } = await this.q.query<EventRow>(
+      `SELECT * FROM events WHERE dot_id = $1 AND type = 'user.message' AND data->'origin' IS NOT NULL
+         AND data->'origin'->>'binding_id' = $2 AND data->'origin'->>'external_id' = $3`,
+      [dotId, bindingId, externalId],
+    );
+    return rows[0] ? toStored(rows[0]) : null;
   }
 
   /** The newest events of a Dot, returned oldest first (for `logs`-style tails). */
