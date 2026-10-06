@@ -159,6 +159,27 @@ describe("Home", () => {
     expect(screen.getByRole("link", { name: "New Dot" }).getAttribute("href")).toBe("/new");
   });
 
+  it("says when the Dot was last active, in the words of its newest event that is not noise, and follows the stream", async () => {
+    plane.dots = [dotRecord("d1", { name: "fares" }), dotRecord("d2", { name: "mailer" })];
+    plane.store("d1", "task.completed", { task_id: "t1", summary: "done" }, new Date(Date.now() - 2 * 3_600_000).toISOString());
+    // Its agent changing state and a report of the next automation are not activity, and are not what the card says.
+    plane.store("d1", "agent.state", { state: "IDLE" });
+    plane.store("d1", "automation.next_run", { next_run_at_ms: null });
+    await renderHome();
+    const fares = await screen.findByRole("article", { name: "fares" });
+    await waitFor(() => expect(within(fares).getByText("Task completed")).toBeTruthy());
+    expect(fares.textContent).toContain("Task completed, 2h ago");
+    // One request for the newest event of the kinds that say the Dot was active, and none for the Dot with nothing.
+    expect(plane.eventQueries.filter((q) => q.limit === 1 && q.order === "desc").map((q) => q.types?.includes("agent.state"))).toEqual([false, false]);
+    expect(within(await screen.findByRole("article", { name: "mailer" })).getByText("None yet")).toBeTruthy();
+
+    act(() => plane.push("d2", "message.assistant", { text: "Good morning" }));
+    await waitFor(() => expect(within(card("mailer")).getByText("Assistant replied")).toBeTruthy());
+    expect(card("mailer").textContent).toContain("Assistant replied, Just now");
+    // The other card is not touched by it.
+    expect(within(card("fares")).getByText("Task completed")).toBeTruthy();
+  });
+
   it("says why a Dot is in error, as the control plane recorded it", async () => {
     plane.dots = [dotRecord("d1", { name: "broken", status: "ERROR", error: "the guest never became healthy", computer_state: "ERROR" })];
     await renderHome();

@@ -14,7 +14,7 @@ import {
   type OutboundEventDataMap,
   type StoredEvent,
 } from "@invisible-dots/shared/browser";
-import { viaChannel } from "../channels";
+import { CHANNEL_LABELS, viaChannel } from "../channels";
 import type { Tone } from "../tone";
 import { toolLabel } from "./tool-labels";
 
@@ -116,6 +116,11 @@ function joined(...parts: string[]): string {
   return parts.filter(Boolean).join(" ");
 }
 
+/** A channel as the person names it ("Telegram"); a kind this version does not know is shown as the host wrote it. */
+function channelName(kind: unknown): string {
+  return typeof kind === "string" && Object.hasOwn(CHANNEL_LABELS, kind) ? CHANNEL_LABELS[kind as keyof typeof CHANNEL_LABELS] : text(kind);
+}
+
 function identity(data: Partial<OutboundEventDataMap["browser.identity.created"]>): string {
   const name = text(data.name);
   const id = text(data.identity_id);
@@ -185,11 +190,11 @@ const DESCRIBE: { [K in KnownType]: (data: Partial<EventData[K]>) => Draft } = {
   "memory.written": (d) => ({ title: "Memory written", detail: text(d.key), tone: "neutral" }),
   "channel.status": (d) => ({
     title: "Channel status",
-    detail: joined(text(d.kind), text(d.status), text(d.detail) && `- ${text(d.detail)}`),
+    detail: joined(channelName(d.kind), text(d.status), text(d.detail) && `- ${text(d.detail)}`),
     tone: d.status === "error" ? "error" : d.status === "needs_relink" ? "warn" : d.status === "connected" ? "ok" : "neutral",
   }),
-  "channel.changed": (d) => ({ title: `Channel ${text(d.change) || "changed"}`, detail: text(d.kind), tone: d.change === "removed" ? "warn" : "neutral" }),
-  "channel.peer.paired": (d) => ({ title: "Person paired", detail: joined(text(d.label), text(d.kind) && `on ${text(d.kind)}`), tone: "ok" }),
+  "channel.changed": (d) => ({ title: `Channel ${text(d.change) || "changed"}`, detail: channelName(d.kind), tone: d.change === "removed" ? "warn" : "neutral" }),
+  "channel.peer.paired": (d) => ({ title: "Person paired", detail: joined(text(d.label), channelName(d.kind) && `on ${channelName(d.kind)}`), tone: "ok" }),
   "dot.created": (d) => ({ title: "Dot created", detail: text(d.name), tone: "ok" }),
   // Two things write it: a saved config (`name` only) and a Dot that went to ERROR (`status` and `error` too, lifecycle.ts).
   "dot.updated": (d) =>

@@ -13,6 +13,7 @@ import { useDotAttention, useDotLive, useShell } from "../shell/attention";
 import { DotAvatar } from "../shell/DotAvatar";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { LastActivity } from "./last-activity";
 
 /**
  * A Dot on the Home page: who it is and what it is for, what state it is in (and why, when that is an error), its
@@ -65,6 +66,10 @@ export function DotCard({ dot }: { dot: Dot }) {
           <dd>
             <CostPill dotId={dot.id} />
           </dd>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <dt>Last activity</dt>
+          <LastActivity dotId={dot.id} />
         </div>
       </dl>
 

@@ -5,14 +5,14 @@ import { usePathname } from "next/navigation";
 import { cn } from "../../lib/utils";
 import { useDotAttention } from "../shell/attention";
 
-/** The tabs of a Dot's page, each the address of a page that exists. */
+/** The tabs of a Dot's page, each the address of a page that exists, in the order of the design (1.4): what the Dot says and does, then how it is reached, then how it is set up. */
 export const DOT_TABS = [
   { slug: "chat", label: "Chat" },
   { slug: "tasks", label: "Tasks" },
   { slug: "computer", label: "Computer" },
   { slug: "memory", label: "Memory" },
-  { slug: "channels", label: "Channels" },
   { slug: "activity", label: "Activity" },
+  { slug: "channels", label: "Channels" },
   { slug: "settings", label: "Settings" },
 ] as const;
 

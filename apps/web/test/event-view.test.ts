@@ -143,19 +143,19 @@ describe("viewEvent", () => {
   it("describes the channel events by their kind and status", () => {
     expect(viewEvent(event(12, "channel.status", { kind: "telegram", status: "connected" }, "host"))).toMatchObject({
       title: "Channel status",
-      detail: "telegram connected",
+      detail: "Telegram connected",
       tone: "ok",
     });
     expect(viewEvent(event(13, "channel.status", { kind: "whatsapp", status: "needs_relink" }, "host")).tone).toBe("warn");
     expect(viewEvent(event(14, "channel.status", { kind: "telegram", status: "connecting" }, "host")).tone).toBe("neutral");
     expect(
       viewEvent(event(15, "channel.status", { kind: "telegram", status: "error", detail: "bot token revoked" }, "host")),
-    ).toMatchObject({ detail: "telegram error - bot token revoked", tone: "error" });
+    ).toMatchObject({ detail: "Telegram error - bot token revoked", tone: "error" });
     expect(
       viewEvent(event(16, "channel.peer.paired", { kind: "telegram", peer_id: "4242", label: "Ada" }, "host")),
-    ).toMatchObject({ title: "Person paired", detail: "Ada on telegram", tone: "ok" });
-    expect(viewEvent(event(17, "channel.changed", { kind: "telegram", change: "paused" }, "host"))).toMatchObject({ title: "Channel paused", detail: "telegram", tone: "neutral", family: "channels" });
-    expect(viewEvent(event(18, "channel.changed", { kind: "whatsapp", change: "removed" }, "host"))).toMatchObject({ title: "Channel removed", detail: "whatsapp", tone: "warn" });
+    ).toMatchObject({ title: "Person paired", detail: "Ada on Telegram", tone: "ok" });
+    expect(viewEvent(event(17, "channel.changed", { kind: "telegram", change: "paused" }, "host"))).toMatchObject({ title: "Channel paused", detail: "Telegram", tone: "neutral", family: "channels" });
+    expect(viewEvent(event(18, "channel.changed", { kind: "whatsapp", change: "removed" }, "host"))).toMatchObject({ title: "Channel removed", detail: "WhatsApp", tone: "warn" });
   });
 
   it("falls back to the raw data for an unknown type and tolerates missing fields", () => {

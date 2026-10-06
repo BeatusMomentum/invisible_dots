@@ -72,7 +72,7 @@ function Spend({ dotId }: { dotId: string }) {
         <dt>In total</dt>
         <dd>{total.data === undefined ? "-" : formatUsd(total.data.spent_usd)}</dd>
       </Facts>
-      <p className="text-xs text-muted-foreground">What the Dot&apos;s computer reported for answers and finished tasks. Work that was cancelled or cut short is not counted.</p>
+      <p className="text-xs text-muted-foreground">What the Dot&apos;s computer reported for answers and finished tasks, in US dollars as OpenRouter priced them. Tokens are not reported, only the cost. Work that was cancelled or cut short is not counted.</p>
     </Card>
   );
 }

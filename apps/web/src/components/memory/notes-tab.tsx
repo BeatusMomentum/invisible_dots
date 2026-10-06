@@ -108,7 +108,9 @@ export function NotesTab({ dotId, open }: { dotId: string; open: string | null }
             <FilePreview key={`${selected.key}`} dotId={dotId} folder={noteFolderPath(selected)} entry={noteEntry(selected)} markdown={isMarkdown(selected.name)} />
           ) : open !== null && listing.data !== undefined ? (
             <p role="status" className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
-              There is no note called {open} (any more).
+              {listing.data.cut
+                ? `${open} is not among the notes listed. The memory folder has more folders than are listed, so it may be in one of them: the Files view shows them all.`
+                : `There is no note called ${open} (any more).`}
             </p>
           ) : open === null ? (
             <p className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">Pick a note to read it.</p>

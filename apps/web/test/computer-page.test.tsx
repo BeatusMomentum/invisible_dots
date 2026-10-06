@@ -504,6 +504,8 @@ describe("the usage", () => {
     const spend = await screen.findByRole("region", { name: "Model spend" });
     await waitFor(() => expect(within(spend).getByText("$0.42")).toBeTruthy());
     expect(within(spend).getByText("$3.50")).toBeTruthy();
+    // The money is in dollars, and the page says that no token count is kept (design 1.9): the engine reports cost only.
+    expect(within(spend).getByText(/in US dollars as OpenRouter priced them\. Tokens are not reported, only the cost\./)).toBeTruthy();
     expect(requested(/GET \/api\/dots\/d1\/usage$/).length).toBeGreaterThanOrEqual(2);
   });
 

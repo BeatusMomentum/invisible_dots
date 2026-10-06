@@ -39,7 +39,7 @@ export function DeleteDot({ dotId, name }: { dotId: string; name: string }) {
         <h2 id="settings-danger" className="text-base font-semibold">
           Danger zone
         </h2>
-        <p className="text-sm text-muted-foreground">Delete this Dot: its computer, its disk and everything stored on it (files, memory, browser identities) are destroyed. This cannot be undone.</p>
+        <p className="text-sm text-muted-foreground">Delete this Dot: its computer, its disk and everything stored on it (files, memory, browser identities) are destroyed, and so are its channels: the Telegram or WhatsApp link, its bot token or login, the people paired to it, and a key stored for this Dot alone. This cannot be undone.</p>
       </div>
       <Button type="button" variant="destructive" onClick={() => setOpen(true)}>
         <Trash2Icon />
@@ -49,7 +49,7 @@ export function DeleteDot({ dotId, name }: { dotId: string; name: string }) {
         open={open}
         onOpenChange={change}
         title={`Delete ${name}?`}
-        description="Its computer and its disk are destroyed, with every file, memory note and browser identity on them. The history of what it did is kept in the log."
+        description="Its computer and its disk are destroyed, with every file, memory note and browser identity on them, and its channels go with it: the link to Telegram or WhatsApp, its token or login, and the people paired to it. The history of what it did is kept in the log."
         confirmLabel="Delete Dot"
         pendingLabel="Deleting..."
         keepLabel="Keep it"

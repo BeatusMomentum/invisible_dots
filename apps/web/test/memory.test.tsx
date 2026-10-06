@@ -180,6 +180,14 @@ describe("the notes", () => {
     expect(requested(/GET \/api\/dots\/d1\/files$/)).toEqual([]);
   });
 
+  it("does not say a note is gone when the walk of the folder was cut short and the note may be past the cut", async () => {
+    for (let i = 0; i < MAX_NOTE_FOLDERS + 2; i++) plane.putFile(`/home/dot/memory/f${i}/n.md`, "x");
+    await renderMemory({ note: "zzz/deep.md" });
+    const said = await screen.findByText(/zzz\/deep\.md is not among the notes listed/);
+    expect(said.textContent).toMatch(/may be in one of them: the Files view shows them all/);
+    expect(screen.queryByText(/There is no note called/)).toBeNull();
+  });
+
   it("marks a note the Dot writes while the page is open, as a chip that leads to it, and lists it", async () => {
     plane.putFile("/home/dot/memory/fares.md", "a", hoursAgo(5));
     await renderMemory();

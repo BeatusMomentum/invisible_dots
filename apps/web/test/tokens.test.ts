@@ -44,6 +44,9 @@ const TEXT_PAIRS: [string, string][] = [
 const GRAPHIC_PAIRS: [string, string][] = [
   ["ring", "background"],
   ["ring", "card"],
+  // The border of a field is what shows where it is (WCAG 1.4.11): it is drawn at its own color, not decoration like --border.
+  ["input", "background"],
+  ["input", "card"],
   ["primary", "card"],
   ["ok", "card"],
   ["danger", "card"],
