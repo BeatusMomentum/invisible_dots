@@ -1,0 +1,29 @@
+name: geoip-pin
+
+# The GeoIP release that guest/image-builder/pins.json pins is deleted by its
+# project about two weeks after it is published (it keeps only its latest two
+# releases), and the required browser-smoke job and every image build without a
+# cached archive download it. This job is the warning: it goes red as soon as a
+# newer release exists, while the pin still downloads, and says what to put in
+# pins.json. It is not part of `gate`: a red run here is a reminder, never a
+# blocked pull request.
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pin:
+    name: the pinned GeoIP release is the newest one
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: node .github/scripts/geoip-pin.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

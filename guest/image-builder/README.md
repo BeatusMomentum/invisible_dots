@@ -59,8 +59,18 @@ image's SHA-256; `invisible-dots doctor` checks an image against it with
    404 within weeks. The build then stops and says what to change: put the
    current tag, URL and `digest` of `geoip-aio-all.mmdb.zip`
    (`https://api.github.com/repos/daijro/geoip-all-in-one/releases/latest`) into
-   `pins.json`. A host that already built with the pin keeps the verified archive
-   in `images/.cache` and does not need the network for it. The
+   `pins.json`. The decision, written down: the pin is bumped by hand, about
+   weekly, and the project owns no mirror of the archive (a mirror needs a
+   release store of its own, which is the owner's to create; the SHA-256 pin
+   and the digest input would stay as they are). So the bump never comes as a
+   surprise, `.github/workflows/geoip-pin.yml` runs
+   `.github/scripts/geoip-pin.mjs` every day and goes red as soon as the pinned
+   release is no longer the newest one on GitHub (while it still downloads,
+   about a week before it is deleted), when it is gone, or when the digest of
+   the pinned asset changed; its message names the tag, URL and SHA-256 to put
+   into `pins.json`. A host that already built with the pin keeps the verified
+   archive in `images/.cache` and does not need the network for it; an older
+   tree whose pin is gone builds there only with such a cached archive. The
    browser smoke runs the same script on the same pinned archive. The only
    browser a Dot has is that server: a test refuses any other browser or browser
    library among the apt packages, the lock and the build scripts. `provision.sh`
