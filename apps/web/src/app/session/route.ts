@@ -2,15 +2,18 @@
  * Sign in and out of this web server (architecture section 9.7). POST takes
  * `{ token }`, the API token, and answers with the session cookie when it is
  * the right one; DELETE clears the cookie. The same Host and Origin checks as
- * the proxy run first.
+ * the proxy run first. Each sign-in is a session of its own, kept here with the
+ * time it ends; DELETE drops it (lib/proxy.ts).
  */
 import {
   ProxyError,
   checkRequestOrigin,
   clearedSessionCookie,
+  endSession,
   errorResponse,
   loadApiToken,
   sessionCookie,
+  startSession,
   tokenMatches,
 } from "../../lib/proxy";
 
@@ -45,11 +48,13 @@ export async function POST(request: Request): Promise<Response> {
     throw error;
   }
   if (!tokenMatches(given.trim(), token)) return errorResponse(401, "wrong_token", "that is not the API token of this control plane");
-  return new Response(null, { status: 204, headers: { "set-cookie": sessionCookie(token), "cache-control": "no-store" } });
+  return new Response(null, { status: 204, headers: { "set-cookie": sessionCookie(startSession(token)), "cache-control": "no-store" } });
 }
 
 export async function DELETE(request: Request): Promise<Response> {
   const refusal = refused(request);
   if (refusal) return refusal;
+  // The session ends here, not only in this browser: a copy of its cookie is no longer worth anything.
+  endSession(request.headers.get("cookie"));
   return new Response(null, { status: 204, headers: { "set-cookie": clearedSessionCookie(), "cache-control": "no-store" } });
 }

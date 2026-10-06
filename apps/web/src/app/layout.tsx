@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
 import type { ReactNode } from "react";
 import { Toaster } from "../components/ui/sonner";
 import { THEME_BOOTSTRAP } from "../lib/theme";
@@ -13,12 +14,14 @@ export const viewport: Viewport = {
   colorScheme: "light dark",
 };
 
-export default function RootLayout({ children }: { children: ReactNode }) {
+export default async function RootLayout({ children }: { children: ReactNode }) {
+  // The nonce the request's Content Security Policy names (src/proxy.ts): the theme script is the one inline script that is ours.
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
     // The theme script sets data-theme before the first paint, so the server's markup has none to agree with.
     <html lang="en" suppressHydrationWarning>
       <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
       </head>
       <body>
         <a

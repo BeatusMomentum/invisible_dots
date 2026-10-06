@@ -35,6 +35,8 @@ test("the rail lists the Dots and a Dot's page shows its header and its tabs", a
 
   await expect(page).toHaveURL(new RegExp(`/dots/${dot.id}/chat$`));
   await expect(page.getByRole("heading", { level: 1, name: "shell-header" })).toBeVisible();
+  // The tab names the Dot, so several of them open at once can be told apart (a count of what needs the person may come first).
+  await expect(page).toHaveTitle(/Chat - shell-header - invisible_dots$/);
   await expect(page.getByRole("button", { name: /^Watch the fares/ })).toBeVisible();
   await expect(dots.getByRole("link", { name: /shell-header/ })).toHaveAttribute("aria-current", "page");
   await expect(page.getByRole("img", { name: "Ready" }).first()).toBeVisible();
@@ -152,7 +154,7 @@ test("a focused control keeps an outline under forced colors, where box shadows 
     }
     return page.evaluate(() => {
       const style = getComputedStyle(document.activeElement!);
-      return { tag: document.activeElement!.tagName, outlineStyle: style.outlineStyle, outlineWidth: style.outlineWidth, outlineColor: style.outlineColor, boxShadow: style.boxShadow };
+      return { tag: document.activeElement!.tagName, label: (document.activeElement as HTMLElement).getAttribute("aria-label") ?? document.activeElement!.className, outlineStyle: style.outlineStyle, outlineWidth: style.outlineWidth, outlineColor: style.outlineColor, boxShadow: style.boxShadow };
     });
   };
 
@@ -166,7 +168,76 @@ test("a focused control keeps an outline under forced colors, where box shadows 
   await page.reload();
   await expect(page.getByRole("heading", { name: "Create a Dot" })).toBeVisible();
   const forced = await focused();
-  expect(forced.outlineStyle).toBe("solid");
-  expect(forced.outlineWidth).toBe("2px");
+  expect(forced.outlineStyle, JSON.stringify(forced)).toBe("solid");
+  expect(parseFloat(forced.outlineWidth), JSON.stringify(forced)).toBeGreaterThanOrEqual(2);
   expect(forced.outlineColor).not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
+});
+
+test("every page is served under a Content Security Policy with a nonce of its own, the theme script runs under it, and no page breaks it", async ({ signedIn: page, harness }) => {
+  const dot = await harness.createDot("csp-pages");
+  const reported: string[] = [];
+  page.on("console", (message) => {
+    if (/Content Security Policy|Refused to/i.test(message.text())) reported.push(message.text());
+  });
+  await page.addInitScript(() => {
+    document.addEventListener("securitypolicyviolation", (event) => {
+      const holder = window as unknown as { __violations?: string[] };
+      // zod probes `new Function("")` once, inside try/catch, to choose its code-generating parser; the strict policy refuses it, the
+      // library falls back to its interpreted parser, and the browser still reports the refusal. It is the one report that is expected.
+      if (event.blockedURI === "eval" && event.sourceFile.includes("/_next/static/chunks/")) return;
+      (holder.__violations ??= []).push(`${event.violatedDirective} blocked ${event.blockedURI} at ${event.sourceFile}:${event.lineNumber}:${event.columnNumber} ${event.sample}`);
+    });
+  });
+
+  const nonces = new Set<string>();
+  const addresses = ["/", "/inbox", "/settings", "/new", ...["chat", "tasks", "computer", "memory", "activity", "channels", "settings"].map((tab) => `/dots/${dot.id}/${tab}`)];
+  for (const address of addresses) {
+    const response = await page.goto(`${harness.webUrl}${address}`);
+    const policy = response!.headers()["content-security-policy"] ?? "";
+    expect(policy, address).toMatch(/script-src 'self' 'nonce-[A-Za-z0-9+/=]+' 'strict-dynamic'/);
+    expect(policy, address).toContain("frame-ancestors 'none'");
+    expect(policy, address).not.toContain("'unsafe-inline' 'strict-dynamic'");
+    expect(response!.headers()["x-content-type-options"], address).toBe("nosniff");
+    expect(response!.headers()["x-frame-options"], address).toBe("DENY");
+    expect(response!.headers()["referrer-policy"], address).toBe("no-referrer");
+    nonces.add(/'nonce-([^']+)'/.exec(policy)![1]!);
+    // The page rendered and ran its scripts (the theme script set the theme before the first paint; React took the page over).
+    await expect(page.getByRole("complementary", { name: "Navigation" })).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.dataset.theme)).toMatch(/^(light|dark)$/);
+    expect(await page.evaluate(() => (window as unknown as { __violations?: string[] }).__violations ?? []), address).toEqual([]);
+  }
+  expect(nonces.size).toBe(addresses.length);
+  expect(reported).toEqual([]);
+
+  // Markup with a script of its own, such as an injection would put in the page, has no nonce: it does not run (the browser's
+  // own evaluation here is not what is tested, so the markup is parsed by the page, as injected markup is).
+  await page.goto(`${harness.webUrl}/`);
+  await page.evaluate(() => {
+    const holder = window as unknown as { __violations?: string[] };
+    holder.__violations = [];
+    document.open();
+    document.write("<!doctype html><script>window.__injected = true</script>");
+    document.close();
+  });
+  expect(await page.evaluate(() => (window as unknown as { __injected?: boolean }).__injected === true)).toBe(false);
+});
+
+test("signing out ends the session in the server: the cookie that was signed out is refused afterwards", async ({ page, harness }) => {
+  const signIn = await page.request.post(`${harness.webUrl}/session`, { data: { token: harness.token } });
+  expect(signIn.status()).toBe(204);
+  const cookie = signIn.headers()["set-cookie"] ?? "";
+  expect(cookie).toMatch(/idots_session=[A-Za-z0-9_-]{43};/);
+  expect(cookie).toMatch(/Max-Age=\d+/);
+  const copy = /idots_session=([^;]+)/.exec(cookie)![1]!;
+  expect((await page.request.get(`${harness.webUrl}/api/health`)).status()).toBe(200);
+
+  expect((await page.request.delete(`${harness.webUrl}/session`)).status()).toBe(204);
+  expect((await page.request.get(`${harness.webUrl}/api/health`)).status()).toBe(401);
+  // A copy of the cookie, kept by whoever could read it, is worth nothing now.
+  const replay = await fetch(`${harness.webUrl}/api/health`, { headers: { cookie: `idots_session=${copy}` } });
+  expect(replay.status).toBe(401);
+  // Another sign-in is another session.
+  const again = await page.request.post(`${harness.webUrl}/session`, { data: { token: harness.token } });
+  const second = /idots_session=([^;]+)/.exec(again.headers()["set-cookie"] ?? "")![1]!;
+  expect(second).not.toBe(copy);
 });

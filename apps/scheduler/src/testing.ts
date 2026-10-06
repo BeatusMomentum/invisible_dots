@@ -52,6 +52,9 @@ import type {
   WaitForHealthOptions,
 } from "./driver.js";
 
+/** A 1x1 white PNG. */
+const ONE_PIXEL_PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
 /** The error shape of vm-manager's GuestRequestError: a status (0 = unreachable) and the guest's code. */
 export class FakeGuestError extends Error {
   constructor(
@@ -554,8 +557,9 @@ export class FakeGuest implements GuestApi {
 
   async screenshot(): Promise<Uint8Array> {
     this.#reachable("screenshot");
-    // The PNG signature and nothing else: enough for a content check.
-    return Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    // A real picture, one white pixel: a browser that is shown it decodes it (an image it cannot decode makes Chromium report a
+    // connect-src violation for its blob: URL, which a page under a strict policy must not be taught to expect).
+    return Uint8Array.from(Buffer.from(ONE_PIXEL_PNG, "base64"));
   }
 
   /** The outbox after `after`, then every new event, until aborted or disconnected. */
