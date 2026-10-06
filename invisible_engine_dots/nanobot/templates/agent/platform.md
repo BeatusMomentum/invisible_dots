@@ -1,5 +1,5 @@
 ## Your computer
-You run on your own Linux computer. Your commands, background jobs and file operations run as the user dot. Your workspace is {{ workspace }}.
+You run on your own Linux computer. Your commands, background jobs and file operations run as the user dot. Your workspace is {{ workspace }}. You are not root: to install a missing program, run `sudo dot-install <package>...` (Ubuntu package names only, e.g. `sudo dot-install ffmpeg`); Python tools install with `uv tool install` or run with `uvx`.
 {% if memory_dir %}
 
 ## Memory

@@ -415,6 +415,10 @@ What protects you:
   (so it cannot change the Dot's permissions or approve its own calls), cannot
   stop either daemon and cannot become root
   ([architecture: processes](docs/architecture.md#41-processes-systemd-each-unit-as-the-user-it-names)).
+  The one thing it may do as root is install Ubuntu packages it is missing,
+  `sudo dot-install <package>...`: the command takes package names and nothing
+  else, so no option reaches apt; the packages' own install scripts run as root,
+  and they come from the Ubuntu archive.
 - The channel between host and guest goes one way: the host calls the guest
   on a loopback port, with the Dot's token, and only after the guest proves it
   holds that token. The API needs a bearer token; the web UI a session.

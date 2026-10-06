@@ -107,6 +107,13 @@ PY
   fi
 fi
 
+# Missing software: dot may run `sudo dot-install <package>...` (bin/dot-install, which takes package names and
+# nothing else) and no other command as root. The rule is checked before it is put in place.
+install -m 0755 -o root -g root "$runtime/bin/dot-install" /usr/local/sbin/dot-install
+printf 'dot ALL=(root) NOPASSWD: /usr/local/sbin/dot-install\n' > /etc/sudoers.d/dot-install.new
+chmod 0440 /etc/sudoers.d/dot-install.new
+visudo -cqf /etc/sudoers.d/dot-install.new && mv -f /etc/sudoers.d/dot-install.new /etc/sudoers.d/dot-install
+
 # A /run/user/<uid> for the desktop session without anyone logging in.
 loginctl enable-linger dot || log "warning: could not enable lingering for dot; the desktop runs without XDG_RUNTIME_DIR"
 

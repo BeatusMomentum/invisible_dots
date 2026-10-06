@@ -97,6 +97,7 @@ describe("buildRuntimeIso", () => {
         "VERSION",
         "bin/dot-agentd",
         "bin/dot-desktop",
+        "bin/dot-install",
         "engine/LICENSE",
         "engine/UPSTREAM.md",
         "engine/nanobot/__init__.py",

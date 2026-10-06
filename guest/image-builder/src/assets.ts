@@ -29,6 +29,7 @@ export const BUILDER_ENGINE_BUILD = "builder/build-engine-env.sh";
 export const BUILDER_BROWSER_BUILD = "builder/build-browser-env.sh";
 export const RUNTIME_INSTALL = "runtime/install.sh";
 export const RUNTIME_DESKTOP = "runtime/dot-desktop.sh";
+export const RUNTIME_DOT_INSTALL = "runtime/dot-install.sh";
 /** The guest units, in the order install.sh enables them. */
 export const GUEST_UNITS = ["dot-desktop.service", "dot-agentd.service", "invisible-dots-agent.service"] as const;
 
@@ -37,7 +38,7 @@ export function unitAsset(name: (typeof GUEST_UNITS)[number]): string {
 }
 
 /** Every guest file, for checks that apply to all of them. */
-export const GUEST_ASSETS: readonly string[] = [BUILDER_USER_DATA, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_ENGINE_LOCK, BUILDER_ENGINE_BUILD, BUILDER_BROWSER_BUILD, RUNTIME_INSTALL, RUNTIME_DESKTOP, ...GUEST_UNITS.map(unitAsset)];
+export const GUEST_ASSETS: readonly string[] = [BUILDER_USER_DATA, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_ENGINE_LOCK, BUILDER_ENGINE_BUILD, BUILDER_BROWSER_BUILD, RUNTIME_INSTALL, RUNTIME_DESKTOP, RUNTIME_DOT_INSTALL, ...GUEST_UNITS.map(unitAsset)];
 
 /**
  * Reads a guest file and refuses one a Windows checkout turned into CRLF:

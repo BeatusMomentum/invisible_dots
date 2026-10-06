@@ -7,6 +7,7 @@
  *   /VERSION                     this runtime's version
  *   /bin/dot-agentd              the computer daemon (linux/amd64)
  *   /bin/dot-desktop             ExecStart of dot-desktop.service
+ *   /bin/dot-install             the package installer dot may run with sudo
  *   /engine/nanobot/...          the engine's source: its .py files and templates
  *   /engine/LICENSE, /engine/UPSTREAM.md   the engine's license and where it was forked from
  *   /units/*.service             the guest systemd units
@@ -31,6 +32,7 @@ import {
   GUEST_UNITS,
   readGuestAsset,
   RUNTIME_DESKTOP,
+  RUNTIME_DOT_INSTALL,
   RUNTIME_INSTALL,
   unitAsset,
 } from "./assets.js";
@@ -180,6 +182,7 @@ export async function runtimeFiles(inputs: RuntimeInputs, assetRoot: string = de
   const files = [
     stageBytes("install.sh", await readGuestAsset(assetRoot, RUNTIME_INSTALL)),
     stageBytes("bin/dot-desktop", await readGuestAsset(assetRoot, RUNTIME_DESKTOP)),
+    stageBytes("bin/dot-install", await readGuestAsset(assetRoot, RUNTIME_DOT_INSTALL)),
     await stageFile("bin/dot-agentd", inputs.agentdBinary),
     ...(await engineFiles(inputs.engineRoot)),
   ];
