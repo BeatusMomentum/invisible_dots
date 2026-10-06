@@ -1,42 +1,29 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { api } from "../../lib/api";
+import Link from "next/link";
 import { cn } from "../../lib/utils";
+import { useShell } from "./attention";
 
-const INTERVAL_MS = 30_000;
+/** Whether the control plane answers through the proxy, with its version (the shell asks every 30 seconds); a missing key links to where it is entered. */
+export function ApiStatus({ onNavigate }: { onNavigate?: () => void }) {
+  const { health } = useShell();
+  const state = health.error !== null ? "down" : health.data ? "ok" : "checking";
 
-type Health = { state: "checking" } | { state: "ok"; version: string; keyConfigured: boolean } | { state: "down"; detail: string };
-
-/** Whether the control plane answers through the proxy, with its version; checked every 30 seconds. */
-export function ApiStatus() {
-  const [health, setHealth] = useState<Health>({ state: "checking" });
-
-  useEffect(() => {
-    let cancelled = false;
-    const check = () => {
-      api
-        .health()
-        .then((answer) => !cancelled && setHealth({ state: "ok", version: answer.version, keyConfigured: answer.openrouter_configured }))
-        .catch((error: unknown) => !cancelled && setHealth({ state: "down", detail: (error as Error).message }));
-    };
-    check();
-    const timer = setInterval(check, INTERVAL_MS);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, []);
-
-  const label = health.state === "checking" ? "API: checking" : health.state === "ok" ? "API: ok" : "API: unreachable";
+  const label = state === "checking" ? "API: checking" : state === "ok" ? "API: ok" : "API: unreachable";
   return (
     <div className="space-y-0.5">
-      <p className="flex items-center gap-1.5 text-xs text-muted-foreground" role="status" title={health.state === "down" ? health.detail : undefined}>
-        <span aria-hidden="true" className={cn("size-2 rounded-full", health.state === "ok" ? "bg-ok" : health.state === "down" ? "bg-danger" : "bg-muted-foreground")} />
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground" role="status" title={state === "down" ? String(health.error instanceof Error ? health.error.message : health.error) : undefined}>
+        <span aria-hidden="true" className={cn("size-2 rounded-full", state === "ok" ? "bg-ok" : state === "down" ? "bg-danger" : "bg-muted-foreground")} />
         {label}
-        {health.state === "ok" ? <span>v{health.version}</span> : null}
+        {state === "ok" && health.data ? <span>v{health.data.version}</span> : null}
       </p>
-      {health.state === "ok" && !health.keyConfigured ? <p className="text-xs text-warn">No OpenRouter key stored yet</p> : null}
+      {state === "ok" && health.data && !health.data.openrouter_configured ? (
+        <p className="text-xs text-warn">
+          <Link href="/settings" onClick={onNavigate} className="underline underline-offset-2">
+            No OpenRouter key stored yet
+          </Link>
+        </p>
+      ) : null}
     </div>
   );
 }

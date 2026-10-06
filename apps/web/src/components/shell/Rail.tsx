@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckSquareIcon, HomeIcon, PlusIcon } from "lucide-react";
+import { CheckSquareIcon, HomeIcon, PlusIcon, SettingsIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
@@ -83,6 +83,10 @@ export function Rail({ onNavigate }: { onNavigate?: () => void }) {
           Approvals
           <CountBadge count={pendingApprovals} label="waiting" />
         </NavLink>
+        <NavLink href="/settings" current={path.startsWith("/settings")} onNavigate={onNavigate}>
+          <SettingsIcon className="size-4" />
+          Settings
+        </NavLink>
       </nav>
 
       <Separator />
@@ -133,7 +137,7 @@ export function Rail({ onNavigate }: { onNavigate?: () => void }) {
 
       <div className="space-y-2 px-1 pb-1">
         <div className="space-y-1 px-1">
-          <ApiStatus />
+          <ApiStatus onNavigate={onNavigate} />
           <StreamIndicator />
         </div>
         <div className="flex items-center gap-1">

@@ -8,7 +8,8 @@ import { FakeDriver, ManualClock, waitFor, waitUntilSettledReady } from "@invisi
 import { ApiError, InvisibleDotsClient } from "@invisible-dots/sdk";
 import { MAX_EVENT_PAGE, OPENROUTER_KEY_RULE, type Automation, type DoctorCheck, type StoredEvent } from "@invisible-dots/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildServer, type FastifyInstance } from "../src/index.js";
+import { API_VERSION, buildServer, type FastifyInstance } from "../src/index.js";
+import { hostFacts } from "./host-facts.js";
 
 const TOKEN = "test-token-0123456789abcdef";
 
@@ -45,7 +46,7 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
       dispatcher: { retryDelayMs: 0 },
     });
     channels = new ChannelHub({ db, host: scheduler, types: [new FakeChannelType()] });
-    app = buildServer({ scheduler, channels, doctor: async () => REPORT, token: TOKEN, heartbeatMs: 50 });
+    app = buildServer({ scheduler, channels, doctor: async () => REPORT, host: hostFacts(kind), token: TOKEN, heartbeatMs: 50 });
     await app.listen({ host: "127.0.0.1", port: 0 });
     base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
     api = new InvisibleDotsClient({ baseUrl: base, token: TOKEN });
@@ -85,7 +86,7 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
 
   it("health, unknown routes and malformed bodies answer {error, message}", async () => {
     await db.secrets.put("global", "openrouter_api_key", "sk-or-test");
-    expect(await api.health()).toMatchObject({ status: "ok", database: "ok" });
+    expect(await api.health()).toEqual({ status: "ok", database: "ok", version: API_VERSION, openrouter_configured: true, ...hostFacts(kind) });
     const missing = await fetch(`${base}/api/nope`, { headers: { authorization: `Bearer ${TOKEN}` } });
     expect(missing.status).toBe(404);
     expect(await missing.json()).toMatchObject({ error: "not_found" });

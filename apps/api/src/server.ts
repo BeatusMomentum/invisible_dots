@@ -18,6 +18,7 @@ import type {
   EventsAnswer,
   FilesListAnswer,
   HealthResponse,
+  HostFacts,
   IdentitiesAnswer,
   MessagesAnswer,
   TasksAnswer,
@@ -47,6 +48,8 @@ export interface ServerOptions {
   channels: ChannelHub;
   /** Runs the host checks of architecture section 11.1 on the machine this server runs on; `startServer` binds the real ones. */
   doctor(): Promise<DoctorCheck[]>;
+  /** What `GET /api/health` says about where the state lives; `startServer` reads it from the paths and the database it opened. */
+  host: HostFacts;
   token: string;
   logger?: Logger;
   heartbeatMs?: number;
@@ -170,7 +173,7 @@ export function buildServer(options: ServerOptions): FastifyInstance {
 
   app.get("/api/health", async (): Promise<HealthResponse> => {
     const { database, openrouter_configured } = await scheduler.health();
-    return { status: "ok", database, version: API_VERSION, openrouter_configured };
+    return { status: "ok", database, version: API_VERSION, openrouter_configured, ...options.host };
   });
 
   // The host report `invisible-dots doctor` prints: what is missing for a Dot to run, and the command that fixes it. It runs QEMU's accelerator probe, so it takes a moment:

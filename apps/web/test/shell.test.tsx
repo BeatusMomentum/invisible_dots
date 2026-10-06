@@ -113,6 +113,40 @@ describe("the rail", () => {
     expect(within(rail()).getByText("No OpenRouter key stored yet")).toBeTruthy();
   });
 
+  it("sends the person from the missing key to the settings page where it is entered", async () => {
+    plane.keyConfigured = false;
+    renderShell();
+    const warning = await within(rail()).findByRole("link", { name: "No OpenRouter key stored yet" });
+    expect(warning.getAttribute("href")).toBe("/settings");
+  });
+
+  it("has a Settings page in the main navigation, marked as the current page while it is open", async () => {
+    pathname = "/settings";
+    renderShell();
+    const link = await within(rail()).findByRole("link", { name: "Settings" });
+    expect(link.getAttribute("href")).toBe("/settings");
+    expect(link.getAttribute("aria-current")).toBe("page");
+    expect(within(rail()).getByRole("link", { name: "Home" }).getAttribute("aria-current")).toBeNull();
+  });
+
+  it("learns that a key was stored from the next health answer, without a reload of the page", async () => {
+    plane.keyConfigured = false;
+    // Faked before the shell starts, so that its 30 second timer is the faked one. The shell asks every 30 seconds;
+    // a saved key asks at once through the shared resource (settings.test.tsx).
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderShell();
+      await within(rail()).findByText("No OpenRouter key stored yet");
+      plane.keyConfigured = true;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000);
+      });
+      await waitFor(() => expect(within(rail()).queryByText("No OpenRouter key stored yet")).toBeNull());
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("says when the API cannot be reached", async () => {
     plane.healthy = false;
     renderShell();

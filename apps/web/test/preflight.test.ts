@@ -1,8 +1,8 @@
 import type { DoctorCheck } from "@invisible-dots/shared/browser";
 import { describe, expect, it } from "vitest";
-import { preflightItems } from "../src/lib/preflight";
+import { isReady, notReadyCount, preflightItems } from "../src/lib/preflight";
 
-const HEALTHY = { status: "ok", database: "ok", version: "1.2.3", openrouter_configured: true } as const;
+const HEALTHY = { status: "ok", database: "ok", version: "1.2.3", openrouter_configured: true, database_kind: "pglite", data_dir: "/home/me/.invisible-dots", logs_dir: "/home/me/.invisible-dots/logs" } as const;
 const row = (id: DoctorCheck["id"], status: DoctorCheck["status"], detail = "fine", fix?: string): DoctorCheck => ({ id, label: id, status, detail, ...(fix ? { fix } : {}) });
 const HOST_OK = { checks: [row("node", "ok"), row("qemu", "ok"), row("openrouter", "ok", "stored")] };
 
@@ -48,5 +48,25 @@ describe("preflightItems", () => {
     const items = preflightItems({ health: { health: HEALTHY }, host: { error: "the doctor could not run" } });
     expect(items.slice(0, 3).every((item) => item.state === "ok")).toBe(true);
     expect(items[3]).toMatchObject({ id: "host", state: "unknown", detail: "Not checked: the doctor could not run" });
+  });
+});
+
+describe("isReady and notReadyCount", () => {
+  it("is ready when every item is ok", () => {
+    const items = preflightItems({ health: { health: HEALTHY }, host: HOST_OK });
+    expect(isReady(items)).toBe(true);
+    expect(notReadyCount(items)).toBe(0);
+  });
+
+  it("is not ready with a failed item, and counts it", () => {
+    const items = preflightItems({ health: { health: { ...HEALTHY, openrouter_configured: false } }, host: { checks: [row("qemu", "missing", "not found", "invisible-dots setup")] } });
+    expect(isReady(items)).toBe(false);
+    expect(notReadyCount(items)).toBe(2);
+  });
+
+  it("does not count a check that was not made as ready", () => {
+    const items = preflightItems({ health: { error: "down" }, host: { error: "down" } });
+    expect(isReady(items)).toBe(false);
+    expect(notReadyCount(items)).toBe(4);
   });
 });

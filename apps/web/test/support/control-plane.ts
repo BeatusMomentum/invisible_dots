@@ -93,6 +93,12 @@ export class FakeControlPlane {
   spentUsd = 0;
   keyConfigured = true;
   healthy = true;
+  /** The value of every `PUT /api/secrets/openrouter`, as the browser sent it. */
+  savedKeys: string[] = [];
+  /** How many running Dots `PUT /api/secrets/openrouter` says it pushed the key to. */
+  keyPushedTo = 0;
+  /** Answer `PUT /api/secrets/openrouter` with this error instead of storing the key. */
+  failKey: { status: number; error: string; message: string } | null = null;
   /** What `GET /api/doctor` reports, in the contract's order (the real one has nine rows, the last the key). */
   doctor: DoctorCheck[] = [
     { id: "node", label: "Node.js", status: "ok", detail: "24.1.0" },
@@ -168,7 +174,23 @@ export class FakeControlPlane {
       return json({ ok: this.doctor.every((check) => check.status === "ok"), checks: this.doctor });
     }
     if (pathname === "/api/health") {
-      return this.healthy ? json({ status: "ok", database: "ok", version: "9.9.9", openrouter_configured: this.keyConfigured }) : json({ error: "down", message: "down" }, 503);
+      return this.healthy
+        ? json({
+            status: "ok",
+            database: "ok",
+            version: "9.9.9",
+            openrouter_configured: this.keyConfigured,
+            database_kind: "pglite",
+            data_dir: "/home/me/.invisible-dots",
+            logs_dir: "/home/me/.invisible-dots/logs",
+          })
+        : json({ error: "down", message: "down" }, 503);
+    }
+    if (pathname === "/api/secrets/openrouter" && method === "PUT") {
+      if (this.failKey) return json({ error: this.failKey.error, message: this.failKey.message }, this.failKey.status);
+      this.savedKeys.push((JSON.parse(String(init?.body)) as { value: string }).value);
+      this.keyConfigured = true;
+      return json({ pushed: this.keyPushedTo });
     }
     if (pathname === "/api/dots" && method === "POST") {
       const { config } = JSON.parse(String(init?.body)) as { config: unknown };

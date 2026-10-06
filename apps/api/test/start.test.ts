@@ -96,7 +96,14 @@ describe("startServer on an empty INVISIBLE_DOTS_HOME", { timeout: 120_000 }, ()
     }
 
     const api = new InvisibleDotsClient({ baseUrl: server.url, token: server.token });
-    expect(await api.health()).toMatchObject({ status: "ok", database: "ok", openrouter_configured: false });
+    expect(await api.health()).toMatchObject({
+      status: "ok",
+      database: "ok",
+      openrouter_configured: false,
+      database_kind: "pglite",
+      data_dir: home,
+      logs_dir: join(home, "logs"),
+    });
     await api.setOpenRouterKey("sk-or-first");
     expect(await api.health()).toMatchObject({ openrouter_configured: true });
     const refused = await fetch(`${server.url}/api/health`, { headers: { authorization: "Bearer wrong-token-0123456789" } });

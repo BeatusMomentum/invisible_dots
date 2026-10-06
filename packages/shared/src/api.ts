@@ -224,7 +224,17 @@ export interface ChannelPairingAnswer {
   expires_at: string;
 }
 
-export interface HealthResponse {
+/** Where this control plane keeps its state: what the web client's host settings page tells the person, who otherwise has to know `INVISIBLE_DOTS_HOME`. */
+export interface HostFacts {
+  /** The database behind it: PGlite inside the server, or an external PostgreSQL (`DATABASE_URL`). */
+  database_kind: "pglite" | "pg";
+  /** `INVISIBLE_DOTS_HOME`, as the server resolved it. */
+  data_dir: string;
+  /** Where QEMU's own output of every Dot is written (`logs/qemu-<dot_id>.log`). */
+  logs_dir: string;
+}
+
+export interface HealthResponse extends HostFacts {
   status: "ok";
   database: "ok";
   version: string;

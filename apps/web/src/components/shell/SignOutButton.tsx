@@ -5,8 +5,8 @@ import { useState } from "react";
 import { signOut } from "../../lib/session";
 import { Button } from "../ui/button";
 
-/** Ends the session of this browser and returns to the login page. */
-export function SignOutButton() {
+/** Ends the session of this browser and returns to the login page; quiet in the rail, an outlined button on the settings page. */
+export function SignOutButton({ variant = "ghost" }: { variant?: "ghost" | "outline" }) {
   const [state, setState] = useState<{ pending: boolean; error: string | null }>({ pending: false, error: null });
 
   async function onClick() {
@@ -20,7 +20,7 @@ export function SignOutButton() {
 
   return (
     <>
-      <Button type="button" variant="ghost" size="sm" className="justify-start text-muted-foreground" onClick={onClick} disabled={state.pending}>
+      <Button type="button" variant={variant} size="sm" className={variant === "ghost" ? "justify-start text-muted-foreground" : undefined} onClick={onClick} disabled={state.pending}>
         <LogOutIcon />
         {state.pending ? "Signing out..." : "Sign out"}
       </Button>

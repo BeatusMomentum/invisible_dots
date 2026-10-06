@@ -92,6 +92,58 @@ describe("Home", () => {
     expect(screen.queryByRole("link", { name: "New Dot" })).toBeNull();
   });
 
+  it("shows no setup checklist to a person with no Dot whose host is ready", async () => {
+    await renderHome();
+    await screen.findByRole("heading", { name: "No Dots yet" });
+    await waitFor(() => expect(plane.requests).toContain("GET /api/doctor"));
+    await waitFor(() => expect(screen.queryByText("Checking this computer...")).toBeNull());
+    expect(screen.queryByRole("region", { name: "Get this computer ready" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "This computer is ready" })).toBeNull();
+  });
+
+  it("shows the setup checklist to a person with no Dot whose host lacks something, each item with its command", async () => {
+    plane.keyConfigured = false;
+    plane.doctor = [{ id: "golden-image", label: "golden image", status: "missing", detail: "none in the images folder", fix: "invisible-dots image build" }];
+    await renderHome();
+    const checklist = await screen.findByRole("region", { name: "Get this computer ready" });
+    expect(within(checklist).getByText(/2 things need attention/)).toBeTruthy();
+    expect(within(checklist).getByText("invisible-dots image build")).toBeTruthy();
+    expect(within(checklist).getAllByRole("listitem").some((item) => item.textContent?.startsWith("OpenRouter key: Needs attention"))).toBe(true);
+    // The key is entered here, and the first Dot can be created at once: the checklist informs, it does not block.
+    expect(within(checklist).getByLabelText("OpenRouter API key")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Create your first Dot" }).getAttribute("href")).toBe("/new");
+  });
+
+  it("keeps the checklist on the page, turned green, when the last thing is fixed", async () => {
+    plane.keyConfigured = false;
+    plane.keyPushedTo = 1;
+    await renderHome();
+    const checklist = await screen.findByRole("region", { name: "Get this computer ready" });
+    await userEvent.type(within(checklist).getByLabelText("OpenRouter API key"), "sk-or-onboarding");
+    await userEvent.click(within(checklist).getByRole("button", { name: "Save key" }));
+    expect(await within(checklist).findByText("Saved. Pushed to 1 running Dot.")).toBeTruthy();
+    expect(plane.savedKeys).toEqual(["sk-or-onboarding"]);
+    const ready = await screen.findByRole("region", { name: "This computer is ready" });
+    expect(within(ready).getByText("Everything a Dot needs is in place.")).toBeTruthy();
+  });
+
+  it("does not offer the key field when the key is stored and only the host lacks something", async () => {
+    plane.doctor = [{ id: "qemu", label: "QEMU", status: "missing", detail: "not found on PATH", fix: "invisible-dots setup" }];
+    await renderHome();
+    const checklist = await screen.findByRole("region", { name: "Get this computer ready" });
+    expect(within(checklist).getByText(/1 thing needs attention/)).toBeTruthy();
+    expect(within(checklist).queryByLabelText("OpenRouter API key")).toBeNull();
+    expect(within(checklist).queryByLabelText("Replace the key")).toBeNull();
+  });
+
+  it("shows no checklist when there are Dots, because the cards are what Home is then for", async () => {
+    plane.keyConfigured = false;
+    plane.dots = [dotRecord("d1", { name: "first" })];
+    await renderHome();
+    await screen.findByRole("article", { name: "first" });
+    expect(screen.queryByRole("region", { name: "Get this computer ready" })).toBeNull();
+  });
+
   it("shows a card per Dot with its name, goal, state, model and what it spent today", async () => {
     plane.spentUsd = 1.5;
     plane.dots = [dotRecord("d1", { name: "fares", config: { goal: "Watch the fares from Milan to Lisbon", model: { provider: "openrouter", id: "z-ai/glm" } } as never })];

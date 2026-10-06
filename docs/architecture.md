@@ -1629,8 +1629,12 @@ GET    /api/doctor                   { ok, checks: [{ id, label, status: ok|miss
 ```
 
 `GET /api/health` answers `{ status: "ok", database: "ok", version,
-openrouter_configured }`; the last field is whether a global OpenRouter key is
-stored, which `invisible-dots doctor` reports.
+openrouter_configured, database_kind, data_dir, logs_dir }`; `openrouter_configured`
+is whether a global OpenRouter key is stored, which `invisible-dots doctor`
+reports, and the last three say where the state lives (`pglite` or `pg`,
+`INVISIBLE_DOTS_HOME` as the server resolved it, and its `logs/`), so the web
+client's host settings page can tell the person without their knowing the
+environment variable.
 
 `GET /api/dots/:id/events` returns at most `MAX_EVENT_PAGE` (1000, in
 `packages/shared`) events a call: the store clamps to it, the route refuses a
@@ -1748,8 +1752,28 @@ Home (`/`) is a card per Dot: its avatar ring, name and goal, the state with the
 recorded reason beside an ERROR, the model, what it spent today, the approvals
 that wait, Open chat and the computer's power menu. Each card's spend pill is
 scoped to its own Dot, so a message of one Dot re-reads only that Dot's usage.
-Search appears above six Dots, and with no Dot the page invites the first. The
-card has no "last activity": no route returns the newest event yet.
+Search appears above six Dots, and with no Dot the page invites the first, and,
+while this computer is not ready for a Dot, shows the setup checklist under the
+invitation: each check of `GET /api/doctor` and `GET /api/health` that is not
+ready, with the command that fixes it and a button that copies it (setup needs
+an elevated terminal and an image build takes long, so they stay commands the
+person runs), and the key field when no key is stored. The checks run again
+when the person returns to the window while something is missing, and the
+checklist stays, turned green, once the last thing is done. A ready host shows
+none of it. The card has no "last activity": no route returns the newest event
+yet.
+
+Settings (`/settings`, in the rail) are the host's, not a Dot's: the same checks
+(`useHostChecks` is the one list the checklist, this page and the create form's
+preflight draw), the OpenRouter key (a write-only field over
+`PUT /api/secrets/openrouter`; whether one is stored comes from the health
+answer, which the shell shares and asks again after a save, so the rail agrees
+at once; the answer says how many running Dots got it), the theme, Sign out
+(`DELETE /session`) and About: the version, the database kind, the data
+directory and the logs directory, which `GET /api/health` reports for the
+purpose (`database_kind`, `data_dir`, `logs_dir`), and `invisible-dots logs
+<dot>` for a Dot's own logs. The login page is a card with the token field
+focused; it is outside the shell and asks the API nothing.
 
 Create a Dot (`/new`) is a form in three steps (Identity, Brain, Computer and
 safety) with sliders inside `CONFIG_BOUNDS`, the idle timeout, the Careful,

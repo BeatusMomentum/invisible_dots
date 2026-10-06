@@ -1,10 +1,10 @@
 "use client";
 
-import { CheckIcon, CopyIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "../lib/utils";
+import { CopyButton } from "./copy-button";
 
 /** The text of a node tree, as a reader sees it. */
 function textOf(node: ReactNode): string {
@@ -16,27 +16,14 @@ function textOf(node: ReactNode): string {
 
 /** A fenced block with a button that copies its text. */
 function CodeBlock({ children }: { children?: ReactNode }) {
-  const [copied, setCopied] = useState(false);
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(textOf(children).replace(/\n$/, ""));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      // The clipboard is refused (an insecure page, a denied permission): the text can still be selected.
-    }
-  }
   return (
     <div className="group relative">
       <pre>{children}</pre>
-      <button
-        type="button"
-        onClick={() => void copy()}
-        aria-label={copied ? "Copied" : "Copy the code"}
-        className="absolute top-1.5 right-1.5 rounded-md border bg-card p-1 text-muted-foreground opacity-0 transition-opacity pointer-coarse:opacity-100 outline-none group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring/50"
-      >
-        {copied ? <CheckIcon aria-hidden="true" className="size-3.5" /> : <CopyIcon aria-hidden="true" className="size-3.5" />}
-      </button>
+      <CopyButton
+        text={() => textOf(children).replace(/\n$/, "")}
+        label="Copy the code"
+        className="absolute top-1.5 right-1.5 opacity-0 transition-opacity group-hover:opacity-100 pointer-coarse:opacity-100 focus-visible:opacity-100"
+      />
     </div>
   );
 }

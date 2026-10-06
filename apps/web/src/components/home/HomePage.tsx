@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useMemo, useState } from "react";
 import { filterDots, showSearch } from "../../lib/dot-card";
 import { ErrorAlert } from "../ErrorAlert";
+import { SetupChecklist } from "../setup/SetupChecklist";
 import { useShell } from "../shell/attention";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -90,6 +91,7 @@ function EmptyHome() {
           A Dot is an agent that lives on a computer of its own, keeps working while you are away, and asks you before it does anything you have not allowed.
         </p>
       </div>
+      <SetupChecklist />
       <Button asChild>
         <Link href="/new">Create your first Dot</Link>
       </Button>

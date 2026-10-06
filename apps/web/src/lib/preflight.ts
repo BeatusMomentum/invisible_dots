@@ -74,3 +74,13 @@ function hostItems(health: HealthResult, host: HostResult): PreflightItem[] {
 export function preflightItems({ health, host }: PreflightResult): PreflightItem[] {
   return [...controlPlaneItems(health), ...hostItems(health, host)];
 }
+
+/** Everything the list checks is ready: the host can run a Dot's computer and the Dot can answer. A check that was not made is not ready. */
+export function isReady(items: readonly PreflightItem[]): boolean {
+  return items.every((item) => item.state === "ok");
+}
+
+/** How many items are not ready, for a summary line. */
+export function notReadyCount(items: readonly PreflightItem[]): number {
+  return items.filter((item) => item.state !== "ok").length;
+}

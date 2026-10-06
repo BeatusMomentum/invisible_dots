@@ -22,6 +22,8 @@ const quiet = { debug() {}, info() {}, warn() {}, error() {} };
 export interface Harness {
   /** The web client, as the browser opens it. */
   webUrl: string;
+  /** INVISIBLE_DOTS_HOME of the control plane: what its health answer calls the data directory. */
+  home: string;
   /** The control plane behind it. */
   control: RunningServer;
   driver: FakeDriver;
@@ -64,7 +66,15 @@ async function waitForWeb(url: string, child: ChildProcess, output: () => string
   }
 }
 
-export async function startHarness(): Promise<Harness> {
+export interface HarnessOptions {
+  /**
+   * Whether the control plane already holds an OpenRouter key (the default), as a host does once it has been set up.
+   * Without one, no Dot reaches READY, so this is for the pages a person sees before the first Dot.
+   */
+  withKey?: boolean;
+}
+
+export async function startHarness({ withKey = true }: HarnessOptions = {}): Promise<Harness> {
   const home = await mkdtemp(join(tmpdir(), "idots-e2e-"));
   const driver = new FakeDriver();
   const host = {
@@ -110,9 +120,10 @@ export async function startHarness(): Promise<Harness> {
 
   const api = new InvisibleDotsClient({ baseUrl: control.url, token: control.token });
   // A Dot is not READY until the guest holds a key (the READY procedure pushes it); the fake guest accepts any.
-  await api.setOpenRouterKey("sk-or-e2e-0123456789abcdef");
+  if (withKey) await api.setOpenRouterKey("sk-or-e2e-0123456789abcdef");
   return {
     webUrl,
+    home,
     control,
     driver,
     host,
