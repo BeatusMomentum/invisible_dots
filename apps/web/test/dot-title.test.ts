@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SESSION_COOKIE, startSession } from "../src/lib/proxy";
+import { SESSION_COOKIE, sessionValue } from "../src/lib/proxy";
 
 const TOKEN = "t".repeat(40);
 let cookie: string | null = null;
@@ -19,7 +19,7 @@ const answers = (status: number, body: unknown) =>
 
 beforeEach(() => {
   asked.length = 0;
-  cookie = `${SESSION_COOKIE}=${startSession(TOKEN)}`;
+  cookie = `${SESSION_COOKIE}=${sessionValue(TOKEN)}`;
   vi.stubEnv("INVISIBLE_DOTS_TOKEN", TOKEN);
   vi.stubEnv("INVISIBLE_DOTS_URL", "http://api.test:7777");
 });
@@ -44,7 +44,7 @@ describe("the title of a Dot's page", () => {
 
   it("does not ask, and does not name the Dot, for a request that is not signed in", async () => {
     answers(200, { name: "fares" });
-    for (const value of [null, `${SESSION_COOKIE}=${startSession("another token")}`, "idots_session=garbage"]) {
+    for (const value of [null, `${SESSION_COOKIE}=${sessionValue("another token")}`, "idots_session=garbage"]) {
       cookie = value;
       expect(await dotPageTitle("dot_1", "Chat")).toEqual({ title: "Chat" });
     }
