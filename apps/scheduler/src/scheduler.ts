@@ -21,6 +21,7 @@ import type {
 import {
   checkOpenRouterKey,
   computerResources,
+  CONVERSATION_LIST_LIMIT,
   DotConfigError,
   newId,
   parseDotConfig,
@@ -326,7 +327,7 @@ export class Scheduler {
     return { message_id: messageId, event_id: stored.id, delivery };
   }
 
-  async conversation(idOrName: string, limit = 500): Promise<ConversationMessage[]> {
+  async conversation(idOrName: string, limit = CONVERSATION_LIST_LIMIT): Promise<ConversationMessage[]> {
     const dot = await this.requireDot(idOrName);
     const events = await this.events.query({
       dotId: dot.id,

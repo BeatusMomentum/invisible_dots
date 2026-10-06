@@ -35,7 +35,7 @@ test("the rail lists the Dots and a Dot's page shows its header and its tabs", a
 
   await expect(page).toHaveURL(new RegExp(`/dots/${dot.id}/chat$`));
   await expect(page.getByRole("heading", { level: 1, name: "shell-header" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Watch the fares/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Watch the fares/ })).toBeVisible();
   await expect(dots.getByRole("link", { name: /shell-header/ })).toHaveAttribute("aria-current", "page");
   await expect(page.getByRole("img", { name: "Ready" }).first()).toBeVisible();
   await expect(page.getByText("$0.00")).toBeVisible();

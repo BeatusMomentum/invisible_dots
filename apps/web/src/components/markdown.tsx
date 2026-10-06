@@ -1,12 +1,51 @@
 "use client";
 
+import { CheckIcon, CopyIcon } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "../lib/utils";
 
+/** The text of a node tree, as a reader sees it. */
+function textOf(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textOf).join("");
+  if (node && typeof node === "object" && "props" in node) return textOf((node as { props: { children?: ReactNode } }).props.children);
+  return "";
+}
+
+/** A fenced block with a button that copies its text. */
+function CodeBlock({ children }: { children?: ReactNode }) {
+  const [copied, setCopied] = useState(false);
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(textOf(children).replace(/\n$/, ""));
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // The clipboard is refused (an insecure page, a denied permission): the text can still be selected.
+    }
+  }
+  return (
+    <div className="group relative">
+      <pre>{children}</pre>
+      <button
+        type="button"
+        onClick={() => void copy()}
+        aria-label={copied ? "Copied" : "Copy the code"}
+        className="absolute top-1.5 right-1.5 rounded-md border bg-card p-1 text-muted-foreground opacity-0 transition-opacity pointer-coarse:opacity-100 outline-none group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring/50"
+      >
+        {copied ? <CheckIcon aria-hidden="true" className="size-3.5" /> : <CopyIcon aria-hidden="true" className="size-3.5" />}
+      </button>
+    </div>
+  );
+}
+
 /**
  * Text a Dot wrote, as markdown. Raw HTML in it is never rendered (react-markdown drops it), links open in a new
- * tab without sending the page's address along, and nothing in it can reach the page's own styles.
+ * tab without sending the page's address along, an image is shown as a link to it (a page the Dot read can ask for
+ * any address, and loading it would tell that address who is looking), and nothing in it can reach the page's own
+ * styles. A fenced block has a copy button.
  */
 export function Markdown({ children, className }: { children: string; className?: string }) {
   return (
@@ -15,6 +54,13 @@ export function Markdown({ children, className }: { children: string; className?
         remarkPlugins={[remarkGfm]}
         components={{
           a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2" />,
+          img: ({ node: _node, src, alt }) =>
+            typeof src === "string" ? (
+              <a href={src} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2">
+                {alt ? `Image: ${alt}` : "Image"}
+              </a>
+            ) : null,
+          pre: ({ node: _node, children: code }) => <CodeBlock>{code}</CodeBlock>,
         }}
       >
         {children}

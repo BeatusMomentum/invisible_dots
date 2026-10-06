@@ -98,3 +98,19 @@
     }
   }
 }
+
+/* A label that is going on now: the text carries a light that passes over it (both ends are text colors of the tokens). */
+@utility shimmer {
+  background-image: linear-gradient(90deg, var(--muted-foreground) 0%, var(--foreground) 50%, var(--muted-foreground) 100%);
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 2.2s linear infinite;
+}
+
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}

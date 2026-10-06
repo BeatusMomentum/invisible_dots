@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { statePill } from "../src/lib/agent";
+import { isWorking, statePill } from "../src/lib/agent";
 
 describe("the state pill of a Dot", () => {
   it("says what the agent is doing when this page has seen it", () => {
@@ -25,5 +25,13 @@ describe("the state pill of a Dot", () => {
     expect(statePill("ERROR", "THINKING")).toEqual({ label: "Error", tone: "error", working: false });
     expect(statePill("DISABLED", "IDLE")).toMatchObject({ label: "Disabled", tone: "neutral" });
     expect(statePill("CREATING", null)).toMatchObject({ label: "Preparing the computer", working: true });
+  });
+});
+
+describe("when the agent is busy", () => {
+  it("is while it thinks, plans or runs a tool, and not while it waits for the person or rests", () => {
+    for (const state of ["THINKING", "PLANNING", "EXECUTING"] as const) expect(isWorking(state), state).toBe(true);
+    for (const state of ["IDLE", "DONE", "WAITING_APPROVAL"] as const) expect(isWorking(state), state).toBe(false);
+    expect(isWorking(null)).toBe(false);
   });
 });

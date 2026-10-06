@@ -1,6 +1,7 @@
 "use client";
 
 import { BanIcon, CheckCircle2Icon, CircleDotIcon, FlagIcon, HandIcon, MessageSquareIcon, PlayIcon, TerminalIcon, XCircleIcon, type LucideIcon } from "lucide-react";
+import { toolLabel } from "../../lib/events/tool-labels";
 import { formatDate, formatDuration } from "../../lib/format";
 import type { StoryStep } from "../../lib/task-events";
 import { priorityLabel } from "../../lib/task-view";
@@ -46,7 +47,9 @@ function Body({ step }: { step: StoryStep }) {
       const outcome = toolOutcome(step);
       return (
         <>
-          <code className="rounded bg-muted px-1 font-mono text-[0.85em]">{step.tool}</code>
+          <span title={step.tool} className="font-medium">
+            {toolLabel(step.tool).label}
+          </span>
           {step.target ? <span className="break-all text-muted-foreground"> {step.target}</span> : null}{" "}
           <span className={cn("text-xs", outcome.bad ? "text-danger" : "text-muted-foreground")}>
             {outcome.word}
@@ -58,7 +61,7 @@ function Body({ step }: { step: StoryStep }) {
     case "approval":
       return (
         <>
-          <span className="font-medium">{APPROVAL_WORD[step.outcome]}:</span> <code className="rounded bg-muted px-1 font-mono text-[0.85em]">{step.tool}</code>
+          <span className="font-medium">{APPROVAL_WORD[step.outcome]}:</span> <span title={step.tool}>{toolLabel(step.tool).label.toLowerCase()}</span>
           {step.reason ? <span className="text-muted-foreground"> {step.reason}</span> : null}
           {step.note ? <span className="block text-xs text-muted-foreground">Note: {step.note}</span> : null}
         </>

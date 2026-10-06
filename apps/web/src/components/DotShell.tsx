@@ -3,6 +3,7 @@
 import { createContext, useContext, type ReactNode } from "react";
 import { api } from "../lib/api";
 import type { Dot } from "../lib/types";
+import { PanelProvider } from "./computer/panel-state";
 import { DotHeader } from "./dot/DotHeader";
 import { DotTabs } from "./dot/DotTabs";
 import { useLiveRefresh } from "./events";
@@ -33,9 +34,11 @@ export function DotShell({ dotId, children }: { dotId: string; children: ReactNo
 
   return (
     <DotContext.Provider value={{ dotId, dot }}>
-      <DotHeader dotId={dotId} dot={dot} />
-      <DotTabs dotId={dotId} />
-      <section className="mt-4">{children}</section>
+      <PanelProvider>
+        <DotHeader dotId={dotId} dot={dot} />
+        <DotTabs dotId={dotId} />
+        <section className="mt-4">{children}</section>
+      </PanelProvider>
     </DotContext.Provider>
   );
 }

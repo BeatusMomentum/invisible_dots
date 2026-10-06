@@ -34,6 +34,15 @@ export function formatDuration(seconds: number | null | undefined): string {
   return `${s}s`;
 }
 
+/** How long a call took: milliseconds under a second, then seconds with a decimal, then the longer units. */
+export function formatMillis(ms: number | null | undefined): string {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "-";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  // 59.95 s and over would round to "60.0 s": it is a minute.
+  if (ms < 59_950) return `${(ms / 1000).toFixed(1)} s`;
+  return formatDuration(Math.round(ms / 1000));
+}
+
 const TONES: Record<string, Tone> = {
   // Dot states
   READY: "ok",

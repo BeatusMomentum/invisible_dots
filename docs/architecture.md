@@ -1542,7 +1542,7 @@ PATCH  /api/dots/:id                 body: { config }   (pushed to the guest if 
 DELETE /api/dots/:id                 destroys the VM and its disk, then deletes the Dot, its rows and its own secrets
 
 POST   /api/dots/:id/messages        body: { text }
-GET    /api/dots/:id/messages        conversation, from the event log
+GET    /api/dots/:id/messages        conversation, from the event log (the oldest 500)
 POST   /api/dots/:id/tasks           body: { description, priority?, scheduled_at? }
 GET    /api/dots/:id/tasks
 GET    /api/tasks/:id
@@ -1645,10 +1645,34 @@ age), and History (filtered by how the task ended, twenty at a time). A task
 has its own address, `/dots/<id>/tasks/<taskId>`, which opens a drawer over the
 list with its state, its result as markdown or the reason it failed, and its
 story. The story and the progress lines come from the Dot's event log, which
-the page reads from its start (`lib/task-events.ts`, the one place that knows
-how) only once a task is running or open, and then keeps current from the live
-stream. The newest progress line of a running task is also under the goal in
+the page reads from its start (`lib/event-log.ts` is the one function that
+pages through it, the route having no filter yet) only once a task is running
+or open, and then keeps current from the live stream. The newest progress line of a running task is also under the goal in
 the Dot header. A task that waits for an answer links to the Dot's approvals.
+
+The chat (`/dots/<id>/chat`) is the conversation: the person's messages as
+bubbles, the Dot's as markdown (no raw HTML, links open in a new tab without a
+referrer, an image is shown as a link to it, a fenced block has a copy button).
+Between them it shows what the Dot did to answer, read from the same event
+log: each `tool.called` that names no task as one quiet line (the words of
+`lib/events/tool-labels.ts`, which a test keeps equal to the engine's tool
+table, then the call's `target`, and how it ended when that was not well; more
+than three in a row fold into one line that opens), each `memory.written` of
+such a call as a chip, and each `approval.requested` that names no task, where it
+was asked, with its answer as a receipt (the answer itself is given in the
+approvals until the inline card exists). The messages route and the log are two
+views of one log, so a step is placed between two messages by event id
+(`lib/chat-thread.ts`). A message shows as soon as it is sent and is replaced by
+the logged one, which `POST .../messages` names by its `event_id`; one that was
+`queued` says the computer is waking up until the agent reports. While the agent
+thinks or runs a tool a row says so, with the last step. The box grows with the
+text, Enter sends and Shift+Enter adds a line, and an unsent draft is kept per Dot
+in this browser. The header's "Watch the computer" button opens the computer panel
+beside the thread (a sheet below 1024 px): the desktop and each open browser as
+the pictures the host reads from the guest every few seconds while the page is
+visible, with a LIVE badge, a warning when a frame is more than 15 s old, and the
+words "The Dot has control", because nothing the person does there reaches the
+computer.
 
 ## 10. Out of scope for this version
 

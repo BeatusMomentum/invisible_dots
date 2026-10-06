@@ -3,11 +3,9 @@
  * drawer. The log is the one record of both (the task row keeps only its state, result and spend).
  */
 import type { InvisibleDotsClient } from "@invisible-dots/sdk";
+import { readEventLog } from "./event-log";
 import { mergeEvents } from "./timeline";
 import type { StoredEvent } from "./types";
-
-/** The events the control plane stores per page (`MAX_EVENT_PAGE`); a shorter page is the last one. */
-const PAGE = 1000;
 
 function text(value: unknown): string {
   return typeof value === "string" ? value : "";
@@ -25,21 +23,9 @@ export function isTaskEvent(event: Pick<StoredEvent, "type" | "data">): boolean 
   return taskIdOf(event) !== "" || event.type === "approval.resolved";
 }
 
-/**
- * Every event of the Dot's log that can belong to a task, oldest first. The log is read page by page from its
- * start and the others are dropped here, because the route has no filter by task yet; this is the one function
- * that changes when it has.
- */
-export async function loadTaskEvents(client: Pick<InvisibleDotsClient, "events">, dotId: string, signal?: AbortSignal): Promise<StoredEvent[]> {
-  const found: StoredEvent[] = [];
-  let after = 0;
-  for (;;) {
-    const page = await client.events(dotId, { after, limit: PAGE });
-    if (signal?.aborted) return found;
-    for (const event of page) if (isTaskEvent(event)) found.push(event);
-    if (page.length < PAGE) return found;
-    after = page[page.length - 1]!.id;
-  }
+/** Every event of the Dot's log that can belong to a task, oldest first (the route has no filter by task yet, see `readEventLog`). */
+export function loadTaskEvents(client: Pick<InvisibleDotsClient, "events">, dotId: string, signal?: AbortSignal): Promise<StoredEvent[]> {
+  return readEventLog(client, dotId, isTaskEvent, signal);
 }
 
 export function mergeTaskEvents(current: readonly StoredEvent[], incoming: readonly StoredEvent[]): StoredEvent[] {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { allowedActions, computerView } from "../src/lib/computer";
-import { formatBytes, formatDuration, formatUsd, maskProxy, startOfToday, statusTone } from "../src/lib/format";
+import { formatBytes, formatDuration, formatMillis, formatUsd, maskProxy, startOfToday, statusTone } from "../src/lib/format";
 import type { DotConfig } from "../src/lib/types";
 
 const GIB = 1024 ** 3;
@@ -92,5 +92,17 @@ describe("spend", () => {
     expect(start.getFullYear()).toBe(2026);
     expect([start.getMonth(), start.getDate(), start.getHours(), start.getMinutes(), start.getSeconds()]).toEqual([9, 5, 0, 0, 0]);
     expect(startOfToday(noon)).toMatch(/Z$/);
+  });
+
+  it("says how long a call took, in the unit that reads best", () => {
+    expect(formatMillis(0)).toBe("0 ms");
+    expect(formatMillis(412.4)).toBe("412 ms");
+    expect(formatMillis(1000)).toBe("1.0 s");
+    expect(formatMillis(2600)).toBe("2.6 s");
+    expect(formatMillis(59_999)).toBe("1m 0s");
+    expect(formatMillis(125_000)).toBe("2m 5s");
+    expect(formatMillis(-1)).toBe("-");
+    expect(formatMillis(Number.NaN)).toBe("-");
+    expect(formatMillis(undefined)).toBe("-");
   });
 });

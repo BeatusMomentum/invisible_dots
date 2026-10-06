@@ -3,7 +3,7 @@
  * sends, answered from memory, and `/api/stream` as a live SSE body the test pushes events into. `install()` puts
  * it behind the global `fetch`, which is where the web client's SDK looks.
  */
-import type { ApprovalRecord, ComputerAnswer, DotConfig, DotSummary, StoredEvent } from "@invisible-dots/shared/browser";
+import type { ApprovalRecord, BrowserIdentity, ComputerAnswer, DotConfig, DotSummary, StoredEvent } from "@invisible-dots/shared/browser";
 import type { TaskRecord } from "@invisible-dots/sdk";
 import { vi } from "vitest";
 
@@ -72,6 +72,20 @@ export class FakeControlPlane {
   eventPage = 1000;
   /** Answer `GET .../events` with this status instead of the log. */
   failEvents: number | null = null;
+  /** The text of every `POST /api/dots/:id/messages`, as the browser sent it. */
+  sentMessages: string[] = [];
+  /** Answer `POST /api/dots/:id/messages` with this error instead of 201. */
+  failSend: { status: number; error: string; message: string } | null = null;
+  /** What `POST /api/dots/:id/messages` says of the delivery. */
+  delivery: "delivered" | "queued" = "delivered";
+  /** While set, `POST /api/dots/:id/messages` waits for it to resolve before it answers. */
+  holdSend: Promise<void> | null = null;
+  /** The most messages `GET .../messages` answers with, oldest first (the real route's is CONVERSATION_LIST_LIMIT). */
+  messageLimit = 1000;
+  /** The identities `GET .../browser-identities` lists. */
+  identities: BrowserIdentity[] = [];
+  /** Answer `GET .../computer/screenshot` and `.../frame` with this error instead of a picture. */
+  failPicture: { status: number; error: string; message: string } | null = null;
   /** Spend today, as `GET /api/dots/:id/usage` answers it. */
   spentUsd = 0;
   keyConfigured = true;
@@ -186,6 +200,33 @@ export class FakeControlPlane {
         const after = Number(searchParams.get("after") ?? 0);
         const limit = Math.min(Number(searchParams.get("limit") ?? 500), this.eventPage);
         return json({ events: this.events.filter((e) => e.dot_id === record.id && e.id > after).slice(0, limit) });
+      }
+      if (rest === "messages" && method === "GET") {
+        // The host logs the person's side as `user.message`, which the shared event type list does not hold.
+        const type = (e: StoredEvent) => e.type as string;
+        const messages = this.events
+          .filter((e) => e.dot_id === record.id && (type(e) === "user.message" || type(e) === "message.assistant"))
+          .slice(0, this.messageLimit)
+          .map((e) => ({ event_id: e.id, role: type(e) === "user.message" ? "user" : "assistant", text: String(e.data.text ?? ""), in_reply_to: null, created_at: e.created_at }));
+        return json({ messages });
+      }
+      if (rest === "messages" && method === "POST") {
+        const { text } = JSON.parse(String(init?.body)) as { text: string };
+        this.sentMessages.push(text);
+        if (this.holdSend) await this.holdSend;
+        if (this.failSend) return json({ error: this.failSend.error, message: this.failSend.message }, this.failSend.status);
+        const stored = this.store(record.id, "user.message", { message_id: `msg-${this.sentMessages.length}`, text });
+        this.#stream?.enqueue(new TextEncoder().encode(`id: ${stored.id}\ndata: ${JSON.stringify(stored)}\n\n`));
+        return json({ message_id: `msg-${this.sentMessages.length}`, event_id: stored.id, delivery: this.delivery }, 201);
+      }
+      if (rest === "computer/screenshot") {
+        if (this.failPicture) return json({ error: this.failPicture.error, message: this.failPicture.message }, this.failPicture.status);
+        return new Response(Uint8Array.from([0x89, 0x50, 0x4e, 0x47]), { headers: { "content-type": "image/png" } });
+      }
+      if (rest === "browser-identities") return json({ identities: this.identities });
+      if (/^browser-identities\/[^/]+\/frame$/.test(rest)) {
+        if (this.failPicture) return json({ error: this.failPicture.error, message: this.failPicture.message }, this.failPicture.status);
+        return new Response(Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]), { headers: { "content-type": "image/jpeg" } });
       }
       if (rest === "usage") return json({ dot_id: record.id, since: searchParams.get("since"), spent_usd: this.spentUsd });
       if (rest === "computer") {

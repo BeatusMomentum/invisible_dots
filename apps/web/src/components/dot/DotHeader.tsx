@@ -1,10 +1,10 @@
 "use client";
 
-import { AlertCircleIcon, InfoIcon } from "lucide-react";
+import { AlertCircleIcon, InfoIcon, PanelRightIcon } from "lucide-react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { statePill } from "../../lib/agent";
-import { ringState } from "../../lib/attention";
 import { api } from "../../lib/api";
 import { taskRunning } from "../../lib/computer";
 import { cn } from "../../lib/utils";
@@ -13,21 +13,26 @@ import { ErrorBox, useResource, type Resource } from "../ui";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
-import { useDotAttention, useDotLive, useShell } from "../shell/attention";
+import { usePanel } from "../computer/panel-state";
+import { useDotLive, useShell } from "../shell/attention";
 import { DotAvatar } from "../shell/DotAvatar";
 import { CostPill } from "./CostPill";
 import { PowerMenu } from "./PowerMenu";
 import { TONE_CLASS } from "./tone";
+import { useDotRing } from "./use-ring";
 
 /**
  * The Dot header (S4): its avatar, name and goal; the state it is in, what it cost today, and its computer with
  * the power menu; and under it the banners that say why a Dot is in ERROR or that its agent was restarted.
  */
 export function DotHeader({ dotId, dot }: { dotId: string; dot: Resource<Dot> }) {
-  const { pendingApprovals } = useDotAttention(dotId);
   const live = useDotLive(dotId);
+  const ring = useDotRing(dotId, dot.data);
   const { dismissRestart } = useShell();
   const [goalOpen, setGoalOpen] = useState(false);
+  const panel = usePanel();
+  // The computer panel is part of the chat; no other tab has one to open.
+  const onChat = (usePathname() ?? "").endsWith("/chat");
   const record = dot.data;
 
   const hasError = record !== undefined && (record.status === "ERROR" || record.computer_state === "ERROR");
@@ -47,7 +52,6 @@ export function DotHeader({ dotId, dot }: { dotId: string; dot: Resource<Dot> })
   }
 
   const pill = statePill(record.status, live.agent);
-  const ring = ringState({ status: record.status, computerState: record.computer_state, agentState: live.agent, pendingApprovals });
   const goal = record.config?.goal ?? "";
   const pillClass = cn("rounded-full px-2.5 py-0.5 text-xs font-medium", TONE_CLASS[pill.tone], pill.working && "animate-pulse");
 
@@ -93,6 +97,12 @@ export function DotHeader({ dotId, dot }: { dotId: string; dot: Resource<Dot> })
             </span>
           )}
           <CostPill dotId={dotId} />
+          {onChat ? (
+            <Button type="button" variant="outline" size="sm" aria-pressed={panel.open} onClick={panel.toggle}>
+              <PanelRightIcon />
+              Watch the computer
+            </Button>
+          ) : null}
           <PowerMenu dotId={dotId} computerState={record.computer_state} taskRunning={taskRunning(record.status)} onDone={dot.reload} />
         </div>
       </div>

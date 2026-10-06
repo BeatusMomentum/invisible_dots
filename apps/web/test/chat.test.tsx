@@ -1,0 +1,400 @@
+// @vitest-environment jsdom
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { CONVERSATION_LIST_LIMIT } from "@invisible-dots/shared/browser";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ChatView } from "../src/components/chat/ChatView";
+import { DotShell } from "../src/components/DotShell";
+import { DotEventScope, EventStreamProvider } from "../src/components/events";
+import { AttentionProvider } from "../src/components/shell/attention";
+import { stubMatchMedia, stubObjectUrls, stubResizeObserver } from "./support/browser";
+import { dotRecord, FakeControlPlane } from "./support/control-plane";
+
+let pathname = "/dots/d1/chat";
+vi.mock("next/navigation", () => ({ usePathname: () => pathname, useRouter: () => ({ push() {}, replace() {} }) }));
+
+let plane: FakeControlPlane;
+
+beforeEach(() => {
+  pathname = "/dots/d1/chat";
+  window.localStorage.clear();
+  plane = new FakeControlPlane();
+  plane.dots = [dotRecord("d1", { name: "fares", config: { goal: "Watch the fares to Lisbon" } as never })];
+  plane.install();
+  stubMatchMedia();
+  stubResizeObserver();
+  stubObjectUrls();
+  // The thread scrolls itself to its end; jsdom has no layout to scroll.
+  Element.prototype.scrollTo = () => {};
+});
+
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+const requested = (pattern: RegExp) => plane.requests.filter((r) => pattern.test(r));
+const call = (data: Record<string, unknown>) => ({ tool: "exec", permission: "computer.exec", decision: "allow", ok: true, duration_ms: 40, ...data });
+
+async function renderChat() {
+  const view = render(
+    <EventStreamProvider>
+      <AttentionProvider>
+        <DotEventScope dotId="d1">
+          <DotShell dotId="d1">
+            <ChatView />
+          </DotShell>
+        </DotEventScope>
+      </AttentionProvider>
+    </EventStreamProvider>,
+  );
+  await screen.findByRole("heading", { level: 1, name: "fares" });
+  await waitFor(() => expect(plane.streamOpen).toBe(true));
+  return view;
+}
+
+const box = () => screen.getByRole("textbox", { name: "Message" }) as HTMLTextAreaElement;
+
+describe("the conversation", () => {
+  it("shows what the person said as a bubble and what the Dot said as markdown, with the Dot's face at the start of its group", async () => {
+    plane.store("d1", "user.message", { text: "What is the cheapest fare?" });
+    plane.store("d1", "message.assistant", { text: "It is **EUR 41** on Tuesday." });
+    plane.store("d1", "message.assistant", { text: "Second part, [the source](https://example.com/f)." });
+    await renderChat();
+    const you = await screen.findByRole("article", { name: "You" });
+    expect(within(you).getByText("What is the cheapest fare?")).toBeTruthy();
+    const dots = screen.getAllByRole("article", { name: "fares" });
+    expect(dots).toHaveLength(2);
+    expect(dots[0]!.querySelector("strong")?.textContent).toBe("EUR 41");
+    expect(dots[1]!.querySelector("a")?.getAttribute("href")).toBe("https://example.com/f");
+    // One face for the group of two answers: the avatar of the chat, not counting the header's own.
+    expect(within(dots[0]!).getByRole("img")).toBeTruthy();
+    expect(within(dots[1]!).queryByRole("img")).toBeNull();
+  });
+
+  it("invites the first message with the goal and three ways to begin, which fill the box and do not send", async () => {
+    await renderChat();
+    expect(await screen.findByRole("heading", { name: "Say hello to fares" })).toBeTruthy();
+    expect(screen.getByText("Its goal: Watch the fares to Lisbon")).toBeTruthy();
+    const ways = within(screen.getByRole("list", { name: "Ways to begin" })).getAllByRole("button");
+    expect(ways).toHaveLength(3);
+    await userEvent.click(within(screen.getByRole("list", { name: "Ways to begin" })).getByRole("button", { name: "What can you do on your computer?" }));
+    expect(box().value).toBe("What can you do on your computer?");
+    expect(document.activeElement).toBe(box());
+    expect(plane.sentMessages).toEqual([]);
+  });
+
+  it("does not invite a first message when the Dot has already done something, though no message is listed yet", async () => {
+    plane.store("d1", "tool.called", call({ tool: "list_dir", target: "/home/dot" }));
+    await renderChat();
+    await screen.findByText("Listed a folder");
+    expect(screen.queryByRole("heading", { name: /Say hello/ })).toBeNull();
+  });
+
+  it("says so when the conversation cannot be loaded", async () => {
+    const real = plane.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+        String(input).endsWith("/messages") && (init?.method ?? "GET") === "GET" ? Response.json({ error: "down", message: "the control plane said no" }, { status: 500 }) : real(input, init),
+      ),
+    );
+    await renderChat();
+    expect((await screen.findByText(/Could not load the conversation/)).closest("[role=alert]")?.textContent).toContain("the control plane said no");
+  });
+
+  it("says that only the first messages are listed when the host's list is full", async () => {
+    // The route answers with the oldest CONVERSATION_LIST_LIMIT messages: a list that long may be cut.
+    for (let i = 0; i < CONVERSATION_LIST_LIMIT + 5; i++) plane.store("d1", "message.assistant", { text: `m${i}` });
+    plane.messageLimit = CONVERSATION_LIST_LIMIT;
+    await renderChat();
+    const notice = await screen.findByText(/The first 500 messages of this conversation are listed/);
+    expect(notice.getAttribute("role")).toBe("status");
+  });
+
+  it("does not say it for a conversation that fits", async () => {
+    plane.store("d1", "message.assistant", { text: "hi" });
+    await renderChat();
+    await screen.findByText("hi");
+    expect(screen.queryByText(/The first 500 messages/)).toBeNull();
+  });
+});
+
+describe("what the Dot did between its messages", () => {
+  it("shows tool calls as quiet lines with their words, their target and how they ended", async () => {
+    plane.store("d1", "user.message", { text: "tidy up" });
+    plane.store("d1", "tool.called", call({ tool: "list_dir", target: "/home/dot/workspace", duration_ms: 12 }));
+    plane.store("d1", "tool.called", call({ tool: "exec", target: "rm old.txt", ok: false, duration_ms: 2500 }));
+    plane.store("d1", "tool.called", call({ tool: "browser_navigate", target: "https://example.com", decision: "deny", ok: false, duration_ms: 0 }));
+    plane.store("d1", "message.assistant", { text: "done" });
+    plane.store("d1", "tool.called", call({ tool: "exec", interrupted: true, ok: false, duration_ms: 0 }));
+    await renderChat();
+    const [steps, later] = await screen.findAllByRole("list", { name: "What the Dot did" });
+    const lines = within(steps!).getAllByTestId("activity-step");
+    expect(lines.map((l) => l.textContent)).toEqual(["Listed a folder/home/dot/workspace", "Ran a commandrm old.txtfailed2.5 s", "Opened a pagehttps://example.comdenied"]);
+    expect(within(later!).getByTestId("activity-step").textContent).toBe("Ran a commandinterrupted");
+    // The line is cut short on a narrow screen; its whole text is its title.
+    expect(lines[1]!.querySelector("[title]")?.getAttribute("title")).toBe("Ran a command: rm old.txt (failed, 2.5 s)");
+  });
+
+  it("is between the messages it happened between, in the order of the log", async () => {
+    plane.store("d1", "user.message", { text: "first question" });
+    plane.store("d1", "tool.called", call({ tool: "grep", target: "needle" }));
+    plane.store("d1", "message.assistant", { text: "first answer" });
+    plane.store("d1", "user.message", { text: "second question" });
+    plane.store("d1", "tool.called", call({ tool: "read_file", target: "b.txt" }));
+    plane.store("d1", "message.assistant", { text: "second answer" });
+    await renderChat();
+    await screen.findByText("second answer");
+    const order = screen.getByRole("log").textContent ?? "";
+    const at = (text: string) => order.indexOf(text);
+    expect(at("first question")).toBeLessThan(at("Searched in files"));
+    expect(at("Searched in files")).toBeLessThan(at("first answer"));
+    expect(at("first answer")).toBeLessThan(at("second question"));
+    expect(at("second question")).toBeLessThan(at("Read a file"));
+    expect(at("Read a file")).toBeLessThan(at("second answer"));
+  });
+
+  it("folds a run of more than three calls into one line that opens", async () => {
+    plane.store("d1", "user.message", { text: "dig" });
+    for (let i = 0; i < 5; i++) plane.store("d1", "tool.called", call({ tool: "read_file", target: `f${i}.txt`, ok: i !== 3 }));
+    await renderChat();
+    const fold = await screen.findByRole("button", { name: "5 steps, 1 did not go through" });
+    expect(fold.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByText("f0.txt")).toBeNull();
+    await userEvent.click(fold);
+    expect(fold.getAttribute("aria-expanded")).toBe("true");
+    expect(within(screen.getByRole("list", { name: "Steps" })).getAllByTestId("activity-step")).toHaveLength(5);
+    expect(screen.getByText("f3.txt")).toBeTruthy();
+  });
+
+  it("shows a note the Dot saved as a chip, and leaves out what belongs to a task", async () => {
+    plane.store("d1", "user.message", { text: "remember Rome" });
+    plane.store("d1", "tool.called", call({ tool: "write_file", target: "/home/dot/memory/trips/rome.md" }));
+    plane.store("d1", "memory.written", { key: "trips/rome.md" });
+    plane.store("d1", "tool.called", call({ tool: "exec", task_id: "t1", target: "the task's command" }));
+    plane.store("d1", "memory.written", { key: "from-a-task.md" });
+    await renderChat();
+    const chip = await screen.findByText("trips/rome.md");
+    expect(chip.closest("span")?.textContent).toBe("Rememberedtrips/rome.md");
+    expect(screen.queryByText("the task's command")).toBeNull();
+    expect(screen.queryByText("from-a-task.md")).toBeNull();
+  });
+
+  it("shows an approval where it was asked, with the way to answer it, and its receipt after", async () => {
+    plane.store("d1", "user.message", { text: "clean the disk" });
+    plane.store("d1", "approval.requested", { approval_id: "a1", tool: "exec", permission: "computer.exec", arguments: {}, reason: "to delete the cache" });
+    await renderChat();
+    const line = await screen.findByText(/Waiting for your answer:/);
+    expect(line.closest("[data-testid=activity-step]")?.textContent).toContain("ran a command (to delete the cache)");
+    expect(screen.getByRole("link", { name: "Answer it in Approvals" }).getAttribute("href")).toBe("/dots/d1/approvals");
+
+    act(() => plane.push("d1", "approval.resolved", { approval_id: "a1", decision: "approve" }));
+    await waitFor(() => expect(screen.getByText(/^Allowed:/)).toBeTruthy());
+    expect(screen.queryByRole("link", { name: "Answer it in Approvals" })).toBeNull();
+    act(() => plane.push("d1", "approval.requested", { approval_id: "a2", tool: "write_file", permission: "files.write", arguments: {}, reason: "" }));
+    await screen.findByText(/Waiting for your answer:/);
+    act(() => plane.push("d1", "approval.resolved", { approval_id: "a2", decision: "reject" }));
+    await waitFor(() => expect(screen.getByText(/^Denied:/)).toBeTruthy());
+  });
+
+  it("follows the Dot live: a call that arrives shows at once, and an answer arrives from the log", async () => {
+    plane.store("d1", "user.message", { text: "go" });
+    await renderChat();
+    await screen.findByText("go");
+    act(() => plane.push("d1", "tool.called", call({ tool: "find_files", target: "*.md" })));
+    expect(await screen.findByText("Searched for files")).toBeTruthy();
+    act(() => plane.push("d1", "message.assistant", { text: "found three" }));
+    expect(await screen.findByText("found three")).toBeTruthy();
+  });
+
+  it("reads the log page by page, so a step on a later page is found", async () => {
+    // The route serves 1000 events a page: a step after the first thousand is on the second.
+    plane.store("d1", "user.message", { text: "long ago" });
+    for (let i = 0; i < 1000; i++) plane.store("d1", "agent.state", { state: "IDLE" });
+    plane.store("d1", "tool.called", call({ tool: "grep", target: "deep" }));
+    await renderChat();
+    expect(await screen.findByText("deep")).toBeTruthy();
+    expect(requested(/\/events$/)).toHaveLength(2);
+  });
+
+  it("says when what the Dot did cannot be read, keeps the messages, and reads again on request", async () => {
+    plane.store("d1", "user.message", { text: "still here" });
+    plane.store("d1", "tool.called", call({ tool: "grep", target: "later" }));
+    plane.failEvents = 500;
+    await renderChat();
+    expect(await screen.findByText("still here")).toBeTruthy();
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("the event log is not available");
+    plane.failEvents = null;
+    await userEvent.click(within(alert).getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("later")).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("while the Dot works", () => {
+  it("shows a row with what it is doing and its last step, and takes it away when it is idle", async () => {
+    plane.store("d1", "user.message", { text: "dig" });
+    plane.store("d1", "tool.called", call({ tool: "read_file", target: "a.md" }));
+    await renderChat();
+    await screen.findByText("Read a file");
+    expect(screen.queryByText("Thinking...", { selector: ".shimmer" })).toBeNull();
+    act(() => plane.push("d1", "agent.state", { state: "THINKING" }));
+    const label = await screen.findByText("Thinking...", { selector: ".shimmer" });
+    expect(label.closest("[role=status]")?.textContent).toContain("Last step: read a file a.md");
+    act(() => plane.push("d1", "agent.state", { state: "EXECUTING" }));
+    expect(await screen.findByText("Running a tool...", { selector: ".shimmer" })).toBeTruthy();
+    act(() => plane.push("d1", "agent.state", { state: "IDLE" }));
+    await waitFor(() => expect(screen.queryByText("Running a tool...", { selector: ".shimmer" })).toBeNull());
+  });
+
+  it("does not show the row while the Dot waits for the person", async () => {
+    await renderChat();
+    act(() => plane.push("d1", "agent.state", { state: "WAITING_APPROVAL" }));
+    await waitFor(() => expect(screen.getAllByText("Waiting for you").length).toBeGreaterThan(0));
+    expect(document.querySelector(".shimmer")).toBeNull();
+  });
+});
+
+describe("the composer", () => {
+  it("sends on Enter, adds a line on Shift+Enter, and sends nothing when empty", async () => {
+    await renderChat();
+    await userEvent.type(box(), "hello{Shift>}{Enter}{/Shift}world");
+    expect(box().value).toBe("hello\nworld");
+    expect(plane.sentMessages).toEqual([]);
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(plane.sentMessages).toEqual(["hello\nworld"]));
+    await waitFor(() => expect(box().value).toBe(""));
+    await userEvent.type(box(), "   {Enter}");
+    expect(plane.sentMessages).toHaveLength(1);
+    expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("takes the focus, so the person can write at once", async () => {
+    await renderChat();
+    expect(document.activeElement).toBe(box());
+  });
+
+  it("shows the message at once, and replaces it with the logged one", async () => {
+    let release!: () => void;
+    plane.holdSend = new Promise<void>((resolve) => (release = resolve));
+    await renderChat();
+    await userEvent.type(box(), "are you there{Enter}");
+    const bubble = await screen.findByText("are you there");
+    expect(bubble.closest("article")?.textContent).toContain("Sending...");
+    expect(box().value).toBe("");
+    release();
+    await waitFor(() => expect(screen.queryByText("Sending...")).toBeNull());
+    // One bubble: the logged message, not the logged message and the one that was waiting for it.
+    expect(screen.getAllByText("are you there")).toHaveLength(1);
+    expect(screen.getByRole("article", { name: "You" })).toBeTruthy();
+  });
+
+  it("gives the text back and says why when the message is refused", async () => {
+    plane.failSend = { status: 409, error: "dot_deleting", message: "Dot d1 is being deleted" };
+    await renderChat();
+    await userEvent.type(box(), "last words{Enter}");
+    expect((await screen.findByText(/The message was not sent/)).closest("[role=alert]")?.textContent).toContain("Dot d1 is being deleted");
+    expect(box().value).toBe("last words");
+    expect(screen.queryByText("last words", { selector: "p" })).toBeNull();
+    plane.failSend = null;
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(plane.sentMessages).toEqual(["last words", "last words"]));
+    await waitFor(() => expect(screen.queryByText(/The message was not sent/)).toBeNull());
+  });
+
+  it("says that a message waits when the computer had to wake up, until the Dot picks it up", async () => {
+    plane.delivery = "queued";
+    await renderChat();
+    await userEvent.type(box(), "wake up{Enter}");
+    expect(await screen.findByText(/Queued: the computer is waking up/)).toBeTruthy();
+    act(() => plane.push("d1", "agent.state", { state: "THINKING" }));
+    await waitFor(() => expect(screen.queryByText(/Queued: the computer is waking up/)).toBeNull());
+  });
+
+  it("keeps a draft per Dot across a reload, and forgets it once sent", async () => {
+    const first = await renderChat();
+    await userEvent.type(box(), "half a thought");
+    first.unmount();
+    cleanup();
+    await renderChat();
+    await waitFor(() => expect(box().value).toBe("half a thought"));
+    await userEvent.keyboard("{Enter}");
+    await waitFor(() => expect(plane.sentMessages).toEqual(["half a thought"]));
+    expect(window.localStorage.getItem("idots.draft.d1")).toBeNull();
+  });
+
+  it("says why it is closed for a Dot that is disabled or being deleted", async () => {
+    plane.dots = [dotRecord("d1", { name: "fares", status: "DISABLED" })];
+    await renderChat();
+    await waitFor(() => expect(box().disabled).toBe(true));
+    expect(screen.getAllByText("This Dot is disabled, so it does not answer.").length).toBeGreaterThan(0);
+    expect((screen.getByRole("button", { name: "Send" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("tells how long the answer will take while the computer is stopped, and still takes the message", async () => {
+    plane.dots = [dotRecord("d1", { name: "fares", computer_state: "STOPPED" })];
+    await renderChat();
+    expect(await screen.findByText(/Sending a message wakes it/)).toBeTruthy();
+    expect(box().disabled).toBe(false);
+    await userEvent.type(box(), "hi{Enter}");
+    await waitFor(() => expect(plane.sentMessages).toEqual(["hi"]));
+  });
+});
+
+describe("the computer panel", () => {
+  it("opens from the header on a wide window, beside the thread, and shows the desktop", async () => {
+    stubMatchMedia(true);
+    plane.dots = [dotRecord("d1", { name: "fares", computer_state: "RUNNING" })];
+    await renderChat();
+    const toggle = screen.getByRole("button", { name: "Watch the computer" });
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByRole("complementary", { name: "Computer" })).toBeNull();
+    await userEvent.click(toggle);
+    const panel = await screen.findByRole("complementary", { name: "Computer" });
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(await within(panel).findByRole("img", { name: /current picture of the desktop/ })).toBeTruthy();
+    // The thread is still there beside it.
+    expect(screen.getByRole("log")).toBeTruthy();
+    // The choice is kept for the next visit.
+    expect(window.localStorage.getItem("idots.chat.panel")).toBe("open");
+    await userEvent.click(toggle);
+    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Computer" })).toBeNull());
+  });
+
+  it("is a sheet on a narrow window", async () => {
+    plane.dots = [dotRecord("d1", { name: "fares", computer_state: "RUNNING" })];
+    await renderChat();
+    await userEvent.click(screen.getByRole("button", { name: "Watch the computer" }));
+    const sheet = await screen.findByRole("dialog", { name: "The Dot's computer" });
+    expect(await within(sheet).findByRole("img", { name: /current picture of the desktop/ })).toBeTruthy();
+    expect(screen.queryByRole("complementary", { name: "Computer" })).toBeNull();
+  });
+
+  it("is only offered on the chat tab", async () => {
+    pathname = "/dots/d1/tasks";
+    await renderChat();
+    expect(screen.queryByRole("button", { name: "Watch the computer" })).toBeNull();
+  });
+
+  it("is not opened on a narrow window by what was chosen on a wide one, and does not remember what it did there", async () => {
+    window.localStorage.setItem("idots.chat.panel", "open");
+    await renderChat();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: "Watch the computer" }));
+    expect(await screen.findByRole("dialog", { name: "The Dot's computer" })).toBeTruthy();
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(window.localStorage.getItem("idots.chat.panel")).toBe("open");
+  });
+
+  it("remembers that it was open", async () => {
+    window.localStorage.setItem("idots.chat.panel", "open");
+    stubMatchMedia(true);
+    await renderChat();
+    expect(await screen.findByRole("complementary", { name: "Computer" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Watch the computer" }).getAttribute("aria-pressed")).toBe("true");
+  });
+});

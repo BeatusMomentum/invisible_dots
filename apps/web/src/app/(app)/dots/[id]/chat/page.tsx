@@ -1,12 +1,8 @@
 import type { Metadata } from "next";
-import { ChatTab } from "../../../../../components/ChatTab";
+import { ChatView } from "../../../../../components/chat/ChatView";
 
 export const metadata: Metadata = { title: "Chat" };
 
 export default function Page() {
-  return (
-    <div className="legacy">
-      <ChatTab />
-    </div>
-  );
+  return <ChatView />;
 }

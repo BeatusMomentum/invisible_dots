@@ -51,6 +51,9 @@ export const TERMINAL_TASK_STATES: readonly TaskState[] = ["COMPLETED", "FAILED"
 /** How many of a Dot's tasks (the newest) `GET /api/dots/:id/tasks` answers with; older ones are not reachable. */
 export const TASK_LIST_LIMIT = 200;
 
+/** How many messages (the OLDEST) `GET /api/dots/:id/messages` answers with; later ones are not reachable through it. */
+export const CONVERSATION_LIST_LIMIT = 500;
+
 /**
  * `approvals.status` (section 9.1). An approval is `expired` when its task
  * ended before anybody decided: nothing waits for the decision any more.
