@@ -24,7 +24,7 @@ export function ComputerView({ query }: { query: ComputerQuery }) {
   const state = dot.data?.computer_state;
 
   return (
-    <div className="space-y-5">
+    <div className="flex min-h-0 flex-1 flex-col gap-5">
       <ViewTabs label="Computer views" views={COMPUTER_VIEWS} labels={COMPUTER_VIEW_LABELS} current={query.view} hrefOf={(view) => computerHref(dotId, { view })} />
 
       <Body query={query} dotId={dotId} state={state} />

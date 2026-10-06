@@ -83,7 +83,7 @@ export function Rail({ onNavigate }: { onNavigate?: () => void }) {
 
       <Separator />
 
-      <nav aria-label="Dots" className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
+      <nav aria-label="Dots" className="relative min-h-0 flex-1 space-y-0.5 overflow-y-auto">
         <div className="flex items-center justify-between px-2 pb-1">
           <h2 className="text-xs text-muted-foreground">Dots</h2>
           <Link href={NEW_DOT_HREF} onClick={onNavigate} aria-label="New Dot" className="rounded-full p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground">

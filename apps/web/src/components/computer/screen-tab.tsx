@@ -8,7 +8,7 @@ import { FrameView } from "./frame-view";
  */
 export function ScreenTab({ dotId }: { dotId: string }) {
   return (
-    <section aria-labelledby="screen-heading" className="space-y-3">
+    <section aria-labelledby="screen-heading" className="flex min-h-0 flex-1 flex-col gap-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <h2 id="screen-heading" className="text-sm font-semibold">
           Desktop

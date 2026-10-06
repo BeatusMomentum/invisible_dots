@@ -38,8 +38,9 @@ export function FrameView({ dotId, source, identity = null, onClosed }: { dotId:
 
   const subject = browser ? `the browser "${identity?.name ?? source.identityId}"` : "the desktop";
   return (
-    <div className="space-y-2">
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
       <ScreenView
+        className="min-h-0 flex-1"
         src={frame.url}
         alt={`The current picture of ${subject} on the Dot's computer`}
         live={frame.url !== null && problem === null}
@@ -47,13 +48,7 @@ export function FrameView({ dotId, source, identity = null, onClosed }: { dotId:
         lastFrameAt={frame.takenAt}
         now={now}
         placeholder={problem ? problem.text : "Waiting for the first picture..."}
-      />
-      {problem && frame.url ? (
-        <p role="status" className="text-xs text-warn">
-          {problem.text}
-        </p>
-      ) : null}
-      <div className="flex flex-wrap items-center gap-2">
+      >
         <Button type="button" variant="outline" size="xs" onClick={() => void frame.refresh()} disabled={frame.pending}>
           <RefreshCwIcon className={cn(frame.pending && "animate-spin")} />
           Refresh
@@ -67,7 +62,12 @@ export function FrameView({ dotId, source, identity = null, onClosed }: { dotId:
           </Button>
         ) : null}
         {frame.takenAt ? <span className="text-xs text-muted-foreground">Taken {formatDate(frame.takenAt)}</span> : null}
-      </div>
+      </ScreenView>
+      {problem && frame.url ? (
+        <p role="status" className="text-xs text-warn">
+          {problem.text}
+        </p>
+      ) : null}
     </div>
   );
 }

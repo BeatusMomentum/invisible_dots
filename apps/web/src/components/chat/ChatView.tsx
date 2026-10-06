@@ -7,15 +7,12 @@ import { lastStepSinceUser } from "../../lib/chat-thread";
 import { viaChannel } from "../../lib/channels";
 import { composerState, messageNote, suggestions } from "../../lib/chat-view";
 import { readDraft, writeDraft } from "../../lib/draft";
-import { useMinWidth } from "../../lib/use-min-width";
 import { ComputerPanel } from "../computer/ComputerPanel";
-import { PANEL_WIDE_PX, usePanel } from "../computer/panel-state";
 import { useDot } from "../DotShell";
 import { useDotRing } from "../dot/use-ring";
 import { useDotLive } from "../shell/attention";
 import { ErrorAlert } from "../ErrorAlert";
 import { Button } from "../ui/button";
-import { Sheet, SheetContent, SheetDescription, SheetTitle } from "../ui/sheet";
 import { Activity } from "./activity";
 import { useChat } from "./chat-data";
 import { Composer } from "./composer";
@@ -49,8 +46,6 @@ function ChatInner({ dotId }: { dotId: string }) {
   const chat = useChat(dotId);
   const live = useDotLive(dotId);
   const ring = useDotRing(dotId, record);
-  const panel = usePanel();
-  const wide = useMinWidth(PANEL_WIDE_PX);
   const [draft, setDraft, restoreDraft] = useDraft(dotId);
   const input = useRef<HTMLTextAreaElement>(null);
   const [sendError, setSendError] = useState<unknown>(null);
@@ -141,30 +136,20 @@ function ChatInner({ dotId }: { dotId: string }) {
   );
 
   const computerState = record?.computer_state ?? null;
+  // Side by side from 1024 px, the conversation on the left; below that the computer is a strip above the
+  // conversation, as tall as its picture needs. Both reach the bottom of the window: the tab's body is as tall as
+  // what is left of it.
   return (
-    <>
-      <div className={panel.open && wide ? "grid gap-4 lg:grid-cols-[minmax(0,1fr)_26rem]" : undefined}>
-        <div className="flex h-[max(26rem,calc(100dvh-19rem))] min-w-0 flex-col overflow-hidden rounded-lg border bg-card">{column}</div>
-        {panel.open && wide ? (
-          <aside aria-label="Computer" className="max-h-[max(26rem,calc(100dvh-19rem))] overflow-y-auto rounded-lg border bg-card p-4">
-            <ComputerPanel dotId={dotId} computerState={computerState} />
-          </aside>
-        ) : null}
-      </div>
-      {!wide ? (
-        <Sheet open={panel.open} onOpenChange={panel.setOpen}>
-          <SheetContent side="right" className="w-full overflow-y-auto p-4 pt-12 sm:max-w-md">
-            <SheetTitle className="sr-only">The Dot&apos;s computer</SheetTitle>
-            <SheetDescription className="sr-only">What is on the Dot&apos;s desktop and in its open browsers</SheetDescription>
-            <ComputerPanel dotId={dotId} computerState={computerState} />
-          </SheetContent>
-        </Sheet>
-      ) : null}
-    </>
+    <div className="grid min-h-0 flex-1 grid-rows-[auto_minmax(0,1fr)] gap-4 lg:grid-cols-2 lg:grid-rows-1">
+      <div className="order-2 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border bg-card lg:order-1">{column}</div>
+      <aside aria-label="Computer" className="order-1 flex min-h-0 min-w-0 flex-col rounded-lg border bg-card p-4 lg:order-2">
+        <ComputerPanel dotId={dotId} computerState={computerState} />
+      </aside>
+    </div>
   );
 }
 
-/** The chat tab (S5): the conversation with the Dot, what it did to answer, and a computer panel beside it. */
+/** The chat tab (S5): the conversation with the Dot and what it did to answer, always beside its computer. */
 export function ChatView() {
   const { dotId } = useDot();
   // One chat per Dot: moving to another Dot starts from nothing.

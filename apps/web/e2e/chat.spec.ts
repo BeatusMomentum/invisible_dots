@@ -1,3 +1,4 @@
+import type { Locator } from "@playwright/test";
 import type { FakeGuest } from "@invisible-dots/scheduler/testing";
 import type { OutboundEventDataMap } from "@invisible-dots/shared";
 import { expect, test } from "./fixtures.js";
@@ -149,10 +150,8 @@ test("the computer panel shows the desktop and each open browser, and follows a 
   const guest = harness.driver.guestOf(dot.id);
   await page.setViewportSize({ width: 1400, height: 900 });
   await page.goto(`${harness.webUrl}/dots/${dot.id}/chat`);
-  const toggle = page.getByRole("button", { name: "Watch the computer" });
-  await expect(page.getByRole("complementary", { name: "Computer" })).toHaveCount(0);
-
-  await toggle.click();
+  // There is nothing to open: the computer is always beside the thread.
+  await expect(page.getByRole("button", { name: "Watch the computer" })).toHaveCount(0);
   const panel = page.getByRole("complementary", { name: "Computer" });
   await expect(panel.getByText("The Dot has control. You are watching.")).toBeVisible();
   await expect(panel.getByRole("img", { name: /current picture of the desktop/ })).toHaveAttribute("src", /^blob:/);
@@ -180,12 +179,27 @@ test("the computer panel shows the desktop and each open browser, and follows a 
   await expect(panel.getByRole("img", { name: /current picture of the desktop/ })).toBeVisible();
   await expect(panel.getByRole("button", { name: "Desktop" })).toHaveAttribute("aria-pressed", "true");
 
-  // The choice to have it open is remembered across a load.
-  await page.reload();
-  await expect(page.getByRole("complementary", { name: "Computer" })).toBeVisible();
-  await toggle.click();
-  await expect(page.getByRole("complementary", { name: "Computer" })).toHaveCount(0);
+  // The thread and the computer are side by side, and both reach the bottom of the window (the page's own padding
+  // below them, no more): the page does not scroll, and nothing is left empty under them.
+  const thread = page.getByRole("log").locator("xpath=ancestor::div[contains(@class,'rounded-lg')][1]");
+  const [left, right] = [await thread.boundingBox(), await panel.boundingBox()];
+  expect(left!.x + left!.width).toBeLessThanOrEqual(right!.x);
+  for (const box of [left!, right!]) expect(900 - (box.y + box.height)).toBeLessThanOrEqual(24);
+  expect(await page.evaluate(() => document.getElementById("main")!.scrollHeight - document.getElementById("main")!.clientHeight)).toBeLessThanOrEqual(0);
+  await expectPictureInPlace(panel);
 });
+
+/**
+ * The desktop's picture (taller than its place, at 1280 x 800) is drawn whole inside the panel and above its controls:
+ * it is fitted to the place, never sized by its own pixels, which would push the controls out of view.
+ */
+async function expectPictureInPlace(panel: Locator) {
+  const picture = (await panel.getByRole("img", { name: /current picture of the desktop/ }).boundingBox())!;
+  const [refresh, outer] = [(await panel.getByRole("button", { name: "Refresh" }).boundingBox())!, (await panel.boundingBox())!];
+  expect(picture.y + picture.height).toBeLessThanOrEqual(refresh.y);
+  expect(picture.x + picture.width).toBeLessThanOrEqual(outer.x + outer.width);
+  expect(refresh.y + refresh.height).toBeLessThanOrEqual(outer.y + outer.height);
+}
 
 test("a stopped computer says so in the panel, and the chat still takes a message", async ({ page, harness }) => {
   const dot = await harness.createDot("chat-stopped");
@@ -193,7 +207,6 @@ test("a stopped computer says so in the panel, and the chat still takes a messag
   await page.setViewportSize({ width: 1400, height: 900 });
   await page.goto(`${harness.webUrl}/dots/${dot.id}/chat`);
   await expect(page.getByRole("button", { name: /^Computer: Stopped/ })).toBeVisible();
-  await page.getByRole("button", { name: "Watch the computer" }).click();
   await expect(page.getByRole("complementary", { name: "Computer" }).getByText(/The computer is stopped/)).toBeVisible();
   await expect(page.getByText(/Sending a message wakes it/)).toBeVisible();
 });
@@ -220,7 +233,7 @@ test("the chat works from the keyboard and keeps a draft across a reload", async
   await expect(box).toHaveValue("");
 });
 
-test("the chat fits a phone: long lines wrap, code scrolls inside its block, and the computer opens as a sheet", async ({ page, harness }) => {
+test("the chat fits a phone: long lines wrap, code scrolls inside its block, and the computer is a strip above the thread", async ({ page, harness }) => {
   const dot = await harness.createDot("chat-phone", "A goal long enough to run past the edge of a narrow screen if nothing held it back, word after word");
   const guest = harness.driver.guestOf(dot.id);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -233,13 +246,13 @@ test("the chat fits a phone: long lines wrap, code scrolls inside its block, and
   const overflow = () => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(await overflow()).toBeLessThanOrEqual(0);
 
-  await page.getByRole("button", { name: "Watch the computer" }).click();
-  const sheet = page.getByRole("dialog", { name: "The Dot's computer" });
-  await expect(sheet.getByRole("img", { name: /current picture of the desktop/ })).toHaveAttribute("src", /^blob:/);
+  const panel = page.getByRole("complementary", { name: "Computer" });
+  await expect(panel.getByRole("img", { name: /current picture of the desktop/ })).toHaveAttribute("src", /^blob:/);
+  const box = page.getByRole("textbox", { name: "Message" });
+  await expect(box).toBeVisible();
+  expect((await panel.boundingBox())!.y).toBeLessThan((await box.boundingBox())!.y);
+  await expectPictureInPlace(panel);
   expect(await overflow()).toBeLessThanOrEqual(0);
-  await page.keyboard.press("Escape");
-  await expect(sheet).toHaveCount(0);
-  await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible();
 });
 
 test("the user's bubble and the Dot's words are readable in light and in dark", async ({ page, harness }) => {

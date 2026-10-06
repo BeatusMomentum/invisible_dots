@@ -264,8 +264,9 @@ History lists the answered ones.
 
 - **Chat**: the one persistent conversation, with a quiet line for each tool the
   Dot used to answer, approvals you can answer in place, and a "via Telegram"
-  mark on a message that came through a channel. "Watch the computer" opens a
-  panel beside it with the desktop and each open browser.
+  mark on a message that came through a channel. The Dot's computer is always
+  beside it (above it on a narrow screen), with the desktop and each open
+  browser; both fill the window to the bottom.
 - **Tasks**: what is running (with its latest progress line and its cost), what
   is scheduled and queued, and the history. Create a task, cancel one after a
   question, and open one for its result and its story.

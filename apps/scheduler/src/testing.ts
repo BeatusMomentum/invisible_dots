@@ -9,6 +9,7 @@
  * file system (`putFile`) served through the files routes with the real
  * daemon's errors, automations (`putAutomation`) and a small tool table.
  */
+import { crc32, deflateSync } from "node:zlib";
 import {
   checkIdentityRequest,
   IDENTITY_ERROR_STATUS,
@@ -51,6 +52,35 @@ import type {
   StartedComputer,
   WaitForHealthOptions,
 } from "./driver.js";
+
+/** The fake desktop's size: a picture a browser draws with real proportions, so a page that shows it is laid out as it will be. */
+const FAKE_DESKTOP = { width: 1280, height: 800 } as const;
+
+let desktop: Uint8Array | undefined;
+
+/** A real PNG of the fake desktop, one flat colour, made once. */
+function desktopPng(): Uint8Array {
+  if (desktop) return desktop;
+  const { width, height } = FAKE_DESKTOP;
+  const stride = 1 + width * 3;
+  const raw = Buffer.alloc(stride * height);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) raw.set([24, 32, 48], y * stride + 1 + x * 3);
+  const chunk = (type: string, data: Buffer) => {
+    const head = Buffer.alloc(8);
+    head.writeUInt32BE(data.length, 0);
+    head.write(type, 4, "latin1");
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(crc32(Buffer.concat([head.subarray(4), data])), 0);
+    return Buffer.concat([head, data, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // bits per channel
+  ihdr[9] = 2; // RGB
+  desktop = new Uint8Array(Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]));
+  return desktop;
+}
 
 /** The error shape of vm-manager's GuestRequestError: a status (0 = unreachable) and the guest's code. */
 export class FakeGuestError extends Error {
@@ -554,8 +584,7 @@ export class FakeGuest implements GuestApi {
 
   async screenshot(): Promise<Uint8Array> {
     this.#reachable("screenshot");
-    // The PNG signature and nothing else: enough for a content check.
-    return Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    return desktopPng();
   }
 
   /** The outbox after `after`, then every new event, until aborted or disconnected. */

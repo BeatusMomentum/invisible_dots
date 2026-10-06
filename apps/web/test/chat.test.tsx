@@ -578,56 +578,21 @@ describe("the composer", () => {
 });
 
 describe("the computer panel", () => {
-  it("opens from the header on a wide window, beside the thread, and shows the desktop", async () => {
-    stubMatchMedia(true);
+  it("is always beside the thread, at any width, and shows the desktop: there is nothing to open", async () => {
     plane.dots = [dotRecord("d1", { name: "fares", computer_state: "RUNNING" })];
     await renderChat();
-    const toggle = screen.getByRole("button", { name: "Watch the computer" });
-    expect(toggle.getAttribute("aria-pressed")).toBe("false");
-    expect(screen.queryByRole("complementary", { name: "Computer" })).toBeNull();
-    await userEvent.click(toggle);
     const panel = await screen.findByRole("complementary", { name: "Computer" });
-    expect(toggle.getAttribute("aria-pressed")).toBe("true");
     expect(await within(panel).findByRole("img", { name: /current picture of the desktop/ })).toBeTruthy();
-    // The thread is still there beside it.
+    // The thread is there beside it, and no button opens or closes the panel.
     expect(screen.getByRole("log")).toBeTruthy();
-    // The choice is kept for the next visit.
-    expect(window.localStorage.getItem("idots.chat.panel")).toBe("open");
-    await userEvent.click(toggle);
-    await waitFor(() => expect(screen.queryByRole("complementary", { name: "Computer" })).toBeNull());
-  });
-
-  it("is a sheet on a narrow window", async () => {
-    plane.dots = [dotRecord("d1", { name: "fares", computer_state: "RUNNING" })];
-    await renderChat();
-    await userEvent.click(screen.getByRole("button", { name: "Watch the computer" }));
-    const sheet = await screen.findByRole("dialog", { name: "The Dot's computer" });
-    expect(await within(sheet).findByRole("img", { name: /current picture of the desktop/ })).toBeTruthy();
-    expect(screen.queryByRole("complementary", { name: "Computer" })).toBeNull();
-  });
-
-  it("is only offered on the chat tab", async () => {
-    pathname = "/dots/d1/tasks";
-    await renderChat();
     expect(screen.queryByRole("button", { name: "Watch the computer" })).toBeNull();
   });
 
-  it("is not opened on a narrow window by what was chosen on a wide one, and does not remember what it did there", async () => {
-    window.localStorage.setItem("idots.chat.panel", "open");
+  it("says the computer is stopped instead of showing a picture", async () => {
+    plane.dots = [dotRecord("d1", { name: "fares", computer_state: "STOPPED" })];
     await renderChat();
-    expect(screen.queryByRole("dialog")).toBeNull();
-    await userEvent.click(screen.getByRole("button", { name: "Watch the computer" }));
-    expect(await screen.findByRole("dialog", { name: "The Dot's computer" })).toBeTruthy();
-    await userEvent.keyboard("{Escape}");
-    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    expect(window.localStorage.getItem("idots.chat.panel")).toBe("open");
-  });
-
-  it("remembers that it was open", async () => {
-    window.localStorage.setItem("idots.chat.panel", "open");
-    stubMatchMedia(true);
-    await renderChat();
-    expect(await screen.findByRole("complementary", { name: "Computer" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Watch the computer" }).getAttribute("aria-pressed")).toBe("true");
+    const panel = await screen.findByRole("complementary", { name: "Computer" });
+    expect(within(panel).getByText(/The computer is stopped/)).toBeTruthy();
+    expect(within(panel).queryByRole("img")).toBeNull();
   });
 });

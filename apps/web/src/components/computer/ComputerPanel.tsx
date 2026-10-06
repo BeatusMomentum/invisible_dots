@@ -42,23 +42,23 @@ export function ComputerPanel({ dotId, computerState }: { dotId: string; compute
 
   const sourceKey = source.kind === "browser" ? `browser:${source.identityId}` : "screen";
   return (
-    <section aria-label="The Dot's computer" className="space-y-3">
-      <div className="flex items-center justify-between gap-2">
+    <section aria-label="The Dot's computer" className="flex min-h-0 flex-1 flex-col gap-3">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <h2 className="text-sm font-medium">Computer</h2>
-        <span className="text-xs text-muted-foreground">The Dot has control. You are watching.</span>
-      </div>
-      <div role="group" aria-label="What to watch" className="flex flex-wrap gap-1.5">
-        <Button type="button" size="xs" variant={source.kind === "screen" ? "default" : "outline"} aria-pressed={source.kind === "screen"} onClick={() => setSource({ kind: "screen" })}>
-          Desktop
-        </Button>
-        {open.map((identity) => {
-          const active = source.kind === "browser" && source.identityId === identity.id;
-          return (
-            <Button key={identity.id} type="button" size="xs" variant={active ? "default" : "outline"} aria-pressed={active} onClick={() => setSource({ kind: "browser", identityId: identity.id })}>
-              Browser: {identity.name}
-            </Button>
-          );
-        })}
+        <div role="group" aria-label="What to watch" className="flex flex-wrap gap-1.5">
+          <Button type="button" size="xs" variant={source.kind === "screen" ? "default" : "outline"} aria-pressed={source.kind === "screen"} onClick={() => setSource({ kind: "screen" })}>
+            Desktop
+          </Button>
+          {open.map((identity) => {
+            const active = source.kind === "browser" && source.identityId === identity.id;
+            return (
+              <Button key={identity.id} type="button" size="xs" variant={active ? "default" : "outline"} aria-pressed={active} onClick={() => setSource({ kind: "browser", identityId: identity.id })}>
+                Browser: {identity.name}
+              </Button>
+            );
+          })}
+        </div>
+        <span className="ml-auto text-xs text-muted-foreground">The Dot has control. You are watching.</span>
       </div>
       <ErrorAlert error={identities.error} title="Could not list the browsers" />
       <FrameView key={sourceKey} dotId={dotId} source={source} identity={chosen} onClosed={identities.reload} />

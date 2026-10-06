@@ -126,11 +126,11 @@ describe("the Tasks page", () => {
     const base = Date.now() - 3_600_000;
     plane.tasks = Array.from({ length: TASK_LIST_LIMIT + 5 }, (_, i) => taskRecord(`q${String(i).padStart(3, "0")}`, { created_at: new Date(base + i * 1000).toISOString() }));
     await renderTasks();
-    await screen.findByRole("region", { name: /^Queue/ });
+    // Found by its words, then checked to be a status: a page-wide role query is what costs the time here.
+    const notice = (await screen.findByText(new RegExp(`The newest ${TASK_LIST_LIMIT} tasks are listed`))).closest<HTMLElement>("[role=status]")!;
+    expect(notice).not.toBeNull();
     expect(queueItems()).toHaveLength(TASK_LIST_LIMIT);
     expect(screen.queryByText("task q000")).toBeNull();
-    const notice = screen.getByRole("status", { name: "" });
-    expect(notice.textContent).toContain(`The newest ${TASK_LIST_LIMIT} tasks are listed`);
     const pagedQueries = () => plane.taskQueries.filter((query) => query.before !== null);
     expect(pagedQueries()).toEqual([]);
 

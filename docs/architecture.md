@@ -2147,8 +2147,10 @@ the logged one, which `POST .../messages` names by its `event_id`; one that was
 `queued` says the computer is waking up until the agent reports. While the agent
 thinks or runs a tool a row says so, with the last step. The box grows with the
 text, Enter sends and Shift+Enter adds a line, and an unsent draft is kept per Dot
-in this browser. The header's "Watch the computer" button opens the computer panel
-beside the thread (a sheet below 1024 px): the desktop and each open browser as
+in this browser. The computer panel is always beside the thread (from 1024 px; a
+strip above it below that), and both reach the bottom of the window: the page column
+is as tall as the window, a Dot's header and tabs stay and the tab's body fills the
+rest. The panel shows the desktop and each open browser as
 the pictures the host reads from the guest every few seconds while the page is
 visible, with a LIVE badge, a warning when a frame is more than 15 s old, and the
 words "The Dot has control", because nothing the person does there reaches the
