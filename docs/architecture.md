@@ -37,6 +37,11 @@ test covers. The complete list today:
 | `setup` run as root | refused: it would check `/dev/kvm` as root and add root to the `kvm` group, not the person who runs the server; it calls `sudo` itself | there is no root; setup always runs as the normal user and elevates its one step | `apps/cli/src/setup/install.ts` `setupRefusal()` |
 | a file or directory private to the user (`config/`, `master.key`, `api.token`, `db/`, the data directory) | mode `0600` / `0700` | an ACL that no account but the current user can use, inheritance removed (`icacls`), because Windows ignores the mode bits and a directory under a drive root inherits "Authenticated Users: Modify"; SYSTEM and the local Administrators may stay, as root does on Linux, since some machines grant them explicitly on every new directory | `packages/shared/src/files.ts` `permissionBitsEnforced()` and `restrictToOwner()` |
 
+One line names a platform without being a branch: `agentdBuildCommand()` in
+`guest/image-builder/src/runtime.ts` builds dot-agentd with `GOOS=linux
+GOARCH=amd64` on both hosts, because that is the guest's platform, not the
+host's.
+
 One more branch exists only to let tests run on a Windows developer host:
 `packages/shared/src/sockets.ts` `testSocketPath()` hands out a named pipe
 there, because Node cannot serve a unix socket on Windows. The guest
@@ -2686,9 +2691,10 @@ start it.
 
 ## 11. Getting a host ready
 
-The same four commands on every host:
+The same commands on every host:
 
 ```text
+invisible-dots setup --all   everything below in one run, in order, that can be run again (section 11.4)
 invisible-dots setup         get QEMU and its accelerator ready (may ask for administrator rights once)
 invisible-dots doctor        check everything, print one line per check and the command that fixes a failure
 invisible-dots image build   build the golden image and the runtime ISO (section 3.3)
@@ -2838,3 +2844,50 @@ bash and the rest of Ubuntu's base), most of it GPL or LGPL software under its o
 licenses and source offers, downloaded from Ubuntu's archive on the machine that builds
 the image and published by no one here. Whoever copies a golden image to another
 machine takes those licenses with it (the paragraph above).
+
+### 11.4 setup --all
+
+`invisible-dots setup --all` is what the quick start used to have the person
+type after `npm ci` and the build of the command line, as one command
+(`apps/cli/src/setup/all.ts`). Every step is the code of the command that
+owns it, run as a function, and skips what is already done, so the same
+command is also how a run that stopped is continued. In order:
+
+1. **The guest daemon.** `go build` of `guest/dot-agentd` for linux/amd64 with
+   no cgo (`agentdBuildCommand()` in the image builder, which also names where
+   the runtime disk takes the binary from). It comes first because it needs
+   nothing but Go: a missing Go stops the run here, with the install command of
+   each host in one line (`GO_INSTALL_HINT` in `setup/build.ts`: winget on
+   Windows, snap on Linux; one text, so that no platform check is added to
+   section 1.1), before anything is changed. It is not skipped: Go's build
+   cache makes an unchanged daemon take seconds, and the image builder turns the
+   same bytes into "already built".
+2. **QEMU and its accelerator.** `prepareHost()` of `setup/setup.ts`, the code
+   `setup` itself runs (section 11.2), so the one elevated step (UAC on
+   Windows, `sudo apt-get` on Linux) stays one step and `setup` as a command
+   prints what it printed before. It comes before the long builds so that a
+   restart or a new login it asks for costs nothing already done. Where it asks
+   for a restart (exit code 5) or for `usermod -aG kvm`, `setup --all` says to run
+   itself again and stops with `setup`'s exit code.
+3. **The web client**, unless `locateWebBuild()` finds it complete: node runs
+   `apps/web/scripts/build.mjs` (the script `npm run build --workspace
+   @invisible-dots/web` runs; node starts it directly because npm is a `.cmd`
+   file on Windows and the CLI never starts a program through a shell) with
+   `NEXT_TELEMETRY_DISABLED=1`, its output on the person's terminal.
+4. **The guest images**, `image build` as it is (the runtime disk first, then
+   the golden image).
+
+A step that fails ends the run with exit code 1 and the reason, and nothing
+after it is run; the message ends with the command to run again. At the end it
+prints how to start the server, the address of the web client
+(`INVISIBLE_DOTS_WEB_LISTEN` or its default) and the file whose first line is
+the token to sign in with (created when the server first starts). It does not
+start the server itself: `server` runs in the foreground until Ctrl+C. Ctrl+C
+asks `image build` to stop (it kills its builder VM) and ends the run between
+steps; a second Ctrl+C exits at once.
+
+Not in it, on purpose: installing Node, Git and Go (the Windows installers and
+snap ask for administrator rights of their own, and `setup --all` keeps to
+one), the clone, `npm ci` and the build of the command line (the command is
+their product), and the OpenRouter key (the web client's Home page takes it
+once the server runs, or `invisible-dots secret openrouter`).

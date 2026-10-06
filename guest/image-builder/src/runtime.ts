@@ -56,6 +56,26 @@ export function defaultRuntimeInputs(repoRoot: string = fileURLToPath(new URL(".
   };
 }
 
+/** A program to run, with the environment variables it needs on top of the caller's own. */
+export interface BuildCommand {
+  command: string;
+  args: string[];
+  env: Record<string, string>;
+}
+
+/**
+ * The command that builds `defaultRuntimeInputs(repoRoot).agentdBinary`: a static linux/amd64 executable whatever
+ * the host is (`assertLinuxAmd64Elf` refuses anything else), with the paths trimmed so the same source gives the same
+ * bytes from any checkout. `go -C` enters the module itself, so the caller's working directory does not matter.
+ */
+export function agentdBuildCommand(repoRoot: string): BuildCommand {
+  return {
+    command: "go",
+    args: ["-C", join(repoRoot, "guest", "dot-agentd"), "build", "-trimpath", "-o", defaultRuntimeInputs(repoRoot).agentdBinary, "./cmd/dot-agentd"],
+    env: { CGO_ENABLED: "0", GOOS: "linux", GOARCH: "amd64" },
+  };
+}
+
 export interface RuntimeBuildOptions {
   inputs?: RuntimeInputs;
   paths?: HostPaths;

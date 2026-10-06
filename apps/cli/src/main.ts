@@ -1,5 +1,5 @@
 /** The `invisible-dots` executable: wires `run` to the real process. */
-import { commandOf, run } from "./cli.js";
+import { commandOf, interruptIsAsked, run } from "./cli.js";
 import { readSecretLine } from "./secret-input.js";
 
 async function readStdin(): Promise<string> {
@@ -14,10 +14,11 @@ const command = commandOf(argv);
 const controller = new AbortController();
 
 // What Ctrl-C does depends on the command. `logs` ends cleanly. `image build`
-// is asked to stop, so it can kill its builder VM, and a second Ctrl-C exits
-// at once. `server` installs its own handlers (it closes the database before
-// exiting). Every other command keeps Node's default: exit immediately.
-if (command === "logs" || command === "image") {
+// (and `setup --all`, which ends with it) is asked to stop, so it can kill its
+// builder VM, and a second Ctrl-C exits at once. `server` installs its own
+// handlers (it closes the database before exiting). Every other command keeps
+// Node's default: exit immediately.
+if (interruptIsAsked(argv)) {
   process.on("SIGINT", () => {
     if (controller.signal.aborted) process.exit(130);
     controller.abort();

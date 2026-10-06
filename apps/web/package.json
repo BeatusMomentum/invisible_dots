@@ -10,7 +10,7 @@
   },
   "scripts": {
     "dev": "next dev --webpack --hostname 127.0.0.1 --port 3000",
-    "build": "next build --webpack && node scripts/standalone.mjs",
+    "build": "node scripts/build.mjs",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json",
     "test:e2e": "playwright test"
