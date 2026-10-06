@@ -79,7 +79,8 @@ Using the server:
   invisible-dots computer <dot> start|stop|reboot
   invisible-dots browser <dot> identities       list the Dot's browser identities
   invisible-dots approvals [--all]              list pending (or all) approvals
-  invisible-dots approve <approval-id> [--note text]
+  invisible-dots approve <approval-id> [--note text] [--always]
+                                                --always also allows that permission for the Dot from now on
   invisible-dots reject <approval-id> [--note text]
   invisible-dots secret openrouter [--dot <dot>]
                                                 store the OpenRouter key: asked for in a terminal, read from stdin when piped (never from arguments)
@@ -143,6 +144,7 @@ const OPTIONS = {
   priority: { type: "string" },
   at: { type: "string" },
   note: { type: "string" },
+  always: { type: "boolean" },
   dot: { type: "string" },
   tail: { type: "string" },
   "no-follow": { type: "boolean" },
@@ -424,7 +426,12 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
       case "reject": {
         const id = need(args, 0, "<approval-id>");
         const c = await api();
-        const approval = command === "approve" ? await c.approve(id, values.note) : await c.reject(id, values.note);
+        if (values.always && command === "reject") throw new UsageError("--always applies to approve, not to reject");
+        const note = values.note === undefined ? {} : { note: values.note };
+        const approval =
+          command === "approve"
+            ? await c.approve(id, { ...note, ...(values.always ? { always: true as const } : {}) })
+            : await c.reject(id, note);
         out(approval, `approval ${approval.id} ${approval.status}\n`);
         return EXIT.ok;
       }

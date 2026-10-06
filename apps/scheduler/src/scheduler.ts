@@ -23,6 +23,7 @@ import {
   checkOpenRouterKey,
   computerResources,
   DotConfigError,
+  isPermission,
   isStoredEventType,
   MAX_HOST_FILE_BYTES,
   newId,
@@ -279,18 +280,26 @@ export class Scheduler {
       throw error;
     }
     if (!updated) throw notFound("Dot", idOrName);
+    await this.#configChanged(updated);
+    return updated;
+  }
+
+  /**
+   * The Dot's saved config changed (a PATCH, an "always allow"): push it to the guest like a PATCH does and log
+   * `dot.updated`. A failed push does not fail the change: the config is pushed again on the next READY.
+   */
+  async #configChanged(dot: DotRecord): Promise<void> {
     let pushed = false;
     try {
-      pushed = await this.lifecycle.syncGuest(current.id);
+      pushed = await this.lifecycle.syncGuest(dot.id);
     } catch (error) {
       this.#log.warn("config saved but the push to the guest failed; it is pushed again on the next READY", {
-        dotId: current.id,
+        dotId: dot.id,
         error: errorMessage(error),
       });
-      this.lifecycle.markSuspect(current.id);
+      this.lifecycle.markSuspect(dot.id);
     }
-    await this.events.appendHost(current.id, "dot.updated", { name: config.name, pushed_to_guest: pushed });
-    return updated;
+    await this.events.appendHost(dot.id, "dot.updated", { name: dot.name, pushed_to_guest: pushed });
   }
 
   async deleteDot(idOrName: string): Promise<AcceptedAnswer> {
@@ -622,36 +631,64 @@ export class Scheduler {
    * `approval.received` for the guest, in one transaction: a decision the
    * person saw accepted always reaches the guest, also when the Dot sleeps
    * and its wake fails or the control plane restarts first.
+   *
+   * `always` (an approval only) is "allow this from now on": in the same
+   * transaction `permissions[<the approval's permission>]` becomes `allow` in
+   * the Dot's config, and the config is pushed to the guest before the answer
+   * is delivered, so what the approved call does next is not asked again. An
+   * answer that loses the race for the approval (409) changes nothing.
    */
-  async resolveApproval(id: string, decision: "approve" | "reject", note?: string): Promise<ApprovalRecord> {
+  async resolveApproval(
+    id: string,
+    decision: "approve" | "reject",
+    answer: { note?: string; always?: true } = {},
+  ): Promise<ApprovalRecord> {
+    const { note, always } = answer;
     if (note !== undefined && typeof note !== "string") {
       throw new ControlPlaneError(400, "invalid_request", "note must be a string");
     }
+    if (always !== undefined && always !== true) {
+      throw new ControlPlaneError(400, "invalid_request", "always must be true");
+    }
+    if (always && decision !== "approve") {
+      throw new ControlPlaneError(400, "invalid_request", "always applies to an approval, not to a rejection");
+    }
     const existing = await this.db.approvals.get(id);
     if (!existing) throw notFound("approval", id);
+    if (always && !isPermission(existing.permission)) {
+      throw new ControlPlaneError(
+        400,
+        "invalid_request",
+        `"${existing.permission}" is not a permission a Dot's config can set, so it cannot be allowed for good`,
+      );
+    }
     const event: InboundEvent<"approval.received"> = {
       id: newId("evt"),
       type: "approval.received",
       ts: this.#clock.now().toISOString(),
       data: { approval_id: id, decision, ...(note !== undefined ? { note } : {}) },
     };
-    const { logged, resolved } = await this.db.transaction(async (tx) => {
+    const { logged, resolved, reconfigured } = await this.db.transaction(async (tx) => {
       // The event first: its insert takes the event-order lock (database events.ts).
       const logged = await this.events.appendHostIn(tx, existing.dot_id, "approval.resolved", {
         approval_id: id,
         decision,
         ...(note !== undefined ? { note } : {}),
+        ...(always ? { always } : {}),
       });
       const resolved = await tx.approvals.resolve(id, decision === "approve" ? "approved" : "rejected", note ?? null);
       if (!resolved) {
         const current = await tx.approvals.get(id);
         throw new ControlPlaneError(409, "already_resolved", `approval ${id} is already ${current?.status ?? existing.status}`);
       }
+      const reconfigured = always ? await tx.dots.setPermission(resolved.dot_id, resolved.permission, "allow") : null;
+      if (always && !reconfigured) throw notFound("Dot", resolved.dot_id);
       if (resolved.task_id) await tx.tasks.transition(resolved.task_id, "RUNNING", { dotId: resolved.dot_id });
       await tx.inbound.enqueue(resolved.dot_id, event);
-      return { logged, resolved };
+      return { logged, resolved, reconfigured };
     });
     this.events.publish(logged);
+    if (reconfigured) await this.#configChanged(reconfigured);
     await this.#deliver(resolved.dot_id, event.id);
     return resolved;
   }

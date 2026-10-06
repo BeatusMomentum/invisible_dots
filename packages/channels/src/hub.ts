@@ -35,7 +35,7 @@ import { BindingRunner } from "./runner.js";
 /** What the hub asks of the control plane; the Scheduler satisfies it. */
 export interface ChannelHost {
   sendMessage(idOrName: string, text: string, origin?: MessageOrigin): Promise<MessageAnswer>;
-  resolveApproval(id: string, decision: "approve" | "reject", note?: string): Promise<ApprovalRecord>;
+  resolveApproval(id: string, decision: "approve" | "reject"): Promise<ApprovalRecord>;
   requireDot(idOrName: string): Promise<{ id: string; name: string }>;
   events: Pick<EventLog, "stream" | "userMessage" | "tail" | "appendHost">;
 }

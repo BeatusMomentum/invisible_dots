@@ -200,7 +200,8 @@ export interface HostEventDataMap {
   "computer.stopped": Record<string, unknown>;
   "task.created": { task_id: string; description: string; priority: number };
   "task.cancelled": { task_id: string };
-  "approval.resolved": { approval_id: string; decision: ApprovalDecision; note?: string };
+  /** `always` marks an approval answered with "always allow": the Dot's config now allows the permission (`dot.updated` follows). */
+  "approval.resolved": { approval_id: string; decision: ApprovalDecision; note?: string; always?: true };
   /** A channel's connection changed (`detail` is a reason for `error`, never a credential). */
   "channel.status": { kind: ChannelKind; status: ChannelStatus; detail?: string };
   /** A person was paired to the Dot's channel; `peer_id` is the channel's own id for them. */

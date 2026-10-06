@@ -128,7 +128,13 @@ export interface MessageAnswer {
   delivery: "delivered" | "queued";
 }
 
-export interface ApprovalDecisionRequest {
+export interface ApproveRequest {
+  note?: string;
+  /** Also set the approval's permission to `allow` in the Dot's config, so the Dot is not asked for it again. */
+  always?: true;
+}
+
+export interface RejectRequest {
   note?: string;
 }
 

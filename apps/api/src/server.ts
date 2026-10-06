@@ -363,9 +363,13 @@ export function buildServer(options: ServerOptions): FastifyInstance {
 
   for (const decision of ["approve", "reject"] as const) {
     app.post<{ Params: Params }>(`/api/approvals/:id/${decision}`, async (request) => {
-      const note = bodyOf(request).note;
+      const { note, always } = bodyOf(request);
       if (note !== undefined && typeof note !== "string") throw bad("note must be a string");
-      return scheduler.resolveApproval(request.params.id, decision, note);
+      if (always !== undefined && always !== true) throw bad("always must be true");
+      return scheduler.resolveApproval(request.params.id, decision, {
+        ...(note !== undefined ? { note } : {}),
+        ...(always !== undefined ? { always } : {}),
+      });
     });
   }
 

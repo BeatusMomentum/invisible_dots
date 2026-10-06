@@ -1,11 +1,11 @@
 {
   "//": "What each suite must reach on each host, read by .github/scripts/test-guard.mjs in CI (tests.yml) and in the pre-push hook. Raise a floor when tests are added; lowering one is a decision to write down in the commit that does it. Linux skips only the tests that drive a real Windows PowerShell; a Windows host compiles dot-agentd's unix-only test files out and skips the two Go tests that need a Linux guest. The pytest floor is the Python engine's (invisible_engine_dots, the engine job of tests.yml, Linux only, nothing may skip).",
   "vitest": {
-    "linux": { "min_passed": 990, "allow_skipped": "^generated PowerShell on a real Windows PowerShell " },
-    "win32": { "min_passed": 993, "allow_skipped": "" }
+    "linux": { "min_passed": 995, "allow_skipped": "^generated PowerShell on a real Windows PowerShell " },
+    "win32": { "min_passed": 998, "allow_skipped": "" }
   },
   "postgres": {
-    "linux": { "min_passed": 568, "allow_skipped": "", "require": { "\\bpg\\b": 227 } }
+    "linux": { "min_passed": 578, "allow_skipped": "", "require": { "\\bpg\\b": 232 } }
   },
   "go": {
     "linux": { "min_passed": 97, "allow_skipped": "" },

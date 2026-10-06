@@ -1521,7 +1521,7 @@ POST   /api/dots/:id/channels/:kind/pairing   201 { code, deep_link, message, ex
 DELETE /api/dots/:id/channels/:kind/peers/:peer   revoke a paired person
 
 GET    /api/approvals                ?status=pending|approved|rejected|expired
-POST   /api/approvals/:id/approve    body: { note? }
+POST   /api/approvals/:id/approve    body: { note?, always?: true }   `always` also sets the approval's permission to `allow` in the Dot's config in the same transaction (then pushed like a PATCH, `dot.updated` logged); `approval.resolved` carries `always: true`
 POST   /api/approvals/:id/reject     body: { note? }
 
 GET    /api/dots/:id/events          ?after=<id>&limit=&types=<a,b>&task_id=   `types` are event type names (an unknown one is a 400), `task_id` keeps the events whose `data.task_id` it is

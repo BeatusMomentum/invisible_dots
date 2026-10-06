@@ -17,6 +17,7 @@ import type {
   AcceptedAnswer,
   ApprovalRecord,
   ApprovalsAnswer,
+  ApproveRequest,
   ChannelLinkFrame,
   ChannelPairingAnswer,
   ChannelRecord,
@@ -35,6 +36,7 @@ import type {
   MessageAnswer,
   MessagesAnswer,
   PatchChannelRequest,
+  RejectRequest,
   TaskRecord,
   TasksAnswer,
   UsageAnswer,
@@ -319,12 +321,13 @@ export class InvisibleDotsClient {
     return (await this.#json<ApprovalsAnswer>("GET", "/api/approvals", { query: { status } })).approvals;
   }
 
-  approve(approvalId: string, note?: string): Promise<ApprovalRecord> {
-    return this.#json("POST", `/api/approvals/${enc(approvalId)}/approve`, { body: note === undefined ? {} : { note } });
+  /** Allow what the Dot asked for; with `always` its permission is also set to `allow` in the Dot's config. */
+  approve(approvalId: string, request: ApproveRequest = {}): Promise<ApprovalRecord> {
+    return this.#json("POST", `/api/approvals/${enc(approvalId)}/approve`, { body: request });
   }
 
-  reject(approvalId: string, note?: string): Promise<ApprovalRecord> {
-    return this.#json("POST", `/api/approvals/${enc(approvalId)}/reject`, { body: note === undefined ? {} : { note } });
+  reject(approvalId: string, request: RejectRequest = {}): Promise<ApprovalRecord> {
+    return this.#json("POST", `/api/approvals/${enc(approvalId)}/reject`, { body: request });
   }
 
   // Events

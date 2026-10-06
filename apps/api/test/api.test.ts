@@ -418,13 +418,38 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     );
     expect(pending.task_id).toBe(task.id);
     await waitFor(async () => (await api.getTask(task.id)).status === "WAITING_APPROVAL", "task waiting");
-    const rejected = await api.reject(pending.id, "keep it");
+    const rejected = await api.reject(pending.id, { note: "keep it" });
     expect(rejected).toMatchObject({ status: "rejected", note: "keep it" });
     await waitFor(async () => (await api.getTask(task.id)).status === "COMPLETED", "task resumed and completed");
     await expect(api.approve(pending.id)).rejects.toMatchObject({ status: 409, code: "already_resolved" });
     await expect(api.approve("apr_missing")).rejects.toMatchObject({ status: 404 });
     const raw = await fetch(`${base}/api/approvals?status=maybe`, { headers: { authorization: `Bearer ${TOKEN}` } });
     expect(raw.status).toBe(400);
+  });
+
+  it("approve with always over HTTP sets the permission in the Dot's config and pushes it", async () => {
+    const dot = await readyDot("always-http");
+    const guest = driver.guestOf(dot.id);
+    const approvalId = guest.requestApproval(undefined);
+    await waitFor(async () => (await api.listApprovals("pending")).some((a) => a.id === approvalId), "approval pending");
+    const post = (id: string, decision: string, body: unknown) =>
+      fetch(`${base}/api/approvals/${id}/${decision}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    expect((await post(approvalId, "approve", { always: "yes" })).status).toBe(400);
+    expect((await post(approvalId, "approve", { always: false })).status).toBe(400);
+    expect((await post(approvalId, "reject", { always: true })).status).toBe(400);
+    expect((await api.listApprovals("pending")).some((a) => a.id === approvalId)).toBe(true);
+    expect((await api.getDot(dot.id)).config.permissions).toEqual({});
+
+    expect(await api.approve(approvalId, { note: "yes", always: true })).toMatchObject({ status: "approved", note: "yes" });
+    expect((await api.getDot(dot.id)).config.permissions["browser.identity.delete"]).toBe("allow");
+    expect(guest.config?.permissions["browser.identity.delete"]).toBe("allow");
+    const resolved = (await api.events(dot.id, { types: ["approval.resolved"] })).at(-1);
+    expect(resolved?.data).toEqual({ approval_id: approvalId, decision: "approve", note: "yes", always: true });
+    await expect(api.approve(approvalId, { always: true })).rejects.toMatchObject({ status: 409, code: "already_resolved" });
   });
 
   it("messages: delivered to a READY Dot and readable as a conversation", async () => {

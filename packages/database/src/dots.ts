@@ -1,4 +1,4 @@
-import type { DotConfig, DotState, VmState } from "@invisible-dots/shared";
+import type { DotConfig, DotState, PermissionDecision, VmState } from "@invisible-dots/shared";
 import type { DotRecord, DotSummary } from "@invisible-dots/shared";
 import { isUniqueViolation, isoRequired, type Queryable } from "./rows.js";
 
@@ -84,6 +84,21 @@ export class DotsRepository {
       if (isUniqueViolation(error, "dots_name_key")) throw new DotNameTakenError(config.name);
       throw error;
     }
+  }
+
+  /**
+   * Set one permission in the Dot's config, in ONE statement that touches no other key: a PATCH or a second approval
+   * running at the same time cannot be lost to a read-modify-write.
+   */
+  async setPermission(id: string, permission: string, decision: PermissionDecision): Promise<DotRecord | null> {
+    const { rows } = await this.q.query<DotRow>(
+      `UPDATE dots
+          SET config = jsonb_set(config, '{permissions}', COALESCE(config->'permissions', '{}'::jsonb) || jsonb_build_object($2::text, $3::text), true),
+              updated_at = now()
+        WHERE id = $1 RETURNING *`,
+      [id, permission, decision],
+    );
+    return rows[0] ? toRecord(rows[0]) : null;
   }
 
   /** Set the status; `error` is cleared unless given, so a stale reason never outlives its ERROR. */

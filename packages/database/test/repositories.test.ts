@@ -54,6 +54,22 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect((await db.dots.list()).map((d) => d.name)).toContain("alpha");
   });
 
+  it("dots: setPermission changes one permission and nothing else, also when the config has none", async () => {
+    const dot = await seedDot(db, "alpha-permissions");
+    const before = dot.config;
+    const first = await db.dots.setPermission(dot.id, "computer.exec", "allow");
+    expect(first?.config).toEqual({ ...before, permissions: { "computer.exec": "allow" } });
+    const second = await db.dots.setPermission(dot.id, "files.write", "ask");
+    expect(second?.config.permissions).toEqual({ "computer.exec": "allow", "files.write": "ask" });
+    expect((await db.dots.setPermission(dot.id, "computer.exec", "deny"))?.config.permissions).toEqual({ "computer.exec": "deny", "files.write": "ask" });
+    expect((await db.dots.get(dot.id))?.config).toEqual({ ...before, permissions: { "computer.exec": "deny", "files.write": "ask" } });
+    expect(Date.parse(second!.updated_at)).toBeGreaterThanOrEqual(Date.parse(first!.updated_at));
+
+    await db.query("UPDATE dots SET config = config - 'permissions' WHERE id = $1", [dot.id]);
+    expect((await db.dots.setPermission(dot.id, "automations", "allow"))?.config.permissions).toEqual({ automations: "allow" });
+    expect(await db.dots.setPermission("dot_missing", "automations", "allow")).toBeNull();
+  });
+
   it("computers: token stored encrypted, process recorded and cleared, cursor only moves forward", async () => {
     const dot = await seedDot(db, "bravo");
     const { rows } = await db.query<{ token_enc: Uint8Array }>("SELECT token_enc FROM computers WHERE dot_id = $1", [dot.id]);

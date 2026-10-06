@@ -340,6 +340,14 @@ describe("commands", () => {
     expect(approved.stdout).toBe("approval apr_1 approved\n");
     expect(requests.at(-1)?.body).toEqual({ note: "fine" });
     expect((await cli(["reject", "apr_1"])).stdout).toBe("approval apr_1 rejected\n");
+    expect(requests.at(-1)?.body).toEqual({});
+    await cli(["approve", "apr_1", "--always"]);
+    expect(requests.at(-1)?.body).toEqual({ always: true });
+    await cli(["approve", "apr_1", "--always", "--note", "ok"]);
+    expect(requests.at(-1)?.body).toEqual({ note: "ok", always: true });
+    const refused = await cli(["reject", "apr_1", "--always"]);
+    expect(refused.code).toBe(EXIT.usage);
+    expect(refused.stderr).toContain("--always applies to approve");
   });
 
   it("secret openrouter reads the key from stdin only", async () => {

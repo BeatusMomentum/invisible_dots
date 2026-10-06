@@ -217,7 +217,7 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     await waitFor(async () => (await db.tasks.get(task.id))?.status === "WAITING_APPROVAL", "task waiting");
     await waitFor(async () => (await db.dots.get(dot.id))?.status === "WAITING_APPROVAL", "dot waiting");
 
-    const resolved = await scheduler.resolveApproval(approval.id, "approve", "go ahead");
+    const resolved = await scheduler.resolveApproval(approval.id, "approve", { note: "go ahead" });
     expect(resolved.status).toBe("approved");
     const received = guest.inbound.find((e) => e.type === "approval.received");
     expect(received?.data).toEqual({ approval_id: approval.id, decision: "approve", note: "go ahead" });
@@ -228,6 +228,83 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
       code: "already_resolved",
     });
     expect(types(await db.events.list({ dotId: dot.id, types: ["approval.resolved"] }))).toEqual(["approval.resolved"]);
+  });
+
+  it("approve with always: the permission becomes allow in the config and the guest, once, in the same transaction as the decision", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "always-allow");
+    const guest = driver.guestOf(dot.id);
+    expect(guest.config?.permissions["browser.identity.delete"]).toBe("ask");
+    const original = guest.onInbound;
+    guest.onInbound = (event, g) => {
+      if (event.type === "task.created") {
+        g.emit("task.started", { task_id: event.data.task_id });
+        g.requestApproval(event.data.task_id);
+      } else {
+        return original(event, g);
+      }
+    };
+    const task = await scheduler.createTask(dot.id, { description: "delete the old identity" });
+    const approval = await waitFor(async () => (await scheduler.listApprovals("pending")).find((a) => a.task_id === task.id), "pending approval");
+    const configBefore = (await db.dots.get(dot.id))!.config;
+
+    const resolved = await scheduler.resolveApproval(approval.id, "approve", { always: true, note: "fine" });
+    expect(resolved.status).toBe("approved");
+    const stored = (await db.dots.get(dot.id))!;
+    expect(stored.config).toEqual({ ...configBefore, permissions: { ...configBefore.permissions, "browser.identity.delete": "allow" } });
+    expect(guest.config?.permissions["browser.identity.delete"]).toBe("allow");
+    expect(guest.config?.name).toBe("always-allow");
+    const events = await db.events.list({ dotId: dot.id, types: ["approval.resolved", "dot.updated"] });
+    expect(events.map((e) => [e.type, e.data])).toEqual([
+      ["approval.resolved", { approval_id: approval.id, decision: "approve", note: "fine", always: true }],
+      ["dot.updated", { name: "always-allow", pushed_to_guest: true }],
+    ]);
+    // The guest is told the plain decision: what the config says is the guest's own business.
+    expect(guest.inbound.find((e) => e.type === "approval.received")?.data).toEqual({ approval_id: approval.id, decision: "approve", note: "fine" });
+    await waitFor(async () => (await db.tasks.get(task.id))?.status === "COMPLETED", "task completed");
+
+    // Answered once: the second try is a 409 and changes nothing, however it asks.
+    await db.dots.setPermission(dot.id, "browser.identity.delete", "ask");
+    await expect(scheduler.resolveApproval(approval.id, "approve", { always: true })).rejects.toMatchObject({ status: 409, code: "already_resolved" });
+    expect((await db.dots.get(dot.id))?.config.permissions["browser.identity.delete"]).toBe("ask");
+    expect(types(await db.events.list({ dotId: dot.id, types: ["approval.resolved", "dot.updated"] }))).toEqual(["approval.resolved", "dot.updated"]);
+  });
+
+  it("approve with always refuses what cannot be allowed for good and leaves the approval pending", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "always-refused");
+    const guest = driver.guestOf(dot.id);
+    const known = guest.requestApproval(undefined);
+    // A guest newer than the host can name a permission the host does not know; the type forbids it, the wire does not.
+    guest.emit("approval.requested", { approval_id: "apr_unknownpermission", tool: "mystery", permission: "made.up" as never, arguments: {}, reason: "?" });
+    await waitFor(async () => (await db.approvals.get("apr_unknownpermission")) !== null, "stored");
+    const configBefore = (await db.dots.get(dot.id))!.config;
+
+    await expect(scheduler.resolveApproval(known, "reject", { always: true })).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+    await expect(scheduler.resolveApproval("apr_unknownpermission", "approve", { always: true })).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+    await expect(scheduler.resolveApproval(known, "approve", { always: false as unknown as true })).rejects.toMatchObject({ status: 400 });
+    await expect(scheduler.resolveApproval("apr_missing", "approve", { always: true })).rejects.toMatchObject({ status: 404 });
+    for (const id of [known, "apr_unknownpermission"]) expect((await db.approvals.get(id))?.status).toBe("pending");
+    expect((await db.dots.get(dot.id))?.config).toEqual(configBefore);
+    expect(await db.events.list({ dotId: dot.id, types: ["approval.resolved", "dot.updated"] })).toEqual([]);
+    // A plain approval of the unknown permission still works: it asks nothing of the config.
+    expect((await scheduler.resolveApproval("apr_unknownpermission", "approve")).status).toBe("approved");
+  });
+
+  it("approve with always on a sleeping Dot saves the config, and the wake that delivers the answer pushes it", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "always-asleep");
+    const approvalId = driver.guestOf(dot.id).requestApproval(undefined);
+    await waitFor(async () => (await db.approvals.get(approvalId)) !== null, "stored");
+    await scheduler.stopComputer(dot.id);
+    await scheduler.settle();
+    expect((await db.computers.get(dot.id))?.state).toBe("STOPPED");
+
+    await scheduler.resolveApproval(approvalId, "approve", { always: true });
+    expect((await db.dots.get(dot.id))?.config.permissions["browser.identity.delete"]).toBe("allow");
+    expect((await db.events.list({ dotId: dot.id, types: ["dot.updated"] })).at(-1)?.data).toEqual({ name: "always-asleep", pushed_to_guest: false });
+    await waitFor(async () => (await db.computers.get(dot.id))?.state === "RUNNING", "woken for the answer");
+    await waitFor(() => driver.guestOf(dot.id).config?.permissions["browser.identity.delete"] === "allow", "config pushed on the wake");
   });
 
   it("sleeps after idle_timeout (fake clock) and wakes on a new task", async () => {
