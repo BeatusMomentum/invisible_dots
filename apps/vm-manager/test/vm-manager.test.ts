@@ -170,7 +170,7 @@ describe("start", () => {
     const args = host.spawned[0]!.args;
     expect(argAfter(args, "-smp")).toBe("4");
     expect(argAfter(args, "-m")).toBe("8192");
-    expect(args).toContain(`media=cdrom,file=${runtime2},format=raw,readonly=on`);
+    expect(args).toContain(`if=virtio,file=${runtime2},format=raw,readonly=on`);
   });
 
   it("retries with another port when QEMU cannot bind the forward", async () => {

@@ -185,7 +185,7 @@ host (`%USERPROFILE%\.invisible-dots` on Windows):
   db/                                   the embedded PostgreSQL (PGlite) data directory
   server.lock                           { pid, host_uptime_s } of the one server running on this home
   images/
-    noble-server-cloudimg-amd64.img     pinned by SHA-256 (virtualization/images/base.json)
+    noble-minimal-cloudimg-amd64.img     pinned by SHA-256 (virtualization/images/base.json)
     golden-<version>.qcow2              immutable, read-only
     golden-<version>.json               its manifest: inputs, versions, SHA-256
     runtime-<version>.iso               our code: agent bundle + dot-agentd + units
@@ -312,8 +312,8 @@ qemu-system-x86_64
   -machine q35 -accel <kvm|whpx> -cpu host,-vmx,-svm
   -smp <cpu> -m <memory MiB>
   -drive if=virtio,file=<vms/id/disk.qcow2>,format=qcow2,discard=unmap
-  -drive media=cdrom,file=<vms/id/seed.iso>,readonly=on
-  -drive media=cdrom,file=<images/runtime-<v>.iso>,readonly=on
+  -drive if=virtio,file=<vms/id/seed.iso>,format=raw,readonly=on
+  -drive if=virtio,file=<images/runtime-<v>.iso>,format=raw,readonly=on
   -netdev user,id=net0,hostfwd=tcp:127.0.0.1:<guest_port>-:1024
   -device virtio-net-pci,netdev=net0
   -device virtio-rng-pci

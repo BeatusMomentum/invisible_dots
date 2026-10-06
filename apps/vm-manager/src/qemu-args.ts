@@ -99,11 +99,14 @@ export function diskDriveArg(path: string): string {
 }
 
 /**
- * The `-drive` value of a read-only CD-ROM (a seed or the runtime ISO).
+ * The `-drive` value of a read-only ISO (a seed or the runtime ISO), as a virtio disk: every Ubuntu cloud kernel has
+ * virtio-blk built in, where a CD-ROM needs the SATA controller's and the CD's modules, which the minimal cloud image
+ * does not load (measured: its builder VM never saw the seed, so cloud-init never ran). The guest finds both by their
+ * labels (cidata, IDOTS-RT), whatever device they are.
  * format=raw: an ISO is raw, and naming it stops QEMU probing the format.
  */
-export function cdromDriveArg(label: string, path: string): string {
-  return `media=cdrom,file=${qemuPathArg(label, path)},format=raw,readonly=on`;
+export function isoDriveArg(label: string, path: string): string {
+  return `if=virtio,file=${qemuPathArg(label, path)},format=raw,readonly=on`;
 }
 
 /**
@@ -142,9 +145,9 @@ export function qemuArgs(spec: QemuArgsSpec): string[] {
     "-drive",
     diskDriveArg(spec.diskPath),
     "-drive",
-    cdromDriveArg("seed ISO", spec.seedPath),
+    isoDriveArg("seed ISO", spec.seedPath),
     "-drive",
-    cdromDriveArg("runtime ISO", spec.runtimeIsoPath),
+    isoDriveArg("runtime ISO", spec.runtimeIsoPath),
     ...deviceArgs(`user,id=net0,hostfwd=tcp:127.0.0.1:${port}-:${GUEST_PORT}`, spec.serialLogPath),
   ];
 }

@@ -6,7 +6,7 @@
  * later boots it on; it leaves out what a builder has no use for (the port
  * forward, the runtime ISO) and adds only what is its own (below).
  */
-import { cdromDriveArg, deviceArgs, diskDriveArg, machineArgs, type Accelerator } from "@invisible-dots/vm-manager";
+import { deviceArgs, diskDriveArg, isoDriveArg, machineArgs, type Accelerator } from "@invisible-dots/vm-manager";
 
 export type { Accelerator };
 
@@ -37,7 +37,7 @@ export function builderQemuArgs(spec: BuilderVmSpec): string[] {
     "-drive",
     diskDriveArg(spec.disk),
     "-drive",
-    cdromDriveArg("seed ISO", spec.seed),
+    isoDriveArg("seed ISO", spec.seed),
     // No forward: nothing on the host talks to the builder. The serial
     // console is the only channel back from the provisioner: its progress
     // lines and the final result marker are read from that file.

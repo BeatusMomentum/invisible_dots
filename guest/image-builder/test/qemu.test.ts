@@ -32,7 +32,7 @@ describe("builderQemuArgs", () => {
     expect(values(args, "-m")).toEqual(["4096"]);
     expect(values(args, "-drive")).toEqual([
       `if=virtio,file=${spec.disk},format=qcow2,discard=unmap`,
-      `media=cdrom,file=${spec.seed},format=raw,readonly=on`,
+      `if=virtio,file=${spec.seed},format=raw,readonly=on`,
     ]);
     expect(values(args, "-netdev")).toEqual(["user,id=net0"]);
     expect(values(args, "-device")).toEqual(["virtio-net-pci,netdev=net0", "virtio-rng-pci"]);
@@ -61,7 +61,7 @@ describe("builderQemuArgs", () => {
       serialLogPath: spec.serialLog,
     });
     // The Dot's argv after its name, without the runtime ISO drive, and with the forward taken off the netdev.
-    const runtime = dot.indexOf("media=cdrom,file=/images/runtime-1.iso,format=raw,readonly=on");
+    const runtime = dot.indexOf("if=virtio,file=/images/runtime-1.iso,format=raw,readonly=on");
     const rest = [...dot.slice(2, runtime - 1), ...dot.slice(runtime + 1)].map((arg) => (arg.startsWith("user,id=net0,hostfwd") ? "user,id=net0" : arg));
     expect(builder).toEqual(["-name", "invisible-dots-image-builder", ...rest, "-monitor", "none", "-no-reboot"]);
   });
@@ -77,7 +77,7 @@ describe("builderQemuArgs", () => {
   it("passes Windows paths with spaces through unchanged", () => {
     const args = builderQemuArgs({ ...spec, accelerator: "whpx", disk: "C:\\Users\\A B\\disk.qcow2", seed: "C:\\Users\\A B\\seed.iso", serialLog: "C:\\Users\\A B\\serial.log" });
     expect(values(args, "-drive")[0]).toBe("if=virtio,file=C:\\Users\\A B\\disk.qcow2,format=qcow2,discard=unmap");
-    expect(values(args, "-drive")[1]).toBe("media=cdrom,file=C:\\Users\\A B\\seed.iso,format=raw,readonly=on");
+    expect(values(args, "-drive")[1]).toBe("if=virtio,file=C:\\Users\\A B\\seed.iso,format=raw,readonly=on");
     expect(values(args, "-serial")).toEqual(["file:C:\\Users\\A B\\serial.log"]);
   });
 

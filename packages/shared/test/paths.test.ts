@@ -19,7 +19,7 @@ describe("hostPaths", () => {
     expect(paths.dbDir).toBe(join(home, "db"));
     expect(paths.serverLockPath).toBe(join(home, "server.lock"));
     expect(paths.imagesDir).toBe(join(home, "images"));
-    expect(paths.baseImagePath("noble-server-cloudimg-amd64.img")).toBe(join(home, "images", "noble-server-cloudimg-amd64.img"));
+    expect(paths.baseImagePath("noble-minimal-cloudimg-amd64.img")).toBe(join(home, "images", "noble-minimal-cloudimg-amd64.img"));
     expect(paths.goldenImagePath("3")).toBe(join(home, "images", "golden-3.qcow2"));
     expect(paths.runtimeIsoPath("0.1.0")).toBe(join(home, "images", "runtime-0.1.0.iso"));
     expect(paths.vmsDir).toBe(join(home, "vms"));
@@ -71,7 +71,7 @@ describe("image file names", () => {
   });
 
   it("ignore every other file of the images directory", () => {
-    for (const name of ["golden-1.json", "runtime-1.json", "golden-.qcow2", ".golden-1.work", "noble-server-cloudimg-amd64.img", "runtime-1.iso.tmp"]) {
+    for (const name of ["golden-1.json", "runtime-1.json", "golden-.qcow2", ".golden-1.work", "noble-minimal-cloudimg-amd64.img", "runtime-1.iso.tmp"]) {
       expect(imageVersionOf("golden", name)).toBeUndefined();
       expect(imageVersionOf("runtime", name)).toBeUndefined();
     }
