@@ -73,6 +73,26 @@ test("a name that is not valid, or is taken, is said so at once, and nothing is 
   expect((await harness.api.listDots()).filter((dot) => dot.name === "name-taken")).toHaveLength(1);
 });
 
+test("the checks beside the form say what the host lacks and the command that fixes it, and check again on request", async ({ signedIn: page, harness }) => {
+  const missing = { id: "golden-image", label: "golden image", status: "missing", detail: "none in the images folder", fix: "invisible-dots image build" } as const;
+  const healthy = harness.host.images;
+  harness.host.images = [missing, healthy[1]!];
+  try {
+    await page.goto(`${harness.webUrl}/new`);
+    const panel = page.getByRole("region", { name: "Before you create" });
+    await expect(panel.getByText("QEMU: Ready")).toBeVisible();
+    await expect(panel.getByText("golden image: Needs attention")).toBeVisible();
+    await expect(panel.getByText("invisible-dots image build")).toBeVisible();
+    // Fixed on the host: the next check shows it.
+    harness.host.images = healthy;
+    await panel.getByRole("button", { name: "Check again" }).click();
+    await expect(panel.getByText("golden image: Ready")).toBeVisible();
+    await expect(panel.getByText("invisible-dots image build")).toHaveCount(0);
+  } finally {
+    harness.host.images = healthy;
+  }
+});
+
 test("the Home page shows a card per Dot and the computer's power on it works", async ({ signedIn: page, harness }) => {
   const dot = await harness.createDot("home-card", "Watch the fares from Milan to Lisbon");
   await page.goto(`${harness.webUrl}/`);

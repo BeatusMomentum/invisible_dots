@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../lib/api";
-import { buildThread, isChatActivityEvent, mergeChatEvents, unsettled, type PendingMessage, type ThreadItem } from "../../lib/chat-thread";
+import { buildThread, CHAT_ACTIVITY_EVENT_TYPES, isChatActivityEvent, mergeChatEvents, unsettled, type PendingMessage, type ThreadItem } from "../../lib/chat-thread";
 import { readEventLog } from "../../lib/event-log";
 import { CHAT_EVENT_TYPES } from "../../lib/messages";
 import type { ChatMessage, StoredEvent } from "../../lib/types";
@@ -47,7 +47,7 @@ export function useChat(dotId: string): Chat {
   const load = useCallback(() => {
     const mine = ++generation.current;
     setStatus("loading");
-    readEventLog(api, dotId, isChatActivityEvent)
+    readEventLog(api, dotId, { types: CHAT_ACTIVITY_EVENT_TYPES })
       .then((read) => {
         if (mine !== generation.current) return;
         setEvents((current) => mergeChatEvents(current, read));

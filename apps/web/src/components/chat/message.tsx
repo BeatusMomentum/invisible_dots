@@ -16,12 +16,16 @@ function When({ at }: { at: string }) {
   );
 }
 
-/** What the person said: a bubble on the right. `note` says something about it that the log does not (still on its way, waiting for the computer). */
-export function UserMessage({ text, at, note }: { text: string; at?: string; note?: string }) {
+/**
+ * What the person said: a bubble on the right. `via` says which chat it came through when it was not typed here;
+ * `note` says something about it that the log does not (still on its way, waiting for the computer).
+ */
+export function UserMessage({ text, at, note, via }: { text: string; at?: string; note?: string; via?: string }) {
   return (
     <article aria-label="You" className="flex flex-col items-end gap-1">
       <p className="max-w-[85%] rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-sm leading-relaxed break-words whitespace-pre-wrap text-primary-foreground">{text}</p>
       <div className="flex items-center gap-2">
+        {via ? <span className="text-xs text-muted-foreground">{via}</span> : null}
         {note ? (
           <span role="status" className="text-xs text-muted-foreground">
             {note}

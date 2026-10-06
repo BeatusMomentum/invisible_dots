@@ -2,6 +2,7 @@
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CONVERSATION_LIST_LIMIT } from "@invisible-dots/shared/browser";
+import { CHAT_ACTIVITY_EVENT_TYPES } from "../src/lib/chat-thread";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ChatView } from "../src/components/chat/ChatView";
@@ -111,6 +112,17 @@ describe("the conversation", () => {
     // One face for the group of two answers: the avatar of the chat, not counting the header's own.
     expect(within(dots[0]!).getByRole("img")).toBeTruthy();
     expect(within(dots[1]!).queryByRole("img")).toBeNull();
+  });
+
+  it("says which chat a message came through, and nothing for one typed here", async () => {
+    plane.store("d1", "user.message", { text: "from my phone", origin: { channel: "telegram", binding_id: "b1", chat_id: "42", external_id: "7" } });
+    plane.store("d1", "user.message", { text: "from a number", origin: { channel: "whatsapp", binding_id: "b2", chat_id: "393", external_id: "8" } });
+    plane.store("d1", "user.message", { text: "from this page" });
+    await renderChat();
+    const phone = within(await screen.findByText("from my phone").then((node) => node.closest("article")!));
+    expect(phone.getByText("via Telegram")).toBeTruthy();
+    expect(within(screen.getByText("from a number").closest("article")!).getByText("via WhatsApp")).toBeTruthy();
+    expect(within(screen.getByText("from this page").closest("article")!).queryByText(/^via /)).toBeNull();
   });
 
   it("invites the first message with the goal and three ways to begin, which fill the box and do not send", async () => {
@@ -274,14 +286,16 @@ describe("what the Dot did between its messages", () => {
     expect(await screen.findByText("found three")).toBeTruthy();
   });
 
-  it("reads the log page by page, so a step on a later page is found", async () => {
-    // The route serves 1000 events a page: a step after the first thousand is on the second.
+  it("asks the log only for what the chat reads, page by page, so a step on a later page is found", async () => {
+    // The route serves 1000 events a page and counts what the filter keeps: a step after a thousand kept ones is on the second.
     plane.store("d1", "user.message", { text: "long ago" });
-    for (let i = 0; i < 1000; i++) plane.store("d1", "agent.state", { state: "IDLE" });
+    for (let i = 0; i < 1000; i++) plane.store("d1", "approval.resolved", { approval_id: `a${i}`, decision: "approve" });
+    plane.store("d1", "agent.state", { state: "IDLE" });
     plane.store("d1", "tool.called", call({ tool: "grep", target: "deep" }));
     await renderChat();
     expect(await screen.findByText("deep")).toBeTruthy();
     expect(requested(/\/events$/)).toHaveLength(2);
+    expect(plane.eventQueries.map((q) => q.types)).toEqual([CHAT_ACTIVITY_EVENT_TYPES, CHAT_ACTIVITY_EVENT_TYPES]);
   });
 
   it("says when what the Dot did cannot be read, keeps the messages, and reads again on request", async () => {

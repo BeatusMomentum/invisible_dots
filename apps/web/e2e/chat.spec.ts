@@ -246,3 +246,16 @@ test("a Dot opened by its name moves to its id, and the chat hears the Dot live"
   guest.emit("message.assistant", { text: "Heard on the id." });
   await expect(page.getByRole("log").getByRole("article", { name: "chat-by-name" }).getByText("Heard on the id.")).toBeVisible();
 });
+
+test("a message that came through a chat says which one, and one typed here says nothing", async ({ signedIn: page, harness }) => {
+  const dot = await harness.createDot("chat-origin", "Watch the fares to Lisbon");
+  const origin = { channel: "telegram", binding_id: "bind_e2e", chat_id: "4242", external_id: "99:1" } as const;
+  await harness.control.scheduler.sendMessage(dot.id, "Is the 9 am flight still the cheapest?", origin);
+  await harness.control.scheduler.sendMessage(dot.id, "And the one on Friday?");
+  await page.goto(`${harness.webUrl}/dots/${dot.id}/chat`);
+
+  const phone = page.getByRole("article", { name: "You" }).filter({ hasText: "Is the 9 am flight still the cheapest?" });
+  await expect(phone.getByText("via Telegram")).toBeVisible();
+  await expect(page.getByRole("article", { name: "You" }).filter({ hasText: "And the one on Friday?" })).toBeVisible();
+  await expect(page.getByText(/^via /)).toHaveCount(1);
+});

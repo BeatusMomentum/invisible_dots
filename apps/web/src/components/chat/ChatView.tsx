@@ -5,6 +5,7 @@ import { CONVERSATION_LIST_LIMIT } from "@invisible-dots/shared/browser";
 import { useEffect, useRef, useState } from "react";
 import { isWorking } from "../../lib/agent";
 import { lastStepSinceUser } from "../../lib/chat-thread";
+import { viaChannel } from "../../lib/channels";
 import { composerState, messageNote, suggestions } from "../../lib/chat-view";
 import { readDraft, writeDraft } from "../../lib/draft";
 import { useMinWidth } from "../../lib/use-min-width";
@@ -107,7 +108,7 @@ function ChatInner({ dotId }: { dotId: string }) {
           {chat.thread.map((item) => {
             switch (item.kind) {
               case "user":
-                return <UserMessage key={`m${item.id}`} text={item.message.text} at={item.message.created_at} note={messageNote(item.id, chat.queued)} />;
+                return <UserMessage key={`m${item.id}`} text={item.message.text} at={item.message.created_at} note={messageNote(item.id, chat.queued)} via={viaChannel(item.message.origin)} />;
               case "assistant":
                 return <AssistantMessage key={`m${item.id}`} message={item.message} dot={who} ring={ring} firstOfGroup={item.firstOfGroup} />;
               case "activity":

@@ -3,7 +3,7 @@
  * sends, answered from memory, and `/api/stream` as a live SSE body the test pushes events into. `install()` puts
  * it behind the global `fetch`, which is where the web client's SDK looks.
  */
-import { MAX_EVENT_PAGE, type ApprovalRecord, type BrowserIdentity, type ComputerAnswer, type DotConfig, type DotSummary, type StoredEvent } from "@invisible-dots/shared/browser";
+import { MAX_EVENT_PAGE, type ApprovalRecord, type BrowserIdentity, type ComputerAnswer, type DoctorCheck, type DotConfig, type DotSummary, type StoredEvent } from "@invisible-dots/shared/browser";
 import type { TaskRecord } from "@invisible-dots/sdk";
 import { vi } from "vitest";
 
@@ -63,6 +63,8 @@ export class FakeControlPlane {
   tasks: TaskRecord[] = [];
   /** The stored event log, as `GET /api/dots/:id/events` pages through it; `push` and `store` add to it. */
   events: StoredEvent[] = [];
+  /** What each `GET .../events` asked for, so a test can see that a page cut by type was asked for by type. */
+  eventQueries: Array<{ after: number; limit: number; types: string[] | null; taskId: string | null }> = [];
   /** The body of every `POST /api/dots/:id/tasks`, as the browser sent it. */
   createdTasks: unknown[] = [];
   /** Answer `POST /api/dots/:id/tasks` with this error instead of 201. */
@@ -91,6 +93,15 @@ export class FakeControlPlane {
   spentUsd = 0;
   keyConfigured = true;
   healthy = true;
+  /** What `GET /api/doctor` reports, in the contract's order (the real one has nine rows, the last the key). */
+  doctor: DoctorCheck[] = [
+    { id: "node", label: "Node.js", status: "ok", detail: "24.1.0" },
+    { id: "qemu", label: "QEMU", status: "ok", detail: "8.2.2" },
+    { id: "golden-image", label: "golden image", status: "ok", detail: "golden-1.qcow2 matches its manifest" },
+    { id: "openrouter", label: "OpenRouter key", status: "ok", detail: "stored" },
+  ];
+  /** Answer `GET /api/doctor` with this status instead of the report. */
+  failDoctor: number | null = null;
   computerLastError: string | null = null;
   /** Every request as "METHOD path", in order. */
   requests: string[] = [];
@@ -152,6 +163,10 @@ export class FakeControlPlane {
       );
     }
     if (pathname === "/session" && method === "DELETE") return new Response(null, { status: 204 });
+    if (pathname === "/api/doctor") {
+      if (this.failDoctor) return json({ error: "broken", message: "the doctor could not run" }, this.failDoctor);
+      return json({ ok: this.doctor.every((check) => check.status === "ok"), checks: this.doctor });
+    }
     if (pathname === "/api/health") {
       return this.healthy ? json({ status: "ok", database: "ok", version: "9.9.9", openrouter_configured: this.keyConfigured }) : json({ error: "down", message: "down" }, 503);
     }
@@ -202,7 +217,15 @@ export class FakeControlPlane {
         if (this.failEvents) return json({ error: "broken", message: "the event log is not available" }, this.failEvents);
         const after = Number(searchParams.get("after") ?? 0);
         const limit = Math.min(Number(searchParams.get("limit") ?? 500), this.eventPage);
-        return json({ events: this.events.filter((e) => e.dot_id === record.id && e.id > after).slice(0, limit) });
+        // The real route's filters: `types` (a comma-separated list) and `task_id` (data.task_id).
+        const types = searchParams.get("types")?.split(",");
+        const taskId = searchParams.get("task_id");
+        this.eventQueries.push({ after, limit, types: types ?? null, taskId });
+        return json({
+          events: this.events
+            .filter((e) => e.dot_id === record.id && e.id > after && (!types || types.includes(e.type)) && (taskId === null || e.data.task_id === taskId))
+            .slice(0, limit),
+        });
       }
       if (rest === "messages" && method === "GET") {
         // The host logs the person's side as `user.message`, which the shared event type list does not hold.
@@ -210,7 +233,7 @@ export class FakeControlPlane {
         const messages = this.events
           .filter((e) => e.dot_id === record.id && (type(e) === "user.message" || type(e) === "message.assistant"))
           .slice(0, this.messageLimit)
-          .map((e) => ({ event_id: e.id, role: type(e) === "user.message" ? "user" : "assistant", text: String(e.data.text ?? ""), in_reply_to: null, created_at: e.created_at }));
+          .map((e) => ({ event_id: e.id, role: type(e) === "user.message" ? "user" : "assistant", text: String(e.data.text ?? ""), in_reply_to: null, ...(type(e) === "user.message" && e.data.origin ? { origin: e.data.origin } : {}), created_at: e.created_at }));
         return json({ messages });
       }
       if (rest === "messages" && method === "POST") {

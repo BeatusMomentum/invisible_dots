@@ -1,6 +1,6 @@
 import { MAX_EVENT_PAGE, type StoredEvent } from "@invisible-dots/shared/browser";
 import { describe, expect, it } from "vitest";
-import { isTaskEvent, loadTaskEvents, mergeTaskEvents, progressOf, storyOf, taskIdOf } from "../src/lib/task-events";
+import { isTaskEvent, loadTaskEvents, TASK_EVENT_TYPES, mergeTaskEvents, progressOf, storyOf, taskIdOf } from "../src/lib/task-events";
 
 let n = 0;
 function event(type: string, data: Record<string, unknown> = {}, at = `2026-03-10T12:00:${String(n).padStart(2, "0")}Z`): StoredEvent {
@@ -29,36 +29,49 @@ describe("which events can belong to a task", () => {
 });
 
 describe("loadTaskEvents", () => {
-  it("reads the log page by page to its end and keeps the events of tasks", async () => {
-    const log: StoredEvent[] = [];
-    for (let i = 0; i < 2 * MAX_EVENT_PAGE + 300; i++) log.push(i % 2 === 0 ? event("task.progress", { task_id: "t1", text: `p${i}` }) : event("agent.state", { state: "IDLE" }));
-    const asked: Array<{ after?: number; limit?: number }> = [];
-    const client = {
-      async events(_dot: string, options: { after?: number; limit?: number } = {}) {
+  /** The control plane's `types` filter: the limit counts what is kept. */
+  function serving(log: StoredEvent[]) {
+    const asked: Array<{ after?: number; limit?: number; types?: readonly string[] }> = [];
+    return {
+      asked,
+      async events(_dot: string, options: { after?: number; limit?: number; types?: readonly string[] } = {}) {
         asked.push(options);
-        return log.filter((e) => e.id > (options.after ?? 0)).slice(0, options.limit);
+        return log.filter((e) => e.id > (options.after ?? 0) && (!options.types || options.types.includes(e.type))).slice(0, options.limit);
       },
     };
+  }
+
+  it("asks for the types of a task's story and reads them page by page to the end", async () => {
+    const log: StoredEvent[] = [];
+    for (let i = 0; i < 2 * MAX_EVENT_PAGE + 300; i++) log.push(i % 2 === 0 ? event("task.progress", { task_id: "t1", text: `p${i}` }) : event("agent.state", { state: "IDLE" }));
+    const client = serving(log);
     const read = await loadTaskEvents(client, "d1");
     expect(read).toHaveLength(MAX_EVENT_PAGE + 150);
     expect(read.every((e) => e.type === "task.progress")).toBe(true);
-    // A full page, a full page, 300: the short page ends it.
-    expect(asked).toHaveLength(3);
-    expect(asked.map((a) => a.limit)).toEqual([MAX_EVENT_PAGE, MAX_EVENT_PAGE, MAX_EVENT_PAGE]);
-    expect(asked[1]!.after).toBe(log[MAX_EVENT_PAGE - 1]!.id);
+    // The agent's state never crossed the wire: 1150 kept events are a full page and a short one.
+    expect(client.asked.map((a) => a.types)).toEqual([TASK_EVENT_TYPES, TASK_EVENT_TYPES]);
+    expect(client.asked.map((a) => a.limit)).toEqual([MAX_EVENT_PAGE, MAX_EVENT_PAGE]);
+    expect(client.asked[1]!.after).toBe(read[MAX_EVENT_PAGE - 1]!.id);
+  });
+
+  it("leaves out the tool calls and approvals of the chat, which name no task", async () => {
+    const log = [
+      event("tool.called", { tool: "exec", task_id: "t1" }),
+      event("tool.called", { tool: "exec" }),
+      event("approval.requested", { approval_id: "a1", tool: "exec" }),
+      event("approval.requested", { approval_id: "a2", tool: "exec", task_id: "t1" }),
+      event("approval.resolved", { approval_id: "a2", decision: "approve" }),
+      event("message.assistant", { text: "hi" }),
+    ];
+    const read = await loadTaskEvents(serving(log), "d1");
+    expect(read.map((e) => e.id)).toEqual([log[0]!.id, log[3]!.id, log[4]!.id]);
   });
 
   it("ends on a page that is exactly full only after asking once more", async () => {
     const log = Array.from({ length: MAX_EVENT_PAGE }, (_, i) => event("task.progress", { task_id: "t1", text: String(i) }));
-    let calls = 0;
-    const client = {
-      async events(_dot: string, options: { after?: number; limit?: number } = {}) {
-        calls++;
-        return log.filter((e) => e.id > (options.after ?? 0)).slice(0, options.limit);
-      },
-    };
+    const client = serving(log);
     expect(await loadTaskEvents(client, "d1")).toHaveLength(MAX_EVENT_PAGE);
-    expect(calls).toBe(2);
+    expect(client.asked).toHaveLength(2);
   });
 
   it("lets a failure through", async () => {

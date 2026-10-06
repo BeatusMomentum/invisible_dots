@@ -7,24 +7,34 @@ function log(count: number): StoredEvent[] {
 }
 
 function clientOf(events: StoredEvent[]) {
-  const asked: Array<{ after?: number; limit?: number }> = [];
+  const asked: Array<{ after?: number; limit?: number; types?: readonly string[] }> = [];
   return {
     asked,
-    async events(_dot: string, options: { after?: number; limit?: number } = {}) {
+    // The control plane's filter: the types a caller names are kept in the database, the limit counts what is kept.
+    async events(_dot: string, options: { after?: number; limit?: number; types?: readonly string[] } = {}) {
       asked.push(options);
-      return events.filter((e) => e.id > (options.after ?? 0)).slice(0, options.limit);
+      return events.filter((e) => e.id > (options.after ?? 0) && (!options.types || options.types.includes(e.type))).slice(0, options.limit);
     },
   };
 }
 
 describe("readEventLog", () => {
-  it("keeps what the caller's predicate accepts, oldest first, from every page", async () => {
-    const client = clientOf(log(2 * MAX_EVENT_PAGE + 500));
-    const read = await readEventLog(client, "d1", (event) => event.type === "tool.called");
-    expect(read).toHaveLength(Math.ceil((2 * MAX_EVENT_PAGE + 500) / 3));
+  it("asks the control plane for the types it reads and pages through what is kept, oldest first", async () => {
+    const client = clientOf(log(5 * MAX_EVENT_PAGE + 500));
+    const read = await readEventLog(client, "d1", { types: ["tool.called"] });
+    expect(read).toHaveLength(Math.ceil((5 * MAX_EVENT_PAGE + 500) / 3));
     expect(read.every((event) => event.type === "tool.called")).toBe(true);
     expect(read.map((event) => event.id)).toEqual([...read.map((event) => event.id)].sort((a, b) => a - b));
-    expect(client.asked.map((a) => a.after)).toEqual([0, MAX_EVENT_PAGE, 2 * MAX_EVENT_PAGE]);
+    // Every page asked for the type: the log was not read in full to be cut here (a third of it is that type, so two pages).
+    expect(client.asked.every((a) => a.types?.join() === "tool.called")).toBe(true);
+    expect(client.asked).toHaveLength(2);
+    expect(client.asked.map((a) => a.after)).toEqual([0, read[MAX_EVENT_PAGE - 1]!.id]);
+  });
+
+  it("also keeps only what the caller's predicate accepts, for what a type alone cannot say", async () => {
+    const client = clientOf(log(30));
+    const read = await readEventLog(client, "d1", { types: ["tool.called", "agent.state"], keep: (event) => event.id % 2 === 0 });
+    expect(read.map((event) => event.id)).toEqual(Array.from({ length: 15 }, (_, i) => 2 * (i + 1)));
   });
 
   it("reads a log the way the control plane serves it: pages cut at the cap it publishes, never longer", async () => {
@@ -32,16 +42,16 @@ describe("readEventLog", () => {
     const events = log(3 * MAX_EVENT_PAGE + 7);
     const asked: number[] = [];
     const client = {
-      async events(_dot: string, options: { after?: number; limit?: number } = {}) {
+      async events(_dot: string, options: { after?: number; limit?: number; types?: readonly string[] } = {}) {
         asked.push(options.limit ?? 0);
         return events.filter((e) => e.id > (options.after ?? 0)).slice(0, Math.min(options.limit ?? MAX_EVENT_PAGE, MAX_EVENT_PAGE));
       },
     };
-    expect(await readEventLog(client, "d1", () => true)).toHaveLength(events.length);
+    expect(await readEventLog(client, "d1", { types: ["tool.called", "agent.state"] })).toHaveLength(events.length);
     expect(asked).toEqual([MAX_EVENT_PAGE, MAX_EVENT_PAGE, MAX_EVENT_PAGE, MAX_EVENT_PAGE]);
   });
 
   it("returns an empty log as nothing", async () => {
-    expect(await readEventLog(clientOf([]), "d1", () => true)).toEqual([]);
+    expect(await readEventLog(clientOf([]), "d1", { types: ["tool.called"] })).toEqual([]);
   });
 });

@@ -13,7 +13,8 @@ import { fileURLToPath } from "node:url";
 import { startServer, type RunningServer } from "@invisible-dots/api";
 import { FakeDriver, waitUntilSettledReady } from "@invisible-dots/scheduler/testing";
 import { InvisibleDotsClient, type DotRecord } from "@invisible-dots/sdk";
-import { ENV } from "@invisible-dots/shared";
+import { ENV, type DoctorCheck } from "@invisible-dots/shared";
+import { healthyDoctor, ok } from "../../vm-manager/test/doctor-fakes.js";
 
 const WEB_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const quiet = { debug() {}, info() {}, warn() {}, error() {} };
@@ -28,6 +29,11 @@ export interface Harness {
   api: InvisibleDotsClient;
   /** The token the login page asks for. */
   token: string;
+  /**
+   * The host the doctor looks at: a healthy one (QEMU, an accelerator, disk), so a test does not depend on the machine
+   * it runs on. A test changes what the images row says; the page's next check shows it.
+   */
+  host: { images: DoctorCheck[] };
   /** A Dot whose computer is up and READY. */
   createDot(name: string, goal?: string): Promise<DotRecord>;
   close(): Promise<void>;
@@ -61,11 +67,15 @@ async function waitForWeb(url: string, child: ChildProcess, output: () => string
 export async function startHarness(): Promise<Harness> {
   const home = await mkdtemp(join(tmpdir(), "idots-e2e-"));
   const driver = new FakeDriver();
+  const host = {
+    images: [ok("golden-image", "golden image", "golden-1.qcow2 matches its manifest"), ok("runtime-image", "runtime ISO", "runtime-1.iso matches its manifest")],
+  };
   const control = await startServer({
     env: { INVISIBLE_DOTS_HOME: home },
     listen: "127.0.0.1:0",
     logger: quiet,
     driver,
+    doctor: { ...healthyDoctor().deps, images: async () => host.images },
     // Quick polls, so a Dot is READY in milliseconds; the slow background loops are not needed.
     scheduler: {
       dispatchIntervalMs: 60_000,
@@ -105,6 +115,7 @@ export async function startHarness(): Promise<Harness> {
     webUrl,
     control,
     driver,
+    host,
     api,
     token: control.token,
     async createDot(name, goal = "watch the fares") {

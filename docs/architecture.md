@@ -1759,7 +1759,9 @@ YAML that sets what it has no control for instead of dropping it. The shared
 config schema is the only judge: `lib/dot-form.ts` maps its issues onto the
 controls, and a name another Dot has is refused at once. A preflight panel shows
 what `GET /api/health` reports (the control plane, its database, the OpenRouter
-key). Submitting is `POST /api/dots`, and then the Dot's chat opens.
+key) and, below it, the host report of `GET /api/doctor` (QEMU, the accelerator,
+disk, the images), each failing row with the command that fixes it; the doctor's
+own key row is left out, so the key is said once. Submitting is `POST /api/dots`, and then the Dot's chat opens.
 
 The Dot header's error banner gives the reason and "Open settings", and one way
 back: Reboot while the computer is up (the host reboots only a running
@@ -1775,13 +1777,15 @@ has its own address, `/dots/<id>/tasks/<taskId>`, which opens a drawer over the
 list with its state, its result as markdown or the reason it failed, and its
 story. The task route knows a task by its id alone, so a task of another Dot
 opened under this Dot's address is shown as missing. The story and the progress lines come from the Dot's event log, which
-the page reads from its start (`lib/event-log.ts` is the one function that
-pages through it, the route having no filter yet) only once a task is running
+the page reads from its start, asking only for the event types of a task's
+story (`lib/event-log.ts` is the one function that pages through the route's
+`types` filter) only once a task is running
 or open, and then keeps current from the live stream. The newest progress line of a running task is also under the goal in
 the Dot header. A task that waits for an answer links to the Dot's approvals.
 
 The chat (`/dots/<id>/chat`) is the conversation: the person's messages as
-bubbles, the Dot's as markdown (no raw HTML, links open in a new tab without a
+bubbles (one that came through Telegram or WhatsApp says "via Telegram", from
+the `origin` of the message), the Dot's as markdown (no raw HTML, links open in a new tab without a
 referrer, an image is shown as a link to it, a fenced block has a copy button).
 Between them it shows what the Dot did to answer, read from the same event
 log: each `tool.called` that names no task as one quiet line (the words of

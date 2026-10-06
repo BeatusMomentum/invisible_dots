@@ -15,6 +15,19 @@ export function taskIdOf(event: Pick<StoredEvent, "data">): string {
   return text(event.data?.task_id);
 }
 
+/** The event types that can belong to a task's story; the control plane keeps only these when the log is read. */
+export const TASK_EVENT_TYPES: readonly string[] = [
+  "task.created",
+  "task.started",
+  "task.progress",
+  "task.completed",
+  "task.failed",
+  "task.cancelled",
+  "tool.called",
+  "approval.requested",
+  "approval.resolved",
+];
+
 /**
  * Whether an event can belong to a task's story: it names a task, or it is an approval's answer, which names only
  * the approval (the story links it to its task through the request).
@@ -23,9 +36,9 @@ export function isTaskEvent(event: Pick<StoredEvent, "type" | "data">): boolean 
   return taskIdOf(event) !== "" || event.type === "approval.resolved";
 }
 
-/** Every event of the Dot's log that can belong to a task, oldest first (the route has no filter by task yet, see `readEventLog`). */
+/** Every event of the Dot's log that can belong to a task, oldest first: the types of a task's story, of which a tool call or an approval of the chat names no task and is left out. */
 export function loadTaskEvents(client: Pick<InvisibleDotsClient, "events">, dotId: string): Promise<StoredEvent[]> {
-  return readEventLog(client, dotId, isTaskEvent);
+  return readEventLog(client, dotId, { types: TASK_EVENT_TYPES, keep: isTaskEvent });
 }
 
 export function mergeTaskEvents(current: readonly StoredEvent[], incoming: readonly StoredEvent[]): StoredEvent[] {

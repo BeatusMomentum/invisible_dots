@@ -190,20 +190,25 @@ function checkLine(panel: HTMLElement, label: string): string {
 }
 
 describe("Create a Dot: before you create", () => {
-  it("shows the checks of the control plane, all ready when it has a key", async () => {
+  /** The control plane's three rows and the host's three (the doctor's key row is not drawn). */
+  const ROWS = 6;
+
+  it("shows the checks of the control plane and of the host, all ready when it has a key", async () => {
     await renderPage();
     const panel = await screen.findByRole("region", { name: "Before you create" });
-    await waitFor(() => expect(within(panel).getAllByRole("listitem")).toHaveLength(3));
+    await waitFor(() => expect(within(panel).getAllByRole("listitem")).toHaveLength(ROWS));
     expect(checkLine(panel, "Control plane")).toBe("Control plane: ReadyAnswering, version 9.9.9.");
     expect(checkLine(panel, "Database")).toBe("Database: ReadyAnswering.");
     expect(checkLine(panel, "OpenRouter key")).toBe("OpenRouter key: ReadyStored.");
+    expect(checkLine(panel, "QEMU")).toBe("QEMU: Ready8.2.2");
+    expect(checkLine(panel, "golden image")).toBe("golden image: Readygolden-1.qcow2 matches its manifest");
   });
 
   it("says that no key is stored, and still lets the Dot be created", async () => {
     plane.keyConfigured = false;
     await renderPage();
     const panel = await screen.findByRole("region", { name: "Before you create" });
-    await waitFor(() => expect(within(panel).getAllByRole("listitem")).toHaveLength(3));
+    await waitFor(() => expect(within(panel).getAllByRole("listitem")).toHaveLength(ROWS));
     expect(checkLine(panel, "OpenRouter key")).toMatch(/^OpenRouter key: Needs attention.*cannot answer until one is/);
     expect(checkLine(panel, "Control plane")).toContain(": Ready");
     await fillIdentity();
@@ -211,17 +216,46 @@ describe("Create a Dot: before you create", () => {
     await waitFor(() => expect(push).toHaveBeenCalled());
   });
 
-  it("says when the control plane does not answer, and checks again on request", async () => {
-    plane.healthy = false;
+  it("names what the host lacks and the command that fixes it, and still lets the Dot be created", async () => {
+    plane.doctor = [
+      { id: "qemu", label: "QEMU", status: "missing", detail: "not found on PATH", fix: "invisible-dots setup" },
+      { id: "golden-image", label: "golden image", status: "missing", detail: "none in the images folder", fix: "invisible-dots image build" },
+    ];
     await renderPage();
     const panel = await screen.findByRole("region", { name: "Before you create" });
-    await waitFor(() => expect(within(panel).getAllByRole("listitem")).toHaveLength(3));
+    await waitFor(() => expect(within(panel).getAllByRole("listitem")).toHaveLength(5));
+    expect(checkLine(panel, "QEMU")).toBe("QEMU: Needs attentionnot found on PATHFix: invisible-dots setup");
+    expect(checkLine(panel, "golden image")).toContain("Fix: invisible-dots image build");
+    expect(checkLine(panel, "Control plane")).toContain(": Ready");
+    await fillIdentity();
+    await userEvent.click(screen.getByRole("button", { name: "Create Dot" }));
+    await waitFor(() => expect(push).toHaveBeenCalled());
+  });
+
+  it("says that the host was not checked when the report cannot be made, and keeps the control plane's rows", async () => {
+    plane.failDoctor = 500;
+    await renderPage();
+    const panel = await screen.findByRole("region", { name: "Before you create" });
+    await waitFor(() => expect(within(panel).getAllByRole("listitem")).toHaveLength(4));
+    expect(checkLine(panel, "This computer")).toBe("This computer: Not checkedNot checked: the doctor could not run");
+    expect(checkLine(panel, "Control plane")).toContain(": Ready");
+  });
+
+  it("says when the control plane does not answer, and checks again on request", async () => {
+    plane.healthy = false;
+    plane.failDoctor = 503;
+    await renderPage();
+    const panel = await screen.findByRole("region", { name: "Before you create" });
+    await waitFor(() => expect(within(panel).getAllByRole("listitem")).toHaveLength(4));
     expect(checkLine(panel, "Control plane")).toContain(": Needs attention");
     expect(checkLine(panel, "Database")).toContain(": Not checked");
+    expect(checkLine(panel, "This computer")).toContain(": Not checked");
     plane.healthy = true;
+    plane.failDoctor = null;
     await userEvent.click(within(panel).getByRole("button", { name: "Check again" }));
     await waitFor(() => expect(checkLine(panel, "Control plane")).toContain(": Ready"));
     expect(checkLine(panel, "Database")).toContain(": Ready");
+    expect(checkLine(panel, "QEMU")).toContain(": Ready");
   });
 });
 

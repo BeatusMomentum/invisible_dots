@@ -2,7 +2,7 @@
 
 import { CircleCheckIcon, CircleHelpIcon, CircleXIcon, RefreshCwIcon } from "lucide-react";
 import { api } from "../../lib/api";
-import { preflightItems, type HealthResult, type PreflightState } from "../../lib/preflight";
+import { preflightItems, type HealthResult, type HostResult, type PreflightResult, type PreflightState } from "../../lib/preflight";
 import { cn } from "../../lib/utils";
 import { useResource } from "../ui";
 import { Button } from "../ui/button";
@@ -14,12 +14,17 @@ const STATE = {
   unknown: { Icon: CircleHelpIcon, className: "text-muted-foreground", word: "Not checked" },
 } satisfies Record<PreflightState, { Icon: typeof CircleCheckIcon; className: string; word: string }>;
 
-async function check(): Promise<HealthResult> {
-  try {
-    return { health: await api.health() };
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) };
-  }
+function reason(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** The control plane's answer and the host's report, asked together; the report runs QEMU's probe, so it is the slower one. */
+async function check(): Promise<PreflightResult> {
+  const [health, host] = await Promise.all([
+    api.health().then((answer): HealthResult => ({ health: answer }), (error: unknown): HealthResult => ({ error: reason(error) })),
+    api.doctor().then((answer): HostResult => ({ checks: answer.checks }), (error: unknown): HostResult => ({ error: reason(error) })),
+  ]);
+  return { health, host };
 }
 
 /** What a new Dot depends on, checked when the page opens and again on request. It informs; creating stays possible. */
@@ -55,6 +60,11 @@ export function PreflightPanel() {
                     <span className="sr-only">: {word}</span>
                   </p>
                   <p className="text-xs text-muted-foreground">{item.detail}</p>
+                  {item.fix ? (
+                    <p className="text-xs">
+                      Fix: <code className="rounded bg-muted px-1 py-0.5 font-mono break-all">{item.fix}</code>
+                    </p>
+                  ) : null}
                 </div>
               </li>
             );
