@@ -1,18 +1,18 @@
 {
   "//": "What each suite must reach on each host, read by .github/scripts/test-guard.mjs in CI (tests.yml) and in the pre-push hook. Raise a floor when tests are added; lowering one is a decision to write down in the commit that does it. Linux skips only the tests that drive a real Windows PowerShell; a Windows host compiles dot-agentd's unix-only test files out and skips the two Go tests that need a Linux guest. The playwright floor is the web client's browser tests (the web job of tests.yml; the same ninety-five run on a Windows host, which is where they are developed). The pytest floor is the Python engine's (invisible_engine_dots, the engine job of tests.yml, Linux only, nothing may skip).",
   "vitest": {
-    "linux": { "min_passed": 1998, "allow_skipped": "^generated PowerShell on a real Windows PowerShell " },
-    "win32": { "min_passed": 2001, "allow_skipped": "" }
+    "linux": { "min_passed": 2157, "allow_skipped": "^generated PowerShell on a real Windows PowerShell " },
+    "win32": { "min_passed": 2160, "allow_skipped": "" }
   },
   "postgres": {
-    "linux": { "min_passed": 633, "allow_skipped": "", "require": { "\\bpg\\b": 255 } }
+    "linux": { "min_passed": 687, "allow_skipped": "", "require": { "\\bpg\\b": 279 } }
   },
   "go": {
-    "linux": { "min_passed": 108, "allow_skipped": "" },
+    "linux": { "min_passed": 110, "allow_skipped": "" },
     "win32": { "min_passed": 64, "allow_skipped": "^agentd (TestSystemRoute|TestPowerOffStartsTheCommandAndAnswers202)$" }
   },
   "pytest": {
-    "linux": { "min_passed": 2421, "allow_skipped": "" }
+    "linux": { "min_passed": 2778, "allow_skipped": "" }
   },
   "playwright": {
     "linux": { "min_passed": 95, "allow_skipped": "" },
