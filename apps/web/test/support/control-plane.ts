@@ -49,6 +49,10 @@ export class FakeControlPlane {
   requests: string[] = [];
   /** Answer a computer action with this error status instead of 202. */
   failComputerAction: number | null = null;
+  /** The `config` of every `POST /api/dots`, as the browser sent it (YAML text or an object). */
+  created: unknown[] = [];
+  /** Answer `POST /api/dots` with this error instead of 201. */
+  failCreate: { status: number; error: string; message: string; details?: unknown } | null = null;
   #stream: ReadableStreamDefaultController<Uint8Array> | null = null;
   #nextEventId = 1;
 
@@ -96,6 +100,12 @@ export class FakeControlPlane {
     if (pathname === "/session" && method === "DELETE") return new Response(null, { status: 204 });
     if (pathname === "/api/health") {
       return this.healthy ? json({ status: "ok", database: "ok", version: "9.9.9", openrouter_configured: this.keyConfigured }) : json({ error: "down", message: "down" }, 503);
+    }
+    if (pathname === "/api/dots" && method === "POST") {
+      const { config } = JSON.parse(String(init?.body)) as { config: unknown };
+      this.created.push(config);
+      if (this.failCreate) return json({ error: this.failCreate.error, message: this.failCreate.message, details: this.failCreate.details }, this.failCreate.status);
+      return json(dotRecord("created-1", { name: "created", status: "CREATING", computer_state: null }), 201);
     }
     if (pathname === "/api/dots") return json({ dots: this.dots });
     if (pathname === "/api/approvals") {

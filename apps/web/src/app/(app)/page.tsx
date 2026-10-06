@@ -1,12 +1,8 @@
 import type { Metadata } from "next";
-import { DotsPage } from "../../components/DotsPage";
+import { HomePage } from "../../components/home/HomePage";
 
 export const metadata: Metadata = { title: "Dots" };
 
 export default function Home() {
-  return (
-    <div className="legacy">
-      <DotsPage />
-    </div>
-  );
+  return <HomePage />;
 }

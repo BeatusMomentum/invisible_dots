@@ -1,6 +1,37 @@
 import { parseDotConfig } from "@invisible-dots/shared";
 import { describe, expect, it } from "vitest";
-import { EXAMPLE_CONFIG, toYaml } from "../src/lib/yaml";
+import { toYaml } from "../src/lib/yaml";
+
+/** The example of the architecture document: every section of a config, written the way a person would. */
+const EXAMPLE_CONFIG = `name: fare-watch
+goal: >
+  Check one-way fares from Milan to Lisbon every morning and report the cheapest day.
+instructions: >
+  Write findings to ~/workspace/fares.csv.
+model:
+  provider: openrouter
+  id: z-ai/glm-5.3-flash
+computer:
+  cpu: 2
+  memory: 4gb
+  disk: 40gb
+  idle_timeout: 15m
+browser:
+  identities:
+    managed_by_dot: true
+    max_identities: 20
+    max_open: 3
+permissions:
+  computer.exec: allow
+  browser.identity.delete: ask
+memory:
+  enabled: true
+limits:
+  max_steps_per_task: 60
+  context_tokens: 32000
+  max_cost_per_task_usd: 1.00
+`;
+
 
 describe("toYaml", () => {
   it("round-trips the example config through the shared schema", () => {

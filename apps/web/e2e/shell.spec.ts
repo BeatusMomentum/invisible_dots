@@ -12,7 +12,7 @@ test("the login page has no rail, refuses a wrong token and lets the right one i
 
   await page.getByLabel("API token").fill("not-the-token");
   await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(page.getByRole("alert").filter({ hasText: "not the API token" })).toBeVisible();
 
   await page.getByLabel("API token").fill(harness.token);
   await page.getByRole("button", { name: "Sign in" }).click();
@@ -119,7 +119,7 @@ test("on a phone the rail is a sheet behind the menu button and nothing scrolls 
   await page.getByRole("button", { name: "Open the menu" }).click();
   const sheet = page.getByRole("dialog");
   await expect(sheet.getByRole("link", { name: /shell-phone/ })).toBeVisible();
-  await sheet.getByRole("link", { name: "Home" }).click();
+  await sheet.getByRole("link", { name: "Home", exact: true }).click();
   await expect(page).toHaveURL(`${harness.webUrl}/`);
   await expect(sheet).toBeHidden();
 });

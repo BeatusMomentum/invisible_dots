@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  CONFIG_BOUNDS,
   computerResources,
   DotConfigError,
   parseDotConfig,
@@ -226,6 +227,41 @@ describe("parseDotConfig", () => {
       expect(error).toBeInstanceOf(DotConfigError);
       expect((error as Error).message).toMatch(/name: .*goal: .*model\.provider: /);
     }
+  });
+});
+
+describe("CONFIG_BOUNDS", () => {
+  const withComputer = (computer: Record<string, unknown>) => ({ ...MINIMAL, computer });
+  const withLimits = (limits: Record<string, unknown>) => ({ ...MINIMAL, limits });
+
+  it("are the defaults the schema applies to a config that leaves the numbers out", () => {
+    const config = parseDotConfig(MINIMAL);
+    expect(config.computer).toEqual({
+      cpu: CONFIG_BOUNDS.cpu.default,
+      memory: CONFIG_BOUNDS.memory.default,
+      disk: CONFIG_BOUNDS.disk.default,
+      idle_timeout: CONFIG_BOUNDS.idleTimeout.default,
+    });
+    expect(config.limits.max_cost_per_task_usd).toBe(CONFIG_BOUNDS.maxCostPerTaskUsd.default);
+  });
+
+  it("are the range the schema accepts: both ends in, one step outside refused", () => {
+    const { cpu, memory, disk, maxCostPerTaskUsd } = CONFIG_BOUNDS;
+    expect(safeParseDotConfig(withComputer({ cpu: cpu.min })).ok).toBe(true);
+    expect(safeParseDotConfig(withComputer({ cpu: cpu.max })).ok).toBe(true);
+    expect(safeParseDotConfig(withComputer({ cpu: cpu.min - 1 })).ok).toBe(false);
+    expect(safeParseDotConfig(withComputer({ cpu: cpu.max + 1 })).ok).toBe(false);
+    for (const [field, bounds] of [["memory", memory], ["disk", disk]] as const) {
+      const gib = (size: string) => parseSize(size) / 1024 ** 3;
+      expect(safeParseDotConfig(withComputer({ [field]: bounds.min })).ok).toBe(true);
+      expect(safeParseDotConfig(withComputer({ [field]: bounds.max })).ok).toBe(true);
+      expect(safeParseDotConfig(withComputer({ [field]: `${gib(bounds.min) - 1}gb` })).ok).toBe(false);
+      expect(safeParseDotConfig(withComputer({ [field]: `${gib(bounds.max) + 1}gb` })).ok).toBe(false);
+    }
+    expect(safeParseDotConfig(withLimits({ max_cost_per_task_usd: maxCostPerTaskUsd.min })).ok).toBe(true);
+    expect(safeParseDotConfig(withLimits({ max_cost_per_task_usd: maxCostPerTaskUsd.max })).ok).toBe(true);
+    expect(safeParseDotConfig(withLimits({ max_cost_per_task_usd: maxCostPerTaskUsd.min / 2 })).ok).toBe(false);
+    expect(safeParseDotConfig(withLimits({ max_cost_per_task_usd: maxCostPerTaskUsd.max + 1 })).ok).toBe(false);
   });
 });
 

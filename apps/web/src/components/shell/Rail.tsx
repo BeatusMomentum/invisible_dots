@@ -18,8 +18,8 @@ import { DotAvatar } from "./DotAvatar";
 import { SignOutButton } from "./SignOutButton";
 import { ThemeToggle } from "./ThemeToggle";
 
-/** Where the person creates a Dot today: the form at the foot of the Dots page (step W4 gives it a page of its own). */
-const NEW_DOT_HREF = "/#create-dot";
+/** Where a Dot is created. */
+const NEW_DOT_HREF = "/new";
 
 function NavLink({ href, current, onNavigate, children }: { href: string; current: boolean; onNavigate?: () => void; children: ReactNode }) {
   return (

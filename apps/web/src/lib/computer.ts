@@ -69,3 +69,8 @@ export function allowedActions(state: string): { start: boolean; stop: boolean; 
       return { start: true, stop: true, reboot: true };
   }
 }
+
+/** The task is cut off if the computer goes down now: the Dot is running one, or waits on an answer inside one. */
+export function taskRunning(status: string): boolean {
+  return status === "RUNNING" || status === "WAITING_APPROVAL";
+}

@@ -124,9 +124,9 @@ describe("the rail", () => {
     await waitFor(() => expect(within(rail()).getByText("Live")).toBeTruthy());
   });
 
-  it("offers a way to create a Dot where creating one is today", async () => {
+  it("offers a way to create a Dot, which is the create page", async () => {
     renderShell();
-    expect(screen.getByRole("link", { name: "New Dot" }).getAttribute("href")).toBe("/#create-dot");
+    expect(screen.getByRole("link", { name: "New Dot" }).getAttribute("href")).toBe("/new");
   });
 
   it("says so, and stays signed in, when the server cannot end the session", async () => {

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { statePill } from "../../lib/agent";
 import { ringState } from "../../lib/attention";
 import { api } from "../../lib/api";
+import { taskRunning } from "../../lib/computer";
 import { cn } from "../../lib/utils";
 import type { Dot } from "../../lib/types";
 import { ErrorBox, useResource, type Resource } from "../ui";
@@ -16,17 +17,7 @@ import { useDotAttention, useDotLive, useShell } from "../shell/attention";
 import { DotAvatar } from "../shell/DotAvatar";
 import { CostPill } from "./CostPill";
 import { PowerMenu } from "./PowerMenu";
-
-const TONE_CLASS = {
-  ok: "bg-ok-soft text-ok",
-  warn: "bg-warn-soft text-warn",
-  error: "bg-danger-soft text-danger",
-  info: "bg-info-soft text-info",
-  neutral: "bg-muted text-muted-foreground",
-} as const;
-
-/** The task is cut off if the computer goes down now: the Dot is running one, or waits on an answer inside one. */
-const TASK_RUNNING = ["RUNNING", "WAITING_APPROVAL"];
+import { TONE_CLASS } from "./tone";
 
 /**
  * The Dot header (S4): its avatar, name and goal; the state it is in, what it cost today, and its computer with
@@ -91,7 +82,7 @@ export function DotHeader({ dotId, dot }: { dotId: string; dot: Resource<Dot> })
             </span>
           )}
           <CostPill dotId={dotId} />
-          <PowerMenu dotId={dotId} computerState={record.computer_state} taskRunning={TASK_RUNNING.includes(record.status)} onDone={dot.reload} />
+          <PowerMenu dotId={dotId} computerState={record.computer_state} taskRunning={taskRunning(record.status)} onDone={dot.reload} />
         </div>
       </div>
 
