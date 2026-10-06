@@ -48,7 +48,7 @@ function Body({ step }: { step: StoryStep }) {
       return (
         <>
           <span title={step.tool} className="font-medium">
-            {toolLabel(step.tool).label}
+            {toolLabel(step.tool, step.tty).label}
           </span>
           {step.target ? <span className="break-all text-muted-foreground"> {step.target}</span> : null}{" "}
           <span className={cn("text-xs", outcome.bad ? "text-danger" : "text-muted-foreground")}>

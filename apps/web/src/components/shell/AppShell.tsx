@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { Button } from "../ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "../ui/sheet";
+import { OfflineBanner } from "./offline-banner";
 import { Rail } from "./Rail";
 
 /**
@@ -38,6 +39,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           </Sheet>
           <span className="font-semibold tracking-tight">invisible_dots</span>
         </header>
+        <OfflineBanner />
         <main id="main" className="mx-auto w-full max-w-[1200px] px-4 py-6 md:px-8">
           {children}
         </main>

@@ -89,7 +89,7 @@ function Cluster({ steps }: { steps: readonly ToolStep[] }) {
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
-        className="flex items-center gap-1.5 rounded py-0.5 text-ui font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+        className="flex items-center gap-1.5 rounded py-0.5 text-ui font-medium text-muted-foreground focus-visible:outline-hidden hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/80"
       >
         <ChevronRightIcon aria-hidden="true" className={cn("size-3.5 transition-transform", open && "rotate-90")} />
         <span className={cn(bad && "text-warn")}>{clusterSummary(steps)}</span>

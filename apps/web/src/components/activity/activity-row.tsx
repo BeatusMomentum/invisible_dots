@@ -46,7 +46,7 @@ export function ActivityRow({ view, event }: { view: EventView; event: StoredEve
         </div>
         {view.detail ? <p className="text-sm break-words text-muted-foreground">{view.detail}</p> : null}
         <details className="text-xs">
-          <summary className="w-fit cursor-pointer rounded-sm text-muted-foreground hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none">Data</summary>
+          <summary className="w-fit cursor-pointer rounded-sm text-muted-foreground hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/80 focus-visible:outline-hidden">Data</summary>
           <pre tabIndex={0} aria-label={`Data of event ${view.id}`} className="mt-1 max-h-64 overflow-auto rounded-md bg-muted p-2 font-mono break-words whitespace-pre-wrap">
             {JSON.stringify(event.data, null, 2)}
           </pre>

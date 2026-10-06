@@ -140,3 +140,33 @@ test("the whole shell works from the keyboard", async ({ signedIn: page, harness
   await page.keyboard.press("Enter");
   await expect(page).toHaveURL(/#main$/);
 });
+
+test("a focused control keeps an outline under forced colors, where box shadows are not drawn, and draws its ring as a shadow otherwise", async ({ signedIn: page, harness }) => {
+  await page.goto(`${harness.webUrl}/new`);
+  await expect(page.getByRole("heading", { name: "Create a Dot" })).toBeVisible();
+  const focused = async () => {
+    for (let i = 0; i < 20; i++) {
+      await page.keyboard.press("Tab");
+      const tag = await page.evaluate(() => document.activeElement?.tagName ?? "");
+      if (["BUTTON", "INPUT", "TEXTAREA"].includes(tag)) break;
+    }
+    return page.evaluate(() => {
+      const style = getComputedStyle(document.activeElement!);
+      return { tag: document.activeElement!.tagName, outlineStyle: style.outlineStyle, outlineWidth: style.outlineWidth, outlineColor: style.outlineColor, boxShadow: style.boxShadow };
+    });
+  };
+
+  // Ordinary colors: the ring is a shadow, and there is no outline besides it.
+  const ordinary = await focused();
+  expect(ordinary.boxShadow).not.toBe("none");
+  expect(ordinary.outlineStyle).toBe("none");
+
+  // Forced colors: no shadow is drawn, so the indicator is the outline, in a system color.
+  await page.emulateMedia({ forcedColors: "active" });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Create a Dot" })).toBeVisible();
+  const forced = await focused();
+  expect(forced.outlineStyle).toBe("solid");
+  expect(forced.outlineWidth).toBe("2px");
+  expect(forced.outlineColor).not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
+});

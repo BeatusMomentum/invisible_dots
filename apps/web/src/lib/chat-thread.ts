@@ -101,7 +101,7 @@ export function activityOf(events: readonly StoredEvent[]): ActivityItem[] {
         lastCallInChat = !hasTask(event);
         if (!lastCallInChat) break;
         const tool = text(d.tool);
-        const { label, family } = toolLabel(tool);
+        const { label, family } = toolLabel(tool, d.tty === true);
         items.push({
           ...base,
           kind: "tool",

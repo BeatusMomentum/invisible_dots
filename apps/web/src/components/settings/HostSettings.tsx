@@ -71,7 +71,7 @@ function Appearance() {
           <label
             key={theme.value}
             className={cn(
-              "flex cursor-pointer flex-col gap-1 rounded-lg border bg-background p-3 text-sm transition-colors hover:bg-accent has-[:focus-visible]:ring-[3px] has-[:focus-visible]:ring-ring/50",
+              "flex cursor-pointer flex-col gap-1 rounded-lg border bg-background p-3 text-sm transition-colors hover:bg-accent has-[:focus-visible]:ring-[3px] has-[:focus-visible]:ring-ring/80 has-[:focus-visible]:outline-hidden",
               preference === theme.value && "border-primary bg-accent",
             )}
           >

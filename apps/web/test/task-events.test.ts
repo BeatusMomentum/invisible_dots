@@ -143,6 +143,12 @@ describe("storyOf", () => {
     expect(story[7]).toMatchObject({ kind: "completed", summary: "Done: **report.md**" });
   });
 
+  it("keeps whether a call started a terminal session", () => {
+    const [step] = storyOf([event("tool.called", { task_id: "t9", tool: "exec", decision: "allow", ok: true, duration_ms: 5, target: "python3", tty: true })], "t9");
+    expect(step).toMatchObject({ kind: "tool", tty: true });
+    expect(storyOf(events, "t1")[3]).toMatchObject({ kind: "tool", tty: false });
+  });
+
   it("folds an approval and its answer into one step, found by the approval's id", () => {
     const approval = storyOf(events, "t1").find((s) => s.kind === "approval");
     expect(approval).toMatchObject({ approvalId: "a1", tool: "write_file", reason: "needs to save the report", outcome: "approved", note: "go on" });

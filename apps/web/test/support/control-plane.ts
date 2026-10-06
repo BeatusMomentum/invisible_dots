@@ -83,6 +83,8 @@ export class FakeControlPlane {
   eventQueries: Array<{ after: number; before?: number; limit: number; types: string[] | null; tools: string[] | null; taskId: string | null; order: string | null }> = [];
   /** What the shell asked for to know the agent's state when a page opened: the newest `agent.state` or `agent.started`. */
   agentQueries: Array<{ after: number; before?: number; limit: number; types: string[] | null; tools: string[] | null; taskId: string | null; order: string | null }> = [];
+  /** While set, `GET /api/stream` answers 503, as a control plane that does not answer does. */
+  streamDown = false;
   /** What each `GET /api/approvals` asked for. */
   approvalQueries: Array<{ status: string[] | null; limit: number | null; order: string | null; before: string | null }> = [];
   /** The body of every `POST /api/dots/:id/tasks`, as the browser sent it. */
@@ -227,6 +229,13 @@ export class FakeControlPlane {
     this.#stream?.enqueue(new TextEncoder().encode(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`));
   }
 
+  /** The connection of the live stream ends without a last event: the control plane stopped, or the network dropped. */
+  dropStream(): void {
+    const stream = this.#stream;
+    this.#stream = null;
+    stream?.close();
+  }
+
   get streamOpen(): boolean {
     return this.#stream !== null;
   }
@@ -262,6 +271,7 @@ export class FakeControlPlane {
     const json = (body: unknown, status = 200) => Response.json(body, { status });
 
     if (pathname === "/api/stream") {
+      if (this.streamDown) return json({ error: "down", message: "the control plane is down" }, 503);
       return new Response(
         new ReadableStream<Uint8Array>({
           start: (controller) => {

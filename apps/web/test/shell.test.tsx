@@ -156,6 +156,33 @@ describe("the rail", () => {
     await waitFor(() => expect(within(rail()).getByText("API: unreachable")).toBeTruthy());
   });
 
+  it("says at the top of the page, as an alert, that the control plane does not answer, and takes it back when it does", async () => {
+    renderShell();
+    await waitFor(() => expect(within(rail()).getByText("Live")).toBeTruthy());
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    plane.streamDown = true;
+    act(() => plane.dropStream());
+    const alert = await screen.findByRole("alert", undefined, { timeout: 5000 });
+    expect(within(alert).getByText("The control plane does not answer")).toBeTruthy();
+    // First that the stream ended, then what the next attempt was answered with.
+    await waitFor(() => expect(screen.getByRole("alert").textContent).toContain("the control plane is down"), { timeout: 5000 });
+    // It is above the page, not in the rail, so it shows under 768 px too.
+    expect(rail().contains(alert)).toBe(false);
+    expect(within(rail()).getByText("Reconnecting")).toBeTruthy();
+
+    plane.streamDown = false;
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull(), { timeout: 8000 });
+    expect(within(rail()).getByText("Live")).toBeTruthy();
+  }, 20_000);
+
+  it("says it when the health check fails, though the stream is up", async () => {
+    plane.healthy = false;
+    renderShell();
+    const alert = await screen.findByRole("alert");
+    expect(within(alert).getByText("The control plane does not answer")).toBeTruthy();
+  });
+
   it("shows whether live updates arrive", async () => {
     renderShell();
     await waitFor(() => expect(within(rail()).getByText("Live")).toBeTruthy());

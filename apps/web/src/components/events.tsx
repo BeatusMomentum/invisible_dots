@@ -71,6 +71,12 @@ export function EventStreamProvider({ children }: { children: ReactNode }) {
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 
+/** Whether the live stream is up, and why it is not when it is not. */
+export function useStreamStatus(): { status: StreamStatus; detail: string } {
+  const context = useContext(Context);
+  return { status: context?.status ?? "connecting", detail: context?.detail ?? "" };
+}
+
 /**
  * Call `onEvent` for each live event whose type matches `types` (all when
  * omitted), and, below a DotEventScope, that belongs to the scope's Dot. The

@@ -105,6 +105,24 @@ test("a conversation longer than a page opens on its newest messages, and goes b
   await expect(log.getByText("one more, live")).toBeVisible();
 });
 
+test("a command that started a terminal session says so in the chat and in the Activity, and one that did not says it ran", async ({ signedIn: page, harness }) => {
+  const dot = await harness.createDot("chat-terminal");
+  const guest = harness.driver.guestOf(dot.id);
+  await harness.api.sendMessage(dot.id, "open a python shell");
+  guest.emit("tool.called", called("exec", "python3", { tty: true }));
+  guest.emit("tool.called", called("exec", "ls /home/dot"));
+  await expect.poll(async () => (await harness.api.events(dot.id, { types: ["tool.called"] })).length).toBe(2);
+
+  await page.goto(`${harness.webUrl}/dots/${dot.id}/chat`);
+  const steps = page.getByRole("log").getByTestId("activity-step");
+  await expect(steps).toHaveText(["Started a terminal sessionpython3", "Ran a commandls /home/dot"]);
+
+  await page.goto(`${harness.webUrl}/dots/${dot.id}/activity`);
+  const rows = page.getByRole("list", { name: "Events" }).getByRole("listitem");
+  await expect(rows.filter({ hasText: "Started a terminal session" })).toHaveCount(1);
+  await expect(rows.filter({ hasText: "Ran a command" })).toHaveCount(1);
+});
+
 test("an approval the Dot asks for in the chat is a card where it was asked, the person answers it there, and its answer is a receipt", async ({ signedIn: page, harness }) => {
   const dot = await harness.createDot("chat-approval");
   const guest = harness.driver.guestOf(dot.id);

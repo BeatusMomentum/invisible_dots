@@ -91,7 +91,7 @@ export function ApprovalCard({ ask, answers, dotName, selected = false, classNam
     );
 
   return (
-    <article aria-label={askTitle(ask)} data-approval-id={ask.id} aria-current={selected ? "true" : undefined} className={cn("rounded-lg", selected && "ring-2 ring-ring", className)}>
+    <article aria-label={askTitle(ask)} data-approval-id={ask.id} aria-current={selected ? "true" : undefined} className={cn("rounded-lg", selected && "outline-2 outline-offset-2 outline-ring", className)}>
       <ApprovalCardElement
         state={settled?.receipt ?? "request"}
         title={askTitle(ask)}

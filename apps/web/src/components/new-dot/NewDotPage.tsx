@@ -113,7 +113,7 @@ export function NewDotPage() {
           )}
 
           {attempted && issues.length > 0 ? (
-            <div ref={summary} tabIndex={-1} className="outline-none">
+            <div ref={summary} tabIndex={-1} className="focus-visible:outline-hidden">
               <Alert variant="destructive">
                 <AlertCircleIcon />
                 <AlertTitle>{issues.length === 1 ? "One thing to fix before the Dot can be created" : `${issues.length} things to fix before the Dot can be created`}</AlertTitle>

@@ -125,7 +125,7 @@ export function ComputerSection({ form, change, errorOf }: SectionProps) {
             {...control}
             value={form.idleTimeout}
             onChange={(event) => change({ idleTimeout: event.target.value })}
-            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 sm:w-56"
+            className="h-9 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs focus-visible:outline-hidden focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/80 sm:w-56"
           >
             {IDLE_CHOICES.map((choice) => (
               <option key={choice.value} value={choice.value}>

@@ -162,7 +162,7 @@ const DESCRIBE: { [K in KnownType]: (data: Partial<EventData[K]>) => Draft } = {
     // What it acted on, how it ended, and which tool under which permission the policy decided on.
     const policy = joined(tool, text(d.permission) && `[${text(d.permission)}]`, text(d.decision));
     return {
-      title: tool ? toolLabel(tool).label : "Tool call",
+      title: tool ? toolLabel(tool, d.tty === true).label : "Tool call",
       detail: [text(d.target), `${word}${duration}`, policy].filter(Boolean).join(" | "),
       tone,
       tool,

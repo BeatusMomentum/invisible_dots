@@ -19,6 +19,13 @@ describe("the words for the engine's tools", () => {
     expect(Object.keys(TOOL_LABELS).sort()).toEqual([...tools].sort());
   });
 
+  it("say a command that started a terminal session as that, and no other tool for it", () => {
+    expect(toolLabel("exec", true)).toEqual({ label: "Started a terminal session", ask: "run a command", family: "command" });
+    expect(toolLabel("exec", false).label).toBe("Ran a command");
+    expect(toolLabel("read_file", true)).toEqual(toolLabel("read_file"));
+    expect(toolLabel("rm_rf", true)).toEqual(toolLabel("rm_rf"));
+  });
+
   it("say what the call did, in a short phrase of its own", () => {
     expect(toolLabel("exec")).toEqual({ label: "Ran a command", ask: "run a command", family: "command" });
     expect(toolLabel("browser_navigate").family).toBe("browser");

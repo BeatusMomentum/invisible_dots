@@ -46,7 +46,7 @@ function DecisionControl({ row, onChange }: { row: PermissionRow; onChange: (dec
           <label
             key={decision}
             className={cn(
-              "cursor-pointer rounded px-3 py-1 text-sm text-muted-foreground transition-colors hover:text-foreground has-[:focus-visible]:ring-[3px] has-[:focus-visible]:ring-ring/50",
+              "cursor-pointer rounded px-3 py-1 text-sm text-muted-foreground transition-colors hover:text-foreground has-[:focus-visible]:ring-[3px] has-[:focus-visible]:ring-ring/80 has-[:focus-visible]:outline-hidden",
               row.decision === decision && "bg-secondary font-medium text-foreground",
             )}
           >

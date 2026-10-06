@@ -50,7 +50,14 @@ export const TOOL_LABELS: Readonly<Record<string, ToolLabel>> = {
   browser_reload: { label: "Reloaded the page", ask: "reload the page", family: "browser" },
 };
 
-/** The words for a tool; one the table does not know (the model called a name the engine refuses) keeps its own name. */
-export function toolLabel(tool: string): ToolLabel {
+/** What a command that was started in a terminal (`exec` with `tty`, which the engine reports on `tool.called`) did: it did not just run. */
+export const TERMINAL_LABEL = "Started a terminal session";
+
+/**
+ * The words for a tool; one the table does not know (the model called a name the engine refuses) keeps its own name.
+ * A call that started a terminal session (`tty` of `tool.called`) says so and not "Ran a command".
+ */
+export function toolLabel(tool: string, tty = false): ToolLabel {
+  if (tool === "exec" && tty) return { ...TOOL_LABELS.exec!, label: TERMINAL_LABEL };
   return Object.hasOwn(TOOL_LABELS, tool) ? TOOL_LABELS[tool]! : { label: `Called ${tool}`, ask: `call ${tool}`, family: "other" };
 }

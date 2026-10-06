@@ -60,6 +60,10 @@ describe("viewEvent", () => {
       tool: "exec",
       family: "tools",
     });
+    expect(viewEvent(event(23, "tool.called", { tool: "exec", target: "python3", permission: "computer.exec", decision: "allow", ok: true, duration_ms: 50, tty: true }))).toMatchObject({
+      title: "Started a terminal session",
+      detail: "python3 | ok in 50 ms | exec [computer.exec] allow",
+    });
     // A call that waited for the person says so in its decision; one cut off by a restart is neither a success nor a failure of the call.
     expect(viewEvent(event(21, "tool.called", { tool: "write_file", permission: "files.write", decision: "ask", ok: true, duration_ms: 3 })).detail).toBe(
       "ok in 3 ms | write_file [files.write] ask",

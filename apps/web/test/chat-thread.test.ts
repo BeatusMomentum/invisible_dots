@@ -30,6 +30,12 @@ describe("the activity of the chat", () => {
     expect(step).toMatchObject({ kind: "tool", tool: "exec", label: "Ran a command", family: "command", target: "ls -la", state: "ok", durationMs: 2500 });
   });
 
+  it("says a command that opened a terminal session as that", () => {
+    const [terminal, plain] = activityOf([call("exec", { target: "python3", tty: true }), call("exec", { target: "ls" })]);
+    expect(terminal).toMatchObject({ label: "Started a terminal session", target: "python3", family: "command" });
+    expect(plain).toMatchObject({ label: "Ran a command" });
+  });
+
   it("leaves out what belongs to a task: its calls, its approvals and the notes those calls wrote", () => {
     const events = [
       call("exec", { task_id: "t1" }),
