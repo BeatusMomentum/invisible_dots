@@ -1606,31 +1606,19 @@ drew id 10 could commit after one that drew 11, and a client that resumed
 event and changes other rows inserts the event first, so the lock is never
 taken while holding a row lock another event writer waits for.
 
-Two migrations clean data written before a rule existed. `0008_orphaned_secrets`
-deletes the secrets scoped to a Dot that no longer exists (those of Dots deleted
-before `DotsRepository.delete` removed them). `0009_removed_config_names` removes
-from every stored `dots.config` the model roles other than `summary` and the five
-permission names that were deleted from `PERMISSIONS` (`web.fetch`, `web.search`,
-`subagents`, `message.send`, `memory.write`, section 7): `dots.config` is jsonb that
-is not parsed again on its way to the guest, so a stored name the schema no longer
-knows would reach the engine, which refuses the whole config, and would make every
-update of the Dot fail until the person removed it by hand. The migration rewrites
-`config` in one statement per Dot and moves its `config_version` once, as a save does,
-so a form opened before it is refused by the version precondition and not by the parser.
-
 Tables: `dots`, `computers`, `tasks`, `task_runs`, `events`, `approvals`,
 `inbound_events`, `secrets`, `channel_bindings`, `channel_peers`,
 `channel_pairings`, `channel_prompts`, `schema_migrations`. Migrations are plain
 SQL files applied in order at start.
 
-- `dots(id text pk, name text unique, config jsonb, status text, error text null, config_version int default 1, created_at, updated_at)`: `config_version` grows with every save of `config` (`updateConfig`, `setPermission`, and `0009_removed_config_names` once for each Dot it rewrites) and with nothing else, while `updated_at` also moves with every status change; the PATCH precondition is on the version
-- `computers(dot_id pk fk, vm_name, guest_port int null, pid int null, state text, golden_image text, runtime_image text, token_enc bytea, event_cursor bigint default 0, last_active_at, next_automation_at timestamptz null, stop_reason text null, last_error, updated_at)`: `guest_port` and `pid` are null while no QEMU runs, and `guest_port` is not unique (a crashed VM's row may name a port since reused); both are copies of `qemu.json` (section 3.2), which wins on reconciliation; `next_automation_at` is the guest's last `automation.next_run` report (migration `0010_computer_next_automation`), null while none is due or nothing was reported, and it is the guest's report: nothing else of the row moves with it; `stop_reason` (`idle`, `user` or `exited`, same migration) is why the computer is STOPPING or STOPPED and is null in every other state (section 9.5)
+- `dots(id text pk, name text unique, config jsonb, status text, error text null, config_version int default 1, created_at, updated_at)`: `config_version` grows with every save of `config` (`updateConfig` and `setPermission`) and with nothing else, while `updated_at` also moves with every status change; the PATCH precondition is on the version
+- `computers(dot_id pk fk, vm_name, guest_port int null, pid int null, state text, golden_image text, runtime_image text, token_enc bytea, event_cursor bigint default 0, last_active_at, next_automation_at timestamptz null, stop_reason text null, last_error, updated_at)`: `guest_port` and `pid` are null while no QEMU runs, and `guest_port` is not unique (a crashed VM's row may name a port since reused); both are copies of `qemu.json` (section 3.2), which wins on reconciliation; `next_automation_at` is the guest's last `automation.next_run` report (migration `0008_computer_next_automation`), null while none is due or nothing was reported, and it is the guest's report: nothing else of the row moves with it; `stop_reason` (`idle`, `user` or `exited`, same migration) is why the computer is STOPPING or STOPPED and is null in every other state (section 9.5)
 - `tasks(id text pk, dot_id fk, description, priority int, status, created_at, scheduled_at, started_at, finished_at, summary, error, spent_usd double precision default 0)`: `spent_usd` is the highest `spent_usd` the guest reported on the task's events (section 5.4), recorded by the host in the transaction that stores each event, so a late or repeated event never lowers it and a cancelled task the guest keeps working on still counts; a task whose guest never reported spend stays 0
 - `task_runs(id pk, task_id fk, started_at, delivered_at, finished_at, outcome)`: `delivered_at` is set when the guest accepted the run's `task.created`
 - `events(id bigserial pk, dot_id, type, data jsonb, source 'host'|'guest', guest_seq bigint, created_at)`, unique `(dot_id, guest_seq)`, and unique `(dot_id, data->origin->>binding_id, data->origin->>external_id)` for a `user.message` with an origin: a channel message is stored once, by the channel's own id, in the transaction that stores it, so a redelivery after any failure finds the first one and the Dot gets it once (section 9.8)
 - `approvals(id text pk, dot_id, task_id, tool, permission, arguments jsonb, reason, status 'pending'|'approved'|'rejected'|'expired', note, created_at, resolved_at)`: an approval whose task reached a terminal state before anyone decided is `expired`, in the same statement that ends the task, and an `approval.requested` for a task that is already terminal is stored as `expired`, never `pending`
 - `inbound_events(seq bigserial pk, id text unique, dot_id fk, type, data jsonb, ts, task_id, run_id, created_at, sent_at, delivered_at, dropped_at, drop_reason, failures int, last_error, retry_at)`: the outbox of host to guest events (section 9.2)
-- `secrets(scope text, name text, value_enc bytea, updated_at, pk(scope, name))`: `scope` is `global` or a dot id; no foreign key can cover that, so deleting a Dot deletes the secrets scoped to it in the same statement (`DotsRepository.delete`); the migration `0008_orphaned_secrets` deleted those of Dots removed before that
+- `secrets(scope text, name text, value_enc bytea, updated_at, pk(scope, name))`: `scope` is `global` or a dot id; no foreign key can cover that, so deleting a Dot deletes the secrets scoped to it in the same statement (`DotsRepository.delete`)
 
 - `channel_bindings(id text pk, dot_id fk cascade, kind 'telegram'|'whatsapp', enabled bool, settings jsonb, status, status_detail, account, event_cursor bigint, created_at)`, unique `(dot_id, kind)`: one Dot's link to one channel kind (section 9.8), and unique `account` among the `telegram` bindings whose account is known: one bot serves one Dot (a WhatsApp number is learned at the scan and may be linked on several Dots, each a device of the phone); `settings` is `{approvals, notify_tasks, show_arguments}` and never a credential; `account` is the channel's public name for the account (a bot's username); `event_cursor` is the id of the last event of the Dot the hub dealt with
 - `channel_peers(binding_id fk cascade, peer_id, chat_id, role 'owner'|'user', label, created_at, pk(binding_id, peer_id))`: the people allowed to talk through the binding, by the channel's stable id, with the chat they paired from
@@ -1770,7 +1758,7 @@ as STOPPED, and started again at once when `keepsAwake` says the Dot still has
 work.
 
 `next_automation_at` arrives only from a guest that ran. A Dot that was asleep
-when migration `0010` was applied has none stored, so it is not woken for its
+when migration `0008` was applied has none stored, so it is not woken for its
 automations (and misses their runs) until it starts for another reason: a
 message, a task, or the person. Its guest then reports its next run at that
 start, and the automations are woken for from there on. The host does not boot

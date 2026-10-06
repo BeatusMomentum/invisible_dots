@@ -27,7 +27,6 @@ import {
   CONVERSATION_LIST_LIMIT,
   DotConfigError,
   isIdentityAnswer,
-  isPermission,
   isStoredEventType,
   MAX_HOST_FILE_BYTES,
   newId,
@@ -707,14 +706,6 @@ export class Scheduler {
     }
     const existing = await this.db.approvals.get(id);
     if (!existing) throw notFound("approval", id);
-    // A pending approval stored before its permission was removed from PERMISSIONS: a config cannot name it any more.
-    if (always && !isPermission(existing.permission)) {
-      throw new ControlPlaneError(
-        400,
-        "invalid_request",
-        `"${existing.permission}" is not a permission a Dot's config can set, so it cannot be allowed for good`,
-      );
-    }
     const event: InboundEvent<"approval.received"> = {
       id: newId("evt"),
       type: "approval.received",

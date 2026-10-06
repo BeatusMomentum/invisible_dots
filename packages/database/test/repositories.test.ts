@@ -54,9 +54,7 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
       "0005_channel_prompts",
       "0006_events_task",
       "0007_dot_config_version",
-      "0008_orphaned_secrets",
-      "0009_removed_config_names",
-      "0010_computer_next_automation",
+      "0008_computer_next_automation",
     ]);
   });
 

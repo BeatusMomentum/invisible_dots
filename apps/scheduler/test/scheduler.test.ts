@@ -314,22 +314,15 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     const dot = await readyDot(scheduler, "always-refused");
     const guest = driver.guestOf(dot.id);
     const known = guest.requestApproval(undefined);
-    // The one way an approval of an unknown permission exists: a row stored before the permission was deleted from
-    // PERMISSIONS (decision C1). The guest's own events cannot make one: the real client parses every event with the
-    // permission list, so it is seeded through the repository, as the old row is.
     await waitFor(async () => (await db.approvals.get(known)) !== null, "stored");
-    await db.approvals.insertRequested(dot.id, { approval_id: "apr_unknownpermission", tool: "mystery", permission: "made.up" as never, arguments: {}, reason: "?" });
     const configBefore = (await db.dots.get(dot.id))!.config;
 
     await expect(scheduler.resolveApproval(known, "reject", { always: true })).rejects.toMatchObject({ status: 400, code: "invalid_request" });
-    await expect(scheduler.resolveApproval("apr_unknownpermission", "approve", { always: true })).rejects.toMatchObject({ status: 400, code: "invalid_request" });
     await expect(scheduler.resolveApproval(known, "approve", { always: false as unknown as true })).rejects.toMatchObject({ status: 400 });
     await expect(scheduler.resolveApproval("apr_missing", "approve", { always: true })).rejects.toMatchObject({ status: 404 });
-    for (const id of [known, "apr_unknownpermission"]) expect((await db.approvals.get(id))?.status).toBe("pending");
+    expect((await db.approvals.get(known))?.status).toBe("pending");
     expect((await db.dots.get(dot.id))?.config).toEqual(configBefore);
     expect(await db.events.list({ dotId: dot.id, types: ["approval.resolved", "dot.updated"] })).toEqual([]);
-    // A plain approval of the unknown permission still works: it asks nothing of the config.
-    expect((await scheduler.resolveApproval("apr_unknownpermission", "approve")).status).toBe("approved");
   });
 
   it("approve with always on a sleeping Dot saves the config, and the wake that delivers the answer pushes it", async () => {

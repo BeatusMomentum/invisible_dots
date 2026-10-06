@@ -55,8 +55,8 @@ describe("loadMigrations", () => {
     try {
       await writeFile(join(dir, "0001_initial.sql"), "SELECT 1;");
       await writeFile(join(dir, "0002_channel_prompts.sql"), "SELECT 1;");
-      await writeFile(join(dir, "0002_orphaned_secrets.sql"), "SELECT 1;");
-      await expect(loadMigrations(dir)).rejects.toThrow(/0002_channel_prompts.*0002_orphaned_secrets.*same number/);
+      await writeFile(join(dir, "0002_other_change.sql"), "SELECT 1;");
+      await expect(loadMigrations(dir)).rejects.toThrow(/0002_channel_prompts.*0002_other_change.*same number/);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
