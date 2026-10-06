@@ -14,7 +14,8 @@ transaction atomic per file only.
   left by a crash is a call the agent stopped during), with the notes the call
   writes (`memory_keys_json`), which its result reports as `memory.written`, and the
   line that names what it acts on (`target`), which its result reports in `tool.called`;
-- dots_spend: what the model requests of a session have cost, in USD (see `nanobot.dots.spend`);
+- dots_spend: what the model requests of a session have cost, in USD, and whether one of them reported
+  no cost (see `nanobot.dots.spend`);
 - dots_browser_identities: the browser identities of the Dot (id, name, proxy, created, last used,
   archived). Whether one is open is never stored: it is derived from the live browser sessions of
   this process, so a file never says "open" about a process that is gone. Its profile is a
@@ -63,7 +64,7 @@ T = TypeVar("T")
 # The version of the database layout, kept in the file's `user_version`. Change it with any
 # change of `_SCHEMA`: an engine refuses a file of another version rather than run on a layout
 # it does not know. There is no migration (no engine of an older layout has run on a real Dot).
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 
 # How long open() waits for the file's lock before it says another engine owns it.
 OPEN_TIMEOUT_S = 2.0
@@ -131,7 +132,8 @@ _SCHEMA: tuple[str, ...] = (
     """
     CREATE TABLE dots_spend (
       session_key TEXT PRIMARY KEY,
-      usd REAL NOT NULL
+      usd REAL NOT NULL,
+      unpriced INTEGER NOT NULL DEFAULT 0 CHECK (unpriced IN (0, 1))
     ) STRICT
     """,
     """
@@ -701,9 +703,26 @@ def add_spend(conn: sqlite3.Connection, session_key: str, usd: float) -> float:
     return get_spend(conn, session_key)
 
 
+def note_unpriced(conn: sqlite3.Connection, session_key: str) -> None:
+    """Note that a model request of the session came back with no cost, so its spend is no longer the whole."""
+    conn.execute(
+        """
+        INSERT INTO dots_spend (session_key, usd, unpriced) VALUES (?, 0, 1)
+        ON CONFLICT (session_key) DO UPDATE SET unpriced = 1
+        """,
+        (session_key,),
+    )
+
+
 def get_spend(conn: sqlite3.Connection, session_key: str) -> float:
     row = conn.execute("SELECT usd FROM dots_spend WHERE session_key = ?", (session_key,)).fetchone()
     return float(row["usd"]) if row else 0.0
+
+
+def has_unpriced(conn: sqlite3.Connection, session_key: str) -> bool:
+    """Whether a request of the session reported no cost (see `note_unpriced`)."""
+    row = conn.execute("SELECT unpriced FROM dots_spend WHERE session_key = ?", (session_key,)).fetchone()
+    return bool(row["unpriced"]) if row else False
 
 
 def reset_spend(conn: sqlite3.Connection, session_key: str) -> None:

@@ -911,14 +911,20 @@ limits.max_cost_per_task_usd (spent 1.0423 USD of 1.00)` (`task.failed`'s
 could not answer: ..."). A request cannot be priced before it is answered, so
 the cap may be exceeded by the last request, and an answer that crosses it is
 delivered and the task completes: the cap only stops the work from going on. A
-request that failed has no cost and counts for nothing. A task's spend is kept
+request that failed has no cost and counts for nothing: OpenRouter reports the cost in the last chunk of a
+stream, so a stream that stalled or was cut after tokens were streamed (and billed) has no figure to count, and
+neither has an attempt the retries of section 8.5 went past (4 attempts a request). The cap can therefore be
+exceeded by those partial streams, each at most the cost of one full response. A task's spend is kept
 across a restart, an approval and a resume (a task that was cut by a crash goes
 on from what it had spent); the chat's spend starts again with each answer it gives, so an approval or a
 restart does not reset it.
 A lowered cap applies from the next turn, like the step limit. A response that
-reports no cost fails the turn at its next check, `stopped: OpenRouter reported
-no cost for a request, so limits.max_cost_per_task_usd cannot be enforced`: the
-cap never runs blind. A request abandoned by a sleep may have cost something
+reports no cost fails the turn, `stopped: OpenRouter reported
+no cost for a request, so limits.max_cost_per_task_usd cannot be enforced`, at
+its next check or, when it was the last response, before its answer is written
+(the answer is not delivered, the task does not complete). The note is a column
+of the same ledger row as the money (`dots_spend.unpriced`), so a restart does
+not forget it: the cap never runs blind. A request abandoned by a sleep may have cost something
 that was never reported; that gap is at most one request a sleep.
 
 ### 8.3 Tools

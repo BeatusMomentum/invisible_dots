@@ -333,7 +333,8 @@ class FakeOpenRouter:
     async def _completions(self, request: web.Request) -> web.StreamResponse:
         body = await request.json()
         self.requests.append({"headers": dict(request.headers), "body": body})
-        usage = {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6}
+        # OpenRouter prices every request in the usage of its last chunk; a response without it fails the turn.
+        usage = {"prompt_tokens": 5, "completion_tokens": 1, "total_tokens": 6, "cost": 0.0125}
         # The provider always streams: the model's answer comes back as server-sent events.
         response = web.StreamResponse(headers={"Content-Type": "text/event-stream"})
         await response.prepare(request)
@@ -442,7 +443,7 @@ class TestTheEngineServed:
         assert [e["type"] for e in events] == [
             "agent.started", "agent.state", "agent.state", "message.assistant", "agent.state", "agent.state",
         ]
-        assert events[3]["data"] == {"text": "pong", "in_reply_to": "m1", "spent_usd": 0.0}
+        assert events[3]["data"] == {"text": "pong", "in_reply_to": "m1", "spent_usd": 0.0125}
         (request,) = served.fake.requests
         # The key reached the provider from memory, the model is the Dot's, and nothing of the Dot's
         # attribution goes to a stand-in.

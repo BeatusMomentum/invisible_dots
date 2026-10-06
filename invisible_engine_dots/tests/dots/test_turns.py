@@ -1043,6 +1043,11 @@ class TestTheStartOfATurn:
         assert roles(h.provider.requests[0]["messages"]) == ["system", "user", "assistant", "tool", "tool", "user"]
 
 
+NO_COST_TEXT = (
+    "stopped: OpenRouter reported no cost for a request, so limits.max_cost_per_task_usd cannot be enforced"
+)
+
+
 def cap_limits(cap: float) -> dict[str, Any]:
     return {"max_steps_per_task": 60, "context_tokens": 32000, "max_cost_per_task_usd": cap}
 
@@ -1173,6 +1178,34 @@ class TestTheCostCap:
             "stopped: OpenRouter reported no cost for a request, so limits.max_cost_per_task_usd cannot be enforced"
         )
         assert len(h.provider.requests) == 1
+
+    async def test_a_final_answer_with_no_cost_fails_the_task_instead_of_completing_it(
+        self, make_harness: MakeHarness
+    ) -> None:
+        h = make_harness([says("all done")], limits=cap_limits(1))
+        h.provider.default_cost = None
+        session = h.start_task()
+
+        outcome = await h.run(TurnUnit(session, "t1", (OpeningMessage("do it"),)))
+
+        assert outcome == TurnOutcome.failed(NO_COST_TEXT)
+        assert len(h.provider.requests) == 1
+        # The answer is what completes a task: it was not written.
+        assert h.events_of("task.completed") == []
+
+    async def test_a_final_answer_with_no_cost_fails_the_chat_turn(
+        self, make_harness: MakeHarness
+    ) -> None:
+        h = make_harness([says("hello back")], limits=cap_limits(1))
+        h.provider.default_cost = None
+        h.accept("in1")
+
+        outcome = await h.run(chat_unit())
+
+        assert outcome == TurnOutcome.failed(NO_COST_TEXT)
+        # The answer was not delivered, and the ledger remembers: the chat does not run on unmetered.
+        assert h.events_of("message.assistant") == []
+        assert h.store.read(lambda conn: s.has_unpriced(conn, CHAT)) is True
 
     async def test_the_spend_of_a_task_is_there_for_the_next_turn_on_it(self, make_harness: MakeHarness) -> None:
         h = make_harness(

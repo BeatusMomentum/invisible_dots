@@ -579,6 +579,45 @@ class TestSpend:
         finally:
             second.close()
 
+    def test_a_request_with_no_cost_is_noted_on_its_session_and_only_there(self, dot_store: DotStore) -> None:
+        assert dot_store.read(lambda c: s.has_unpriced(c, "task:t1")) is False
+        dot_store.write(lambda c: s.add_spend(c, "task:t1", 0.25))
+        dot_store.write(lambda c: s.note_unpriced(c, "task:t1"))
+        dot_store.write(lambda c: s.note_unpriced(c, "task:t1"))
+        # What was spent stays, and the note does not belong to the other sessions.
+        assert dot_store.read(lambda c: s.get_spend(c, "task:t1")) == 0.25
+        assert dot_store.read(lambda c: s.has_unpriced(c, "task:t1")) is True
+        assert dot_store.read(lambda c: s.has_unpriced(c, "chat")) is False
+        # Money added after the note does not clear it.
+        dot_store.write(lambda c: s.add_spend(c, "task:t1", 0.5))
+        assert dot_store.read(lambda c: s.has_unpriced(c, "task:t1")) is True
+
+    def test_a_note_on_a_session_that_spent_nothing_leaves_its_spend_at_zero(self, dot_store: DotStore) -> None:
+        dot_store.write(lambda c: s.note_unpriced(c, "chat"))
+        assert dot_store.read(lambda c: s.get_spend(c, "chat")) == 0.0
+        assert dot_store.read(lambda c: s.has_unpriced(c, "chat")) is True
+
+    def test_an_answer_of_the_chat_takes_the_note_with_it_and_a_task_event_leaves_the_note_of_its_task(
+        self, dot_store: DotStore
+    ) -> None:
+        dot_store.write(lambda c: s.note_unpriced(c, "chat"))
+        dot_store.write(lambda c: s.note_unpriced(c, "task:t1"))
+        dot_store.write(lambda c: s.append_outbox_spent(c, "task.progress", {"task_id": "t1", "text": "x"}, "task:t1"))
+        assert dot_store.read(lambda c: s.has_unpriced(c, "task:t1")) is True
+        dot_store.write(lambda c: s.append_outbox_spent(c, "message.assistant", {"text": "a"}, "chat"))
+        assert dot_store.read(lambda c: s.has_unpriced(c, "chat")) is False
+
+    def test_the_note_is_there_after_the_file_is_opened_again(self, tmp_path: Path) -> None:
+        path = tmp_path / "engine.sqlite"
+        first = DotStore.open(path)
+        first.write(lambda c: s.note_unpriced(c, "task:t1"))
+        first.close()
+        second = DotStore.open(path)
+        try:
+            assert second.read(lambda c: s.has_unpriced(c, "task:t1")) is True
+        finally:
+            second.close()
+
 
 class TestBrowserIdentities:
     def test_a_new_identity_is_never_used_and_not_archived(self, dot_store: DotStore) -> None:

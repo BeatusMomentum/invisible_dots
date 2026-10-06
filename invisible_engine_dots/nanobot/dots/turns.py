@@ -301,6 +301,10 @@ class TurnRunner:
 
         async def commit(payload: dict[str, Any]) -> None:
             final_index = 0 if payload["phase"] == "final_response" else None
+            if final_index is not None:
+                # This write delivers the answer (and completes a task), and no check of the hook
+                # follows the last response: a turn that sent a request it could not price ends here.
+                spend.ensure_priced()
             self._store.write(
                 lambda conn: dots_store.append_messages(
                     conn, session_key, [_stamped(payload["message"])], final_index=final_index

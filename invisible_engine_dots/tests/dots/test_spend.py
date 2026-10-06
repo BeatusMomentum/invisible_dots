@@ -192,6 +192,37 @@ class TestTheCheck:
             "stopped: OpenRouter reported no cost for a request, so limits.max_cost_per_task_usd cannot be enforced"
         )
 
+    async def test_a_response_that_reports_no_cost_fails_the_checks_of_a_turn_that_starts_after_a_restart(
+        self, dot_store: DotStore
+    ) -> None:
+        _, provider = metered(dot_store, [says("a")])
+        await ask(provider)
+
+        # A new turn on the same session (the engine was killed in between): nothing in memory,
+        # the ledger knows that a request went unmetered.
+        restarted = TurnSpend(dot_store, "chat", 1.0, "turn")
+
+        with pytest.raises(CostCapReached, match="reported no cost"):
+            restarted.check()
+
+    async def test_the_answer_of_a_turn_whose_last_request_had_no_cost_is_not_a_priced_one(
+        self, dot_store: DotStore
+    ) -> None:
+        spend, provider = metered(dot_store, [says("final answer")])
+        await ask(provider)
+
+        with pytest.raises(CostCapReached, match="reported no cost"):
+            spend.ensure_priced()
+
+    async def test_a_turn_that_met_the_cap_with_a_priced_answer_has_nothing_to_complain_of(
+        self, dot_store: DotStore
+    ) -> None:
+        spend, provider = metered(dot_store, [says("a", cost=2.0)], cap=1.0)
+        await ask(provider)
+
+        # An answer that crosses the cap is delivered (the cap stops further requests only).
+        spend.ensure_priced()
+
     async def test_a_response_that_reports_no_cost_is_not_counted_as_free_spend(self, dot_store: DotStore) -> None:
         _, provider = metered(dot_store, [says("a", cost=0.25), says("b")])
 
