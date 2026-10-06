@@ -10,7 +10,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { WHATSAPP_INSTALL_COMMAND, WhatsAppChannelType, WhatsAppClientMissingError, loadWhatsAppClient, whatsappClientDir, whatsappClientInstalled } from "../src/index.js";
+import { WHATSAPP_INSTALL_COMMAND, WhatsAppChannelType, WhatsAppClientMissingError, WhatsAppClientVersionError, loadWhatsAppClient, whatsappClientDir, whatsappClientProblem } from "../src/index.js";
 import { BaileysConnector } from "../src/whatsapp-baileys/baileys.js";
 import type { WhatsAppEvents } from "../src/whatsapp-baileys/port.js";
 
@@ -24,12 +24,12 @@ const emptyFolder = async () => {
   return folder;
 };
 
-/** What `npm run whatsapp:install` leaves in the client folder, with a stand-in for the library: a package called baileys. */
-async function install(folder: string): Promise<void> {
-  await writeFile(join(folder, "package.json"), JSON.stringify({ name: "stand-in", private: true, type: "module" }));
+/** What `npm run whatsapp:install` leaves in the client folder, with a stand-in for the library: a package called baileys. `pinned` is the version the folder's package.json declares, `installed` the one in node_modules. */
+async function install(folder: string, { pinned = "0.0.0-stand-in", installed = "0.0.0-stand-in" }: { pinned?: string | null; installed?: string } = {}): Promise<void> {
+  await writeFile(join(folder, "package.json"), JSON.stringify({ name: "stand-in", private: true, type: "module", dependencies: pinned === null ? {} : { baileys: pinned } }));
   const lib = join(folder, "node_modules", "baileys");
   await mkdir(lib, { recursive: true });
-  await writeFile(join(lib, "package.json"), JSON.stringify({ name: "baileys", version: "0.0.0-stand-in", type: "module", main: "index.js" }));
+  await writeFile(join(lib, "package.json"), JSON.stringify({ name: "baileys", version: installed, type: "module", main: "index.js" }));
   await writeFile(join(lib, "index.js"), "export const marker = 'stand-in';\nexport function initAuthCreds() { return { fresh: true }; }\n");
 }
 
@@ -40,7 +40,7 @@ describe("the opt-in WhatsApp client", () => {
 
   it("is not installed in an empty folder, and loading it fails with the one command that installs it and the variable that turns WhatsApp on", async () => {
     const folder = await emptyFolder();
-    expect(whatsappClientInstalled(folder)).toBe(false);
+    expect(whatsappClientProblem(folder)).toBeInstanceOf(WhatsAppClientMissingError);
     const error = await loadWhatsAppClient(folder).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(WhatsAppClientMissingError);
     const message = (error as Error).message;
@@ -54,7 +54,7 @@ describe("the opt-in WhatsApp client", () => {
     const folder = await emptyFolder();
     await expect(loadWhatsAppClient(folder)).rejects.toBeInstanceOf(WhatsAppClientMissingError);
     await install(folder);
-    expect(whatsappClientInstalled(folder)).toBe(true);
+    expect(whatsappClientProblem(folder)).toBeNull();
     const lib = (await loadWhatsAppClient(folder)) as unknown as { marker: string; initAuthCreds(): unknown };
     expect(lib.marker).toBe("stand-in");
     expect(lib.initAuthCreds()).toEqual({ fresh: true });
@@ -65,8 +65,37 @@ describe("the opt-in WhatsApp client", () => {
     await install(parent);
     const child = join(parent, "inner");
     await mkdir(child);
-    expect(whatsappClientInstalled(child)).toBe(false);
+    expect(whatsappClientProblem(child)).toBeInstanceOf(WhatsAppClientMissingError);
     await expect(loadWhatsAppClient(child)).rejects.toBeInstanceOf(WhatsAppClientMissingError);
+  });
+
+  it("is not loaded when the installed release is not the pinned one: a pull that moved the pin leaves the old release in node_modules, and nothing runs until the install is made again", async () => {
+    const folder = await emptyFolder();
+    await install(folder, { pinned: "7.0.0-rc15", installed: "7.0.0-rc14" });
+    const problem = whatsappClientProblem(folder);
+    expect(problem).toBeInstanceOf(WhatsAppClientVersionError);
+    expect(problem).toMatchObject({ pinned: "7.0.0-rc15", installed: "7.0.0-rc14" });
+    const error = await loadWhatsAppClient(folder).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(WhatsAppClientVersionError);
+    const message = (error as Error).message;
+    expect(message).toContain("7.0.0-rc14");
+    expect(message).toContain("7.0.0-rc15");
+    expect(message).toContain("`npm run whatsapp:install`");
+    expect(message).toContain(`${ENV.WHATSAPP}=1`);
+    // The install is made again, and the same folder loads.
+    await install(folder, { pinned: "7.0.0-rc15", installed: "7.0.0-rc15" });
+    expect(whatsappClientProblem(folder)).toBeNull();
+    await expect(loadWhatsAppClient(folder)).resolves.toBeDefined();
+  });
+
+  it("is not loaded when the folder pins no release, or the installed package says no version: what cannot be compared is not trusted", async () => {
+    const folder = await emptyFolder();
+    await install(folder, { pinned: null });
+    expect(whatsappClientProblem(folder)).toMatchObject({ name: "WhatsAppClientVersionError", pinned: null, installed: "0.0.0-stand-in" });
+    await expect(loadWhatsAppClient(folder)).rejects.toBeInstanceOf(WhatsAppClientVersionError);
+    await install(folder);
+    await writeFile(join(folder, "node_modules", "baileys", "package.json"), JSON.stringify({ name: "baileys", type: "module", main: "index.js" }));
+    expect(whatsappClientProblem(folder)).toMatchObject({ name: "WhatsAppClientVersionError", pinned: "0.0.0-stand-in", installed: null });
   });
 
   it("makes a connector that fails to connect with those words, before it reads or writes a single secret", async () => {

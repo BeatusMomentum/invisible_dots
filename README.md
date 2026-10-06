@@ -419,8 +419,9 @@ Baileys depends on `libsignal`, which is GPL-3.0, so nothing of it is installed
 by default: `npm ci` installs neither, and neither is in the bundled command.
 `npm run whatsapp:install` installs them into `optional/whatsapp/`, pinned to
 one release by a lock file with the integrity of every package, and the server
-loads them from there only when WhatsApp is linked. Without them, linking says
-how to enable it ([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
+loads them from there only when WhatsApp is linked. Without them, or with a
+release other than the pinned one (after a `git pull` that moves the pin, run the
+command again), linking says how to enable it ([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 
 The details of both:
 [architecture: messaging channels](docs/architecture.md#98-messaging-channels).

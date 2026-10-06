@@ -119,7 +119,7 @@ describe("the adapter loads the client", () => {
     const loader = read("packages/channels/src/whatsapp-baileys/client.ts");
     // One dynamic import, of a file URL; and the package name is only ever resolved from the client's folder.
     expect(loader.match(/await import\(/g)).toHaveLength(1);
-    expect(loader).toContain("pathToFileURL(entry).href");
+    expect(loader).toContain("pathToFileURL(found.entry).href");
     expect(loader).toContain('createRequire(join(dir, "package.json")).resolve("baileys")');
   });
 

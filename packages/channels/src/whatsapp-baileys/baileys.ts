@@ -12,7 +12,7 @@
  */
 import type { ChannelSecrets } from "../channel.js";
 import { AuthStore } from "./auth-state.js";
-import { loadWhatsAppClient, type WhatsAppClient, type WhatsAppMessage, type WhatsAppSocket } from "./client.js";
+import { loadWhatsAppClient, type WhatsAppClient, type WhatsAppLogger, type WhatsAppMessage, type WhatsAppSocket, type WhatsAppSocketConfig } from "./client.js";
 import { isDirectJid, phoneOf } from "./jid.js";
 import type { WhatsAppConnection, WhatsAppConnector, WhatsAppContent, WhatsAppEnd, WhatsAppEvents, WhatsAppIncoming } from "./port.js";
 
@@ -43,7 +43,7 @@ const ATTACHMENT_KEYS = [
 ] as const;
 
 /** Baileys logs through pino; its lines hold addresses and ids of people, so they are not kept. What matters reaches the channel as `end`. */
-const SILENT_LOGGER = {
+const SILENT_LOGGER: WhatsAppLogger = {
   level: "silent",
   child() {
     return SILENT_LOGGER;
@@ -54,6 +54,23 @@ const SILENT_LOGGER = {
   warn() {},
   error() {},
 };
+
+/** The options of the socket: the one place they are decided, and the one the typecheck made with the library installed holds against the library's own type (`test-optin/shape.ts`). */
+export function socketConfig<Auth>(auth: Auth, options: Pick<BaileysOptions, "version" | "waWebSocketUrl">): WhatsAppSocketConfig<Auth> {
+  return {
+    auth,
+    browser: BROWSER,
+    logger: SILENT_LOGGER,
+    // Only the chats of single people: a group's members would see what the Dot says, and nothing here answers a group.
+    shouldIgnoreJid: (jid: string) => !isDirectJid(jid),
+    shouldSyncHistoryMessage: () => false,
+    syncFullHistory: false,
+    markOnlineOnConnect: false,
+    generateHighQualityLinkPreview: false,
+    ...(options.version && { version: options.version }),
+    ...(options.waWebSocketUrl && { waWebSocketUrl: options.waWebSocketUrl }),
+  };
+}
 
 /** What a Baileys message is to the channel. Null for one that has no id or no chat, which no one could answer. */
 export function toIncoming(message: WhatsAppMessage, lib: Pick<WhatsAppClient, "normalizeMessageContent">): WhatsAppIncoming | null {
@@ -106,19 +123,7 @@ export class BaileysConnector implements WhatsAppConnector {
     const lib = await loadWhatsAppClient(this.options.clientDir);
     const auth = await AuthStore.open(this.dotId, this.secrets, lib);
     let closing = false;
-    const socket = lib.makeWASocket({
-      auth: auth.state,
-      browser: BROWSER,
-      logger: SILENT_LOGGER,
-      // Only the chats of single people: a group's members would see what the Dot says, and nothing here answers a group.
-      shouldIgnoreJid: (jid: string) => !isDirectJid(jid),
-      shouldSyncHistoryMessage: () => false,
-      syncFullHistory: false,
-      markOnlineOnConnect: false,
-      generateHighQualityLinkPreview: false,
-      ...(this.options.version && { version: this.options.version }),
-      ...(this.options.waWebSocketUrl && { waWebSocketUrl: this.options.waWebSocketUrl }),
-    });
+    const socket = lib.makeWASocket(socketConfig(auth.state, this.options));
 
     socket.ev.on("creds.update", () => {
       // A failed write is the connection's failure: the keys it used cannot be taken back.

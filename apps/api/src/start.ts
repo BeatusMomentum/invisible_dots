@@ -9,10 +9,9 @@ import { fileURLToPath } from "node:url";
 import {
   ChannelHub,
   TelegramChannelType,
-  WHATSAPP_ENABLE_HELP,
   WhatsAppChannelType,
   whatsappClientDir,
-  whatsappClientInstalled,
+  whatsappClientProblem,
   type ChannelType,
 } from "@invisible-dots/channels";
 import type { Database } from "@invisible-dots/database";
@@ -129,9 +128,8 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
     });
     cleanup.push(() => scheduler.close());
     const clientDir = options.whatsappClientDir ?? DEFAULT_CLIENT_DIR;
-    if (!options.channelTypes && env[ENV.WHATSAPP] === "1" && !whatsappClientInstalled(clientDir)) {
-      logger.warn(`${ENV.WHATSAPP}=1 is set but the WhatsApp client is not installed: ${WHATSAPP_ENABLE_HELP}`);
-    }
+    const clientProblem = !options.channelTypes && env[ENV.WHATSAPP] === "1" ? whatsappClientProblem(clientDir) : null;
+    if (clientProblem) logger.warn(`${ENV.WHATSAPP}=1 is set. ${clientProblem.message}`);
     // Next to the Scheduler, using only what it offers; registered after it, so it stops first.
     const channels = new ChannelHub({
       db,

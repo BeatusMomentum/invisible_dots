@@ -240,11 +240,28 @@ describe("startServer on an empty INVISIBLE_DOTS_HOME", { timeout: 120_000 }, ()
     expect(await api.health()).toMatchObject({ status: "ok" });
   });
 
+  it("with INVISIBLE_DOTS_WHATSAPP=1 and a client that is not the pinned release, starts anyway and says in the log which releases differ", async () => {
+    const client = join(home, "client");
+    await mkdir(join(client, "node_modules", "baileys"), { recursive: true });
+    await writeFile(join(client, "package.json"), JSON.stringify({ dependencies: { baileys: "1.2.4" } }));
+    await writeFile(join(client, "node_modules", "baileys", "package.json"), JSON.stringify({ name: "baileys", version: "1.2.3", main: "index.js" }));
+    await writeFile(join(client, "node_modules", "baileys", "index.js"), "");
+    const warnings: string[] = [];
+    const logger = { ...quiet, warn: (message: string) => void warnings.push(message) };
+    const server = await start({ env: envFor(home, { INVISIBLE_DOTS_WHATSAPP: "1" }), logger, whatsappClientDir: client });
+    const line = warnings.filter((m) => m.includes("WhatsApp"));
+    expect(line).toHaveLength(1);
+    expect(line[0]).toContain("1.2.3");
+    expect(line[0]).toContain("1.2.4");
+    expect(line[0]).toContain("npm run whatsapp:install");
+    expect(server.channels.kinds).toEqual(["telegram", "whatsapp"]);
+  });
+
   it("says nothing of the WhatsApp client when WhatsApp is not asked for, or when the client is there", async () => {
     const client = join(home, "client");
     await mkdir(join(client, "node_modules", "baileys"), { recursive: true });
-    await writeFile(join(client, "package.json"), "{}");
-    await writeFile(join(client, "node_modules", "baileys", "package.json"), JSON.stringify({ name: "baileys", main: "index.js" }));
+    await writeFile(join(client, "package.json"), JSON.stringify({ dependencies: { baileys: "1.2.3" } }));
+    await writeFile(join(client, "node_modules", "baileys", "package.json"), JSON.stringify({ name: "baileys", version: "1.2.3", main: "index.js" }));
     await writeFile(join(client, "node_modules", "baileys", "index.js"), "");
     const warnings: string[] = [];
     const logger = { ...quiet, warn: (message: string) => void warnings.push(message) };

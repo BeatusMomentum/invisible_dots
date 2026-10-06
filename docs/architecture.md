@@ -2117,15 +2117,26 @@ hub.
   install of that lock file without install scripts. `client.ts` is the one file
   that names the library: it looks for it in that folder when a connection opens
   (`createRequire` from the folder, then one `import()` of the file's URL), loads it
-  only if it is there, and otherwise throws `WhatsAppClientMissingError`, whose
-  message is the command and the variable that turn WhatsApp on. The error is the
-  channel's status detail, the server logs it at start when
-  `INVISIBLE_DOTS_WHATSAPP=1` is set without the client, and the "it is off" answer
-  of linking carries the same words (`WHATSAPP_ENABLE_HELP`). Nothing imports the
+  only if it is there and is the pinned release, and otherwise throws
+  `WhatsAppClientMissingError` (not installed) or `WhatsAppClientVersionError` (the
+  installed `node_modules/baileys` is not the exact version
+  `optional/whatsapp/package.json` declares, which stays the one owner of the pin:
+  a pull that moves it leaves the old release installed until the install is made
+  again). Both messages name the command and the variable that turn WhatsApp on.
+  The error is the channel's status detail, the server logs it at start when
+  `INVISIBLE_DOTS_WHATSAPP=1` is set and `whatsappClientProblem` finds one (the
+  same check the loader makes), and the "it is off" answer of linking carries the
+  same words (`WHATSAPP_ENABLE_HELP`). Nothing imports the
   library by name, not even as types: the adapter writes down what it uses of it
-  (`WhatsAppClient`) and compiles without it; `npm run typecheck:whatsapp` (a CI job,
-  with the client installed) proves the real module has that shape, with the
-  library's own key groups, and `npm run test:whatsapp` runs the tests that need
+  (`WhatsAppClient`, with the library's credentials and key data as type
+  parameters) and compiles without it; `npm run typecheck:whatsapp` (a CI job,
+  with the client installed) proves the real module has that shape, that the
+  options of the socket the adapter builds (`socketConfig`, typed
+  `WhatsAppSocketConfig`) are each an option of the library with a type it takes
+  and none is a name it lacks, that the adapter's auth state is one the library
+  accepts, and that the key groups are the library's own. (The methods of
+  `WhatsAppClient` are compared in both directions, so those two are asserted
+  separately, one way.) `npm run test:whatsapp` runs the tests that need
   the real library (`packages/channels/test-optin/`, left out of the default
   suite). The command bundle has no import of it, so no build of ours embeds GPL
   code. `THIRD_PARTY_NOTICES.md` says what that means for whoever distributes an

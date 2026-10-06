@@ -12,7 +12,7 @@
  * is now, never a step apart; and once the channel or its Dot is deleted nothing is written back.
  */
 import type { ChannelSecrets } from "../channel.js";
-import type { SignalKeyGroup, WhatsAppAuthState, WhatsAppClient, WhatsAppCreds } from "./client.js";
+import type { SignalKeyData, SignalKeyGroup, WhatsAppAuthState, WhatsAppClient, WhatsAppCreds } from "./client.js";
 
 export const WHATSAPP_CREDS_SECRET = "whatsapp_creds";
 
@@ -36,11 +36,12 @@ export const GROUP_SECRETS: Record<KeyGroup, string> = {
 export const WHATSAPP_AUTH_SECRETS: readonly string[] = [WHATSAPP_CREDS_SECRET, ...Object.values(GROUP_SECRETS)];
 
 /** The parts of Baileys the state needs; the caller passes the module it loaded, so this file never loads it. */
-export type BaileysAuthLib = Pick<WhatsAppClient, "initAuthCreds" | "BufferJSON" | "proto">;
+export type BaileysAuthLib<Creds extends WhatsAppCreds = WhatsAppCreds, KeyData extends SignalKeyData = SignalKeyData> = Pick<WhatsAppClient<Creds, KeyData>, "initAuthCreds" | "BufferJSON" | "proto">;
 
-export class AuthStore {
+/** The store keeps what the library handed it as it was; `Creds` and `KeyData` are the library's own types of it (the defaults are the adapter's loose view). */
+export class AuthStore<Creds extends WhatsAppCreds = WhatsAppCreds, KeyData extends SignalKeyData = SignalKeyData> {
   /** What `makeWASocket` takes as `auth`. */
-  readonly state: WhatsAppAuthState;
+  readonly state: WhatsAppAuthState<Creds, KeyData>;
   readonly #groups = new Map<KeyGroup, Record<string, unknown>>();
   readonly #dirty = new Set<KeyGroup>();
   #credsDirty = false;
@@ -50,8 +51,8 @@ export class AuthStore {
   private constructor(
     private readonly dotId: string,
     private readonly secrets: ChannelSecrets,
-    private readonly lib: BaileysAuthLib,
-    creds: WhatsAppCreds,
+    private readonly lib: BaileysAuthLib<Creds, KeyData>,
+    creds: Creds,
   ) {
     this.state = {
       creds,
