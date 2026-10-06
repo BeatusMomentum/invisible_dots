@@ -184,7 +184,8 @@ describe("Home", () => {
     plane.dots = [dotRecord("d1", { name: "broken", status: "ERROR", error: "the guest never became healthy", computer_state: "ERROR" })];
     await renderHome();
     const broken = await screen.findByRole("article", { name: "broken" });
-    expect(within(broken).getByText("Error")).toBeTruthy();
+    expect(within(broken).getByText("Error", { selector: "p" })).toBeTruthy();
+    expect(within(broken).getByRole("button", { name: /^Computer: Error/ })).toBeTruthy();
     expect(within(broken).getByText("the guest never became healthy")).toBeTruthy();
     expect(within(broken).getByRole("img", { name: "Needs attention: error" })).toBeTruthy();
   });
@@ -237,7 +238,7 @@ describe("Home", () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);
     await renderHome();
     const power = await screen.findByRole("article", { name: "power" });
-    await userEvent.click(within(power).getByRole("button", { name: /^Computer: RUNNING/ }));
+    await userEvent.click(within(power).getByRole("button", { name: /^Computer: Running/ }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Stop" }));
     await waitFor(() => expect(plane.requests).toContain("POST /api/dots/d1/computer/stop"));
   });
@@ -249,7 +250,7 @@ describe("Home", () => {
     window.confirm = confirm;
     await renderHome();
     const busy = await screen.findByRole("article", { name: "busy" });
-    await userEvent.click(within(busy).getByRole("button", { name: /^Computer: RUNNING/ }));
+    await userEvent.click(within(busy).getByRole("button", { name: /^Computer: Running/ }));
     await userEvent.click(await screen.findByRole("menuitem", { name: "Stop" }));
     expect(confirm).toHaveBeenCalled();
     expect(plane.requests).not.toContain("POST /api/dots/d1/computer/stop");

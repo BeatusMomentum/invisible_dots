@@ -12,7 +12,7 @@ import { StreamIndicator } from "../events";
 import { Badge } from "../ui/badge";
 import { Separator } from "../ui/separator";
 import { Skeleton } from "../ui/skeleton";
-import { ApiStatus } from "./ApiStatus";
+import { ApiStatus, MissingKeyNotice } from "./ApiStatus";
 import { useShell } from "./attention";
 import { DotAvatar } from "./DotAvatar";
 import { ThemeToggle } from "./ThemeToggle";
@@ -47,7 +47,7 @@ function CountBadge({ count, label }: { count: number; label: string }) {
 
 /**
  * The rail (S1): the brand, a way to make a Dot, the pages, every Dot with its avatar ring, and at the foot the
- * state of the API and the live stream and the theme. `onNavigate` lets a sheet close itself on a click.
+ * state of the API and the live stream on one line with the theme. `onNavigate` lets a sheet close itself on a click.
  */
 export function Rail({ onNavigate }: { onNavigate?: () => void }) {
   const path = usePathname() ?? "/";
@@ -57,13 +57,12 @@ export function Rail({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="flex h-full flex-col gap-3 p-3">
       <div className="flex items-center gap-2 px-2 pt-1">
-        <span aria-hidden="true" className="grid grid-cols-2 gap-px">
-          <span className="size-1.5 bg-foreground" />
-          <span className="size-1.5 bg-foreground/40" />
-          <span className="size-1.5 bg-foreground/40" />
-          <span className="size-1.5 bg-attention" />
+        <span aria-hidden="true" className="flex gap-0.5">
+          <span className="size-2 rounded-full bg-foreground" />
+          <span className="size-2 rounded-full bg-foreground/50" />
+          <span className="size-2 rounded-full bg-foreground/20" />
         </span>
-        <span className="font-mono text-sm font-medium">invisible_dots</span>
+        <span className="text-sm font-semibold tracking-tight">invisible_dots</span>
       </div>
 
       <nav aria-label="Main" className="space-y-0.5">
@@ -87,7 +86,7 @@ export function Rail({ onNavigate }: { onNavigate?: () => void }) {
       <nav aria-label="Dots" className="min-h-0 flex-1 space-y-0.5 overflow-y-auto">
         <div className="flex items-center justify-between px-2 pb-1">
           <h2 className="text-xs text-muted-foreground">Dots</h2>
-          <Link href={NEW_DOT_HREF} onClick={onNavigate} aria-label="New Dot" className="rounded-[3px] p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground">
+          <Link href={NEW_DOT_HREF} onClick={onNavigate} aria-label="New Dot" className="rounded-full p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground">
             <PlusIcon className="size-3.5" />
           </Link>
         </div>
@@ -125,7 +124,7 @@ export function Rail({ onNavigate }: { onNavigate?: () => void }) {
             >
               <DotAvatar id={dot.id} name={dot.name} ring={ring} size="sm" />
               <span className="min-w-0 flex-1 truncate">{dot.name}</span>
-              {dotLive.unread ? <span role="img" aria-label="New reply" className="size-2 shrink-0 rounded-[3px] bg-primary" /> : null}
+              {dotLive.unread ? <span role="img" aria-label="New reply" className="size-2 shrink-0 rounded-full bg-primary" /> : null}
               {relinks.length > 0 ? <UnplugIcon role="img" aria-label={`${relinks.map((relink) => CHANNEL_LABELS[relink.kind]).join(" and ")} needs linking again`} className="size-3.5 shrink-0 text-warn" /> : null}
               <CountBadge count={approvals} label="waiting" />
             </Link>
@@ -135,14 +134,13 @@ export function Rail({ onNavigate }: { onNavigate?: () => void }) {
 
       <Separator />
 
-      <div className="space-y-2 px-1 pb-1">
-        <div className="space-y-1 px-1">
-          <ApiStatus onNavigate={onNavigate} />
-          <StreamIndicator />
-        </div>
+      <div className="space-y-1.5 px-2 pb-1">
         <div className="flex items-center gap-1">
+          <ApiStatus />
+          <StreamIndicator />
           <ThemeToggle />
         </div>
+        <MissingKeyNotice onNavigate={onNavigate} />
       </div>
     </div>
   );

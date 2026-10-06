@@ -60,7 +60,7 @@ export function HomePage() {
             </div>
           ) : null}
           {shown.length > 0 ? (
-            <div>
+            <div className="divide-y rounded-lg border bg-card">
               {shown.map((dot) => (
                 <DotCard key={dot.id} dot={dot} />
               ))}
@@ -79,12 +79,11 @@ export function HomePage() {
 /** Nothing here yet: three dots that become one, and the way to make it. */
 function EmptyHome() {
   return (
-    <section aria-labelledby="empty-title" className="flex flex-col items-center gap-4 border-y px-6 py-14 text-center">
-      <span aria-hidden="true" className="grid grid-cols-2 gap-1">
-        <span className="size-3 bg-foreground" />
-        <span className="size-3 bg-foreground/40" />
-        <span className="size-3 bg-foreground/40" />
-        <span className="size-3 bg-attention" />
+    <section aria-labelledby="empty-title" className="flex flex-col items-center gap-4 rounded-lg border bg-card px-6 py-14 text-center">
+      <span aria-hidden="true" className="flex gap-1.5">
+        <span className="size-3 rounded-full bg-foreground" />
+        <span className="size-3 rounded-full bg-foreground/50" />
+        <span className="size-3 rounded-full bg-foreground/20" />
       </span>
       <div className="space-y-1">
         <h2 id="empty-title" className="text-lg font-semibold">

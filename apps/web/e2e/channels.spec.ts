@@ -28,7 +28,7 @@ async function codeOf(page: Page, name: "Open Telegram" | "Open WhatsApp"): Prom
   return code;
 }
 
-test("the Channels tab connects Telegram, pairs a person with the code, and carries their messages to the chat and the answers back", async ({ signedIn: page, harness }) => {
+test("the Channels tab connects Telegram, pairs a person with the code, and carries their messages to the chat and the answers back", async ({ page, harness }) => {
   const dot = await harness.createDot("channels-telegram");
   const token = makeBot(harness, 700001, "e2e_fares_bot");
   const ann = { id: 4242, first_name: "Ann" };
@@ -81,7 +81,7 @@ test("the Channels tab connects Telegram, pairs a person with the code, and carr
   await expect(page.getByRole("list", { name: "Events" }).getByRole("listitem").filter({ hasText: "via Telegram" })).toBeVisible();
 });
 
-test("the switches of a channel are saved and kept, a person is revoked and Telegram is disconnected, each after asking where it is final", async ({ signedIn: page, harness }) => {
+test("the switches of a channel are saved and kept, a person is revoked and Telegram is disconnected, each after asking where it is final", async ({ page, harness }) => {
   const dot = await harness.createDot("channels-settings");
   const token = makeBot(harness, 700002, "e2e_settings_bot");
   await harness.api.putTelegramChannel(dot.id, token);
@@ -130,7 +130,7 @@ test.describe("a channel that has to be linked again", () => {
     await expect.poll(async () => (await fresh.api.listDots()).length).toBe(0);
   });
 
-  test("a Telegram token that was revoked puts the Dot in the rail, the tab and the Inbox, and a new token clears them", async ({ signedInFresh: page, fresh: harness }) => {
+  test("a Telegram token that was revoked puts the Dot in the rail, the tab and the Inbox, and a new token clears them", async ({ page, fresh: harness }) => {
     const dot = await harness.createDot("channels-relink");
     const token = makeBot(harness, 700003, "e2e_relink_bot");
     const next = makeBot(harness, 700004, "e2e_relink_two_bot");
@@ -168,7 +168,7 @@ test.describe("a channel that has to be linked again", () => {
   });
 
   for (const how of ["pauses it", "disconnects it"] as const) {
-    test(`the marks go as soon as the person ${how}, without a reload`, async ({ signedInFresh: page, fresh: harness }) => {
+    test(`the marks go as soon as the person ${how}, without a reload`, async ({ page, fresh: harness }) => {
       const dot = await harness.createDot("channels-relink");
       const token = makeBot(harness, how === "pauses it" ? 700005 : 700006, how === "pauses it" ? "e2e_pause_bot" : "e2e_remove_bot");
       await harness.api.putTelegramChannel(dot.id, token);
@@ -194,7 +194,7 @@ test.describe("a channel that has to be linked again", () => {
   }
 });
 
-test("WhatsApp is linked by scanning the codes the host makes, then pairs a person and carries their messages", async ({ signedIn: page, harness }) => {
+test("WhatsApp is linked by scanning the codes the host makes, then pairs a person and carries their messages", async ({ page, harness }) => {
   const dot = await harness.createDot("channels-whatsapp");
   const made = harness.whatsapp.connections.length;
   await page.goto(`${harness.webUrl}/dots/${dot.id}/channels`);
@@ -235,7 +235,7 @@ test("WhatsApp is linked by scanning the codes the host makes, then pairs a pers
   await expect.poll(() => harness.whatsapp.current.texts(phone)).toContain("echo: Any news on the fares?");
 });
 
-test("a WhatsApp link that fails says why and starts over", async ({ signedIn: page, harness }) => {
+test("a WhatsApp link that fails says why and starts over", async ({ page, harness }) => {
   const dot = await harness.createDot("channels-whatsapp-failed");
   const made = harness.whatsapp.connections.length;
   await page.goto(`${harness.webUrl}/dots/${dot.id}/channels`);
@@ -259,7 +259,7 @@ test("a WhatsApp link that fails says why and starts over", async ({ signedIn: p
   await expect(whatsapp(page).getByText("WhatsApp is not linked")).toHaveCount(0);
 });
 
-test("the Channels page fits a phone: no sideways scroll at 390 px, with a pairing code and a long bot name on it", async ({ signedIn: page, harness }) => {
+test("the Channels page fits a phone: no sideways scroll at 390 px, with a pairing code and a long bot name on it", async ({ page, harness }) => {
   const dot = await harness.createDot("channels-phone");
   const token = makeBot(harness, 700005, "a_bot_with_a_very_long_name_that_has_no_break_in_it_at_all_bot");
   await harness.api.putTelegramChannel(dot.id, token);
@@ -271,7 +271,7 @@ test("the Channels page fits a phone: no sideways scroll at 390 px, with a pairi
 });
 
 for (const scheme of ["light", "dark"] as const) {
-  test(`the Channels page is readable in ${scheme}: chips, notes, switches' words, links and the countdown`, async ({ signedIn: page, harness }) => {
+  test(`the Channels page is readable in ${scheme}: chips, notes, switches' words, links and the countdown`, async ({ page, harness }) => {
     await page.emulateMedia({ colorScheme: scheme });
     const dot = await harness.createDot(`channels-look-${scheme}`);
     const token = makeBot(harness, scheme === "light" ? 700006 : 700007, `e2e_look_${scheme}_bot`);

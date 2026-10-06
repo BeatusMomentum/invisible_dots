@@ -26,7 +26,7 @@ function automation(id: string, name: string, change: Partial<Automation> = {}):
   };
 }
 
-test("the Memory tab lists the Dot's notes, reads one as Markdown, follows a note the Dot writes, and keeps the open note in the address", async ({ signedIn: page, harness }) => {
+test("the Memory tab lists the Dot's notes, reads one as Markdown, follows a note the Dot writes, and keeps the open note in the address", async ({ page, harness }) => {
   const dot = await harness.createDot("memory-notes");
   const guest = harness.driver.guestOf(dot.id);
   guest.putFile("/home/dot/memory/fares.md", "# Fares\n\nCheapest in **May**.", hoursAgo(5));
@@ -90,7 +90,7 @@ test("the Memory tab lists the Dot's notes, reads one as Markdown, follows a not
   await expect(page.getByText("There is no note called gone.md (any more).")).toBeVisible();
 });
 
-test("the chip of a note in the chat leads to the note", async ({ signedIn: page, harness }) => {
+test("the chip of a note in the chat leads to the note", async ({ page, harness }) => {
   const dot = await harness.createDot("memory-chat-chip");
   const guest = harness.driver.guestOf(dot.id);
   guest.putFile("/home/dot/memory/trips/lisbon.md", "Lisbon in June");
@@ -102,7 +102,7 @@ test("the chip of a note in the chat leads to the note", async ({ signedIn: page
   await expect(page.getByRole("region", { name: "File lisbon.md" }).getByText("Lisbon in June")).toBeVisible();
 });
 
-test("an empty memory says so, and the switch turns the Dot's memory off for good: saved, pushed, and the memory tools no longer offered", async ({ signedIn: page, harness }) => {
+test("an empty memory says so, and the switch turns the Dot's memory off for good: saved, pushed, and the memory tools no longer offered", async ({ page, harness }) => {
   const dot = await harness.createDot("memory-switch");
   const guest = harness.driver.guestOf(dot.id);
   await page.goto(`${harness.webUrl}/dots/${dot.id}/memory`);
@@ -128,7 +128,7 @@ test("an empty memory says so, and the switch turns the Dot's memory off for goo
   expect((await harness.api.getDot(dot.id)).config.memory.enabled).toBe(true);
 });
 
-test("a config changed in another tab is not undone by the switch", async ({ signedIn: page, harness }) => {
+test("a config changed in another tab is not undone by the switch", async ({ page, harness }) => {
   const dot = await harness.createDot("memory-switch-stale");
   await page.goto(`${harness.webUrl}/dots/${dot.id}/memory`);
   await expect(page.getByRole("switch", { name: /Memory is on/ })).toBeChecked();
@@ -150,7 +150,7 @@ test("a config changed in another tab is not undone by the switch", async ({ sig
   expect(saved.config.goal).toBe("a goal set elsewhere");
 });
 
-test("the automations: schedule in words, next and last run, paused and resumed, deleted after a question, and new ones appear when the Dot makes them", async ({ signedIn: page, harness }) => {
+test("the automations: schedule in words, next and last run, paused and resumed, deleted after a question, and new ones appear when the Dot makes them", async ({ page, harness }) => {
   const dot = await harness.createDot("memory-automations");
   const guest = harness.driver.guestOf(dot.id);
   await page.goto(`${harness.webUrl}/dots/${dot.id}/memory?view=automations`);
@@ -207,7 +207,7 @@ test("the automations: schedule in words, next and last run, paused and resumed,
   expect(await page.evaluate(() => (window as unknown as { marker?: number }).marker)).toBe(7);
 });
 
-test("what the empty automations say follows the permission", async ({ signedIn: page, harness }) => {
+test("what the empty automations say follows the permission", async ({ page, harness }) => {
   const dot = await harness.createDot("memory-automations-deny");
   const read = await harness.api.getDot(dot.id);
   await harness.api.updateDot(dot.id, { ...read.config, permissions: { ...read.config.permissions, automations: "deny" } });
@@ -215,7 +215,7 @@ test("what the empty automations say follows the permission", async ({ signedIn:
   await expect(page.getByText(/cannot set any up/)).toBeVisible();
 });
 
-test("a stopped computer says so on both views, and starts from there", async ({ signedIn: page, harness }) => {
+test("a stopped computer says so on both views, and starts from there", async ({ page, harness }) => {
   const dot = await harness.createDot("memory-stopped");
   harness.driver.guestOf(dot.id).putFile("/home/dot/memory/fares.md", "Cheapest in May.");
   await harness.api.stopComputer(dot.id);
@@ -230,7 +230,7 @@ test("a stopped computer says so on both views, and starts from there", async ({
   await expect(page.getByRole("link", { name: /fares\.md/ })).toBeVisible();
 });
 
-test("the Memory page fits a phone: no sideways scroll at 390 px, and a note replaces the list", async ({ signedIn: page, harness }) => {
+test("the Memory page fits a phone: no sideways scroll at 390 px, and a note replaces the list", async ({ page, harness }) => {
   const dot = await harness.createDot("memory-phone");
   const guest = harness.driver.guestOf(dot.id);
   const longName = "a-note-with-a-very-long-name-that-has-no-break-in-it-at-all-and-keeps-going-and-going.md";
@@ -256,7 +256,7 @@ test("the Memory page fits a phone: no sideways scroll at 390 px, and a note rep
 });
 
 for (const scheme of ["light", "dark"] as const) {
-  test(`the Memory page is readable in ${scheme}: notes, the chip, the switch's text, the schedule card`, async ({ signedIn: page, harness }) => {
+  test(`the Memory page is readable in ${scheme}: notes, the chip, the switch's text, the schedule card`, async ({ page, harness }) => {
     await page.emulateMedia({ colorScheme: scheme });
     const dot = await harness.createDot(`memory-look-${scheme}`);
     const guest = harness.driver.guestOf(dot.id);

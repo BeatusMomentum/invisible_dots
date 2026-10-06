@@ -1,7 +1,7 @@
 import { PERMISSIONS, resolvePermission } from "@invisible-dots/shared";
 import { expect, test } from "./fixtures.js";
 
-test("a Dot is created by the form: its config is what the form showed, and the person lands in its chat", async ({ signedIn: page, harness }) => {
+test("a Dot is created by the form: its config is what the form showed, and the person lands in its chat", async ({ page, harness }) => {
   await page.goto(`${harness.webUrl}/`);
   await page.getByRole("link", { name: "New Dot" }).first().click();
   await expect(page).toHaveURL(/\/new$/);
@@ -37,7 +37,7 @@ test("a Dot is created by the form: its config is what the form showed, and the 
   expect(decisions["files.read"]).toBe("allow");
 });
 
-test("a Dot is created from YAML, edited in place", async ({ signedIn: page, harness }) => {
+test("a Dot is created from YAML, edited in place", async ({ page, harness }) => {
   await page.goto(`${harness.webUrl}/new`);
   await page.getByLabel("Name", { exact: true }).fill("yaml-made");
   await page.getByLabel("Goal", { exact: true }).fill("Sort the mail");
@@ -57,7 +57,7 @@ test("a Dot is created from YAML, edited in place", async ({ signedIn: page, har
   expect(stored.config.browser.identities.max_open).toBe(2);
 });
 
-test("a name that is not valid, or is taken, is said so at once, and nothing is created", async ({ signedIn: page, harness }) => {
+test("a name that is not valid, or is taken, is said so at once, and nothing is created", async ({ page, harness }) => {
   await harness.createDot("name-taken");
   await page.goto(`${harness.webUrl}/new`);
   const name = page.getByLabel("Name", { exact: true });
@@ -73,7 +73,7 @@ test("a name that is not valid, or is taken, is said so at once, and nothing is 
   expect((await harness.api.listDots()).filter((dot) => dot.name === "name-taken")).toHaveLength(1);
 });
 
-test("the checks beside the form say what the host lacks and the command that fixes it, and check again on request", async ({ signedIn: page, harness }) => {
+test("the checks beside the form say what the host lacks and the command that fixes it, and check again on request", async ({ page, harness }) => {
   const missing = { id: "golden-image", label: "golden image", status: "missing", detail: "none in the images folder", fix: "invisible-dots image build" } as const;
   const healthy = harness.host.images;
   harness.host.images = [missing, healthy[1]!];
@@ -93,7 +93,7 @@ test("the checks beside the form say what the host lacks and the command that fi
   }
 });
 
-test("the Home page shows a card per Dot and the computer's power on it works", async ({ signedIn: page, harness }) => {
+test("the Home page shows a card per Dot and the computer's power on it works", async ({ page, harness }) => {
   const dot = await harness.createDot("home-card", "Watch the fares from Milan to Lisbon");
   await page.goto(`${harness.webUrl}/`);
   const card = page.getByRole("article", { name: "home-card" });
@@ -102,24 +102,24 @@ test("the Home page shows a card per Dot and the computer's power on it works", 
   await expect(card.getByText("$0.00")).toBeVisible();
   await expect(card.getByRole("img", { name: "Ready" })).toBeVisible();
 
-  await card.getByRole("button", { name: /^Computer: RUNNING/ }).click();
+  await card.getByRole("button", { name: /^Computer: Running/ }).click();
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("menuitem", { name: "Stop" }).click();
-  await expect(card.getByRole("button", { name: /^Computer: STOPPED/ })).toBeVisible();
+  await expect(card.getByRole("button", { name: /^Computer: Stopped/ })).toBeVisible();
   await expect(card.getByRole("img", { name: "Computer stopped" })).toBeVisible();
 
   await card.getByRole("link", { name: "Open chat" }).click();
   await expect(page).toHaveURL(new RegExp(`/dots/${dot.id}/chat$`));
 });
 
-test("a Dot made elsewhere appears on the Home page while it is open", async ({ signedIn: page, harness }) => {
+test("a Dot made elsewhere appears on the Home page while it is open", async ({ page, harness }) => {
   await page.goto(`${harness.webUrl}/`);
   await expect(page.getByRole("heading", { level: 1, name: "Dots" })).toBeVisible();
   await harness.createDot("home-live", "arrives while you look");
   await expect(page.getByRole("article", { name: "home-live" })).toBeVisible();
 });
 
-test("Home and the create page fit a phone: no sideways scroll at 390 px", async ({ signedIn: page, harness }) => {
+test("Home and the create page fit a phone: no sideways scroll at 390 px", async ({ page, harness }) => {
   await harness.createDot("phone-card", "a goal long enough that it has to wrap onto a second line of the card on a narrow screen");
   await page.setViewportSize({ width: 390, height: 844 });
   const loaded: Record<string, () => Promise<void>> = {

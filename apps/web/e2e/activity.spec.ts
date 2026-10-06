@@ -10,7 +10,7 @@ function called(tool: string, target: string, change: Partial<OutboundEventDataM
 
 const PAGE = 200;
 
-test("the Activity tab reads the log as lines, filters by family at the host, follows the Dot live, and the old Timeline address leads to it", async ({ signedIn: page, harness }) => {
+test("the Activity tab reads the log as lines, filters by family at the host, follows the Dot live, and the old Timeline address leads to it", async ({ page, harness }) => {
   const dot = await harness.createDot("activity-lines");
   const guest = harness.driver.guestOf(dot.id);
   guest.emit("tool.called", called("exec", "ls -la /home/dot"));
@@ -64,7 +64,7 @@ test("the Activity tab reads the log as lines, filters by family at the host, fo
   await page.getByRole("searchbox", { name: "Search the events read so far" }).fill("");
 });
 
-test("a long log is read a page at a time from the newest, with nothing skipped or repeated, and the oldest first when asked", async ({ signedIn: page, harness }) => {
+test("a long log is read a page at a time from the newest, with nothing skipped or repeated, and the oldest first when asked", async ({ page, harness }) => {
   const dot = await harness.createDot("activity-paging");
   const guest = harness.driver.guestOf(dot.id);
   const total = 2 * PAGE + 30;
@@ -90,7 +90,7 @@ test("a long log is read a page at a time from the newest, with nothing skipped 
   await expect(rows.last()).toContainText(`note-${String(total - 1).padStart(4, "0")}.md`);
 });
 
-test("the events on screen are saved as JSON Lines, as the host stored them", async ({ signedIn: page, harness }) => {
+test("the events on screen are saved as JSON Lines, as the host stored them", async ({ page, harness }) => {
   const dot = await harness.createDot("activity-export");
   const guest = harness.driver.guestOf(dot.id);
   guest.emit("memory.written", { key: "a.md" });
@@ -107,7 +107,7 @@ test("the events on screen are saved as JSON Lines, as the host stored them", as
   expect(text.trimEnd().split("\n").map((line) => JSON.parse(line) as StoredEvent)).toEqual(stored);
 });
 
-test("the Activity page is usable from the keyboard alone, and fits a phone", async ({ signedIn: page, harness }) => {
+test("the Activity page is usable from the keyboard alone, and fits a phone", async ({ page, harness }) => {
   const dot = await harness.createDot("activity-keys");
   const guest = harness.driver.guestOf(dot.id);
   guest.emit("tool.called", called("exec", "a very long command ".repeat(20)));
@@ -135,7 +135,7 @@ test("the Activity page is usable from the keyboard alone, and fits a phone", as
 });
 
 for (const scheme of ["light", "dark"] as const) {
-  test(`the Activity page is readable in ${scheme}: the chips, the lines, the notes under them`, async ({ signedIn: page, harness }) => {
+  test(`the Activity page is readable in ${scheme}: the chips, the lines, the notes under them`, async ({ page, harness }) => {
     await page.emulateMedia({ colorScheme: scheme });
     const dot = await harness.createDot(`activity-look-${scheme}`);
     const guest = harness.driver.guestOf(dot.id);

@@ -30,7 +30,7 @@ export function DotCard({ dot }: { dot: Dot }) {
   const model = dot.config?.model?.id;
 
   return (
-    <article aria-labelledby={`dot-${dot.id}-name`} className="grid gap-x-6 gap-y-2 border-b py-4 first:border-t md:grid-cols-[minmax(12rem,16rem)_1fr_auto] md:items-center">
+    <article aria-labelledby={`dot-${dot.id}-name`} className="grid gap-x-6 gap-y-2 px-4 py-4 md:grid-cols-[minmax(12rem,16rem)_1fr_auto] md:items-center">
       <div className="flex items-center gap-3">
         <DotAvatar id={dot.id} name={dot.name} ring={ring} size="sm" />
         <div className="min-w-0 flex-1 space-y-1">
@@ -39,8 +39,8 @@ export function DotCard({ dot }: { dot: Dot }) {
               {dot.name}
             </Link>
           </h2>
-          <p className={cn("flex w-fit items-center gap-1.5 font-mono text-xs text-muted-foreground", status.working && "animate-pulse motion-reduce:animate-none")}>
-            <span aria-hidden="true" className={cn("size-1.5", TONE_DOT[status.tone])} />
+          <p className={cn("flex w-fit items-center gap-1.5 text-xs text-muted-foreground", status.working && "animate-pulse motion-reduce:animate-none")}>
+            <span aria-hidden="true" className={cn("size-2 rounded-full", TONE_DOT[status.tone])} />
             <span className="sr-only">Status: </span>
             {status.label}
           </p>
@@ -56,7 +56,7 @@ export function DotCard({ dot }: { dot: Dot }) {
         {status.reason ? <p className="text-sm text-danger">{status.reason}</p> : null}
         <p className="line-clamp-2 text-sm text-muted-foreground">{dot.config?.goal ?? ""}</p>
 
-      <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-xs text-muted-foreground">
+      <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
         {model ? (
           <div className="flex gap-1">
             <dt className="sr-only">Model</dt>

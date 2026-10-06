@@ -39,7 +39,7 @@ export function DotTabs({ dotId }: { dotId: string }) {
                 )}
               >
                 {tab.label}
-                {tab.slug === "channels" && relinks > 0 ? <span role="img" aria-label="needs linking again" className="size-2 rounded-[3px] bg-warn" /> : null}
+                {tab.slug === "channels" && relinks > 0 ? <span role="img" aria-label="needs linking again" className="size-2 rounded-full bg-warn" /> : null}
               </Link>
             </li>
           );

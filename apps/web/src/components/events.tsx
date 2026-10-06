@@ -1,9 +1,11 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { ActivityIcon } from "lucide-react";
 import { api } from "../lib/api";
 import { cn } from "../lib/utils";
 import type { StoredEvent } from "../lib/types";
+import { StatusIcon } from "./shell/StatusIcon";
 
 export type StreamStatus = "connecting" | "open" | "reconnecting" | "closed";
 
@@ -133,15 +135,15 @@ const STREAM_DOT: Record<StreamStatus, string> = {
   reconnecting: "bg-warn",
 };
 
-/** Whether live updates reach this page: a dot and one word. */
+/** Whether live updates reach this page: an icon with a colored dot, the word (and why, when it is not live) on hover. */
 export function StreamIndicator() {
   const context = useContext(Context);
   if (!context) return null;
+  const label = STREAM_LABEL[context.status];
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" role="status" title={context.detail || undefined}>
-      <span aria-hidden="true" className={cn("size-2 rounded-[3px]", STREAM_DOT[context.status])} />
-      <span className="sr-only">Updates: </span>
-      {STREAM_LABEL[context.status]}
-    </span>
+    <StatusIcon icon={ActivityIcon} dotClassName={STREAM_DOT[context.status]} tooltip={[`Live updates: ${label}`, context.detail].filter(Boolean).join(" · ")}>
+      <span>Updates: </span>
+      {label}
+    </StatusIcon>
   );
 }

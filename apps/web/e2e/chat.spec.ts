@@ -17,7 +17,7 @@ function startTurn(guest: FakeGuest): void {
   };
 }
 
-test("the person talks to the Dot: the working row follows the turn, the steps sit between the messages, the answer is markdown", async ({ signedIn: page, harness }) => {
+test("the person talks to the Dot: the working row follows the turn, the steps sit between the messages, the answer is markdown", async ({ page, harness }) => {
   const dot = await harness.createDot("chat-turn", "Watch the fares to Lisbon");
   const guest = harness.driver.guestOf(dot.id);
   startTurn(guest);
@@ -83,7 +83,7 @@ test("the person talks to the Dot: the working row follows the turn, the steps s
   await expect(page.getByRole("log").getByText("trips/lisbon.md", { exact: true })).toBeVisible();
 });
 
-test("a conversation longer than a page opens on its newest messages, and goes back a page at a time", async ({ signedIn: page, harness }) => {
+test("a conversation longer than a page opens on its newest messages, and goes back a page at a time", async ({ page, harness }) => {
   const dot = await harness.createDot("chat-long");
   // 60 questions, each answered by the fake guest's echo: 120 messages, one page and a bit.
   for (let i = 0; i < 60; i++) await harness.api.sendMessage(dot.id, `question ${i}`);
@@ -105,7 +105,7 @@ test("a conversation longer than a page opens on its newest messages, and goes b
   await expect(log.getByText("one more, live")).toBeVisible();
 });
 
-test("a command that started a terminal session says so in the chat and in the Activity, and one that did not says it ran", async ({ signedIn: page, harness }) => {
+test("a command that started a terminal session says so in the chat and in the Activity, and one that did not says it ran", async ({ page, harness }) => {
   const dot = await harness.createDot("chat-terminal");
   const guest = harness.driver.guestOf(dot.id);
   await harness.api.sendMessage(dot.id, "open a python shell");
@@ -123,7 +123,7 @@ test("a command that started a terminal session says so in the chat and in the A
   await expect(rows.filter({ hasText: "Ran a command" })).toHaveCount(1);
 });
 
-test("an approval the Dot asks for in the chat is a card where it was asked, the person answers it there, and its answer is a receipt", async ({ signedIn: page, harness }) => {
+test("an approval the Dot asks for in the chat is a card where it was asked, the person answers it there, and its answer is a receipt", async ({ page, harness }) => {
   const dot = await harness.createDot("chat-approval");
   const guest = harness.driver.guestOf(dot.id);
   await harness.api.sendMessage(dot.id, "please delete the old profile");
@@ -144,7 +144,7 @@ test("an approval the Dot asks for in the chat is a card where it was asked, the
   expect((await harness.api.listApprovals("approved")).map((a) => a.dot_id)).toEqual([dot.id]);
 });
 
-test("the computer panel shows the desktop and each open browser, and follows a browser being opened and closed", async ({ signedIn: page, harness }) => {
+test("the computer panel shows the desktop and each open browser, and follows a browser being opened and closed", async ({ page, harness }) => {
   const dot = await harness.createDot("chat-panel");
   const guest = harness.driver.guestOf(dot.id);
   await page.setViewportSize({ width: 1400, height: 900 });
@@ -187,18 +187,18 @@ test("the computer panel shows the desktop and each open browser, and follows a 
   await expect(page.getByRole("complementary", { name: "Computer" })).toHaveCount(0);
 });
 
-test("a stopped computer says so in the panel, and the chat still takes a message", async ({ signedIn: page, harness }) => {
+test("a stopped computer says so in the panel, and the chat still takes a message", async ({ page, harness }) => {
   const dot = await harness.createDot("chat-stopped");
   await harness.api.stopComputer(dot.id);
   await page.setViewportSize({ width: 1400, height: 900 });
   await page.goto(`${harness.webUrl}/dots/${dot.id}/chat`);
-  await expect(page.getByRole("button", { name: /^Computer: STOPPED/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Computer: Stopped/ })).toBeVisible();
   await page.getByRole("button", { name: "Watch the computer" }).click();
   await expect(page.getByRole("complementary", { name: "Computer" }).getByText(/The computer is stopped/)).toBeVisible();
   await expect(page.getByText(/Sending a message wakes it/)).toBeVisible();
 });
 
-test("the chat works from the keyboard and keeps a draft across a reload", async ({ signedIn: page, harness }) => {
+test("the chat works from the keyboard and keeps a draft across a reload", async ({ page, harness }) => {
   const dot = await harness.createDot("chat-keys");
   await page.goto(`${harness.webUrl}/dots/${dot.id}/chat`);
   const box = page.getByRole("textbox", { name: "Message" });
@@ -220,7 +220,7 @@ test("the chat works from the keyboard and keeps a draft across a reload", async
   await expect(box).toHaveValue("");
 });
 
-test("the chat fits a phone: long lines wrap, code scrolls inside its block, and the computer opens as a sheet", async ({ signedIn: page, harness }) => {
+test("the chat fits a phone: long lines wrap, code scrolls inside its block, and the computer opens as a sheet", async ({ page, harness }) => {
   const dot = await harness.createDot("chat-phone", "A goal long enough to run past the edge of a narrow screen if nothing held it back, word after word");
   const guest = harness.driver.guestOf(dot.id);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -242,7 +242,7 @@ test("the chat fits a phone: long lines wrap, code scrolls inside its block, and
   await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible();
 });
 
-test("the user's bubble and the Dot's words are readable in light and in dark", async ({ signedIn: page, harness }) => {
+test("the user's bubble and the Dot's words are readable in light and in dark", async ({ page, harness }) => {
   const dot = await harness.createDot("chat-look");
   await harness.api.sendMessage(dot.id, "hello there");
   for (const scheme of ["light", "dark"] as const) {
@@ -272,7 +272,7 @@ test("the user's bubble and the Dot's words are readable in light and in dark", 
   }
 });
 
-test("a Dot opened by its name moves to its id, and the chat hears the Dot live", async ({ signedIn: page, harness }) => {
+test("a Dot opened by its name moves to its id, and the chat hears the Dot live", async ({ page, harness }) => {
   const dot = await harness.createDot("chat-by-name");
   const guest = harness.driver.guestOf(dot.id);
   await page.goto(`${harness.webUrl}/dots/chat-by-name/chat`);
@@ -286,7 +286,7 @@ test("a Dot opened by its name moves to its id, and the chat hears the Dot live"
   await expect(page.getByRole("log").getByRole("article", { name: "chat-by-name" }).getByText("Heard on the id.")).toBeVisible();
 });
 
-test("a message that came through a chat says which one, and one typed here says nothing", async ({ signedIn: page, harness }) => {
+test("a message that came through a chat says which one, and one typed here says nothing", async ({ page, harness }) => {
   const dot = await harness.createDot("chat-origin", "Watch the fares to Lisbon");
   const origin = { channel: "telegram", binding_id: "bind_e2e", chat_id: "4242", external_id: "99:1" } as const;
   await harness.control.scheduler.sendMessage(dot.id, "Is the 9 am flight still the cheapest?", origin);

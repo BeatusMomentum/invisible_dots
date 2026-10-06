@@ -3,7 +3,8 @@ import { act, cleanup, render, screen, waitFor, within } from "@testing-library/
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AppLayout from "../src/app/(app)/layout";
-import { stubMatchMedia } from "./support/browser";
+import { FAVICON_ATTENTION } from "../src/lib/favicon";
+import { stubMatchMedia, stubResizeObserver } from "./support/browser";
 import { approvalRecord, channelRecord, dotRecord, FakeControlPlane, taskRecord } from "./support/control-plane";
 
 let pathname = "/";
@@ -18,6 +19,7 @@ beforeEach(() => {
   plane = new FakeControlPlane();
   plane.install();
   stubMatchMedia();
+  stubResizeObserver();
 });
 
 afterEach(() => {
@@ -229,7 +231,7 @@ describe("what the live stream changes in the rail", () => {
     plane.approvals = [approvalRecord("a1", "d1")];
     renderShell();
     await waitFor(() => expect(document.title).toBe("(2) Dots - invisible_dots"));
-    expect(document.head.querySelector('link[rel="icon"]')?.getAttribute("href")).toContain(encodeURIComponent("#a85a00"));
+    expect(document.head.querySelector('link[rel="icon"]')?.getAttribute("href")).toContain(encodeURIComponent(FAVICON_ATTENTION));
 
     plane.approvals = [];
     plane.dots = [dotRecord("d1"), dotRecord("d2")];
@@ -239,7 +241,7 @@ describe("what the live stream changes in the rail", () => {
       plane.push("d2", "dot.updated");
     });
     await waitFor(() => expect(document.title).toBe("Dots - invisible_dots"));
-    expect(document.head.querySelector('link[rel="icon"]')?.getAttribute("href")).not.toContain(encodeURIComponent("#a85a00"));
+    expect(document.head.querySelector('link[rel="icon"]')?.getAttribute("href")).not.toContain(encodeURIComponent(FAVICON_ATTENTION));
   });
 
   it("counts a task that failed in the last day, and not one that failed earlier or one that was dismissed", async () => {
@@ -304,6 +306,10 @@ describe("the menu on a narrow screen", () => {
     renderShell();
     await userEvent.click(screen.getByRole("button", { name: "Open the menu" }));
     const sheet = await screen.findByRole("dialog");
+    // It opens on the page the person is on, and no status of the rail's foot takes the focus (and opens its tooltip).
+    await waitFor(() => expect(document.activeElement?.getAttribute("aria-current")).toBe("page"));
+    expect(sheet.contains(document.activeElement)).toBe(true);
+    expect(screen.queryByRole("tooltip")).toBeNull();
     const link = await within(sheet).findByRole("link", { name: /d1/ });
     // jsdom cannot navigate: the click is still heard by the page, which is what closes the sheet.
     document.addEventListener("click", (event) => event.preventDefault(), { once: true });

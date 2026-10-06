@@ -112,8 +112,8 @@ export function PermissionsPanel({ draft, saved, change, dotId, computerState }:
                     <div className="min-w-0 flex-1 space-y-0.5">
                       <p className="flex flex-wrap items-center gap-2 font-medium">
                         {row.label}
-                        <span className={cn("rounded-[3px] px-2 py-0.5 text-xs font-medium", TONE_CLASS[RISK_TONE[row.risk]])}>{RISK_LABEL[row.risk]}</span>
-                        {row.changed ? <span className="rounded-[3px] bg-info-soft px-2 py-0.5 text-xs font-medium text-info">Changed</span> : null}
+                        <span className={cn("rounded-full px-2 py-0.5 text-xs font-medium", TONE_CLASS[RISK_TONE[row.risk]])}>{RISK_LABEL[row.risk]}</span>
+                        {row.changed ? <span className="rounded-full bg-info-soft px-2 py-0.5 text-xs font-medium text-info">Changed</span> : null}
                       </p>
                       <p className="text-sm text-muted-foreground">{row.description}</p>
                     </div>

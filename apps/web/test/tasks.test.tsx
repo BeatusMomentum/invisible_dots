@@ -118,12 +118,16 @@ describe("the Tasks page", () => {
   });
 
   it("lists the newest page, and reads the older ones when asked, joining them to what is shown", async () => {
+    // The tasks of the Queue region's ordered list, read from the DOM: a role query over two hundred cards costs a
+    // few hundred milliseconds in jsdom, and waitFor repeats it every 50, which alone used up the test's time. The
+    // region is found again at each call (by its heading, a text query), since it is drawn anew when the list grows.
+    const queueItems = () => screen.getByText("Queue", { selector: "h2" }).closest("section")!.querySelectorAll(":scope ol > li");
     // 205 queued tasks, one created a minute after the other: the newest 200 are the first page, five are past it.
     const base = Date.now() - 3_600_000;
     plane.tasks = Array.from({ length: TASK_LIST_LIMIT + 5 }, (_, i) => taskRecord(`q${String(i).padStart(3, "0")}`, { created_at: new Date(base + i * 1000).toISOString() }));
     await renderTasks();
-    const queue = await screen.findByRole("region", { name: /^Queue/ });
-    expect(within(queue).getAllByRole("listitem")).toHaveLength(TASK_LIST_LIMIT);
+    await screen.findByRole("region", { name: /^Queue/ });
+    expect(queueItems()).toHaveLength(TASK_LIST_LIMIT);
     expect(screen.queryByText("task q000")).toBeNull();
     const notice = screen.getByRole("status", { name: "" });
     expect(notice.textContent).toContain(`The newest ${TASK_LIST_LIMIT} tasks are listed`);
@@ -131,7 +135,7 @@ describe("the Tasks page", () => {
     expect(pagedQueries()).toEqual([]);
 
     await userEvent.click(within(notice).getByRole("button", { name: "Show older tasks" }));
-    await waitFor(() => expect(within(screen.getByRole("region", { name: /^Queue/ })).getAllByRole("listitem")).toHaveLength(TASK_LIST_LIMIT + 5));
+    await waitFor(() => expect(queueItems()).toHaveLength(TASK_LIST_LIMIT + 5));
     expect(screen.getByText("task q000")).toBeTruthy();
     // The page went on after the last task of the newest one, and the list ended there: nothing more to ask for.
     expect(pagedQueries()).toEqual([{ limit: null, before: "q005" }]);
@@ -142,7 +146,7 @@ describe("the Tasks page", () => {
     act(() => plane.push("d1", "task.created", { task_id: "q999" }));
     await waitFor(() => expect(screen.getByText("task q999")).toBeTruthy());
     expect(screen.getByText("task q000")).toBeTruthy();
-    expect(within(screen.getByRole("region", { name: /^Queue/ })).getAllByRole("listitem")).toHaveLength(TASK_LIST_LIMIT + 6);
+    expect(queueItems()).toHaveLength(TASK_LIST_LIMIT + 6);
   });
 
   it("does not offer older tasks to a Dot whose tasks fit a page", async () => {

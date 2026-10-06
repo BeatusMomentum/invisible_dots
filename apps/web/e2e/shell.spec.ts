@@ -1,33 +1,6 @@
 import { expect, test } from "./fixtures.js";
 
-test("the login page has no rail, refuses a wrong token and lets the right one in", async ({ page, harness }) => {
-  const calls: string[] = [];
-  page.on("request", (request) => calls.push(new URL(request.url()).pathname));
-  await page.goto(`${harness.webUrl}/login`);
-  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-  await expect(page.getByRole("navigation", { name: "Main" })).toHaveCount(0);
-  // Give an effect time to start a request, if one were going to.
-  await page.waitForTimeout(500);
-  expect(calls.filter((path) => path.startsWith("/api/"))).toEqual([]);
-
-  await page.getByLabel("API token").fill("not-the-token");
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("alert").filter({ hasText: "not the API token" })).toBeVisible();
-
-  await page.getByLabel("API token").fill(harness.token);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("navigation", { name: "Main" })).toBeVisible();
-});
-
-test("signing out returns to the login page, and the pages behind it ask for the token again", async ({ signedIn: page, harness }) => {
-  await page.goto(`${harness.webUrl}/`);
-  await page.getByRole("button", { name: "Sign out" }).click();
-  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-  await page.goto(`${harness.webUrl}/inbox`);
-  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-});
-
-test("the rail lists the Dots and a Dot's page shows its header and its tabs", async ({ signedIn: page, harness }) => {
+test("the rail lists the Dots and a Dot's page shows its header and its tabs", async ({ page, harness }) => {
   const dot = await harness.createDot("shell-header", "Watch the fares from Milan to Lisbon");
   await page.goto(`${harness.webUrl}/`);
   const dots = page.getByRole("navigation", { name: "Dots" });
@@ -48,7 +21,7 @@ test("the rail lists the Dots and a Dot's page shows its header and its tabs", a
   await expect(page.getByRole("button", { name: "New task" })).toBeVisible();
 });
 
-test("a Dot that waits for an approval shows it everywhere at once, live, and clears it when it is answered", async ({ signedIn: page, harness }) => {
+test("a Dot that waits for an approval shows it everywhere at once, live, and clears it when it is answered", async ({ page, harness }) => {
   const dot = await harness.createDot("shell-asks");
   await page.goto(`${harness.webUrl}/`);
   const link = page.getByRole("navigation", { name: "Dots" }).getByRole("link", { name: /shell-asks/ });
@@ -69,22 +42,22 @@ test("a Dot that waits for an approval shows it everywhere at once, live, and cl
   await expect(page).toHaveTitle(titleBefore);
 });
 
-test("the computer pill stops and starts the computer", async ({ signedIn: page, harness }) => {
+test("the computer pill stops and starts the computer", async ({ page, harness }) => {
   const dot = await harness.createDot("shell-power");
   await page.goto(`${harness.webUrl}/dots/${dot.id}/chat`);
-  const pill = page.getByRole("button", { name: /^Computer: RUNNING/ });
+  const pill = page.getByRole("button", { name: /^Computer: Running/ });
   await pill.click();
   page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("menuitem", { name: "Stop" }).click();
-  await expect(page.getByRole("button", { name: /^Computer: STOPPED/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Computer: Stopped/ })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Dots" }).getByRole("link", { name: /shell-power/ }).getByRole("img", { name: "Computer stopped" })).toBeVisible();
 
-  await page.getByRole("button", { name: /^Computer: STOPPED/ }).click();
+  await page.getByRole("button", { name: /^Computer: Stopped/ }).click();
   await page.getByRole("menuitem", { name: "Start" }).click();
-  await expect(page.getByRole("button", { name: /^Computer: RUNNING/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Computer: Running/ })).toBeVisible();
 });
 
-test("the theme follows the system, can be chosen, and is applied before the page is drawn", async ({ signedIn: page, harness }) => {
+test("the theme follows the system, can be chosen, and is applied before the page is drawn", async ({ page, harness }) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await page.goto(`${harness.webUrl}/`);
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
@@ -106,7 +79,7 @@ test("the theme follows the system, can be chosen, and is applied before the pag
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
 });
 
-test("on a phone the rail is a sheet behind the menu button and nothing scrolls sideways", async ({ signedIn: page, harness }) => {
+test("on a phone the rail is a sheet behind the menu button and nothing scrolls sideways", async ({ page, harness }) => {
   const dot = await harness.createDot("shell-phone", "A goal long enough to run past the edge of a narrow screen if nothing held it back, word after word");
   await page.setViewportSize({ width: 390, height: 800 });
   await page.goto(`${harness.webUrl}/dots/${dot.id}/chat`);
@@ -124,10 +97,10 @@ test("on a phone the rail is a sheet behind the menu button and nothing scrolls 
   await expect(sheet).toBeHidden();
 });
 
-test("the whole shell works from the keyboard", async ({ signedIn: page, harness }) => {
+test("the whole shell works from the keyboard", async ({ page, harness }) => {
   const dot = await harness.createDot("shell-keys");
   await page.goto(`${harness.webUrl}/dots/${dot.id}/chat`);
-  await page.getByRole("button", { name: /^Computer: RUNNING/ }).focus();
+  await page.getByRole("button", { name: /^Computer: Running/ }).focus();
   await page.keyboard.press("Enter");
   await expect(page.getByRole("menu")).toBeVisible();
   await page.keyboard.press("Escape");
@@ -141,7 +114,7 @@ test("the whole shell works from the keyboard", async ({ signedIn: page, harness
   await expect(page).toHaveURL(/#main$/);
 });
 
-test("a focused control keeps an outline under forced colors, where box shadows are not drawn, and draws its ring as a shadow otherwise", async ({ signedIn: page, harness }) => {
+test("a focused control keeps an outline under forced colors, where box shadows are not drawn, and draws its ring as a shadow otherwise", async ({ page, harness }) => {
   await page.goto(`${harness.webUrl}/new`);
   await expect(page.getByRole("heading", { name: "Create a Dot" })).toBeVisible();
   const focused = async () => {

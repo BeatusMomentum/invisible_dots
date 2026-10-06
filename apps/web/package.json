@@ -16,8 +16,8 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@fontsource/ibm-plex-mono": "5.3.0",
-    "@fontsource/ibm-plex-sans": "5.3.0",
+    "@fontsource/geist-mono": "5.3.0",
+    "@fontsource/geist-sans": "5.3.0",
     "@invisible-dots/sdk": "0.0.0",
     "@invisible-dots/shared": "0.0.0",
     "class-variance-authority": "^0.7.1",

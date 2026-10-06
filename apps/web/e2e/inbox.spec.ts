@@ -31,7 +31,7 @@ test.afterEach(async ({ fresh }) => {
   await expect.poll(async () => (await fresh.api.listDots()).length).toBe(0);
 });
 
-test("the Inbox lists what every Dot waits on, counts it in the rail and the title, and an answer is heard by the Dot and clears the count", async ({ signedInFresh: page, fresh: harness }) => {
+test("the Inbox lists what every Dot waits on, counts it in the rail and the title, and an answer is heard by the Dot and clears the count", async ({ page, fresh: harness }) => {
   const a = await harness.createDot("inbox-a");
   const b = await harness.createDot("inbox-b");
   const guestA = harness.driver.guestOf(a.id);
@@ -69,7 +69,7 @@ test("the Inbox lists what every Dot waits on, counts it in the rail and the tit
   await expect(page).toHaveTitle(/^(?!\()/);
 });
 
-test("Always allow says what it changes, changes the Dot's settings and its computer's, and is remembered as the answer", async ({ signedInFresh: page, fresh: harness }) => {
+test("Always allow says what it changes, changes the Dot's settings and its computer's, and is remembered as the answer", async ({ page, fresh: harness }) => {
   const dot = await harness.createDot("inbox-always");
   const guest = harness.driver.guestOf(dot.id);
   expect(guest.config?.permissions["automations"]).toBe("ask");
@@ -94,7 +94,7 @@ test("Always allow says what it changes, changes the Dot's settings and its comp
   await expect.poll(() => answersHeard(guest)).toEqual([{ approval_id: id, decision: "approve" }]);
 });
 
-test("Keep asking in that question changes nothing, and Deny sends the note with it", async ({ signedInFresh: page, fresh: harness }) => {
+test("Keep asking in that question changes nothing, and Deny sends the note with it", async ({ page, fresh: harness }) => {
   const dot = await harness.createDot("inbox-deny");
   const guest = harness.driver.guestOf(dot.id);
   const id = ask(guest, exec("make deploy"));
@@ -133,7 +133,7 @@ test("Keep asking in that question changes nothing, and Deny sends the note with
   await expect(page.getByRole("table")).toBeVisible();
 });
 
-test("the old addresses lead to the Inbox, a Dot's approvals to the Inbox filtered to that Dot", async ({ signedInFresh: page, fresh: harness }) => {
+test("the old addresses lead to the Inbox, a Dot's approvals to the Inbox filtered to that Dot", async ({ page, fresh: harness }) => {
   const kept = await harness.createDot("inbox-kept");
   const other = await harness.createDot("inbox-other");
   ask(harness.driver.guestOf(kept.id), exec("ls"));
@@ -160,7 +160,7 @@ test("the old addresses lead to the Inbox, a Dot's approvals to the Inbox filter
   await expect(page.getByRole("navigation", { name: "Dot sections" }).getByRole("link", { name: /Approvals/ })).toHaveCount(0);
 });
 
-test("the Inbox is answered from the keyboard alone: j and k choose, a allows once, d denies, and a command waits for its confirmation", async ({ signedInFresh: page, fresh: harness }) => {
+test("the Inbox is answered from the keyboard alone: j and k choose, a allows once, d denies, and a command waits for its confirmation", async ({ page, fresh: harness }) => {
   const dot = await harness.createDot("inbox-keys");
   const guest = harness.driver.guestOf(dot.id);
   const one = ask(guest, navigate("https://example.com/one"));
@@ -190,7 +190,7 @@ test("the Inbox is answered from the keyboard alone: j and k choose, a allows on
   expect((await harness.api.listApprovals("rejected")).map((x) => x.id)).toEqual([two]);
 });
 
-test("an approval answered somewhere else while this page was cut off says so, and is not a failure", async ({ signedInFresh: page, fresh: harness }) => {
+test("an approval answered somewhere else while this page was cut off says so, and is not a failure", async ({ page, fresh: harness }) => {
   const dot = await harness.createDot("inbox-race");
   const id = ask(harness.driver.guestOf(dot.id), exec("pwd"));
   await page.goto(`${harness.webUrl}/inbox`);
@@ -208,7 +208,7 @@ test("an approval answered somewhere else while this page was cut off says so, a
   expect((await harness.api.listApprovals("rejected")).map((x) => x.id)).toEqual([id]);
 });
 
-test("a task's approval is a card on the task, in its drawer too, and answering it lets the task go on", async ({ signedInFresh: page, fresh: harness }) => {
+test("a task's approval is a card on the task, in its drawer too, and answering it lets the task go on", async ({ page, fresh: harness }) => {
   const dot = await harness.createDot("inbox-task");
   const guest = harness.driver.guestOf(dot.id);
   const onInbound = guest.onInbound;
@@ -238,7 +238,7 @@ test("a task's approval is a card on the task, in its drawer too, and answering 
   await expect(page.getByRole("region", { name: /^History/ }).getByRole("row", { name: /Build the site/ })).toBeVisible();
 });
 
-test("a failed task is in the Inbox for a day, opens in its drawer, and leaves for good when dismissed", async ({ signedInFresh: page, fresh: harness }) => {
+test("a failed task is in the Inbox for a day, opens in its drawer, and leaves for good when dismissed", async ({ page, fresh: harness }) => {
   const dot = await harness.createDot("inbox-failed");
   const guest = harness.driver.guestOf(dot.id);
   const onInbound = guest.onInbound;
@@ -266,7 +266,7 @@ test("a failed task is in the Inbox for a day, opens in its drawer, and leaves f
   await expect(page.getByText("Nothing needs you")).toBeVisible();
 });
 
-test("an approval with a long command and a long file fits a phone, and its answers stay in reach", async ({ signedInFresh: page, fresh: harness }) => {
+test("an approval with a long command and a long file fits a phone, and its answers stay in reach", async ({ page, fresh: harness }) => {
   const dot = await harness.createDot("inbox-phone");
   const guest = harness.driver.guestOf(dot.id);
   const content = Array.from({ length: 120 }, (_, i) => `line ${i} of a file that is long enough to need the sideways scroll of its own, ${"x".repeat(80)}`).join("\n");
@@ -292,7 +292,7 @@ test("an approval with a long command and a long file fits a phone, and its answ
 });
 
 for (const scheme of ["light", "dark"] as const) {
-  test(`the approval card is readable: answers, diff and receipt keep their contrast (${scheme})`, async ({ signedInFresh: page, fresh: harness }) => {
+  test(`the approval card is readable: answers, diff and receipt keep their contrast (${scheme})`, async ({ page, fresh: harness }) => {
     await page.emulateMedia({ colorScheme: scheme });
     const dot = await harness.createDot(`inbox-look-${scheme}`);
     const guest = harness.driver.guestOf(dot.id);

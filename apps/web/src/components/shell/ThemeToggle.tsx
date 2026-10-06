@@ -5,6 +5,7 @@ import type { ThemePreference } from "../../lib/theme";
 import { useThemePreference } from "../../lib/use-theme";
 import { Button } from "../ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from "../ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip";
 
 const CHOICES: { value: ThemePreference; label: string; icon: typeof SunIcon }[] = [
   { value: "light", label: "Light", icon: SunIcon },
@@ -19,11 +20,16 @@ export function ThemeToggle() {
   const Icon = current.icon;
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button type="button" variant="ghost" size="icon-sm" aria-label={`Theme: ${current.label}`}>
-          <Icon />
-        </Button>
-      </DropdownMenuTrigger>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" variant="ghost" size="icon-sm" aria-label={`Theme: ${current.label}`}>
+              <Icon />
+            </Button>
+          </DropdownMenuTrigger>
+        </TooltipTrigger>
+        <TooltipContent side="top">Theme: {current.label}</TooltipContent>
+      </Tooltip>
       <DropdownMenuContent align="start">
         <DropdownMenuRadioGroup value={preference} onValueChange={(value) => setPreference(value as ThemePreference)}>
           {CHOICES.map(({ value, label, icon: ChoiceIcon }) => (

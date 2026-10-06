@@ -20,7 +20,7 @@ import { DotAvatar } from "../shell/DotAvatar";
 import { CostPill } from "./CostPill";
 import { PowerMenu } from "./PowerMenu";
 import { usePower } from "./use-power";
-import { TONE_CLASS } from "./tone";
+import { TONE_DOT } from "./tone";
 import { useDotRing } from "./use-ring";
 
 /**
@@ -48,7 +48,7 @@ export function DotHeader({ dotId, dot }: { dotId: string; dot: Resource<Dot> })
       <header className="space-y-3" aria-busy={dot.loading}>
         <ErrorAlert error={dot.error} title="Could not load this Dot" />
         <div className="flex items-center gap-3">
-          <Skeleton className="size-12 rounded-[3px]" />
+          <Skeleton className="size-12 rounded-full" />
           <Skeleton className="h-6 w-48" />
         </div>
       </header>
@@ -61,7 +61,8 @@ export function DotHeader({ dotId, dot }: { dotId: string; dot: Resource<Dot> })
   // with the computer itself in ERROR the way back is to start it again.
   const allowed = allowedActions(record.computer_state ?? "");
   const recovery = record.computer_state === null ? null : allowed.reboot ? "reboot" : allowed.start ? "start" : null;
-  const pillClass = cn("rounded-[3px] px-2.5 py-0.5 text-xs font-medium", TONE_CLASS[pill.tone], pill.working && "animate-pulse");
+  const pillClass = cn("inline-flex items-center gap-1.5 text-xs font-medium", pill.working && "animate-pulse motion-reduce:animate-none");
+  const pillDot = <span aria-hidden="true" className={cn("size-2 rounded-full", TONE_DOT[pill.tone])} />;
 
   return (
     <header className="space-y-3">
@@ -95,11 +96,13 @@ export function DotHeader({ dotId, dot }: { dotId: string; dot: Resource<Dot> })
         <div className="flex flex-wrap items-center gap-2">
           {pill.label === "Waiting for you" ? (
             <Link href={`/inbox?dot=${encodeURIComponent(dotId)}`} className={cn(pillClass, "underline-offset-2 hover:underline")}>
+              {pillDot}
               <span className="sr-only">Dot state: </span>
               {pill.label}
             </Link>
           ) : (
             <span className={pillClass}>
+              {pillDot}
               <span className="sr-only">Dot state: </span>
               {pill.label}
             </span>

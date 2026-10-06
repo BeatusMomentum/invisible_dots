@@ -8,27 +8,27 @@
 :root {
   color-scheme: light;
 
-  --background: #f3f3f1;
-  --foreground: #161615;
-  --card: #fbfbfa;
-  --card-foreground: #161615;
+  --background: #fafafa;
+  --foreground: #171717;
+  --card: #ffffff;
+  --card-foreground: #171717;
   --popover: #ffffff;
-  --popover-foreground: #161615;
-  --muted: #e9e9e6;
-  --muted-foreground: #5a5a55;
-  --secondary: #e9e9e6;
-  --secondary-foreground: #161615;
-  --accent: #e2e2de;
-  --accent-foreground: #161615;
-  --border: #d9d9d4;
-  --input: #86867f;
-  --ring: #161615;
+  --popover-foreground: #171717;
+  --muted: #f2f2f2;
+  --muted-foreground: #666666;
+  --secondary: #f2f2f2;
+  --secondary-foreground: #171717;
+  --accent: #ebebeb;
+  --accent-foreground: #171717;
+  --border: #eaeaea;
+  --input: #8f8f8f;
+  --ring: #0070f3;
 
-  /* The primary action is ink, not a color: color is kept for status, and amber (--attention) for what needs the person. */
-  --primary: #161615;
-  --primary-foreground: #fbfbfa;
+  /* The primary action is black on white (white on black in the dark): color is kept for status, blue for focus, amber (--attention) for what needs the person. */
+  --primary: #171717;
+  --primary-foreground: #ffffff;
   /* The fill of the primary action under the pointer: a deeper accent, so its text keeps AA (a fill at 90 percent of the accent over a light surface does not). */
-  --primary-hover: #33332f;
+  --primary-hover: #383838;
 
   /* Status: saturated color is for status only. Each has a soft surface to sit on. */
   --ok: #19794a;
@@ -40,39 +40,38 @@
   --info: #1f5fbf;
   --info-soft: #e3edfb;
   /* Not text: the ring and badge of a Dot that waits for the person, and the favicon's second dot. */
-  --attention: #a85a00;
+  --attention: #ab570a;
   /* The fill of a destructive button (the text color of an error is --danger). */
   --destructive: #b3261e;
   --destructive-foreground: #ffffff;
 
-  /* Square-ish: 4px, an instrument's corners, not a toy's. */
-  --radius: 0.25rem;
-  /* IBM Plex, bundled with the client (src/app/layout.tsx imports it; nothing is loaded from another site): Sans for words, Mono for what the machine reports. */
-  --font-ui: "IBM Plex Sans", system-ui, sans-serif;
-  --font-code: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+  --radius: 0.5rem;
+  /* Geist, bundled with the client (src/app/layout.tsx imports it; nothing is loaded from another site): Sans for words, Mono for the few machine facts. */
+  --font-ui: "Geist Sans", system-ui, sans-serif;
+  --font-code: "Geist Mono", ui-monospace, Consolas, monospace;
 }
 
 :root[data-theme="dark"] {
   color-scheme: dark;
 
-  --background: #0e0e0d;
-  --foreground: #ecece8;
-  --card: #151514;
-  --card-foreground: #ecece8;
-  --popover: #1b1b1a;
-  --popover-foreground: #ecece8;
-  --muted: #1c1c1b;
-  --muted-foreground: #a2a29b;
-  --secondary: #232321;
-  --secondary-foreground: #ecece8;
-  --accent: #272725;
-  --accent-foreground: #ecece8;
-  --border: #2a2a28;
-  --input: #6d6d66;
-  --ring: #ecece8;
+  --background: #000000;
+  --foreground: #ededed;
+  --card: #0a0a0a;
+  --card-foreground: #ededed;
+  --popover: #111111;
+  --popover-foreground: #ededed;
+  --muted: #1a1a1a;
+  --muted-foreground: #a1a1a1;
+  --secondary: #1f1f1f;
+  --secondary-foreground: #ededed;
+  --accent: #1f1f1f;
+  --accent-foreground: #ededed;
+  --border: #2e2e2e;
+  --input: #707070;
+  --ring: #3291ff;
 
-  --primary: #ecece8;
-  --primary-foreground: #0e0e0d;
+  --primary: #ededed;
+  --primary-foreground: #0a0a0a;
   --primary-hover: #ffffff;
 
   --ok: #5fd28f;
@@ -83,7 +82,7 @@
   --danger-soft: #401b18;
   --info: #8db4f5;
   --info-soft: #1a2a42;
-  --attention: #f0a43a;
+  --attention: #ffb224;
   --destructive: #c9302c;
   --destructive-foreground: #ffffff;
 }

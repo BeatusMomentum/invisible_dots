@@ -218,7 +218,7 @@ command. To type it that way:
 ## Using the web UI
 
 The web UI is the same control plane as the command line, with a page for what
-you would otherwise read as text. It uses the system's own fonts, has a light
+you would otherwise read as text. It is set in Geist (bundled with it), has a light
 and a dark theme that follows your system unless you choose, and fits a phone
 screen.
 
@@ -727,7 +727,7 @@ it, and to whom:
   identity's proxy when it has one), to set the time zone and locale, and it
   keeps its GeoIP database current from its GitHub release.
 - **The web UI** loads nothing from other sites: its pages, scripts and styles
-  come from the server on your PC and its fonts are your system's. A link you
+  come from the server on your PC, its fonts (Geist) included. A link you
   press (to @BotFather, to an OpenRouter page) opens that site.
 - **Next.js** may send its anonymous build telemetry when the web client is
   built. `setup --all` turns it off for its build; set

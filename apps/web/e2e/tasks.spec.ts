@@ -19,7 +19,7 @@ async function taskNamed(harness: Harness, dotId: string, description: string) {
   return task;
 }
 
-test("a task is made in the dialog, its progress line follows the Dot live, and it ends in the history with its result", async ({ signedIn: page, harness }) => {
+test("a task is made in the dialog, its progress line follows the Dot live, and it ends in the history with its result", async ({ page, harness }) => {
   const dot = await harness.createDot("tasks-live");
   const guest = harness.driver.guestOf(dot.id);
   holdTasks(guest);
@@ -83,7 +83,7 @@ test("a task is made in the dialog, its progress line follows the Dot live, and 
   await expect(page.getByRole("dialog")).toHaveCount(0);
 });
 
-test("a running task is cancelled after a question, and the history keeps it as cancelled", async ({ signedIn: page, harness }) => {
+test("a running task is cancelled after a question, and the history keeps it as cancelled", async ({ page, harness }) => {
   const dot = await harness.createDot("tasks-cancel");
   holdTasks(harness.driver.guestOf(dot.id));
   const created = await harness.api.createTask(dot.id, { description: "Sort the whole archive" });
@@ -106,7 +106,7 @@ test("a running task is cancelled after a question, and the history keeps it as 
   expect((await harness.api.getTask(created.id)).status).toBe("CANCELLED");
 });
 
-test("a task that fails shows the reason as the Dot gave it, in the history and in the drawer", async ({ signedIn: page, harness }) => {
+test("a task that fails shows the reason as the Dot gave it, in the history and in the drawer", async ({ page, harness }) => {
   const dot = await harness.createDot("tasks-fail");
   const guest = harness.driver.guestOf(dot.id);
   holdTasks(guest);
@@ -128,7 +128,7 @@ test("a task that fails shows the reason as the Dot gave it, in the history and 
   await expect(page.getByRole("dialog").getByRole("alert").filter({ hasText: "cost cap of $1.00" })).toBeVisible();
 });
 
-test("tasks that wait are in the queue in the order the Dot takes them, and one with a time is scheduled", async ({ signedIn: page, harness }) => {
+test("tasks that wait are in the queue in the order the Dot takes them, and one with a time is scheduled", async ({ page, harness }) => {
   const dot = await harness.createDot("tasks-queue");
   holdTasks(harness.driver.guestOf(dot.id));
   await harness.api.createTask(dot.id, { description: "Occupy the Dot" });
@@ -149,7 +149,7 @@ test("tasks that wait are in the queue in the order the Dot takes them, and one 
   await expect(scheduled.getByRole("article", { name: "Next week's plan" }).getByText(/in 1d/)).toBeVisible();
 });
 
-test("the Tasks page and its drawer fit a phone: no sideways scroll at 390 px", async ({ signedIn: page, harness }) => {
+test("the Tasks page and its drawer fit a phone: no sideways scroll at 390 px", async ({ page, harness }) => {
   const dot = await harness.createDot("tasks-phone");
   const guest = harness.driver.guestOf(dot.id);
   holdTasks(guest);
@@ -170,7 +170,7 @@ test("the Tasks page and its drawer fit a phone: no sideways scroll at 390 px", 
 });
 
 for (const scheme of ["light", "dark"] as const) {
-  test(`the Tasks page is drawn by its own styles, not the old stylesheet's: readable buttons, no list markers (${scheme})`, async ({ signedIn: page, harness }) => {
+  test(`the Tasks page is drawn by its own styles, not the old stylesheet's: readable buttons, no list markers (${scheme})`, async ({ page, harness }) => {
     await page.emulateMedia({ colorScheme: scheme });
     const dot = await harness.createDot(`tasks-look-${scheme}`);
     const guest = harness.driver.guestOf(dot.id);
@@ -202,7 +202,7 @@ for (const scheme of ["light", "dark"] as const) {
   });
 }
 
-test("a Dot with more tasks than the host lists says so, and one with fewer does not", async ({ signedIn: page, harness }) => {
+test("a Dot with more tasks than the host lists says so, and one with fewer does not", async ({ page, harness }) => {
   const dot = await harness.createDot("tasks-many");
   holdTasks(harness.driver.guestOf(dot.id));
   const make = async (from: number, to: number) => {

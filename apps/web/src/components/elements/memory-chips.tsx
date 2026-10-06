@@ -28,7 +28,7 @@ export function MemoryChips({ chips, className, ...props }: { chips: readonly Me
           <li key={chip.id} className="max-w-full motion-safe:animate-in motion-safe:fade-in motion-safe:zoom-in-95 motion-safe:duration-300">
             <Link
               href={chip.href}
-              className="inline-flex max-w-full items-center rounded-[3px] border border-transparent bg-info-soft px-2.5 py-0.5 font-mono text-xs text-info focus-visible:outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+              className="inline-flex max-w-full items-center rounded-full border border-transparent bg-info-soft px-2.5 py-0.5 font-mono text-xs text-info focus-visible:outline-hidden hover:underline focus-visible:ring-2 focus-visible:ring-ring"
             >
               <span className="truncate">{chip.text}</span>
               <span className="sr-only"> ({chip.change})</span>

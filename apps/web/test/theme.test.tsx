@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ThemeToggle } from "../src/components/shell/ThemeToggle";
 import { applyTheme, storedPreference, THEME_BOOTSTRAP, THEME_KEY } from "../src/lib/theme";
 import { useResolvedTheme } from "../src/lib/use-theme";
+import { stubResizeObserver } from "./support/browser";
 
 let systemDark: boolean;
 let mediaListeners: Set<() => void>;
@@ -14,6 +15,8 @@ beforeEach(() => {
   mediaListeners = new Set();
   localStorage.clear();
   delete document.documentElement.dataset.theme;
+  // The toggle's tooltip is positioned, which jsdom cannot measure.
+  stubResizeObserver();
   vi.stubGlobal(
     "matchMedia",
     vi.fn(() => ({

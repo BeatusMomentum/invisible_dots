@@ -39,7 +39,7 @@ export interface Harness {
   whatsapp: FakeWhatsAppConnector;
   /** The control plane's SDK client, signed in with its token. */
   api: InvisibleDotsClient;
-  /** The token the login page asks for. */
+  /** The API token of this control plane (the web server reads it itself; the tests call the API with it). */
   token: string;
   /**
    * The host the doctor looks at: a healthy one (QEMU, an accelerator, disk), so a test does not depend on the machine

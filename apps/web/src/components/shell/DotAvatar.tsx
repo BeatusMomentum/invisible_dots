@@ -26,11 +26,11 @@ export function DotAvatar({ id, name, ring, size = "md", className }: { id: stri
   const face = avatarOf(id, name);
   const sizes = SIZE_CLASS[size];
   return (
-    <span role="img" aria-label={RING_LABEL[ring]} data-ring={ring} className={cn("relative inline-flex shrink-0 rounded-[3px] border-2 p-0.5", sizes.outer, RING_CLASS[ring], className)}>
-      <span aria-hidden="true" className={cn("flex size-full items-center justify-center rounded-[2px] bg-foreground font-mono font-medium text-background", sizes.initial)}>
+    <span role="img" aria-label={RING_LABEL[ring]} data-ring={ring} className={cn("relative inline-flex shrink-0 rounded-full border-2 p-0.5", sizes.outer, RING_CLASS[ring], className)}>
+      <span aria-hidden="true" className={cn("flex size-full items-center justify-center rounded-full bg-muted font-medium text-foreground", sizes.initial)}>
         {face.initial}
       </span>
-      {ring === "waiting" ? <span aria-hidden="true" className={cn("absolute -top-0.5 -right-0.5 rounded-[3px] border-2 border-card bg-attention", sizes.badge)} /> : null}
+      {ring === "waiting" ? <span aria-hidden="true" className={cn("absolute -top-0.5 -right-0.5 rounded-full border-2 border-card bg-attention", sizes.badge)} /> : null}
     </span>
   );
 }

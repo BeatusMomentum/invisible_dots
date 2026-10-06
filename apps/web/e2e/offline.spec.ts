@@ -6,8 +6,6 @@ test("the page says, at the top and as an alert, when the control plane stops an
   // A control plane of its own: this one is stopped, and the others of the run must keep theirs.
   const harness = await startHarness();
   try {
-    const signedIn = await page.request.post(`${harness.webUrl}/session`, { data: { token: harness.token } });
-    expect(signedIn.ok()).toBe(true);
     await page.goto(`${harness.webUrl}/`);
     await expect(page.getByRole("complementary", { name: "Navigation" }).getByText("Live")).toBeVisible();
     const banner = page.getByRole("alert").filter({ hasText: "The control plane does not answer" });

@@ -1,29 +1,43 @@
 "use client";
 
+import { ServerIcon } from "lucide-react";
 import Link from "next/link";
 import { cn } from "../../lib/utils";
 import { useShell } from "./attention";
+import { StatusIcon } from "./StatusIcon";
 
-/** Whether the control plane answers through the proxy, with its version (the shell asks every 30 seconds); a missing key links to where it is entered. */
-export function ApiStatus({ onNavigate }: { onNavigate?: () => void }) {
+type ApiState = "checking" | "ok" | "down";
+
+function useApiState(): ApiState {
   const { health } = useShell();
-  const state = health.error !== null ? "down" : health.data ? "ok" : "checking";
+  return health.error !== null ? "down" : health.data ? "ok" : "checking";
+}
 
+/** Whether the control plane answers through the proxy, with its version (the shell asks every 30 seconds): an icon, said in full on hover. */
+export function ApiStatus() {
+  const { health } = useShell();
+  const state = useApiState();
   const label = state === "checking" ? "API: checking" : state === "ok" ? "API: ok" : "API: unreachable";
+  const version = state === "ok" && health.data ? `v${health.data.version}` : null;
+  const detail = state === "down" ? String(health.error instanceof Error ? health.error.message : health.error) : null;
   return (
-    <div className="space-y-0.5">
-      <p className="flex items-center gap-1.5 text-xs text-muted-foreground" role="status" title={state === "down" ? String(health.error instanceof Error ? health.error.message : health.error) : undefined}>
-        <span aria-hidden="true" className={cn("size-2 rounded-[3px]", state === "ok" ? "bg-ok" : state === "down" ? "bg-danger" : "bg-muted-foreground")} />
-        {label}
-        {state === "ok" && health.data ? <span>v{health.data.version}</span> : null}
-      </p>
-      {state === "ok" && health.data && !health.data.openrouter_configured ? (
-        <p className="text-xs text-warn">
-          <Link href="/settings" onClick={onNavigate} className="underline underline-offset-2">
-            No OpenRouter key stored yet
-          </Link>
-        </p>
-      ) : null}
-    </div>
+    <StatusIcon icon={ServerIcon} dotClassName={cn(state === "ok" ? "bg-ok" : state === "down" ? "bg-danger" : "bg-muted-foreground")} tooltip={[label, version, detail].filter(Boolean).join(" · ")}>
+      {label}
+      {version ? <span> {version}</span> : null}
+    </StatusIcon>
+  );
+}
+
+/** While the control plane has no OpenRouter key: a link to where it is entered, on a line of its own under the statuses. */
+export function MissingKeyNotice({ onNavigate }: { onNavigate?: () => void }) {
+  const { health } = useShell();
+  const state = useApiState();
+  if (state !== "ok" || !health.data || health.data.openrouter_configured) return null;
+  return (
+    <p className="text-xs text-warn">
+      <Link href="/settings" onClick={onNavigate} className="underline underline-offset-2">
+        No OpenRouter key stored yet
+      </Link>
+    </p>
   );
 }

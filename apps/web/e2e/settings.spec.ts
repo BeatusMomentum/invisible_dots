@@ -4,7 +4,7 @@ import { expect, test } from "./fixtures.js";
 
 const MISSING_IMAGE: DoctorCheck = { id: "golden-image", label: "golden image", status: "missing", detail: "none in the images folder", fix: "invisible-dots image build" };
 
-test("on the first run Home lists what the host lacks with its commands, takes the key, and turns green when the last thing is done", async ({ signedInUnconfigured: page, unconfigured: harness }) => {
+test("on the first run Home lists what the host lacks with its commands, takes the key, and turns green when the last thing is done", async ({ page, unconfigured: harness }) => {
   const healthy = harness.host.images;
   harness.host.images = [MISSING_IMAGE, healthy[1]!];
   try {
@@ -44,7 +44,7 @@ test("on the first run Home lists what the host lacks with its commands, takes t
   }
 });
 
-test("the Settings page is in the rail and shows the checks, the key, the appearance, the session and where the data is", async ({ signedIn: page, harness }) => {
+test("the Settings page is in the rail and shows the checks, the key, the appearance, the session and where the data is", async ({ page, harness }) => {
   await page.goto(`${harness.webUrl}/`);
   await page.getByRole("complementary", { name: "Navigation" }).getByRole("link", { name: "Settings" }).click();
   await expect(page).toHaveURL(/\/settings$/);
@@ -65,7 +65,7 @@ test("the Settings page is in the rail and shows the checks, the key, the appear
   await expect(about.getByText("invisible-dots logs <dot>")).toBeVisible();
 });
 
-test("a missing host check shows its command here too, and checking again follows the host", async ({ signedIn: page, harness }) => {
+test("a missing host check shows its command here too, and checking again follows the host", async ({ page, harness }) => {
   const healthy = harness.host.images;
   harness.host.images = [MISSING_IMAGE, healthy[1]!];
   try {
@@ -84,7 +84,7 @@ test("a missing host check shows its command here too, and checking again follow
   }
 });
 
-test("a new key is pushed to the running Dots, and a key that cannot be one is refused before it is sent", async ({ signedIn: page, harness }) => {
+test("a new key is pushed to the running Dots, and a key that cannot be one is refused before it is sent", async ({ page, harness }) => {
   const dot = await harness.createDot("settings-key");
   await page.goto(`${harness.webUrl}/settings`);
   const key = page.getByRole("region", { name: "OpenRouter key" });
@@ -103,7 +103,7 @@ test("a new key is pushed to the running Dots, and a key that cannot be one is r
   expect(await page.content()).not.toContain("sk-or-replacement-0123456789");
 });
 
-test("the theme is chosen on the page, applied at once and kept across a reload", async ({ signedIn: page, harness }) => {
+test("the theme is chosen on the page, applied at once and kept across a reload", async ({ page, harness }) => {
   await page.emulateMedia({ colorScheme: "light" });
   await page.goto(`${harness.webUrl}/settings`);
   const appearance = page.getByRole("region", { name: "Appearance" });
@@ -117,28 +117,16 @@ test("the theme is chosen on the page, applied at once and kept across a reload"
   await expect(page.locator("html")).toHaveAttribute("data-theme", "light");
 });
 
-test("signing out from the settings page ends the session", async ({ signedIn: page, harness }) => {
-  await page.goto(`${harness.webUrl}/settings`);
-  await page.getByRole("region", { name: "Session" }).getByRole("button", { name: "Sign out" }).click();
-  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-  await page.goto(`${harness.webUrl}/settings`);
-  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-});
-
-test("the login page is a card with the token field focused, and Settings and Home fit a phone", async ({ signedIn: page, harness }) => {
+test("Settings and Home fit a phone", async ({ page, harness }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   for (const path of ["/settings", "/"]) {
     await page.goto(`${harness.webUrl}${path}`);
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0);
   }
-  await page.context().clearCookies();
-  await page.goto(`${harness.webUrl}/login`);
-  await expect(page.getByLabel("API token")).toBeFocused();
-  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBe(0);
 });
 
-test("the settings page is usable from the keyboard alone", async ({ signedIn: page, harness }) => {
+test("the settings page is usable from the keyboard alone", async ({ page, harness }) => {
   await page.goto(`${harness.webUrl}/settings`);
   const key = page.getByRole("region", { name: "OpenRouter key" });
   await key.getByLabel("Replace the key").focus();

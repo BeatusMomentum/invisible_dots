@@ -7,7 +7,7 @@ function called(tool: string, target: string, change: Partial<OutboundEventDataM
   return { tool, permission: "browser.act", decision: "allow", ok: true, duration_ms: 80, target, ...change };
 }
 
-test("the Computer page shows the screen, the files and what the computer uses", async ({ signedIn: page, harness }) => {
+test("the Computer page shows the screen, the files and what the computer uses", async ({ page, harness }) => {
   const dot = await harness.createDot("computer-views");
   const guest = harness.driver.guestOf(dot.id);
   guest.putFile("/home/dot/notes.txt", "Remember the milk.\n");
@@ -81,13 +81,13 @@ test("the Computer page shows the screen, the files and what the computer uses",
     void dialog.accept();
   });
   await page.getByRole("button", { name: "Stop", exact: true }).click();
-  await expect(page.getByRole("button", { name: /^Computer: STOPPED/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Computer: Stopped/ })).toBeVisible();
   await expect(page.getByRole("region", { name: "Automations" })).toContainText("Paused: you stopped this computer, so its automations do not run");
   await expect(page.getByRole("button", { name: "Start", exact: true })).toBeEnabled();
   await expect(page.getByText("What it uses is shown while the computer runs.")).toBeVisible();
 });
 
-test("the browsers are made here, watched with the page the Dot is on, closed and deleted", async ({ signedIn: page, harness }) => {
+test("the browsers are made here, watched with the page the Dot is on, closed and deleted", async ({ page, harness }) => {
   const dot = await harness.createDot("computer-browsers");
   const guest = harness.driver.guestOf(dot.id);
   await page.goto(`${harness.webUrl}/dots/${dot.id}/computer?view=browser`);
@@ -146,19 +146,19 @@ test("the browsers are made here, watched with the page the Dot is on, closed an
   expect(await page.evaluate(() => (window as unknown as { marker?: number }).marker)).toBe(7);
 });
 
-test("the old browser identities address leads to the Browser view", async ({ signedIn: page, harness }) => {
+test("the old browser identities address leads to the Browser view", async ({ page, harness }) => {
   const dot = await harness.createDot("computer-redirect");
   await page.goto(`${harness.webUrl}/dots/${dot.id}/identities`);
   await expect(page).toHaveURL(new RegExp(`/dots/${dot.id}/computer\\?view=browser$`));
   await expect(page.getByRole("link", { name: "Browser", exact: true })).toHaveAttribute("aria-current", "page");
 });
 
-test("a stopped computer says so on the screen, the browsers and the files, and starts from there", async ({ signedIn: page, harness }) => {
+test("a stopped computer says so on the screen, the browsers and the files, and starts from there", async ({ page, harness }) => {
   const dot = await harness.createDot("computer-stopped");
   harness.driver.guestOf(dot.id).putFile("/home/dot/notes.txt", "hello");
   await harness.api.stopComputer(dot.id);
   await page.goto(`${harness.webUrl}/dots/${dot.id}/computer`);
-  await expect(page.getByRole("button", { name: /^Computer: STOPPED/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Computer: Stopped/ })).toBeVisible();
   await expect(page.getByRole("status").filter({ hasText: "Start the computer to see its screen" })).toBeVisible();
   const views = page.getByRole("navigation", { name: "Computer views" });
   await views.getByRole("link", { name: "Browser" }).click();
@@ -168,10 +168,10 @@ test("a stopped computer says so on the screen, the browsers and the files, and 
 
   await page.getByRole("button", { name: "Start the computer" }).click();
   await expect(page.getByRole("link", { name: "notes.txt" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Computer: RUNNING/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Computer: Running/ })).toBeVisible();
 });
 
-test("the Computer page fits a phone: no sideways scroll at 390 px", async ({ signedIn: page, harness }) => {
+test("the Computer page fits a phone: no sideways scroll at 390 px", async ({ page, harness }) => {
   const dot = await harness.createDot("computer-phone");
   const guest = harness.driver.guestOf(dot.id);
   guest.putFile("/home/dot/a-file-with-a-very-long-name-that-has-no-break-in-it-at-all-and-keeps-going-and-going.txt", "x");
@@ -194,7 +194,7 @@ test("the Computer page fits a phone: no sideways scroll at 390 px", async ({ si
 });
 
 for (const scheme of ["light", "dark"] as const) {
-  test(`the Computer page is readable in ${scheme}: chips, buttons, the views bar and the labels of facts`, async ({ signedIn: page, harness }) => {
+  test(`the Computer page is readable in ${scheme}: chips, buttons, the views bar and the labels of facts`, async ({ page, harness }) => {
     await page.emulateMedia({ colorScheme: scheme });
     const dot = await harness.createDot(`computer-look-${scheme}`);
     const guest = harness.driver.guestOf(dot.id);

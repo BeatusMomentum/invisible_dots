@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDownIcon, PlayIcon, RotateCwIcon, SquareIcon } from "lucide-react";
-import { allowedActions } from "../../lib/computer";
+import { allowedActions, computerStateLabel } from "../../lib/computer";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu";
@@ -36,9 +36,9 @@ export function PowerMenu({ dotId, computerState, taskRunning, onDone }: { dotId
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button type="button" variant="outline" size="sm" disabled={pending} aria-label={`Computer: ${computerState}. Power menu`}>
-          <span aria-hidden="true" className={cn("size-2 rounded-[3px] bg-muted-foreground", STATE_DOT[computerState])} />
-          {computerState}
+        <Button type="button" variant="outline" size="sm" disabled={pending} aria-label={`Computer: ${computerStateLabel(computerState)}. Power menu`}>
+          <span aria-hidden="true" className={cn("size-2 rounded-full bg-muted-foreground", STATE_DOT[computerState])} />
+          {computerStateLabel(computerState)}
           <ChevronDownIcon />
         </Button>
       </DropdownMenuTrigger>

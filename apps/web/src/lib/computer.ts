@@ -5,6 +5,23 @@ import { whenLabel } from "./automations";
 import { relativeTime } from "./time";
 import type { Computer, DotConfig, SystemAnswer, VmState } from "./types";
 
+const COMPUTER_STATE_LABELS: Record<VmState, string> = {
+  PROVISIONING: "Provisioning",
+  STARTING: "Starting",
+  RUNNING: "Running",
+  IDLE: "Idle",
+  STOPPING: "Stopping",
+  STOPPED: "Stopped",
+  ERROR: "Error",
+  DELETING: "Deleting",
+};
+
+/** The computer's state in words, for a person; a state this client does not know is shown as the host wrote it. */
+export function computerStateLabel(state: string | null | undefined): string {
+  if (!state) return "Unknown";
+  return (COMPUTER_STATE_LABELS as Record<string, string>)[state] ?? state;
+}
+
 /** The routes that reach into the Dot's computer (identities, files, tools) answer 409 `computer_stopped` while it is off. */
 export function isComputerStopped(error: unknown): boolean {
   return error instanceof ApiError && error.status === 409 && error.code === COMPUTER_STOPPED;

@@ -2,7 +2,7 @@
 
 import { MenuIcon } from "lucide-react";
 import { usePathname } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "../ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from "../ui/sheet";
 import { OfflineBanner } from "./offline-banner";
@@ -15,6 +15,7 @@ import { Rail } from "./Rail";
 export function AppShell({ children }: { children: ReactNode }) {
   const path = usePathname();
   const [open, setOpen] = useState(false);
+  const menu = useRef<HTMLDivElement>(null);
   // A page change closes the sheet, whatever caused it.
   useEffect(() => setOpen(false), [path]);
 
@@ -31,7 +32,19 @@ export function AppShell({ children }: { children: ReactNode }) {
                 <MenuIcon />
               </Button>
             </SheetTrigger>
-            <SheetContent side="left" className="w-72 bg-card p-0">
+            <SheetContent
+              ref={menu}
+              side="left"
+              className="w-72 bg-card p-0"
+              // The menu opens on the page the person is on. Radix would focus the first control that is not a link,
+              // which is a status of the rail's foot, and focus opens its tooltip.
+              onOpenAutoFocus={(event) => {
+                const page = menu.current?.querySelector<HTMLElement>('nav a[aria-current="page"]') ?? menu.current?.querySelector<HTMLElement>("nav a");
+                if (!page) return;
+                event.preventDefault();
+                page.focus();
+              }}
+            >
               <SheetTitle className="sr-only">Menu</SheetTitle>
               <SheetDescription className="sr-only">Pages, Dots and settings</SheetDescription>
               <Rail onNavigate={() => setOpen(false)} />

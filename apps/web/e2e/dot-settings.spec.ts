@@ -14,7 +14,7 @@ async function saveReviewed(page: Page) {
   await expect(dialog).toHaveCount(0);
 }
 
-test("allow, ask and deny a permission: the host saves one entry, the Dot's engine has it, and the tools it offers follow", async ({ signedIn: page, harness }) => {
+test("allow, ask and deny a permission: the host saves one entry, the Dot's engine has it, and the tools it offers follow", async ({ page, harness }) => {
   const dot = await harness.createDot("config-perms");
   const guest = harness.driver.guestOf(dot.id);
   await page.goto(settings(harness.webUrl, dot.id));
@@ -60,7 +60,7 @@ test("allow, ask and deny a permission: the host saves one entry, the Dot's engi
   await expect(row(page, "Automations").getByRole("radio", { name: "Ask" })).toBeChecked();
 });
 
-test("a preset sets the rows together, and the review lists every row that moved", async ({ signedIn: page, harness }) => {
+test("a preset sets the rows together, and the review lists every row that moved", async ({ page, harness }) => {
   const dot = await harness.createDot("config-preset");
   await page.goto(settings(harness.webUrl, dot.id));
   await page.getByRole("radio", { name: /Careful/ }).check();
@@ -77,7 +77,7 @@ test("a preset sets the rows together, and the review lists every row that moved
   await expect(page.getByText("No changes.")).toBeVisible();
 });
 
-test("the other settings are saved with the permissions: the summary model, the spending cap, the browser limits and memory", async ({ signedIn: page, harness }) => {
+test("the other settings are saved with the permissions: the summary model, the spending cap, the browser limits and memory", async ({ page, harness }) => {
   const dot = await harness.createDot("config-rest");
   const guest = harness.driver.guestOf(dot.id);
   await page.goto(settings(harness.webUrl, dot.id));
@@ -108,7 +108,7 @@ test("the other settings are saved with the permissions: the summary model, the 
   expect((await harness.api.getDot(dot.id)).config.models).toEqual({});
 });
 
-test("the rule between the browser limits is said where it is broken, and the disk cannot shrink", async ({ signedIn: page, harness }) => {
+test("the rule between the browser limits is said where it is broken, and the disk cannot shrink", async ({ page, harness }) => {
   const dot = await harness.createDot("config-rules");
   await page.goto(settings(harness.webUrl, dot.id));
   await page.getByLabel("Most identities").fill("2");
@@ -131,7 +131,7 @@ test("the rule between the browser limits is said where it is broken, and the di
   expect((await harness.api.getDot(dot.id)).config.computer.disk).toBe("40gb");
 });
 
-test("the YAML view is the same config: the form's edits are in it, and what it says is what is saved", async ({ signedIn: page, harness }) => {
+test("the YAML view is the same config: the form's edits are in it, and what it says is what is saved", async ({ page, harness }) => {
   const dot = await harness.createDot("config-yaml");
   await page.goto(settings(harness.webUrl, dot.id));
   await choose(page, "Change files", "Ask");
@@ -153,7 +153,7 @@ test("the YAML view is the same config: the form's edits are in it, and what it 
   await expect(page.getByText("The form cannot show this")).toBeVisible();
 });
 
-test("a config changed elsewhere while the page is open is never undone: the edits are kept on top of it, and the save is conditional on what the page read", async ({ signedIn: page, harness }) => {
+test("a config changed elsewhere while the page is open is never undone: the edits are kept on top of it, and the save is conditional on what the page read", async ({ page, harness }) => {
   const dot = await harness.createDot("config-stale");
   await page.goto(settings(harness.webUrl, dot.id));
   await choose(page, "Run commands", "Deny");
@@ -170,11 +170,11 @@ test("a config changed elsewhere while the page is open is never undone: the edi
   await expect(page.getByText("The configuration changed while you were editing")).toHaveCount(0);
 });
 
-test("a stopped computer says the tools need it running, and the permissions can still be set", async ({ signedIn: page, harness }) => {
+test("a stopped computer says the tools need it running, and the permissions can still be set", async ({ page, harness }) => {
   const dot = await harness.createDot("config-stopped");
   await harness.api.stopComputer(dot.id);
   await page.goto(settings(harness.webUrl, dot.id));
-  await expect(page.getByRole("button", { name: /^Computer: STOPPED/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Computer: Stopped/ })).toBeVisible();
   await expect(page.getByText(/Start the computer to see the tools each permission covers/)).toBeVisible();
   await expect(page.getByRole("list", { name: /^Tools of/ })).toHaveCount(0);
   await choose(page, "Run commands", "Ask");
@@ -183,7 +183,7 @@ test("a stopped computer says the tools need it running, and the permissions can
   await expect(page.getByText("Saved. The Dot gets the change when its computer starts.")).toBeVisible();
 });
 
-test("delete asks for the Dot's name, and the Dot is gone after it", async ({ signedIn: page, harness }) => {
+test("delete asks for the Dot's name, and the Dot is gone after it", async ({ page, harness }) => {
   const dot = await harness.createDot("config-delete");
   await page.goto(settings(harness.webUrl, dot.id));
   await page.getByRole("button", { name: "Delete Dot" }).click();
@@ -198,7 +198,7 @@ test("delete asks for the Dot's name, and the Dot is gone after it", async ({ si
   await expect.poll(async () => (await harness.api.listDots()).some((d) => d.id === dot.id)).toBe(false);
 });
 
-test("the settings page is usable from the keyboard alone, and fits a phone", async ({ signedIn: page, harness }) => {
+test("the settings page is usable from the keyboard alone, and fits a phone", async ({ page, harness }) => {
   const dot = await harness.createDot("config-keys");
   await page.goto(settings(harness.webUrl, dot.id));
   // The arrow keys walk the three decisions of a row.
@@ -225,7 +225,7 @@ test("the settings page is usable from the keyboard alone, and fits a phone", as
 });
 
 for (const scheme of ["light", "dark"] as const) {
-  test(`the settings are readable in ${scheme}: the rows, the risk and change marks, the tools, the save bar`, async ({ signedIn: page, harness }) => {
+  test(`the settings are readable in ${scheme}: the rows, the risk and change marks, the tools, the save bar`, async ({ page, harness }) => {
     await page.emulateMedia({ colorScheme: scheme });
     const dot = await harness.createDot(`config-look-${scheme}`);
     await page.goto(settings(harness.webUrl, dot.id));

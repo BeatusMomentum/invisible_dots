@@ -7,8 +7,8 @@ import { TONE_CLASS, TONE_DOT } from "../dot/tone";
 export function TaskStatus({ status }: { status: string }) {
   const tone = statusTone(status);
   return (
-    <span className={cn("inline-flex w-fit items-center gap-1.5 rounded-[3px] px-2 py-0.5 text-xs font-medium", TONE_CLASS[tone])}>
-      <span aria-hidden="true" className={cn("size-1.5 rounded-[3px]", TONE_DOT[tone], status === "RUNNING" && "animate-pulse motion-reduce:animate-none")} />
+    <span className={cn("inline-flex w-fit items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium", TONE_CLASS[tone])}>
+      <span aria-hidden="true" className={cn("size-1.5 rounded-full", TONE_DOT[tone], status === "RUNNING" && "animate-pulse motion-reduce:animate-none")} />
       <span className="sr-only">Status: </span>
       {statusLabel(status)}
     </span>
@@ -19,7 +19,7 @@ export function TaskStatus({ status }: { status: string }) {
 export function PriorityChip({ priority }: { priority: number }) {
   if (priority === NORMAL_PRIORITY) return null;
   return (
-    <span className="inline-flex w-fit items-center rounded-[3px] border px-2 py-0.5 text-xs text-muted-foreground">
+    <span className="inline-flex w-fit items-center rounded-full border px-2 py-0.5 text-xs text-muted-foreground">
       <span className="sr-only">Priority: </span>
       {priorityLabel(priority)}
     </span>
