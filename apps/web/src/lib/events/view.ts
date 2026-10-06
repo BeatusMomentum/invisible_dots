@@ -61,6 +61,7 @@ const FAMILY_OF: Record<KnownType, EventFamily> = {
   "agent.started": "computer",
   "agent.state": "computer",
   "automation.next_run": "computer",
+  "guest.event.refused": "computer",
   "memory.written": "memory",
   "channel.status": "channels",
   "channel.peer.paired": "channels",
@@ -205,6 +206,12 @@ const DESCRIBE: { [K in KnownType]: (data: Partial<EventData[K]>) => Draft } = {
     title: "Next automation",
     detail: typeof d.next_run_at_ms === "number" ? `due ${new Date(d.next_run_at_ms).toISOString()}` : "none due",
     tone: "neutral",
+  }),
+  // The engine sent something the control plane could not read, so it is not in this log: this row is all there is of it.
+  "guest.event.refused": (d) => ({
+    title: "The computer sent an event that was not read",
+    detail: joined(text(d.type), typeof d.seq === "number" ? `(#${d.seq})` : "", text(d.problem) && `- ${text(d.problem)}`),
+    tone: "warn",
   }),
 };
 

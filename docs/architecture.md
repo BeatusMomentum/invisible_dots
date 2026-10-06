@@ -861,6 +861,24 @@ or `removed`: what the person did, which no status says, so that every view of
 the channel follows it). A channel lives in the control plane only: the Dot never sees one, so
 no inbound or outbound type names it.
 
+The last of them is `guest.event.refused {seq, type, problem}`. The host parses
+every message of the guest's event stream with the schemas of `packages/shared`
+and drops one it refuses (it is not an event the host knows, so it is not
+stored as one), because one malformed message must not stall the stream. The
+drop is not silent: the host writes this event, in order with the guest's, with
+the `seq` and `type` the message carried when it was JSON that carried them
+(null otherwise) and the problem in words (at most 300 characters, never a
+credential: a schema message names a path and a rule), and moves the cursor
+past the `seq` in the same transaction, so a reconnect does not record it
+again. The Activity page shows it as "The computer sent an event that was not
+read". The two sides cannot drift unseen: `tests/dots/test_wire_shapes.py`
+writes one event of every type the engine writes, with each set of optional
+keys, into `wire_shapes.json`, and `apps/scheduler/test/engine-shapes.test.ts`
+requires that each parses back unchanged (the schemas strip an unknown key);
+`apps/scheduler/test/host-shapes.test.ts` writes the events and the config the
+host sends into `host_wire_shapes.json`, which the engine's own parsers must
+accept with every key.
+
 The message a person sends is logged as a `user.message` host event
 `{message_id, text, origin?}`. `origin` is `{channel, binding_id, chat_id,
 external_id}` for a message that came through a channel and is absent for the

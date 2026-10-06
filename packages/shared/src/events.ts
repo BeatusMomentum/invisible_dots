@@ -59,6 +59,7 @@ export const HOST_EVENT_TYPES = [
   "task.created",
   "task.cancelled",
   "approval.resolved",
+  "guest.event.refused",
   "channel.status",
   "channel.peer.paired",
   "channel.changed",
@@ -223,6 +224,21 @@ export interface OutboundEventDataMap {
  * carry whatever identifies their subject, and the dot id is always the
  * event's own `dot_id` column.
  */
+/**
+ * A message of the guest's event stream that the host refused: its schema did not take it, or it was not JSON. The
+ * stream goes on past it and the event is not stored, so this record (the host event `guest.event.refused`) is the
+ * only trace of it. It names what can be named: the `seq` and `type` the message carried when it carried them (null
+ * otherwise), and the problem in words, at most REFUSED_PROBLEM_MAX characters.
+ */
+export interface RefusedEvent {
+  seq: number | null;
+  type: string | null;
+  problem: string;
+}
+
+/** The longest `problem` of a refused event, in characters. */
+export const REFUSED_PROBLEM_MAX = 300;
+
 export interface HostEventDataMap {
   "dot.created": { name: string; [key: string]: unknown };
   "dot.updated": { name: string; [key: string]: unknown };
@@ -244,6 +260,7 @@ export interface HostEventDataMap {
   "channel.peer.paired": { kind: ChannelKind; peer_id: string; label: string };
   /** The person paused, resumed or removed a channel (a removed one has no status left to report): every view of the channel follows it. */
   "channel.changed": { kind: ChannelKind; change: ChannelChange };
+  "guest.event.refused": RefusedEvent;
 }
 
 export type InboundEvent<T extends InboundEventType = InboundEventType> = {

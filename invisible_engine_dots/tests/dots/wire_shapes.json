@@ -53,7 +53,162 @@
   "limits": {
     "max_run_at_ms": 253402300799999
   },
-  "outbound_event_data": [
+  "outbound_events": [
+    {
+      "data": {},
+      "type": "agent.started"
+    },
+    {
+      "data": {
+        "state": "IDLE"
+      },
+      "type": "agent.state"
+    },
+    {
+      "data": {
+        "decision": "allow",
+        "duration_ms": 10,
+        "ok": true,
+        "permission": "computer.exec",
+        "target": "echo hi",
+        "tool": "exec",
+        "tty": true
+      },
+      "type": "tool.called"
+    },
+    {
+      "data": {
+        "decision": "allow",
+        "duration_ms": 10,
+        "ok": true,
+        "permission": "files.write",
+        "target": "/home/dot/memory/trips/lisbon.md",
+        "tool": "write_file"
+      },
+      "type": "tool.called"
+    },
+    {
+      "data": {
+        "key": "trips/lisbon.md"
+      },
+      "type": "memory.written"
+    },
+    {
+      "data": {
+        "in_reply_to": "m1",
+        "spent_usd": 0.375,
+        "text": "Noted."
+      },
+      "type": "message.assistant"
+    },
+    {
+      "data": {
+        "task_id": "a"
+      },
+      "type": "task.started"
+    },
+    {
+      "data": {
+        "spent_usd": 0.5,
+        "task_id": "a",
+        "text": "Comparing the fares"
+      },
+      "type": "task.progress"
+    },
+    {
+      "data": {
+        "decision": "allow",
+        "duration_ms": 10,
+        "ok": true,
+        "permission": "files.read",
+        "target": "/home/dot/workspace",
+        "task_id": "a",
+        "tool": "list_dir"
+      },
+      "type": "tool.called"
+    },
+    {
+      "data": {
+        "spent_usd": 0.75,
+        "summary": "The fares are compared.",
+        "task_id": "a"
+      },
+      "type": "task.completed"
+    },
+    {
+      "data": {
+        "error": "provider down",
+        "spent_usd": 0.0,
+        "task_id": "b"
+      },
+      "type": "task.failed"
+    },
+    {
+      "data": {
+        "decision": "allow",
+        "duration_ms": 0,
+        "interrupted": true,
+        "ok": false,
+        "permission": "computer.exec",
+        "target": "sleep 30",
+        "task_id": "c",
+        "tool": "exec"
+      },
+      "type": "tool.called"
+    },
+    {
+      "data": {
+        "approval_id": "approval-1",
+        "arguments": {
+          "command": "ls -la"
+        },
+        "permission": "computer.exec",
+        "reason": "The Dot's policy asks before computer.exec.",
+        "tool": "exec"
+      },
+      "type": "approval.requested"
+    },
+    {
+      "data": {
+        "approval_id": "approval-2",
+        "arguments": {
+          "command": "ls -la"
+        },
+        "permission": "computer.exec",
+        "reason": "The Dot's policy asks before computer.exec.",
+        "task_id": "d",
+        "tool": "exec"
+      },
+      "type": "approval.requested"
+    },
+    {
+      "data": {
+        "identity_id": "identity-1",
+        "name": "Shopping Account"
+      },
+      "type": "browser.identity.created"
+    },
+    {
+      "data": {
+        "identity_id": "identity-1",
+        "name": "Shopping Account"
+      },
+      "type": "browser.identity.launched"
+    },
+    {
+      "data": {
+        "identity_id": "identity-1",
+        "name": "Shopping Account"
+      },
+      "type": "browser.identity.closed"
+    },
+    {
+      "data": {
+        "identity_id": "identity-1",
+        "name": "Shopping Account"
+      },
+      "type": "browser.identity.deleted"
+    },
     {
       "data": {
         "next_run_at_ms": 1790000000000

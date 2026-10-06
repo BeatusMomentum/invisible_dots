@@ -19,6 +19,7 @@ import {
   parseOutboundEvent,
   pollGuestHealth,
   PREPARE_SLEEP_TIMEOUT_MS,
+  REFUSED_PROBLEM_MAX,
   SseParser,
   type AgentHealthAnswer,
   type AgentStateAnswer,
@@ -37,6 +38,7 @@ import {
   type PollGuestHealthOptions,
   type PostEventAnswer,
   type ProofAnswer,
+  type RefusedEvent,
   type SystemAnswer,
   type ToolListAnswer,
 } from "@invisible-dots/shared";
@@ -55,6 +57,11 @@ export interface GuestClientOptions {
 export interface EventStreamOptions {
   /** Resume after this outbound `seq`; the stream sends only newer events. Default 0. */
   after?: number;
+  /**
+   * Called, in order with the events, for a message the host refused, and awaited before the stream goes on. A refused
+   * message with a `seq` is passed once (the stream resumes after it); one without cannot be told apart on a reconnect.
+   */
+  onRefused?: (info: RefusedEvent) => void | Promise<void>;
   signal?: AbortSignal;
   /** First reconnect delay; doubles up to `maxReconnectDelayMs`. Default 500 ms. */
   reconnectDelayMs?: number;
@@ -398,8 +405,16 @@ export class GuestClient {
       const stream = this.openStream(after, signal);
       let lastError: Error | undefined;
       try {
-        for await (const event of stream) {
+        for await (const item of stream) {
           attempt = 0;
+          if ("refused" in item) {
+            const { seq } = item.refused;
+            if (seq !== null && seq <= after) continue;
+            await options.onRefused?.(item.refused);
+            if (seq !== null) after = seq;
+            continue;
+          }
+          const event = item.event;
           if (event.seq <= after) continue;
           after = event.seq;
           yield event;
@@ -420,8 +435,11 @@ export class GuestClient {
     }
   }
 
-  /** One connection to `/events/stream`, parsed into events; ends when the connection ends. */
-  private async *openStream(after: number, signal: AbortSignal | undefined): AsyncGenerator<OutboundEvent, void, undefined> {
+  /** One connection to `/events/stream`, parsed into events and the messages that are none; ends when the connection ends. */
+  private async *openStream(
+    after: number,
+    signal: AbortSignal | undefined,
+  ): AsyncGenerator<{ event: OutboundEvent } | { refused: RefusedEvent }, void, undefined> {
     const path = `${this.agentPath(AGENT_ROUTES.eventsStream)}?after=${after}`;
     const route = `GET ${path}`;
     await this.ensureProven(signal);
@@ -448,17 +466,34 @@ export class GuestClient {
           try {
             event = parseOutboundEvent(JSON.parse(message.data));
           } catch (error) {
-            // One malformed message must not stall the stream forever; it is logged and skipped.
+            // One malformed message must not stall the stream forever; it is logged, handed to the consumer to be
+            // recorded, and skipped.
             this.logger.error("guest sent an invalid event, skipped", { id: message.id, error: (error as Error).message });
+            yield { refused: refusedOf(message.data, error as Error) };
             continue;
           }
-          yield event;
+          yield { event };
         }
       }
     } finally {
       req.destroy();
     }
   }
+}
+
+/** What a refused message is called: the `seq` and `type` it carried, when it was JSON that carried them, and why it was refused. */
+function refusedOf(data: string, error: Error): RefusedEvent {
+  let seq: number | null = null;
+  let type: string | null = null;
+  try {
+    const raw = JSON.parse(data) as { seq?: unknown; type?: unknown };
+    if (typeof raw.seq === "number" && Number.isSafeInteger(raw.seq) && raw.seq > 0) seq = raw.seq;
+    if (typeof raw.type === "string") type = raw.type.slice(0, 64);
+  } catch {
+    // Not JSON: nothing of it can be named.
+  }
+  const problem = error.message.length > REFUSED_PROBLEM_MAX ? `${error.message.slice(0, REFUSED_PROBLEM_MAX - 3)}...` : error.message;
+  return { seq, type, problem };
 }
 
 export type WaitForGuestHealthOptions = PollGuestHealthOptions;

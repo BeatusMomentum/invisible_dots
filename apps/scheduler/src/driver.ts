@@ -16,6 +16,7 @@ import type {
   HealthAnswer,
   InboundEvent,
   OutboundEvent,
+  RefusedEvent,
   SystemAnswer,
   ToolListAnswer,
   VmState,
@@ -55,9 +56,11 @@ export interface GuestApi {
   /**
    * The outbound event stream after `after`. It reconnects by itself on
    * network errors and ends only when `signal` aborts or it hits an error
-   * that waiting cannot fix (a refused token).
+   * that waiting cannot fix (a refused token). A message that is not an
+   * event the host knows is not yielded: `onRefused` is awaited for it, in
+   * order with the events, and the stream goes on past it.
    */
-  events(options: { after?: number; signal?: AbortSignal }): AsyncIterable<OutboundEvent>;
+  events(options: { after?: number; signal?: AbortSignal; onRefused?: (info: RefusedEvent) => void | Promise<void> }): AsyncIterable<OutboundEvent>;
 }
 
 export interface ComputerSpecInput {

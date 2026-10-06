@@ -22,6 +22,7 @@ import {
   type DotState,
   type HealthAnswer,
   type OutboundEvent,
+  type RefusedEvent,
   type StopReason,
   type StoredEvent,
   type VmState,
@@ -608,7 +609,7 @@ export class Lifecycle {
         if (!computer) return;
         const guest = await this.guest(dotId);
         this.#log.debug("event pump connecting", { dotId, after: computer.event_cursor });
-        for await (const event of guest.events({ after: computer.event_cursor, signal })) {
+        for await (const event of guest.events({ after: computer.event_cursor, signal, onRefused: (info) => this.#refused(dotId, info) })) {
           if (signal.aborted) return;
           await this.handleGuestEvent(dotId, event);
           delay = this.#opts.pumpRetryMs;
@@ -661,6 +662,22 @@ export class Lifecycle {
       this.#log.info("the Dot still has work, starting its computer again", { dotId });
       this.#runInBackground("restart after an unexpected stop", dotId, () => this.ensureReady(dotId));
     }
+  }
+
+  /**
+   * The guest sent a message the host's schema refused. It is not stored as the guest's event (it is not one), but it is
+   * not lost with a log line either: a `guest.event.refused` host event says that it happened and what was wrong, and
+   * the cursor moves past it in the same transaction, so a reconnect does not read it again. An engine and a host that
+   * disagree on an event would otherwise leave the Dot with a state nobody can see (an approval that is never shown).
+   */
+  async #refused(dotId: string, info: RefusedEvent): Promise<void> {
+    const now = this.#clock.now();
+    const stored = await this.#db.transaction(async (tx) => {
+      const logged = await this.#events.appendHostIn(tx, dotId, "guest.event.refused", info);
+      if (info.seq !== null) await tx.computers.advanceCursor(dotId, info.seq, now);
+      return logged;
+    });
+    this.#events.publish(stored);
   }
 
   /** Store and apply one guest event; exported for recovery tools and tests. */

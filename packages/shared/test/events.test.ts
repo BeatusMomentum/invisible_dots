@@ -43,6 +43,12 @@ describe("event type lists", () => {
     expect(isHostEventType("approval.resolved")).toBe(true);
   });
 
+  it("lists the event the host writes for a message of the guest it refused, as its own and never the guest's", () => {
+    expect(isHostEventType("guest.event.refused")).toBe(true);
+    expect(isOutboundEventType("guest.event.refused")).toBe(false);
+    expect(isInboundEventType("guest.event.refused")).toBe(false);
+  });
+
   it("lists the channel host events and what they carry", () => {
     expect(HOST_EVENT_TYPES.slice(-3)).toEqual(["channel.status", "channel.peer.paired", "channel.changed"]);
     expect(isHostEventType("channel.changed")).toBe(true);

@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { FILE_TOO_LARGE, GUEST_UNPROVEN, type HealthAnswer, type OutboundEvent } from "@invisible-dots/shared";
+import { FILE_TOO_LARGE, GUEST_UNPROVEN, REFUSED_PROBLEM_MAX, type HealthAnswer, type OutboundEvent, type RefusedEvent } from "@invisible-dots/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import { GuestClient, GuestHealthTimeoutError, GuestRequestError, guestProof, waitForGuestHealth } from "../src/index.js";
 
@@ -267,6 +267,62 @@ describe("GuestClient", () => {
     expect(got).toEqual([1, 2, 3, 4]);
     expect(reconnects).toEqual([2]);
     expect(seen.map((s) => s.url)).toEqual(["/v1/agent/events/stream?after=0", "/v1/agent/events/stream?after=2"]);
+  });
+
+  it("hands over a message that is not an event the host knows, in order with the events, and resumes after it", async () => {
+    let connection = 0;
+    const bad = { ...event(2), type: "approval.requested", data: { approval_id: "a1", tool: "exec", permission: "computer.teleport", arguments: {}, reason: "x" } };
+    const { port, seen } = await serve((req, res) => {
+      connection++;
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      if (connection === 1) {
+        res.write(`id: 1\ndata: ${JSON.stringify(event(1))}\n\n`);
+        res.write(`id: 2\ndata: ${JSON.stringify(bad)}\n\n`);
+        res.write(`id: x\ndata: this is not json\n\n`);
+        res.end(`id: 3\ndata: ${JSON.stringify(event(3))}\n\n`);
+      } else {
+        const after = Number(new URL(req.url!, "http://x").searchParams.get("after"));
+        for (let seq = after + 1; seq <= after + 2; seq++) res.write(`id: ${seq}\ndata: ${JSON.stringify(event(seq))}\n\n`);
+      }
+    });
+    const controller = new AbortController();
+    const order: string[] = [];
+    const refused: RefusedEvent[] = [];
+    const client = new GuestClient(port, TOKEN);
+    for await (const evt of client.events({
+      signal: controller.signal,
+      reconnectDelayMs: 10,
+      onRefused: async (info) => {
+        // Awaited before the stream goes on: the event after it is not yielded until this settles.
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        order.push(`refused ${info.seq}`);
+        refused.push(info);
+      },
+    })) {
+      order.push(`event ${evt.seq}`);
+      if (evt.seq === 5) controller.abort();
+    }
+    expect(order).toEqual(["event 1", "refused 2", "refused null", "event 3", "event 4", "event 5"]);
+    expect(refused).toEqual([
+      { seq: 2, type: "approval.requested", problem: expect.stringContaining("data.permission") },
+      { seq: null, type: null, problem: expect.stringContaining("JSON") },
+    ]);
+    expect(refused[0]!.problem.length).toBeLessThanOrEqual(REFUSED_PROBLEM_MAX);
+    // The reconnect resumed after the last event, the refused one behind it, so it was not handed over again.
+    expect(seen.map((s) => s.url)).toEqual(["/v1/agent/events/stream?after=0", "/v1/agent/events/stream?after=3"]);
+  });
+
+  it("goes on past a refused message when nobody asked to hear of it", async () => {
+    const { port } = await serve((_req, res) => {
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.write(`id: 1\ndata: {"seq":1}\n\n`);
+      res.write(`id: 2\ndata: ${JSON.stringify(event(2))}\n\n`);
+    });
+    const client = new GuestClient(port, TOKEN);
+    for await (const evt of client.events()) {
+      expect(evt.seq).toBe(2);
+      break;
+    }
   });
 
   it("resumes from the given cursor and stops when the consumer breaks", async () => {

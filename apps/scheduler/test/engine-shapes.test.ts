@@ -1,15 +1,18 @@
 /**
- * The engine's answers to `GET /automations` and `GET /tools` and the data of its automation events, against the host's
+ * The engine's answers to `GET /automations` and `GET /tools` and the data of every event it writes, against the host's
  * description of them. The engine's own
- * test (`invisible_engine_dots/tests/dots/test_wire_shapes.py`) writes what it really answers into `wire_shapes.json`;
- * here that file is parsed with the schemas of `packages/shared` and the host's fake guest is held to the same
- * answers, so neither side can move a key, or a rule of what the model is offered, without a suite failing.
+ * test (`invisible_engine_dots/tests/dots/test_wire_shapes.py`) writes what it really answers, and one event of each
+ * type and each set of keys its own writers produce, into `wire_shapes.json`; here that file is parsed with the
+ * schemas of `packages/shared` and the host's fake guest is held to the same answers, so neither side can move a key,
+ * or a rule of what the model is offered, without a suite failing. The host's schemas strip a key they do not know
+ * and the host drops an event they refuse, so an event must come out of its parse exactly as it went in.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   automationSchema,
   MAX_RUN_AT_MS,
+  OUTBOUND_EVENT_TYPES,
   parseDotConfig,
   parseOutboundEvent,
   PERMISSIONS,
@@ -30,7 +33,7 @@ interface OfferingCase {
 
 const shapes = JSON.parse(
   readFileSync(fileURLToPath(new URL("../../../invisible_engine_dots/tests/dots/wire_shapes.json", import.meta.url)), "utf8"),
-) as { automations: unknown[]; limits: { max_run_at_ms: number }; outbound_event_data: { type: string; data: unknown }[]; tool_offering: OfferingCase[] };
+) as { automations: unknown[]; limits: { max_run_at_ms: number }; outbound_events: { type: string; data: Record<string, unknown> }[]; tool_offering: OfferingCase[] };
 
 const baseConfig = toRuntimeConfig(parseDotConfig("name: shapes\ngoal: check\nmodel:\n  provider: openrouter\n  id: test/model\n"));
 
@@ -63,21 +66,43 @@ describe("what the engine answers, as the host describes it", () => {
     expect(new Date(MAX_RUN_AT_MS).toISOString()).toBe("9999-12-31T23:59:59.999Z");
   });
 
-  it("every automation event the engine writes parses as the outbound event it is, with the time or null, and the host's fake guest says the same", async () => {
-    expect(shapes.outbound_event_data.map((event) => event.type)).toEqual(["automation.next_run", "automation.next_run"]);
-    for (const [index, { type, data }] of shapes.outbound_event_data.entries()) {
+  it("every outbound event the engine writes comes out of the host's parse as it went in: none is refused and no key is stripped", () => {
+    for (const [index, { type, data }] of shapes.outbound_events.entries()) {
       const event = { seq: index + 1, id: `evt_${index}`, type, ts: "2026-10-06T09:00:00.000Z", data };
       expect(parseOutboundEvent(event).data, JSON.stringify(event)).toEqual(data);
     }
-    expect(shapes.outbound_event_data.map((event) => (event.data as { next_run_at_ms: number | null }).next_run_at_ms)).toEqual([1_790_000_000_000, null]);
+    // One of every type the contract names, so a type the engine writes and the host does not know (or the reverse) is seen.
+    expect([...new Set(shapes.outbound_events.map((event) => event.type))].sort()).toEqual([...OUTBOUND_EVENT_TYPES].sort());
+  });
 
+  it("a key the schema does not know is stripped by the parse, which the check above sees, and a key it needs and the engine lacks is refused", () => {
+    const called = shapes.outbound_events.find((event) => event.type === "tool.called")!;
+    const around = (event: { type: string; data: Record<string, unknown> }, data: Record<string, unknown>) => ({ seq: 1, id: "evt_x", type: event.type, ts: "2026-10-06T09:00:00.000Z", data });
+    expect(parseOutboundEvent(around(called, { ...called.data, renamed_by_the_engine: true })).data).not.toEqual({ ...called.data, renamed_by_the_engine: true });
+    const { tool: _tool, ...withoutTool } = called.data;
+    expect(() => parseOutboundEvent(around(called, withoutTool))).toThrow();
+  });
+
+  it("the optional keys of the events are all written by the engine: a terminal, an interrupted call, a task's calls, an approval with and without a task, a reply to a message, the spend", () => {
+    const keys = (type: string) => shapes.outbound_events.filter((event) => event.type === type).map((event) => Object.keys(event.data).sort().join());
+    expect(keys("tool.called")).toEqual(expect.arrayContaining(["decision,duration_ms,ok,permission,target,tool,tty", "decision,duration_ms,interrupted,ok,permission,target,task_id,tool"]));
+    expect(keys("approval.requested")).toEqual(expect.arrayContaining(["approval_id,arguments,permission,reason,task_id,tool", "approval_id,arguments,permission,reason,tool"]));
+    expect(keys("message.assistant")).toEqual(["in_reply_to,spent_usd,text"]);
+    expect(keys("task.progress")).toEqual(["spent_usd,task_id,text"]);
+    expect(keys("task.failed")).toEqual(["error,spent_usd,task_id"]);
+    expect(keys("task.completed")).toEqual(["spent_usd,summary,task_id"]);
+  });
+
+  it("the host's fake guest writes the automation events as the engine does", async () => {
+    const written = shapes.outbound_events.filter((event) => event.type === "automation.next_run");
+    expect(written.map((event) => event.data.next_run_at_ms)).toEqual([1_790_000_000_000, null]);
     const guest = new FakeGuest("token-for-shapes");
     guest.running = true;
     const row = automationSchema.parse(shapes.automations[0]);
     guest.putAutomation({ ...row, next_run_at_ms: 1_790_000_000_000 });
-    expect(guest.outbox.map((event) => ({ type: event.type, data: event.data }))).toEqual([shapes.outbound_event_data[0]]);
+    expect(guest.outbox.map((event) => ({ type: event.type, data: event.data }))).toEqual([written[0]]);
     await guest.deleteAutomation(row.id);
-    expect(guest.outbox.map((event) => ({ type: event.type, data: event.data }))).toEqual(shapes.outbound_event_data);
+    expect(guest.outbox.map((event) => ({ type: event.type, data: event.data }))).toEqual(written);
   });
 
   it("every tool row the engine shows parses with the tool schema, in the order of its table, under a permission the host knows", () => {

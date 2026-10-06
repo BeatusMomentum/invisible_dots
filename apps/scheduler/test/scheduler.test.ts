@@ -112,6 +112,31 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     expect((await db.dots.get(dot.id))?.status).toBe("READY");
   });
 
+  it("a message of the guest's stream that the host refuses is a host event of its own, the cursor moves past it, and what follows is stored", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "refused-one");
+    const guest = driver.guestOf(dot.id);
+    await waitFor(async () => (await db.computers.get(dot.id))?.event_cursor === guest.outbox.length, "the guest's events stored");
+    const stored = guest.outbox.length;
+
+    guest.writeUnreadable("approval.requested", "data.permission: Invalid option");
+    guest.sendGarbage("Unexpected token 'x', \"xyz\" is not valid JSON");
+    await waitFor(async () => (await db.events.list({ dotId: dot.id, types: ["guest.event.refused"] })).length === 2, "both refusals recorded");
+    const refused = await db.events.list({ dotId: dot.id, types: ["guest.event.refused"] });
+    expect(refused.map((e) => e.data)).toEqual([
+      { seq: stored + 1, type: "approval.requested", problem: "data.permission: Invalid option" },
+      { seq: null, type: null, problem: "Unexpected token 'x', \"xyz\" is not valid JSON" },
+    ]);
+    expect(refused.every((e) => e.source === "host" && e.guest_seq === null)).toBe(true);
+    // The one with a seq is behind the cursor, so a reconnect does not record it again; one without a seq cannot be
+    // told apart from the others, and is recorded again.
+    expect((await db.computers.get(dot.id))?.event_cursor).toBe(stored + 1);
+    guest.disconnectStreams();
+    guest.emit("agent.state", { state: "THINKING" });
+    await waitFor(async () => (await db.computers.get(dot.id))?.event_cursor === stored + 2, "the event after it stored");
+    expect(await db.events.list({ dotId: dot.id, types: ["guest.event.refused"] })).toHaveLength(3);
+  });
+
   it("the spend a task's events report lands on the task: the highest heard, whatever ends it", async () => {
     const { scheduler, driver } = make();
     const dot = await readyDot(scheduler, "spend-one");

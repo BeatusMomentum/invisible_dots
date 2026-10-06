@@ -106,6 +106,16 @@ describe("viewEvent", () => {
     expect(viewEvent(event(21, "automation.next_run", { next_run_at_ms: null }))).toMatchObject({ detail: "none due" });
   });
 
+  it("says that the computer sent an event that was not read, with what can be named of it", () => {
+    expect(viewEvent(event(22, "guest.event.refused", { seq: 41, type: "approval.requested", problem: "data.permission: Invalid option" }, "host"))).toMatchObject({
+      title: "The computer sent an event that was not read",
+      detail: "approval.requested (#41) - data.permission: Invalid option",
+      tone: "warn",
+      family: "computer",
+    });
+    expect(viewEvent(event(23, "guest.event.refused", { seq: null, type: null, problem: "not JSON" }, "host")).detail).toBe("- not JSON");
+  });
+
   it("describes host events and resolutions", () => {
     expect(viewEvent(event(7, "computer.state", { state: "ERROR" }, "host"))).toMatchObject({
       title: "Computer state",

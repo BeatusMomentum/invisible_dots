@@ -35,6 +35,7 @@ import {
   type OutboundEvent,
   type OutboundEventDataMap,
   type OutboundEventType,
+  type RefusedEvent,
   type SystemAnswer,
   type ToolInfo,
   type ToolListAnswer,
@@ -143,6 +144,8 @@ export class FakeGuest implements GuestApi {
   /** The guest's clock, in ms since the epoch: what its engine compares the jobs' times with at a boot. */
   now: () => number = () => Date.now();
   #seq = 0;
+  /** Messages the guest sent that the host will refuse, each after the `seq` of the last event the guest had written when it was sent. */
+  #refusals: { info: RefusedEvent; after: number }[] = [];
   #wakers = new Set<() => void>();
   #streams = new Set<AbortController>();
 
@@ -256,6 +259,21 @@ export class FakeGuest implements GuestApi {
     this.outbox.push(event);
     this.#wake();
     return event;
+  }
+
+  /**
+   * The engine writes an event of this type that the host's schema does not take: it has a `seq` (the next one) and the
+   * stream carries it, but the host refuses it. What follows is stored as usual.
+   */
+  writeUnreadable(type: string, problem: string): void {
+    this.#refusals.push({ info: { seq: ++this.#seq, type, problem }, after: this.outbox.at(-1)?.seq ?? 0 });
+    this.#wake();
+  }
+
+  /** The stream carries a message that is not JSON, so it has no `seq` and no type to name. */
+  sendGarbage(problem: string): void {
+    this.#refusals.push({ info: { seq: null, type: null, problem }, after: this.outbox.at(-1)?.seq ?? 0 });
+    this.#wake();
   }
 
   /** Ask for an approval from inside a task, as the policy engine does on `ask`. */
@@ -541,15 +559,26 @@ export class FakeGuest implements GuestApi {
   }
 
   /** The outbox after `after`, then every new event, until aborted or disconnected. */
-  async *events(options: { after?: number; signal?: AbortSignal }): AsyncGenerator<OutboundEvent> {
+  async *events(options: { after?: number; signal?: AbortSignal; onRefused?: (info: RefusedEvent) => void | Promise<void> }): AsyncGenerator<OutboundEvent> {
     this.#reachable("events");
     const own = new AbortController();
     this.#streams.add(own);
     let after = options.after ?? 0;
+    const handed = new Set<object>();
     try {
       for (;;) {
         if (options.signal?.aborted) return;
         if (own.signal.aborted) throw new FakeGuestError(0, "event stream disconnected");
+        // A refused message is handed over when its turn comes (after the events written before it), as the real
+        // stream does, and a reconnect resumes after its `seq`.
+        const refusal = this.#refusals.find((r) => !handed.has(r) && !this.outbox.some((e) => e.seq > after && e.seq <= r.after));
+        if (refusal) {
+          handed.add(refusal);
+          if (refusal.info.seq !== null && refusal.info.seq <= after) continue;
+          await options.onRefused?.(refusal.info);
+          if (refusal.info.seq !== null) after = refusal.info.seq;
+          continue;
+        }
         const next = this.outbox.find((e) => e.seq > after);
         if (next) {
           after = next.seq;
