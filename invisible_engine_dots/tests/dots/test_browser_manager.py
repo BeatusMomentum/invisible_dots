@@ -1306,6 +1306,20 @@ async def test_a_frame_the_server_cannot_give_is_a_frame_failure_with_its_reason
     assert manager.is_open(identity.id)
 
 
+async def test_a_frame_that_is_not_a_jpeg_is_a_frame_failure_and_the_browser_stays_open(env: Env) -> None:
+    manager = env.manager()
+    identity = await manager.create("png frame")
+    write_control(env.mcp_home(identity.id), watch_png=True)
+    await manager.launch(identity.id)
+
+    with pytest.raises(BrowserIdentityError) as failed:
+        await manager.frame(identity.id)
+
+    assert failed.value.code == "frame_failed"
+    assert "image/png, not image/jpeg" in failed.value.message
+    assert manager.is_open(identity.id)
+
+
 async def test_a_frame_finds_a_process_that_died_and_closes_the_identity_once(env: Env) -> None:
     manager = env.manager()
     identity = await manager.create("dead for the frame")

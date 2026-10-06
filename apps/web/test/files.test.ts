@@ -1,6 +1,6 @@
-import type { FileEntry } from "@invisible-dots/shared/browser";
+import { MAX_HOST_FILE_BYTES, type FileEntry } from "@invisible-dots/shared/browser";
 import { describe, expect, it } from "vitest";
-import { breadcrumbs, childPath, IMAGE_PREVIEW_MAX_BYTES, previewPlan, sortEntries, TEXT_PREVIEW_MAX_BYTES } from "../src/lib/files";
+import { breadcrumbs, canDownload, childPath, IMAGE_PREVIEW_MAX_BYTES, previewPlan, sortEntries, TEXT_PREVIEW_MAX_BYTES } from "../src/lib/files";
 
 const entry = (name: string, type: FileEntry["type"] = "file", size = 10): FileEntry => ({ name, type, size, mtime: "2026-03-10T12:00:00Z" });
 
@@ -50,6 +50,11 @@ describe("how a file is shown", () => {
   it("never draws markup: an svg is text", () => {
     expect(previewPlan(entry("logo.svg")).show).toBe("text");
     expect(previewPlan(entry("page.html")).show).toBe("text");
+  });
+
+  it("offers a download only up to what the control plane hands out", () => {
+    expect(canDownload({ size: MAX_HOST_FILE_BYTES })).toBe(true);
+    expect(canDownload({ size: MAX_HOST_FILE_BYTES + 1 })).toBe(false);
   });
 
   it("offers a download alone for every other kind", () => {

@@ -345,17 +345,12 @@ export class GuestClient {
   }
 
   /**
-   * JPEG bytes of the open identity's window. The route's contract is a JPEG (architecture section 5.3) and the host
-   * labels the bytes `image/jpeg` all the way to the browser, so any other media type is refused here, as a failed
-   * frame, and not served mislabelled.
+   * JPEG bytes of the open identity's window. The route's contract is a JPEG (architecture section 5.3), and the engine
+   * is its one owner: it answers `frame_failed` for any other media type, so the host labels the bytes `image/jpeg`
+   * all the way to the browser without looking again.
    */
   async getBrowserIdentityFrame(id: string): Promise<Buffer> {
-    const route = `GET ${this.agentPath(AGENT_ROUTES.browserIdentityFrame(id))}`;
-    const answer = await this.send({ path: this.agentPath(AGENT_ROUTES.browserIdentityFrame(id)) });
-    if (answer.contentType !== "image/jpeg") {
-      throw new GuestRequestError(route, 502, `the frame of browser identity "${id}" is ${answer.contentType || "of no media type"}, not image/jpeg`, "frame_failed");
-    }
-    return answer.body;
+    return (await this.send({ path: this.agentPath(AGENT_ROUTES.browserIdentityFrame(id)) })).body;
   }
 
   closeBrowserIdentity(id: string): Promise<void> {

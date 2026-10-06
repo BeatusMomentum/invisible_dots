@@ -98,11 +98,13 @@ export interface AutomationsNote {
 
 /**
  * What the Dot's automations are doing, from the host's record of the computer (which holds it while the computer is
- * off, when the guest cannot be asked): paused because the person stopped it, due at the time the engine last
- * reported (`next_automation_at`, which the host wakes a sleeping computer for), or none due.
+ * off, when the guest cannot be asked): paused because the person stopped it (when the engine had reported a run
+ * that is due, `next_automation_at`: a Dot with none has nothing to pause), due at the time the engine last reported
+ * (which the host wakes a sleeping computer for), or none due.
  */
 export function automationsNote(computer: Pick<Computer, "state" | "stop_reason" | "next_automation_at">, now: number, locale?: string): AutomationsNote {
-  if (computer.stop_reason === "user") {
+  // Paused is said of automations that exist: the engine reported a run that is due, which the person's stop now holds back.
+  if (computer.stop_reason === "user" && computer.next_automation_at !== null) {
     return { paused: true, text: "Paused: you stopped this computer, so its automations do not run. Start it to resume them." };
   }
   const due = computer.next_automation_at === null ? Number.NaN : new Date(computer.next_automation_at).getTime();

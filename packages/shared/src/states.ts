@@ -83,6 +83,12 @@ export const CONVERSATION_LIST_LIMIT = 500;
  */
 export const APPROVAL_LIST_LIMIT = 500;
 
+/** The most characters of a tool's arguments, and of the reason, an approval prompt shows in a chat (a chat is read by a third party). */
+export const APPROVAL_PROMPT_TEXT_MAX = 300;
+
+/** The longest note a person can add to the answer of an approval, in characters (`POST /api/approvals/:id/approve|reject`). */
+export const APPROVAL_NOTE_MAX = 500;
+
 /** The order a list route can be asked for: `asc` is the oldest first (the default of each route), `desc` the newest first. */
 export const LIST_ORDERS = ["asc", "desc"] as const;
 export type ListOrder = (typeof LIST_ORDERS)[number];

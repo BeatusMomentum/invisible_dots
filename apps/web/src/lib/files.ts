@@ -3,7 +3,7 @@
  * to list it and which of its files can be shown. Paths are the guest's, POSIX, under home; the API has already
  * resolved them (`GET .../files/list` answers the path it listed), so none of this validates one.
  */
-import { fileType, GUEST_PATHS, type FileEntry } from "@invisible-dots/shared/browser";
+import { fileType, GUEST_PATHS, MAX_HOST_FILE_BYTES, type FileEntry } from "@invisible-dots/shared/browser";
 
 /** A text file bigger than this is not read for a preview: the whole file crosses the wire, and a page of this size is no longer a glance. */
 export const TEXT_PREVIEW_MAX_BYTES = 1024 * 1024;
@@ -39,6 +39,11 @@ export function childPath(folder: string, name: string): string {
 export function sortEntries(entries: readonly FileEntry[]): FileEntry[] {
   const rank = (entry: FileEntry) => (entry.type === "dir" ? 0 : 1);
   return [...entries].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.name.localeCompare(b.name));
+}
+
+/** Whether the control plane hands the file out at all: it refuses (413) a file above MAX_HOST_FILE_BYTES, so none is offered to be downloaded. */
+export function canDownload(entry: Pick<FileEntry, "size">): boolean {
+  return entry.size <= MAX_HOST_FILE_BYTES;
 }
 
 export type PreviewPlan = { show: "text" | "image"; contentType: string } | { show: "none"; reason: "download-only" | "too-large" };

@@ -75,6 +75,18 @@ export async function migrate(
   const migrations = await loadMigrations(options.dir);
   const log = options.log ?? (() => {});
   const result: MigrateResult = { applied: [], alreadyApplied: [] };
+  // A database that records a migration this build does not ship was migrated by another version (a newer one, or a
+  // build from another branch): its schema is not the one this code reads and writes, so nothing runs against it.
+  const shipped = new Set(migrations.map((migration) => migration.version));
+  const recorded = (await db.query<{ present: boolean }>("SELECT to_regclass('schema_migrations') IS NOT NULL AS present")).rows[0]?.present
+    ? (await db.query<{ version: string }>("SELECT version FROM schema_migrations ORDER BY version")).rows.map((row) => row.version)
+    : [];
+  const unknown = recorded.filter((version) => !shipped.has(version));
+  if (unknown.length > 0) {
+    throw new Error(
+      `the database holds migrations this build does not ship (${unknown.join(", ")}): it was migrated by another version of invisible_dots; run that version, or start from a new data directory`,
+    );
+  }
   for (const migration of migrations) {
     let applied: boolean;
     try {

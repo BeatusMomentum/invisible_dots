@@ -77,7 +77,9 @@ class TurnSpend:
     def record(self, response: LLMResponse) -> None:
         """Count one response: its cost into the ledger, or the note that it had none."""
         if response.finish_reason == "error":
-            # The request failed (and may be retried): nothing was charged.
+            # The request failed (and may be retried) and reported no cost: nothing is counted. A stream that was cut
+            # after tokens were streamed may have been billed, and OpenRouter reports its cost only in the last chunk,
+            # so that cost is not known here (architecture section 8.2).
             return
         if response.cost_usd is None:
             self._store.write(lambda conn: dots_store.note_unpriced(conn, self._session_key))

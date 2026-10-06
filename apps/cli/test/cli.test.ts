@@ -86,6 +86,8 @@ let base: string;
 const requests: Recorded[] = [];
 let stopped = false;
 let stoppedByPerson = false;
+/** The Dot has no automation due: the engine reported none. */
+let noAutomationDue = false;
 /** What the fake server answers about WhatsApp. */
 let whatsappLinked = false;
 let whatsappOff = false;
@@ -123,7 +125,7 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     case `GET /api/dots/${dot.id}`:
       return send(res, 200, dot);
     case `GET /api/dots/${dot.id}/computer`:
-      return send(res, 200, stoppedByPerson ? { ...computer, state: "STOPPED", stop_reason: "user", ready: false } : computer);
+      return send(res, 200, { ...(stoppedByPerson ? { ...computer, state: "STOPPED", stop_reason: "user", ready: false } : computer), ...(noAutomationDue ? { next_automation_at: null } : {}) });
     case `GET /api/dots/${dot.id}/tasks`:
       return send(res, 200, { tasks: [task] });
     case `POST /api/dots/${dot.id}/tasks`:
@@ -211,6 +213,7 @@ beforeEach(() => {
   requests.length = 0;
   stopped = false;
   stoppedByPerson = false;
+  noAutomationDue = false;
   whatsappLinked = false;
   whatsappOff = false;
   linkFrames = [];
@@ -311,6 +314,14 @@ describe("commands", () => {
     expect(status.stdout).toMatch(/next automation\s+2030-01-01T09:00:00.000Z/);
     expect(status.stdout).toContain("task_01");
     expect((await cli(["tasks", "fare-watch"])).stdout).toContain("COMPLETED");
+  });
+
+  it("status does not say paused for a Dot the person stopped that has no automation due", async () => {
+    stoppedByPerson = true;
+    noAutomationDue = true;
+    const status = await cli(["status", "fare-watch"]);
+    expect(status.stdout).toMatch(/next automation\s+none due/);
+    expect(status.stdout).not.toMatch(/paused/);
   });
 
   it("status says the automations are paused while the person's stop lasts, and stop says so when it is asked for", async () => {

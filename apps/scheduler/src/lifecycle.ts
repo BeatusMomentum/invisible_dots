@@ -291,20 +291,37 @@ export class Lifecycle {
    */
   async ensureReady(dotId: string): Promise<void> {
     if (this.#ready.has(dotId)) return;
-    await this.#mutex.run(dotId, async () => {
-      if (this.#ready.has(dotId)) return;
-      const computer = await this.#db.computers.get(dotId);
-      if (!computer) throw new ControlPlaneError(404, "not_found", `Dot ${dotId} has no computer`);
-      if (computer.state === "DELETING") throw new ControlPlaneError(409, "dot_deleting", `Dot ${dotId} is being deleted`);
-      if (computer.state === "PROVISIONING") {
-        throw new ControlPlaneError(409, "dot_provisioning", `Dot ${dotId} is still being provisioned`);
-      }
-      const vm = await this.#driver.state(dotId);
-      if (vm.state === "RUNNING" && vm.guestPort !== null) {
-        await this.#adoptRunning(dotId, { ...vm, guestPort: vm.guestPort });
-      } else {
-        await this.#startLocked(dotId);
-      }
+    await this.#mutex.run(dotId, () => this.#ensureReadyLocked(dotId));
+  }
+
+  async #ensureReadyLocked(dotId: string): Promise<void> {
+    if (this.#ready.has(dotId)) return;
+    const computer = await this.#db.computers.get(dotId);
+    if (!computer) throw new ControlPlaneError(404, "not_found", `Dot ${dotId} has no computer`);
+    if (computer.state === "DELETING") throw new ControlPlaneError(409, "dot_deleting", `Dot ${dotId} is being deleted`);
+    if (computer.state === "PROVISIONING") {
+      throw new ControlPlaneError(409, "dot_provisioning", `Dot ${dotId} is still being provisioned`);
+    }
+    const vm = await this.#driver.state(dotId);
+    if (vm.state === "RUNNING" && vm.guestPort !== null) {
+      await this.#adoptRunning(dotId, { ...vm, guestPort: vm.guestPort });
+    } else {
+      await this.#startLocked(dotId);
+    }
+  }
+
+  /**
+   * Start a stopped computer for an automation that is due, if it still is one: the pass that chose it read the
+   * database before this turn of the per-Dot lock came, and the person may have stopped the computer since (a stop
+   * that is not started for its automations), or the guest reported another time. The rule is read again, under the
+   * lock, from the same place the pass read it (`stoppedDotsWithAutomationDue`); true when the computer was started.
+   */
+  async wakeForAutomation(dotId: string): Promise<boolean> {
+    if (this.#ready.has(dotId)) return false;
+    return this.#mutex.run(dotId, async () => {
+      if (!(await this.stoppedDotsWithAutomationDue()).includes(dotId)) return false;
+      await this.#ensureReadyLocked(dotId);
+      return true;
     });
   }
 

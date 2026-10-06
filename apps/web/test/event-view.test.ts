@@ -120,6 +120,15 @@ describe("viewEvent", () => {
     expect(viewEvent(event(23, "guest.event.refused", { seq: null, type: null, problem: "not JSON" }, "host")).detail).toBe("- not JSON");
   });
 
+  it("tells a Dot that went to ERROR from a saved configuration, though both are dot.updated", () => {
+    expect(viewEvent(event(24, "dot.updated", { name: "fares" }, "host"))).toMatchObject({ title: "Configuration updated", detail: "fares", tone: "neutral" });
+    expect(viewEvent(event(25, "dot.updated", { name: "fares", status: "ERROR", error: "start failed: QEMU did not start" }, "host"))).toMatchObject({
+      title: "The Dot failed",
+      detail: "fares - start failed: QEMU did not start",
+      tone: "error",
+    });
+  });
+
   it("describes host events and resolutions", () => {
     expect(viewEvent(event(7, "computer.state", { state: "ERROR" }, "host"))).toMatchObject({
       title: "Computer state",

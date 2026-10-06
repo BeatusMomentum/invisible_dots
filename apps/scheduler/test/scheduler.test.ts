@@ -1,6 +1,6 @@
 import type { Database } from "@invisible-dots/database";
 import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-dots/database/testing";
-import { type Automation, IDENTITY_ERROR_STATUS, type IdentityErrorCode, type StoredEvent } from "@invisible-dots/shared";
+import { APPROVAL_NOTE_MAX, type Automation, IDENTITY_ERROR_STATUS, type IdentityErrorCode, type StoredEvent } from "@invisible-dots/shared";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Scheduler, type SchedulerOptions } from "../src/index.js";
 import { FakeDriver, FakeGuestError, ManualClock, waitFor, waitUntilSettledReady } from "../src/testing.js";
@@ -334,6 +334,17 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     expect(guest.inbound.filter((e) => e.type === "approval.received")).toHaveLength(2);
   });
 
+  it("refuses a note longer than the one the web takes, and leaves the approval pending", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "long-note");
+    const id = driver.guestOf(dot.id).requestApproval(undefined);
+    await waitFor(async () => (await db.approvals.get(id)) !== null, "stored");
+
+    await expect(scheduler.resolveApproval(id, "approve", { note: "x".repeat(APPROVAL_NOTE_MAX + 1) })).rejects.toMatchObject({ status: 400, code: "invalid_request", message: `note must be at most ${APPROVAL_NOTE_MAX} characters` });
+    expect((await db.approvals.get(id))?.status).toBe("pending");
+    expect((await scheduler.resolveApproval(id, "approve", { note: "x".repeat(APPROVAL_NOTE_MAX) })).note).toHaveLength(APPROVAL_NOTE_MAX);
+  });
+
   it("approve with always refuses what cannot be allowed for good and leaves the approval pending", async () => {
     const { scheduler, driver } = make();
     const dot = await readyDot(scheduler, "always-refused");
@@ -543,6 +554,37 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
       await scheduler.settle();
       expect(guest.boots).toBe(boots + 1);
       expect(guest.automations.get("job_1")?.last_run_at_ms).toBe(ranAt);
+    });
+
+    it("does not start for an automation when the person's stop came in front of the wake the pass had chosen, and still starts one nothing came in front of", async () => {
+      const { scheduler, driver, clock } = makeWithLead();
+      const stopped = await readyDot(scheduler, "stop-comes-first", "10m");
+      const free = await readyDot(scheduler, "nothing-comes-first", "10m");
+      for (const dot of [stopped, free]) {
+        const guest = driver.guestOf(dot.id);
+        guest.now = () => clock.now().getTime();
+        guest.putAutomation(automation({ schedule: { kind: "every", every_ms: 60 * MIN }, next_run_at_ms: clock.now().getTime() + 20 * MIN }));
+        await waitFor(async () => (await db.computers.get(dot.id))?.next_automation_at !== null, "the report stored");
+      }
+      clock.advance(11 * MIN);
+      expect((await scheduler.idleCheck()).sort()).toEqual([stopped.id, free.id].sort());
+      await scheduler.settle();
+      clock.advance(9 * MIN);
+      // The pass would wake both: it read the database, and the wakes wait for their turn of the per-Dot lock.
+      expect((await scheduler.lifecycle.stoppedDotsWithAutomationDue()).sort()).toEqual([stopped.id, free.id].sort());
+      const bootsOf = (id: string) => driver.guestOf(id).boots;
+      const before = { stopped: bootsOf(stopped.id), free: bootsOf(free.id) };
+
+      // The person's stop gets there first.
+      await scheduler.stopComputer(stopped.id);
+      await scheduler.settle();
+      expect(await db.computers.get(stopped.id)).toMatchObject({ state: "STOPPED", stop_reason: "user" });
+      expect(await scheduler.lifecycle.wakeForAutomation(stopped.id)).toBe(false);
+      expect(await scheduler.lifecycle.wakeForAutomation(free.id)).toBe(true);
+      await scheduler.settle();
+      expect(bootsOf(stopped.id)).toBe(before.stopped);
+      expect(bootsOf(free.id)).toBe(before.free + 1);
+      expect((await db.computers.get(stopped.id))?.state).toBe("STOPPED");
     });
 
     it("keeps a Dot the person stopped off, whatever its automations say, until the person starts it again", async () => {

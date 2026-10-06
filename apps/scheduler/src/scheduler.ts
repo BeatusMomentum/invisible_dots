@@ -19,6 +19,7 @@ import type {
   UsageAnswer,
 } from "@invisible-dots/shared";
 import {
+  APPROVAL_NOTE_MAX,
   checkHomePath,
   checkOpenRouterKey,
   COMPUTER_STOPPED,
@@ -171,7 +172,7 @@ export class Scheduler {
     for (const dotId of await this.lifecycle.stoppedDotsWithAutomationDue()) {
       if (this.lifecycle.isBusy(dotId)) continue;
       this.#log.info("waking a stopped Dot: an automation is due", { dotId });
-      this.#runInBackground("wake for an automation", dotId, () => this.lifecycle.ensureReady(dotId));
+      this.#runInBackground("wake for an automation", dotId, () => this.lifecycle.wakeForAutomation(dotId));
     }
   }
 
@@ -704,6 +705,9 @@ export class Scheduler {
     const { note, always } = answer;
     if (note !== undefined && typeof note !== "string") {
       throw new ControlPlaneError(400, "invalid_request", "note must be a string");
+    }
+    if (note !== undefined && note.length > APPROVAL_NOTE_MAX) {
+      throw new ControlPlaneError(400, "invalid_request", `note must be at most ${APPROVAL_NOTE_MAX} characters`);
     }
     if (always !== undefined && always !== true) {
       throw new ControlPlaneError(400, "invalid_request", "always must be true");

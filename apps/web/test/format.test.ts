@@ -89,6 +89,10 @@ describe("automationsNote", () => {
     expect(note.text).toMatch(/^Paused: you stopped this computer, so its automations do not run/);
   });
 
+  it("does not say paused for a Dot that has no automation due: there is nothing to pause", () => {
+    expect(automationsNote({ state: "STOPPED", stop_reason: "user", next_automation_at: null }, now)).toEqual({ paused: false, text: "No automation is due." });
+  });
+
   it("says when the next one is due, and that a computer asleep is started shortly before", () => {
     const running = automationsNote({ state: "RUNNING", stop_reason: null, next_automation_at: "2026-10-06T12:00:00Z" }, now, "en-US");
     expect(running.paused).toBe(false);

@@ -97,6 +97,7 @@ def write_control(mcp_home: Path, **control: Any) -> None:
         whose text is the sentence of a lost browser: a page controls that text, and the browser is not lost.
     refuse_close: `browser_close` fails.
     fail_watch: `browser_watch` fails the way the real server does when the browser has no page.
+    watch_png: `browser_watch` answers with a PNG, which the frame route's contract (a JPEG) does not take.
 
 A `browser_navigate` to `https://crash.test/now` ends the process without an answer, like a server killed in the
 middle of a call; to `slow://...` it answers after 0.3 s. Each call is recorded when it arrives
@@ -232,6 +233,8 @@ async def _serve() -> None:
         if name == "browser_watch":
             if control.get("fail_watch"):
                 return text(f"the {role} browser has no page to watch", error=True)
+            if control.get("watch_png"):
+                return image(PNG, "image/png")
             return image(JPEG, "image/jpeg")
         if name == "browser_click":
             if control.get("overlay_says_gone"):

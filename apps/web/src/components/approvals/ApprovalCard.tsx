@@ -10,6 +10,7 @@ import { cn } from "../../lib/utils";
 import { ErrorAlert } from "../ErrorAlert";
 import { ApprovalCard as ApprovalCardElement } from "../elements/approval-card";
 import { FAMILY_ICON } from "../tool-family-icon";
+import { APPROVAL_NOTE_MAX } from "@invisible-dots/shared/browser";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
@@ -47,7 +48,7 @@ function NoteField({ ask, answers, disabled }: { ask: ApprovalAsk; answers: Answ
       <Label htmlFor={id} className="text-xs">
         Note for the Dot (optional)
       </Label>
-      <Input id={id} value={answers.noteOf(ask.id)} disabled={disabled} maxLength={500} onChange={(event) => answers.setNote(ask.id, event.target.value)} />
+      <Input id={id} value={answers.noteOf(ask.id)} disabled={disabled} maxLength={APPROVAL_NOTE_MAX} onChange={(event) => answers.setNote(ask.id, event.target.value)} />
     </div>
   );
 }

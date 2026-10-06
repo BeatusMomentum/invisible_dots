@@ -185,9 +185,9 @@ function oneLine(text: string, max = 60): string {
   return flat.length > max ? `${flat.slice(0, max - 3)}...` : flat;
 }
 
-/** What `status` says about the Dot's automations: when the next one is due, or that the person's stop has paused them. */
+/** What `status` says about the Dot's automations: when the next one is due, or that the person's stop has paused them (when one was due: a Dot with none has nothing to pause). */
 function nextAutomation(computer: ComputerAnswer): string {
-  if (computer.stop_reason === "user") return "paused: the computer was stopped by you (start it to resume)";
+  if (computer.stop_reason === "user" && computer.next_automation_at !== null) return "paused: the computer was stopped by you (start it to resume)";
   return computer.next_automation_at ?? "none due";
 }
 

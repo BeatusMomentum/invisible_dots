@@ -103,6 +103,9 @@ CLOSE_TIMEOUT_S = 30.0
 REQUEST_TIMEOUT_S = 120
 # How long a frame waits for the identity's call in flight before it gives up with `busy`.
 FRAME_WAIT_S = 5.0
+# What a frame is: the route's contract (architecture section 5.3) is a JPEG, and the host labels the bytes as one all the
+# way to the browser, so the engine refuses any other media type as a failed frame and the host does not check again.
+FRAME_MEDIA_TYPE = "image/jpeg"
 
 SessionState = Literal["opening", "open", "closing"]
 
@@ -483,6 +486,10 @@ class BrowserManager:
         if not images:
             raise BrowserIdentityError("frame_failed", f'no frame of identity "{identity_id}": the server sent no image')
         mime, data = images[0]
+        if mime != FRAME_MEDIA_TYPE:
+            raise BrowserIdentityError(
+                "frame_failed", f'no frame of identity "{identity_id}": the server sent {mime or "no media type"}, not {FRAME_MEDIA_TYPE}'
+            )
         try:
             return mime, base64.b64decode(data, validate=True)
         except ValueError:

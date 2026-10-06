@@ -1,6 +1,6 @@
-import type { ApprovalRecord } from "@invisible-dots/shared";
+import { APPROVAL_PROMPT_TEXT_MAX, type ApprovalRecord } from "@invisible-dots/shared";
 import { describe, expect, it } from "vitest";
-import { ARGUMENTS_MAX, approvalOutcomeText, approvalPromptText, approvalReplyHint, approvalReplyToken, parseApprovalReply } from "../src/approval-text.js";
+import { approvalOutcomeText, approvalPromptText, approvalReplyHint, approvalReplyToken, parseApprovalReply } from "../src/approval-text.js";
 import { CALLBACK_DATA_MAX_BYTES, encodeApprovalCallback, parseApprovalCallback } from "../src/telegram/callback.js";
 
 const ID = "appr_11111111-2222-3333-4444-555555555555";
@@ -63,11 +63,11 @@ describe("what an approval prompt says", () => {
   it("cuts the arguments and the reason to the limit, and shows that they were cut", () => {
     const text = approvalPromptText(approval({ arguments: { command: "x".repeat(2000) }, reason: "r".repeat(2000) }), true);
     const [, reason, args] = text.split("\n") as [string, string, string];
-    expect(reason.slice("Reason: ".length)).toHaveLength(ARGUMENTS_MAX);
-    expect(args.slice("Arguments: ".length)).toHaveLength(ARGUMENTS_MAX);
+    expect(reason.slice("Reason: ".length)).toHaveLength(APPROVAL_PROMPT_TEXT_MAX);
+    expect(args.slice("Arguments: ".length)).toHaveLength(APPROVAL_PROMPT_TEXT_MAX);
     expect(reason.endsWith("...")).toBe(true);
     expect(args.endsWith("...")).toBe(true);
-    expect(text).not.toContain("x".repeat(ARGUMENTS_MAX));
+    expect(text).not.toContain("x".repeat(APPROVAL_PROMPT_TEXT_MAX));
     expect(text.length).toBeLessThan(800);
   });
 

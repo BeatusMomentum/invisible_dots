@@ -284,6 +284,28 @@ describe.each(testAdapters())("migrate on %s", { timeout: SETUP_TIMEOUT }, (kind
     }
   });
 
+  it("refuses a database that records a migration this build does not ship, and changes nothing in it", async () => {
+    const { db, dispose } = await emptyDb(kind);
+    try {
+      await migrate(db);
+      await db.query("INSERT INTO schema_migrations (version) VALUES ('0099_from_another_branch')");
+      await expect(migrate(db)).rejects.toThrow(/does not ship \(0099_from_another_branch\).*another version/);
+      const { rows } = await db.query<{ n: number }>("SELECT count(*)::int AS n FROM schema_migrations");
+      expect(rows[0]!.n).toBe((await loadMigrations()).length + 1);
+    } finally {
+      await dispose();
+    }
+  });
+
+  it("does not mind a database nothing was ever applied to", async () => {
+    const { db, dispose } = await emptyDb(kind);
+    try {
+      expect((await migrate(db)).applied).toEqual((await loadMigrations()).map((m) => m.version));
+    } finally {
+      await dispose();
+    }
+  });
+
   it("a failing migration is rolled back and named in the error", async () => {
     const { db, dispose } = await emptyDb(kind);
     const dir = await mkdtemp(join(tmpdir(), "idots-mig-"));

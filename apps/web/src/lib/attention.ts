@@ -2,7 +2,8 @@
  * What needs the person, per Dot, and how that is drawn. One function owns it, and the rail badges, the
  * avatar ring, the document title and the favicon all read it, so they can never disagree.
  */
-import { computerIsUp, type AgentState, type ChannelKind, type DotState, type VmState } from "@invisible-dots/shared/browser";
+import { computerIsUp, type AgentState, type DotState, type VmState } from "@invisible-dots/shared/browser";
+import type { ChannelRelink } from "./channels";
 
 export interface DotAttention {
   /** Approvals of this Dot that wait for an answer. */
@@ -15,12 +16,8 @@ export interface DotAttention {
   relinks: readonly DotRelink[];
 }
 
-/** A channel of one Dot that needs linking again. */
-export interface DotRelink {
-  kind: ChannelKind;
-  /** What the host says went wrong; null when it says nothing. */
-  detail: string | null;
-}
+/** A channel of one Dot that needs linking again: the one record of it (`ChannelRelink`, lib/channels.ts) without the Dot it is listed under. */
+export type DotRelink = Omit<ChannelRelink, "dot_id">;
 
 export const NO_ATTENTION: DotAttention = { pendingApprovals: 0, error: null, failedTasks: 0, relinks: [] };
 
@@ -42,17 +39,12 @@ export interface AttentionTask {
   dot_id: string;
 }
 
-/** The part of a channel that needs linking again that the model reads. */
-export interface AttentionRelink extends DotRelink {
-  dot_id: string;
-}
-
 /** Per Dot id; a Dot with nothing waiting is in the map with NO_ATTENTION's numbers. */
 export function attentionByDot(
   dots: readonly AttentionDot[],
   approvals: readonly AttentionApproval[],
   failedTasks: readonly AttentionTask[] = [],
-  relinks: readonly AttentionRelink[] = [],
+  relinks: readonly ChannelRelink[] = [],
 ): Map<string, DotAttention> {
   const byDot = new Map<string, Omit<DotAttention, "relinks"> & { relinks: DotRelink[] }>();
   for (const dot of dots) {

@@ -10,8 +10,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_LIFECYCLE_OPTIONS } from "../../apps/scheduler/src/lifecycle.js";
 import { USAGE } from "../../apps/cli/src/cli.js";
-import { ARGUMENTS_MAX } from "../../packages/channels/src/approval-text.js";
-import { ENV, MAX_HOST_FILE_BYTES, parseDotConfig } from "../../packages/shared/src/index.js";
+import { APPROVAL_PROMPT_TEXT_MAX, ENV, MAX_HOST_FILE_BYTES, parseDotConfig } from "../../packages/shared/src/index.js";
 import { PRESET_IDS, PRESETS } from "../../apps/web/src/lib/permission-presets.js";
 
 const repo = resolve(fileURLToPath(new URL(".", import.meta.url)), "../..");
@@ -135,7 +134,7 @@ describe("the numbers the README gives", () => {
     expect(flat).toContain("(90 seconds ahead by default)");
     expect(MAX_HOST_FILE_BYTES).toBe(16 * 1024 * 1024);
     expect(flat).toContain("at most 16 MiB");
-    expect(ARGUMENTS_MAX).toBe(300);
+    expect(APPROVAL_PROMPT_TEXT_MAX).toBe(300);
     expect(flat).toContain("the arguments cut to 300 characters");
   });
 

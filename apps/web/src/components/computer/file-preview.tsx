@@ -1,10 +1,10 @@
 "use client";
 
-import type { FileEntry } from "@invisible-dots/shared/browser";
+import { MAX_HOST_FILE_BYTES, type FileEntry } from "@invisible-dots/shared/browser";
 import { DownloadIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
-import { childPath, previewPlan } from "../../lib/files";
+import { canDownload, childPath, previewPlan } from "../../lib/files";
 import { formatBytes } from "../../lib/format";
 import { saveFile } from "../../lib/save-file";
 import { ErrorAlert } from "../ErrorAlert";
@@ -32,6 +32,7 @@ async function download(dotId: string, folder: string, name: string): Promise<vo
  */
 export function FilePreview({ dotId, folder, entry, markdown = false }: { dotId: string; folder: string; entry: FileEntry; markdown?: boolean }) {
   const plan = previewPlan(entry);
+  const downloadable = canDownload(entry);
   const path = childPath(folder, entry.name);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -84,14 +85,18 @@ export function FilePreview({ dotId, folder, entry, markdown = false }: { dotId:
           {entry.name}
         </h3>
         <span className="text-xs text-muted-foreground">{formatBytes(entry.size)}</span>
-        <Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => void save()}>
-          <DownloadIcon />
-          {saving ? "Downloading..." : "Download"}
-        </Button>
+        {downloadable ? (
+          <Button type="button" variant="outline" size="sm" disabled={saving} onClick={() => void save()}>
+            <DownloadIcon />
+            {saving ? "Downloading..." : "Download"}
+          </Button>
+        ) : null}
       </div>
       <ErrorAlert error={saveError} title="The file was not downloaded" />
 
-      {plan.show === "none" ? (
+      {!downloadable ? (
+        <p className="text-sm text-muted-foreground">This file is too big to be handed out ({formatBytes(entry.size)}, the limit is {formatBytes(MAX_HOST_FILE_BYTES)}). Read it on the computer itself, or copy it in parts.</p>
+      ) : plan.show === "none" ? (
         <p className="text-sm text-muted-foreground">
           {plan.reason === "too-large" ? `This file is too big to show here (${formatBytes(entry.size)}). Download it to read it.` : "This kind of file is not shown here. Download it to open it."}
         </p>

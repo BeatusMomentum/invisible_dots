@@ -191,7 +191,11 @@ const DESCRIBE: { [K in KnownType]: (data: Partial<EventData[K]>) => Draft } = {
   "channel.changed": (d) => ({ title: `Channel ${text(d.change) || "changed"}`, detail: text(d.kind), tone: d.change === "removed" ? "warn" : "neutral" }),
   "channel.peer.paired": (d) => ({ title: "Person paired", detail: joined(text(d.label), text(d.kind) && `on ${text(d.kind)}`), tone: "ok" }),
   "dot.created": (d) => ({ title: "Dot created", detail: text(d.name), tone: "ok" }),
-  "dot.updated": (d) => ({ title: "Configuration updated", detail: text(d.name), tone: "neutral" }),
+  // Two things write it: a saved config (`name` only) and a Dot that went to ERROR (`status` and `error` too, lifecycle.ts).
+  "dot.updated": (d) =>
+    d.status === "ERROR"
+      ? { title: "The Dot failed", detail: joined(text(d.name), text(d.error) && `- ${text(d.error)}`), tone: "error" }
+      : { title: "Configuration updated", detail: text(d.name), tone: "neutral" },
   "dot.deleted": (d) => ({ title: "Dot deleted", detail: text(d.name), tone: "warn" }),
   "computer.state": (d) => ({ title: "Computer state", detail: text(d.state), tone: d.state === "ERROR" ? "error" : "neutral" }),
   "computer.started": () => ({ title: "Computer started", tone: "ok" }),

@@ -328,6 +328,37 @@ describe.each(testAdapters())("the hub with the real Telegram adapter (%s)", { t
     expect((await userMessages(dot.id)).map((e) => e.data.text)).toEqual(["from the first bot", "from the second bot"]);
   });
 
+  it("goes on from where it had got when new credentials are refused after the channel was stopped, and sends nothing again", async () => {
+    const w = await world();
+    const { hub, dot } = await linked(w);
+    bots.say(TOKEN, "hello", ANN);
+    await waitFor(() => bots.sent(TOKEN, 10).length === 1, "the answer");
+    const other = "654321:OTHER-BOT-TOKEN-VALUE";
+    bots.addBot(other, "second_bot");
+    const two = await w.dot();
+    // The check finds the bot free, and takes its time: the Dot answers meanwhile, so the cursor written for it is newer
+    // than the binding the call read. Another Dot's binding lands before this one's write, after the channel was stopped.
+    const listBindings = db.channels.listBindings.bind(db.channels);
+    const spy = vi.spyOn(db.channels, "listBindings").mockImplementationOnce(async (...args) => {
+      const seen = await listBindings(...args);
+      dot.guest.emit("message.assistant", { text: "during the check" });
+      await waitFor(() => bots.sent(TOKEN, 10).length === 2, "the answer given during the check");
+      await db.channels.createBinding({ id: "chb_rival", dotId: two.id, kind: "telegram", settings: DEFAULT_CHANNEL_SETTINGS, eventCursor: 0, account: "second_bot" });
+      return seen;
+    });
+    try {
+      await expect(hub.setCredentials(dot.id, "telegram", { telegram_bot_token: other })).rejects.toMatchObject({ status: 409, code: "account_in_use" });
+    } finally {
+      spy.mockRestore();
+    }
+    // It runs again on the token it had, and its Dot's answer is not sent a second time.
+    await waitFor(() => bots.polling(TOKEN), "the first bot to be polled again");
+    await waitFor(async () => (await hub.list(dot.id))[0]!.status === "connected", "connected again");
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(bots.sent(TOKEN, 10).map((m) => m.text)).toEqual(["echo: hello", "during the check"]);
+    expect(await db.secrets.get(dot.id, "telegram_bot_token")).toBe(TOKEN);
+  });
+
   it("refuses as account_in_use a bot that another Dot takes between the check and the insert, and stores nothing", async () => {
     const w = await world();
     bots.addBot(TOKEN, "dot_helper_bot");

@@ -288,8 +288,10 @@ export class ChannelHub {
         return (await tx.channels.bindingById(binding.id)) ?? binding;
       });
     } catch (error) {
-      // Nothing changed: the channel goes on with the credentials it had.
-      if (binding.enabled && this.#state === "started") this.#run(binding);
+      // Nothing changed: the channel goes on with the credentials it had, from the cursor the stop above wrote (the
+      // binding read before it holds an older one, and what was delivered since would be sent again).
+      const current = (await this.#o.db.channels.bindingById(binding.id)) ?? binding;
+      if (current.enabled && this.#state === "started") this.#run(current);
       if (isUniqueViolation(error, ACCOUNT_KEY)) throw accountInUse(kind, account);
       throw error;
     }

@@ -680,7 +680,7 @@ command detached into another session outlives it.
 | `POST /browser-identities` | `{ name, proxy? }` | `201 BrowserIdentity`; `400 invalid` (name, or a proxy that is not an `http`, `https`, `socks4` or `socks5` URL with a host and a written port: the browser's server refuses one without a port at a launch, with a message that prints the URL and its password), `409 limit` (`max_identities`) |
 | `GET /browser-identities/:id` | | `BrowserIdentity`; `404 not_found` |
 | `DELETE /browser-identities/:id` | | `204` after the identity's browser is closed and its directory removed; `404 not_found` |
-| `GET /browser-identities/:id/frame` | | `200 image/jpeg` (`Cache-Control: no-store`), one frame of the identity's window, taken with the server's `browser_watch`; `404 not_found`; `409 not_open` when the identity is closed; `503 busy` when a call of the Dot held the identity for longer than 5 seconds; `502 frame_failed` (the server has no page to show) or `crashed` |
+| `GET /browser-identities/:id/frame` | | `200 image/jpeg` (`Cache-Control: no-store`), one frame of the identity's window, taken with the server's `browser_watch`; `404 not_found`; `409 not_open` when the identity is closed; `503 busy` when a call of the Dot held the identity for longer than 5 seconds; `502 frame_failed` (the server has no page to show, or sent a frame that is not a JPEG: the engine is the one owner of that rule, the host passes the bytes on as `image/jpeg`) or `crashed` |
 | `POST /browser-identities/:id/close` | | `204` after the identity's browser is closed through `browser_close` and its server has ended; the profile stays. Closing a closed identity is a `204` too; `404 not_found` |
 | `GET /automations` | | `{ automations: Automation[] }`: every cron job of the Dot, paused ones too, as `{ id, name, enabled, schedule: { kind: "at"\|"every"\|"cron", at_ms?, every_ms?, expr?, tz? }, message, next_run_at_ms, last_run_at_ms, last_status, last_error, delete_after_run, created_at_ms }`; times are milliseconds since the epoch, `next_run_at_ms` is `null` while a job is paused |
 | `PATCH /automations/:id` | `{ enabled: bool }` | `200 Automation` (a job already in that state is not touched: resuming a running job does not move its next run); `404 not_found`, `400 invalid_automation` |
@@ -848,7 +848,9 @@ that wrote it to the outbox committed: one written inside a transaction that
 rolls back is never streamed, so its `seq` cannot reach the host and then be
 reused for another event.
 
-The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
+The control plane adds its own: `dot.created`, `dot.updated` (a saved config,
+`{name}`, or a Dot that went to ERROR, `{name, status: "ERROR", error}`, which
+the Activity page tells apart), `dot.deleted`,
 `computer.state {state}`, `computer.started`, `computer.stopped`,
 `task.created`, `task.cancelled`, `approval.resolved {approval_id, decision,
 task_id?, note?, always?}` (`task_id` is the task the approval was asked in, so

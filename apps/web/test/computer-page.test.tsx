@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { BrowserIdentity } from "@invisible-dots/shared/browser";
+import { MAX_HOST_FILE_BYTES, type BrowserIdentity } from "@invisible-dots/shared/browser";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
@@ -395,6 +395,20 @@ describe("the files", () => {
     const preview = await screen.findByRole("region", { name: "File big.txt" });
     expect(within(preview).getByText(/too big to show here \(1\.0 MiB\)/)).toBeTruthy();
     expect(requested(/GET \/api\/dots\/d1\/files$/)).toEqual([]);
+  });
+
+  it("does not offer to download a file the control plane would refuse, and says why", async () => {
+    plane.putFile("/home/dot/huge.bin", new Uint8Array(MAX_HOST_FILE_BYTES + 1));
+    await renderComputer({ view: "files", file: "huge.bin" });
+    const preview = await screen.findByRole("region", { name: "File huge.bin" });
+    expect(within(preview).getByText(/too big to be handed out/)).toBeTruthy();
+    expect(within(preview).queryByRole("button", { name: "Download" })).toBeNull();
+    expect(requested(/GET \/api\/dots\/d1\/files$/)).toEqual([]);
+    // One at the limit is handed out.
+    cleanup();
+    plane.putFile("/home/dot/limit.bin", new Uint8Array(MAX_HOST_FILE_BYTES));
+    await renderComputer({ view: "files", file: "limit.bin" });
+    expect(within(await screen.findByRole("region", { name: "File limit.bin" })).getByRole("button", { name: "Download" })).toBeTruthy();
   });
 
   it("does not show a file named text that holds bytes of something else", async () => {

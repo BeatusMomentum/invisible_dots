@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { APPROVAL_NOTE_MAX } from "@invisible-dots/shared/browser";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -114,6 +115,12 @@ describe("the approval card", () => {
     await waitFor(() => expect(card.getByRole("status").textContent).toContain("Denied"));
     expect(plane.answers).toEqual([{ id: "a1", decision: "reject", body: { note: "not on this machine" } }]);
     expect(card.getByText("Your note: not on this machine")).toBeTruthy();
+  });
+
+  it("takes a note of the length the control plane takes, no longer", async () => {
+    const card = within(await renderCard(askOf("a1")));
+    await userEvent.click(card.getByRole("button", { name: "Add a note for the Dot" }));
+    expect((card.getByLabelText("Note for the Dot (optional)") as HTMLInputElement).maxLength).toBe(APPROVAL_NOTE_MAX);
   });
 
   it("does not send a note that is only blanks", async () => {

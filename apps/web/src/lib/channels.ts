@@ -4,7 +4,7 @@
  * the facts (`ChannelRecord`, the codes, the link stream); this file only puts them in words.
  */
 import type { InvisibleDotsClient } from "@invisible-dots/sdk";
-import type { ChannelKind, ChannelPeerRecord, ChannelRecord, ChannelSettings, ChannelStatus, MessageOrigin } from "@invisible-dots/shared/browser";
+import { APPROVAL_PROMPT_TEXT_MAX, type ChannelKind, type ChannelPeerRecord, type ChannelRecord, type ChannelSettings, type ChannelStatus, type MessageOrigin } from "@invisible-dots/shared/browser";
 import type { Tone } from "./tone";
 import type { Dot } from "./types";
 
@@ -101,7 +101,7 @@ export function settingTexts(kind: ChannelKind): Record<SettingName, SettingText
     },
     show_arguments: {
       label: "Show what the Dot wants to run",
-      description: "An approval in the chat shows the tool's arguments, cut to 300 characters. Off, it shows the tool and the Dot's reason only.",
+      description: `An approval in the chat shows the tool's arguments, cut to ${APPROVAL_PROMPT_TEXT_MAX} characters. Off, it shows the tool and the Dot's reason only.`,
     },
   };
 }

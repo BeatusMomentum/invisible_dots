@@ -5,7 +5,7 @@
  * The arguments come from the engine's table (`tool_arguments` in nanobot/dots/permissions.py): all of a call's
  * arguments, bar a secret the table redacts. So what is shown here is what the call will do, not a summary of it.
  */
-import { isPermission, PERMISSION_INFO, redactProxy, type Permission, type PermissionInfo, type PermissionRisk, type ToolInfo } from "@invisible-dots/shared/browser";
+import { GUEST_PATHS, isPermission, PERMISSION_INFO, redactProxy, type Permission, type PermissionInfo, type PermissionRisk, type ToolInfo } from "@invisible-dots/shared/browser";
 import { additionDiff, replacementDiff, type DiffLine } from "./diff";
 import { toolLabel } from "./events/tool-labels";
 import { formatDate } from "./format";
@@ -38,10 +38,10 @@ export function askOfRecord(record: Approval): ApprovalAsk {
 }
 
 /** Where a Dot's own work goes: a relative path in a file tool means a path under it. */
-export const WORKSPACE = "/home/dot/workspace";
+export const WORKSPACE: string = GUEST_PATHS.workspace;
 
-/** The Dot's own home, where `~` points. */
-const HOME = "/home/dot";
+/** The Dot's own home, where `~` points. (The host's file routes read a relative path against it; the engine's file tools, whose approval this is, read it against the workspace, and resolve `..`.) */
+const HOME: string = GUEST_PATHS.home;
 
 /** A path with its `.` and `..` segments resolved; `..` above the root stays at the root. */
 function resolved(path: string): string {
