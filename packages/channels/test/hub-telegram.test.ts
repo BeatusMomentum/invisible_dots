@@ -235,6 +235,40 @@ describe.each(testAdapters())("the hub with the real Telegram adapter (%s)", { t
     await waitFor(async () => (await hub.list(dot.id))[0]!.status === "connected", "connected again");
   });
 
+  it("keeps backing off a bot whose polls always fail (a 409), and never calls it connected", async () => {
+    const w = await world();
+    bots.addBot(TOKEN, "dot_helper_bot");
+    // The same 409 every time: a second server polling the same bot.
+    bots.failNext(TOKEN, "getUpdates", { error_code: 409, description: "Conflict: terminated by other getUpdates request" }, 100_000);
+    const before = bots.requests.length;
+    const { hub } = await w.hub(telegram(), { backoff: { initialMs: 20, maxMs: 160, jitter: 0 } });
+    const dot = await w.dot();
+    await hub.add(dot.id, "telegram", { credentials: { telegram_bot_token: TOKEN } });
+    await quiet(1500);
+    const polls = bots.requests.slice(before).filter((r) => r.method === "getUpdates").length;
+    const statuses = (await db.events.list({ dotId: dot.id, types: ["channel.status"] })).map((e) => e.data.status);
+    // 20, 40, 80 and then 160 ms apart: about a dozen tries in 1.5 s; a backoff that restarts at 20 ms would make about seventy.
+    expect(polls).toBeGreaterThan(3);
+    expect(polls).toBeLessThanOrEqual(20);
+    expect(statuses).not.toContain("connected");
+    expect(statuses.length).toBeLessThanOrEqual(3);
+    expect((await hub.list(dot.id))[0]!.status).toBe("error");
+  });
+
+  it("waits at least what Telegram asks when a poll is answered with a 429", async () => {
+    const w = await world();
+    bots.addBot(TOKEN, "dot_helper_bot");
+    bots.failNext(TOKEN, "getUpdates", { error_code: 429, description: "x", retry_after: 1 });
+    const { hub } = await w.hub(telegram());
+    const dot = await w.dot();
+    await hub.add(dot.id, "telegram", { credentials: { telegram_bot_token: TOKEN } });
+    await waitFor(async () => (await hub.list(dot.id))[0]!.status === "error", "the error status", 15_000);
+    const failedAt = Date.now();
+    await waitFor(async () => (await hub.list(dot.id))[0]!.status === "connected", "connected again", 15_000);
+    // The backoff of these tests is a few milliseconds: only the 429's own wait can make this long.
+    expect(Date.now() - failedAt).toBeGreaterThanOrEqual(800);
+  });
+
   it("waits out a 429 when sending and delivers the answer once", async () => {
     const w = await world();
     await linked(w);

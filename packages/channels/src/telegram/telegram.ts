@@ -18,6 +18,7 @@ import type { ChannelBindingRecord, SecretsRepository } from "@invisible-dots/da
 import {
   ChannelCredentialsError,
   ChannelNeedsRelinkError,
+  ChannelRateLimitedError,
   ChannelSendError,
   type ApprovalPrompt,
   type Channel,
@@ -98,13 +99,20 @@ class TelegramChannel implements Channel {
     const me = await this.#guard("getMe", () => this.#api.getMe(forGrammy(signal)));
     // A bot that still has a webhook cannot be polled; this bot is the Dot's own, so the webhook goes.
     await this.#guard("deleteWebhook", () => this.#api.deleteWebhook({ drop_pending_updates: false }, forGrammy(signal)));
-    sink.status({ status: "connected", account: me.username });
 
     let offset: number | undefined;
+    let connected = false;
     while (!signal.aborted) {
+      // The first poll does not wait: that it was answered is what proves the bot can be polled (a second poller
+      // or a rate limit answers it with an error), so "connected" is reported after it and not before.
+      const timeout = connected ? this.#pollSeconds : 0;
       const updates = await this.#guard("getUpdates", () =>
-        this.#api.getUpdates({ offset, timeout: this.#pollSeconds, limit: 100, allowed_updates: ["message", "callback_query"] }, forGrammy(signal)),
+        this.#api.getUpdates({ offset, timeout, limit: 100, allowed_updates: ["message", "callback_query"] }, forGrammy(signal)),
       );
+      if (!connected) {
+        connected = true;
+        sink.status({ status: "connected", account: me.username });
+      }
       for (const update of updates) {
         if (signal.aborted) return;
         await this.#handle(update, sink);
@@ -216,6 +224,9 @@ class TelegramChannel implements Channel {
       return await call();
     } catch (error) {
       if (error instanceof GrammyError && error.error_code === 401) throw new ChannelNeedsRelinkError(REFUSED_TOKEN);
+      if (error instanceof GrammyError && error.error_code === 429) {
+        throw new ChannelRateLimitedError(describe(error, method, this.#token), (error.parameters.retry_after ?? 1) * 1000);
+      }
       if (error instanceof GrammyError && error.error_code === 409) {
         throw new Error(
           "Telegram says another process is polling this bot (409 Conflict). A bot token serves one Dot on one running server: use a bot of its own for each Dot.",

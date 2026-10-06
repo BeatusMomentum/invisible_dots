@@ -358,9 +358,11 @@ describe("Telegram adapter", { timeout: 30_000 }, () => {
     expect(api.unconfirmed(TOKEN)).toContain(updateId);
 
     api.failNext(TOKEN, "answerCallbackQuery", { error_code: 400, description: "query is too old" });
+    const pollsBefore = api.polls(TOKEN);
     const second = await running(sink);
     await waitFor(() => seen.approvals.length === 1, "the press, offered again");
-    await waitFor(() => api.polls(TOKEN) > 2, "the next poll");
+    // The poll that carried the press, then the one that confirms it with its offset.
+    await waitFor(() => api.polls(TOKEN) >= pollsBefore + 2, "the next poll");
     expect(api.unconfirmed(TOKEN)).toEqual([]);
     expect(api.answers(TOKEN)).toEqual([]);
     second.abort.abort();

@@ -121,6 +121,8 @@ export class FakeBotApi {
 
   /** A bot that exists: its id is the number before the colon of its token. */
   addBot(token: string, username = "fake_bot"): void {
+    // A bot added again is a new bot: what was set to fail for the old one does not carry over.
+    for (let i = this.#injections.length - 1; i >= 0; i--) if (this.#injections[i]!.token === token) this.#injections.splice(i, 1);
     this.#bots.set(token, {
       token,
       id: Number(token.split(":")[0]),

@@ -13,7 +13,7 @@ import { errorMessage, sleep, type Logger } from "@invisible-dots/scheduler";
 import { Backoff, type BackoffOptions } from "./backoff.js";
 import { BindingSecrets } from "./binding-secrets.js";
 import { approvalOutcomeText, approvalPromptText } from "./approval-text.js";
-import { ChannelNeedsRelinkError, ChannelSendError, type Channel, type ChannelSink, type ChannelStatusReport, type ChannelType } from "./channel.js";
+import { ChannelNeedsRelinkError, ChannelRateLimitedError, ChannelSendError, type Channel, type ChannelSink, type ChannelStatusReport, type ChannelType } from "./channel.js";
 import { splitText } from "./text.js";
 
 /** The part of the event log a runner reads. */
@@ -143,6 +143,7 @@ export class BindingRunner {
     const sink = this.#o.sink(this);
     while (!this.#signal.aborted) {
       let failure: string;
+      let asked = 0;
       try {
         const binding = await this.#o.db.channels.bindingById(this.bindingId);
         if (!binding) return;
@@ -165,13 +166,14 @@ export class BindingRunner {
           this.report({ status: "needs_relink", detail: await this.scrub(error.message) });
           return;
         }
+        if (error instanceof ChannelRateLimitedError) asked = error.retryAfterMs;
         failure = await this.scrub(errorMessage(error));
       } finally {
         this.channel = null;
       }
       this.#o.logger.warn("a channel stopped, starting it again", { binding: this.bindingId, kind: this.kind, reason: failure });
       this.report({ status: "error", detail: failure });
-      await sleep(backoff.next(), this.#signal);
+      await sleep(Math.max(backoff.next(), asked), this.#signal);
     }
   }
 

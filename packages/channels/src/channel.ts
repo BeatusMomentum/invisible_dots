@@ -101,8 +101,10 @@ export interface Channel {
   readonly capabilities: ChannelCapabilities;
   /**
    * Connect and deliver messages to `sink` until `signal` aborts, then disconnect and resolve. Report
-   * `connecting` and `connected` through `sink.status`. Rejecting means the connection cannot continue: the
-   * hub reports `error`, waits (exponential backoff) and calls `run` again on a fresh instance. Rejecting with
+   * `connecting` and `connected` through `sink.status`; report `connected` only once the connection has done
+   * its first piece of work (the hub starts the backoff over at that report). Rejecting means the connection
+   * cannot continue: the hub reports `error`, waits (exponential backoff, at least `ChannelRateLimitedError`'s
+   * `retryAfterMs`) and calls `run` again on a fresh instance. Rejecting with
    * `ChannelNeedsRelinkError` means only the person can fix it (a revoked token, a logged-out device): the
    * hub reports `needs_relink` and does not call `run` again.
    */
@@ -133,6 +135,17 @@ export class ChannelSendError extends Error {
   ) {
     super(message);
     this.name = "ChannelSendError";
+  }
+}
+
+/** `run` failed because the service asked for a pause (a 429's `retry_after`): the hub waits at least this long before it starts the channel again. */
+export class ChannelRateLimitedError extends Error {
+  constructor(
+    message: string,
+    readonly retryAfterMs: number,
+  ) {
+    super(message);
+    this.name = "ChannelRateLimitedError";
   }
 }
 
