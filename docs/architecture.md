@@ -111,7 +111,11 @@ virtualization/
   cloud-init/      NoCloud templates
   images/          pinned base image metadata
 tests/
-  repo/            checks over the whole repository (the platform branches of section 1.1)
+  repo/            checks over the whole repository (the platform branches of section 1.1, and the
+                   contract of the end-to-end run below with the product)
+  e2e/             the real-VM acceptance run (`node tests/e2e/run.ts`, on a Linux host with an
+                   accelerator and an OpenRouter key; not in CI), its stand-in Linux host for
+                   machines that cannot run it directly, and README.md
 docs/
 ```
 

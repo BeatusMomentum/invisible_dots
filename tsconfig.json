@@ -1,5 +1,8 @@
 {
   "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true
+  },
   "include": [
     "*.ts",
     "apps/*/src/**/*.ts",
@@ -9,7 +12,8 @@
     "packages/*/scripts/**/*.ts",
     "guest/image-builder/src/**/*.ts",
     "guest/image-builder/test/**/*.ts",
-    "tests/repo/**/*.ts"
+    "tests/repo/**/*.ts",
+    "tests/e2e/**/*.ts"
   ],
   "exclude": ["node_modules", "apps/web", "invisible_engine_dots"]
 }
