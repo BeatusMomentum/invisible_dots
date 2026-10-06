@@ -446,9 +446,6 @@ class GenerationSettings:
 
 _SYNTHETIC_USER_CONTENT = "(conversation continued)"
 
-# What replaces the provider's key in any text that leaves the provider.
-REDACTED_KEY = "[api key removed]"
-
 # The longest part of a provider's error body that is kept as text.
 _ERROR_BODY_LIMIT = 500
 
@@ -538,8 +535,7 @@ class LLMProvider(ABC):
         runtime_provider_name = cast(object, provider_name)
         if not isinstance(runtime_provider_name, str) or not runtime_provider_name.strip():
             raise ValueError("provider_name must be a non-empty configured identity")
-        # The one place the credential lives: a client is built from it, and
-        # `failure_text` removes it from every error text.
+        # The one place the credential lives: a client is built from it.
         self.api_key = api_key
         self.api_base = api_base
         self.provider_name = provider_name
@@ -670,9 +666,7 @@ class LLMProvider(ABC):
         """The one place a provider failure becomes text (the model, the logs and the host all read it).
 
         The text is the error body when the exception carries one, else the exception's own
-        message. The key never leaves the process in it: a server or a proxy may echo the
-        Authorization header in its error body. The key is replaced in the whole text first and
-        the body is cut afterwards, so a key that straddles the cut is never left as a prefix.
+        message.
         """
         body = (
             getattr(exc, "doc", None)
@@ -680,14 +674,11 @@ class LLMProvider(ABC):
             or getattr(getattr(exc, "response", None), "text", None)
         )
         body_text = body if isinstance(body, str) else str(body) if body is not None else ""
-        body_text = self._without_key(body_text).strip()
+        body_text = body_text.strip()
         if body_text:
             return f"Error: {body_text[:_ERROR_BODY_LIMIT]}"
         detail = str(exc).strip() or type(exc).__name__
-        return self._without_key(f"Error calling LLM: {detail}")
-
-    def _without_key(self, text: str) -> str:
-        return text.replace(self.api_key, REDACTED_KEY) if self.api_key else text
+        return f"Error calling LLM: {detail}"
 
     def _error_response_from_exception(self, exc: Exception) -> LLMResponse:
         """Convert an unexpected exception while retaining retry metadata."""

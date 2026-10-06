@@ -34,9 +34,6 @@ OpenRouter reuse "call_0" in every response and every session. Every row about a
 call (intent, decision, approval) is therefore keyed by the session AND the id,
 and an approval is a row per ask, never one per id.
 
-The layout carries `SCHEMA_VERSION` in the file's `user_version`, set when the file is
-created. An engine opens only a file of its own version and does not migrate one.
-
 Every row function takes the connection and runs inside the caller's
 transaction; none opens one. `DotStore.write` is the one place a write
 transaction begins and ends.
@@ -61,11 +58,6 @@ from nanobot.dots.protocol import AGENT_STATES, INBOUND_EVENT_TYPES, OUTBOUND_EV
 from nanobot.session.manager import Session
 
 T = TypeVar("T")
-
-# The version of the database layout, kept in the file's `user_version`. Change it with any
-# change of `_SCHEMA`: an engine refuses a file of another version rather than run on a layout
-# it does not know. There is no migration (no engine of an older layout has run on a real Dot).
-SCHEMA_VERSION = 7
 
 # How long open() waits for the file's lock before it says another engine owns it.
 OPEN_TIMEOUT_S = 2.0
@@ -203,10 +195,6 @@ class StoreOwnedError(RuntimeError):
     """The database file is held by another engine."""
 
 
-class StoreVersionError(RuntimeError):
-    """The database file has tables of another layout than this engine's `SCHEMA_VERSION`."""
-
-
 class DotStore:
     """One connection to the Dot's database, owned by this process.
 
@@ -224,11 +212,6 @@ class DotStore:
     def open(cls, path: str | Path, *, open_timeout_s: float = OPEN_TIMEOUT_S) -> DotStore:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        # Before this process holds anything: a short-lived read-only connection
-        # with normal locking, closed before the engine's own opens. A refused
-        # file keeps its journal mode too, and no shared lock outlives the check
-        # (one that did would make two engines on a fresh file refuse each other).
-        _check_layout(path, open_timeout_s)
         conn = sqlite3.connect(path, isolation_level=None, timeout=open_timeout_s)
         conn.row_factory = sqlite3.Row
         try:
@@ -242,7 +225,7 @@ class DotStore:
             # held from here on and a second process cannot get past it.
             conn.execute("BEGIN IMMEDIATE")
             try:
-                # Decided under the lock, not from the check above: another engine may have come and gone since.
+                # Decided under the lock: another engine may have come and gone since.
                 if _table_count(conn) == 0:
                     _create_schema(conn)
                 conn.execute("COMMIT")
@@ -314,42 +297,10 @@ def _table_count(conn: sqlite3.Connection) -> int:
     ).fetchone()[0]
 
 
-def _check_layout(path: Path, timeout_s: float) -> None:
-    """Refuse a file of another version (an empty or absent one passes).
-
-    Reads only, on its own read-only connection that is closed before it returns.
-    """
-    if not path.exists():
-        return
-    try:
-        conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=timeout_s)
-    except sqlite3.OperationalError:
-        return
-    try:
-        try:
-            if _table_count(conn) == 0:
-                return
-            found = conn.execute("PRAGMA user_version").fetchone()[0]
-        except sqlite3.OperationalError as error:
-            if "locked" in str(error) or "busy" in str(error):
-                raise StoreOwnedError(f"another engine owns {path}") from None
-            raise
-    finally:
-        conn.close()
-    if found != SCHEMA_VERSION:
-        raise StoreVersionError(
-            f"the engine database was made by another engine version: {path} "
-            f"(layout {found}, this engine's is {SCHEMA_VERSION}); "
-            "this engine does not migrate it: move the file away to start with an empty one"
-        )
-
-
 def _create_schema(conn: sqlite3.Connection) -> None:
-    """Make the tables and stamp the version on an empty file."""
+    """Make the tables on an empty file."""
     for statement in _SCHEMA:
         conn.execute(statement)
-    # PRAGMA takes no bound parameter; the value is this module's own integer.
-    conn.execute(f"PRAGMA user_version = {int(SCHEMA_VERSION)}")
 
 
 def _outbox_high_water(conn: sqlite3.Connection) -> int:

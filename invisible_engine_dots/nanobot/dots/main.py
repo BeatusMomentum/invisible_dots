@@ -30,13 +30,12 @@ from nanobot.dots.computer import (
     DEFAULT_WORKSPACE,
     AgentdComputer,
 )
-from nanobot.dots.credentials import CredentialOnDiskError, assert_no_credentials_on_disk
 from nanobot.dots.engine import Engine
 from nanobot.dots.permissions import ToolDeps, build_registry
 from nanobot.dots.provider import OpenRouterProviders
 from nanobot.dots.secrets import KeyHolder
 from nanobot.dots.server import AgentServer
-from nanobot.dots.store import DotStore, StoreOwnedError, StoreVersionError
+from nanobot.dots.store import DotStore, StoreOwnedError
 
 DEFAULT_AGENT_SOCKET = "/run/invisible-dots-agent/agent.sock"
 # The user every command of the model runs as (dot-agentd's `--run-as`): the one the API socket refuses.
@@ -53,15 +52,6 @@ DEFAULT_MAX_IDENTITIES = 20
 
 REFUSAL = "invisible-dots-engine runs only the Dot's engine; it takes no command (only --version)"
 
-# The golden image's venv holds the third-party packages and a copy of the lock they came from; the
-# runtime disk holds this source and a copy of the same lock (architecture 3.3).
-LOCK_FILE = "requirements.lock"
-LOCK_MISMATCH = (
-    "the golden image's Python environment was built from another requirements lock: "
-    "build a new golden image"
-)
-
-
 MODEL_USER_MISSING = (
     "the golden image has no user {user}, the user of the model's commands, whose processes the engine's socket "
     "refuses: build a new golden image"
@@ -69,7 +59,7 @@ MODEL_USER_MISSING = (
 
 
 class GoldenImageError(Exception):
-    """The golden image is not the one this runtime disk's engine needs: another lock, or a file missing."""
+    """The golden image is not the one this runtime disk's engine needs."""
 
 
 @dataclass(frozen=True)
@@ -120,21 +110,6 @@ def refused_peer_uids(model_user: str | None) -> frozenset[int]:
         return frozenset({pwd.getpwnam(model_user).pw_uid})
     except KeyError:
         raise GoldenImageError(MODEL_USER_MISSING.format(user=model_user)) from None
-
-
-def check_golden_lock(source_root: Path, prefix: Path) -> None:
-    """Refuse a runtime disk that needs other dependencies than the golden image carries.
-
-    `source_root` is the directory the `nanobot` package sits in (on the runtime disk,
-    /opt/invisible-dots/engine) and `prefix` is the venv. A development checkout has the lock in
-    neither place and is not checked; one copy without the other is a mismatch.
-    """
-    source_lock = source_root / LOCK_FILE
-    venv_lock = prefix / LOCK_FILE
-    if not source_lock.exists() and not venv_lock.exists():
-        return
-    if not (source_lock.is_file() and venv_lock.is_file()) or source_lock.read_bytes() != venv_lock.read_bytes():
-        raise GoldenImageError(LOCK_MISMATCH)
 
 
 def configure_logging() -> int:
@@ -242,19 +217,11 @@ def main(argv: Sequence[str] | None = None, environ: Mapping[str, str] | None = 
     environment = read_environment(os.environ if environ is None else environ)
     sink = configure_logging()
     try:
-        source_root = Path(nanobot.__file__).resolve().parent.parent
-        check_golden_lock(source_root, Path(sys.prefix))
-        assert_no_credentials_on_disk(
-            environment.state_dir, environment.home, os.environ if environ is None else environ
-        )
         asyncio.run(_run(environment))
-    except CredentialOnDiskError as error:
-        print(error, file=sys.stderr)
-        return 1
     except GoldenImageError as error:
         print(f"refusing to start: {error}", file=sys.stderr)
         return 1
-    except (StoreOwnedError, StoreVersionError) as error:
+    except StoreOwnedError as error:
         print(f"refusing to start: {error}", file=sys.stderr)
         return 1
     finally:

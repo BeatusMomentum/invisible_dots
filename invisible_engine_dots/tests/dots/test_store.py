@@ -15,7 +15,7 @@ import pytest
 from fakes.store_queries import last_seq
 
 from nanobot.dots import store as s
-from nanobot.dots.store import SCHEMA_VERSION, DotStore, StoreOwnedError, StoreVersionError
+from nanobot.dots.store import DotStore, StoreOwnedError
 
 TS = "2026-10-04T10:00:00.000Z"
 
@@ -91,99 +91,6 @@ class TestOpen:
         DotStore.open(path).close()
         DotStore.open(path, open_timeout_s=0).close()
 
-    def test_a_new_file_is_stamped_with_the_schema_version(self, tmp_path: Path) -> None:
-        store = DotStore.open(tmp_path / "engine.sqlite")
-        try:
-            assert store.read(lambda c: c.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_VERSION
-        finally:
-            store.close()
-        assert SCHEMA_VERSION > 0, "0 is what a file made before versions existed carries"
-
-    def test_a_file_of_the_same_version_opens_and_keeps_its_rows(self, tmp_path: Path) -> None:
-        path = tmp_path / "engine.sqlite"
-        first = DotStore.open(path)
-        first.write(lambda c: s.append_outbox(c, "agent.started", {}))
-        first.close()
-
-        second = DotStore.open(path)
-        try:
-            assert second.read(last_seq) == 1
-            assert second.read(lambda c: c.execute("PRAGMA user_version").fetchone()[0]) == SCHEMA_VERSION
-        finally:
-            second.close()
-
-    @staticmethod
-    def a_file_with_tables_and_version(path: Path, version: int) -> None:
-        raw = sqlite3.connect(path)
-        try:
-            raw.execute("CREATE TABLE dots_kv (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)")
-            raw.execute("INSERT INTO dots_kv VALUES ('config', '{}')")
-            raw.execute(f"PRAGMA user_version = {version}")
-            raw.commit()
-        finally:
-            raw.close()
-
-    @pytest.mark.parametrize("version", [0, SCHEMA_VERSION + 1, 99])
-    def test_a_file_of_another_version_is_refused_and_left_as_it_was(self, tmp_path: Path, version: int) -> None:
-        # Version 0 with tables is what an engine built before versions existed left.
-        path = tmp_path / "engine.sqlite"
-        self.a_file_with_tables_and_version(path, version)
-
-        with pytest.raises(StoreVersionError, match="the engine database was made by another engine version") as raised:
-            DotStore.open(path)
-        assert str(path) in str(raised.value)
-
-        raw = sqlite3.connect(path)
-        try:
-            # Nothing was written to it, not even the journal mode the engine sets on a file it accepts.
-            assert raw.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
-            assert raw.execute("PRAGMA user_version").fetchone()[0] == version
-            assert [r[0] for r in raw.execute("SELECT name FROM sqlite_master WHERE type = 'table'")] == ["dots_kv"]
-            assert raw.execute("SELECT value_json FROM dots_kv").fetchall() == [("{}",)]
-        finally:
-            raw.close()
-
-    def test_a_refused_file_is_not_left_locked(self, tmp_path: Path) -> None:
-        path = tmp_path / "engine.sqlite"
-        self.a_file_with_tables_and_version(path, 0)
-        with pytest.raises(StoreVersionError):
-            DotStore.open(path, open_timeout_s=0)
-        raw = sqlite3.connect(path, timeout=0)
-        raw.execute("BEGIN IMMEDIATE")
-        raw.close()
-
-    @pytest.mark.parametrize("state", ["fresh", "delete-mode"])
-    def test_the_layout_check_holds_no_lock_when_it_returns(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, state: str
-    ) -> None:
-        # A shared lock the check kept would be held until the engine's WAL switch, and two engines
-        # opening one file at once would each hold it and each fail that switch: both refused.
-        path = tmp_path / "engine.sqlite"
-        if state == "delete-mode":
-            DotStore.open(path).close()
-            raw = sqlite3.connect(path)
-            raw.execute("PRAGMA journal_mode=DELETE")
-            raw.close()
-        check = s._check_layout
-        probes: list[str] = []
-
-        def probing_check(*args: object, **kwargs: object) -> object:
-            result = check(*args, **kwargs)
-            other = sqlite3.connect(path, isolation_level=None, timeout=0)
-            try:
-                other.execute("BEGIN EXCLUSIVE")
-                other.execute("ROLLBACK")
-                probes.append("free")
-            except sqlite3.OperationalError:
-                probes.append("held")
-            finally:
-                other.close()
-            return result
-
-        monkeypatch.setattr(s, "_check_layout", probing_check)
-        DotStore.open(path).close()
-        assert probes == ["free"]
-
     @pytest.mark.parametrize("round_", range(3))
     def test_of_two_engines_opening_one_file_at_once_exactly_one_wins(self, tmp_path: Path, round_: int) -> None:
         # Two processes released at the same instant on a fresh file: the loser is refused as owned, not both.
@@ -193,14 +100,6 @@ class TestOpen:
                 "import sys, time",
                 "from nanobot.dots import store as s",
                 "from nanobot.dots.store import DotStore, StoreOwnedError",
-                # The layout check made slow, so that both engines are inside it together:
-                # whatever it still holds when it returns is held while the other one tries.
-                "check = s._check_layout",
-                "def slow_check(*args, **kwargs):",
-                "    result = check(*args, **kwargs)",
-                "    time.sleep(0.4)",
-                "    return result",
-                "s._check_layout = slow_check",
                 "start = float(sys.argv[2])",
                 "while time.time() < start: pass",
                 "try:",
@@ -722,13 +621,6 @@ class TestBrowserIdentities:
             assert second.read(s.list_identities) == [s.BrowserIdentityRow("a-1", "A", "http://p:1", 3, 4, True)]
         finally:
             second.close()
-
-    def test_a_file_of_the_layout_before_the_identities_is_refused(self, tmp_path: Path) -> None:
-        path = tmp_path / "engine.sqlite"
-        TestOpen.a_file_with_tables_and_version(path, 4)
-        with pytest.raises(StoreVersionError, match="layout 4"):
-            DotStore.open(path)
-
 
 class TestToolIntents:
     def test_keeps_the_first_start_of_a_call_hands_it_back_once_and_clears_what_is_left(

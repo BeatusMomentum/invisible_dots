@@ -42,8 +42,7 @@ disk lay them out. This smoke does, in one Linux container, with no QEMU:
   `models.summary` model with no tool in the request, the text sent to the model, the key reaching no file,
   log or process environment, the browser seams (below), the host's file routes (the TCP port) refusing a symbolic link
   under home that leads to `/proc/<pid>/environ`, the token file or `/etc` while the engine's socket
-  still follows it, and the engine refusing to start on a lock that is not
-  the golden image's or on a key in a dotenv file.
+  still follows it.
 
 ## The browser seams
 

@@ -29,13 +29,10 @@ from nanobot.dots.engine import Engine
 from nanobot.dots.main import (
     DEFAULT_AGENT_SOCKET,
     DEFAULT_STATE_DIR,
-    LOCK_FILE,
-    LOCK_MISMATCH,
     REFUSAL,
     UPSTREAM_COMMIT,
     Environment,
     GoldenImageError,
-    check_golden_lock,
     main,
     read_environment,
     refused_peer_uids,
@@ -190,32 +187,6 @@ class TestWhatItRefusesToStartOn:
             **extra,
         }
 
-    def test_a_credential_in_a_file_is_named_by_where_never_by_what(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        state = tmp_path / "state"
-        state.mkdir()
-        (state / ".env").write_bytes(b"OPENROUTER_API_KEY=sk-or-leaked-value\n")
-
-        assert main([], self.environ(state)) == 1
-
-        err = capsys.readouterr().err
-        assert "refusing to start" in err
-        assert str(state / ".env") in err
-        assert "sk-or-leaked-value" not in err
-        assert not (state / "engine.sqlite").exists()
-
-    def test_a_credential_in_the_environment_is_named_by_its_variable(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        state = tmp_path / "state"
-
-        assert main([], self.environ(state, OPENROUTER_API_KEY="sk-or-in-env")) == 1
-
-        err = capsys.readouterr().err
-        assert "environment variable OPENROUTER_API_KEY" in err
-        assert "sk-or-in-env" not in err
-
     def test_a_second_engine_on_the_same_state_does_not_start(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
@@ -227,28 +198,6 @@ class TestWhatItRefusesToStartOn:
             owner.close()
 
         assert "another engine owns" in capsys.readouterr().err
-
-    def test_a_database_of_another_engine_version_does_not_start(
-        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        state = tmp_path / "state"
-        state.mkdir()
-        raw = sqlite3.connect(state / "engine.sqlite")
-        raw.execute("CREATE TABLE dots_kv (key TEXT PRIMARY KEY, value_json TEXT NOT NULL)")
-        raw.commit()
-        raw.close()
-
-        assert main([], self.environ(state)) == 1
-
-        err = capsys.readouterr().err
-        assert "refusing to start: the engine database was made by another engine version" in err
-        assert str(state / "engine.sqlite") in err
-        # Refused untouched: the journal mode is still the one the file had.
-        raw = sqlite3.connect(state / "engine.sqlite")
-        try:
-            assert raw.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
-        finally:
-            raw.close()
 
     def test_the_bound_fails_an_engine_that_starts_instead_of_stalling(self, a_run_that_ends: RunBound) -> None:
         a_run_that_ends.seconds = 1.0
@@ -266,74 +215,6 @@ class TestWhatItRefusesToStartOn:
                 main([], environ)
         finally:
             shutil.rmtree(directory, ignore_errors=True)
-
-
-class TestTheGoldenLock:
-    """The runtime disk's source and the golden image's venv must come from the same lock (architecture 3.3)."""
-
-    def trees(self, tmp_path: Path) -> tuple[Path, Path]:
-        source, prefix = tmp_path / "engine", tmp_path / "venv"
-        source.mkdir()
-        prefix.mkdir()
-        return source, prefix
-
-    def test_the_same_lock_on_both_sides_starts(self, tmp_path: Path) -> None:
-        source, prefix = self.trees(tmp_path)
-        (source / LOCK_FILE).write_bytes(b"idna==3.20 \\\n    --hash=sha256:aa\n")
-        (prefix / LOCK_FILE).write_bytes(b"idna==3.20 \\\n    --hash=sha256:aa\n")
-
-        check_golden_lock(source, prefix)
-
-    def test_a_development_checkout_has_neither_and_is_not_checked(self, tmp_path: Path) -> None:
-        source, prefix = self.trees(tmp_path)
-
-        check_golden_lock(source, prefix)
-
-    def test_a_different_lock_is_refused_and_says_what_to_do(self, tmp_path: Path) -> None:
-        source, prefix = self.trees(tmp_path)
-        (source / LOCK_FILE).write_bytes(b"idna==3.21\n")
-        (prefix / LOCK_FILE).write_bytes(b"idna==3.20\n")
-
-        with pytest.raises(GoldenImageError, match="another requirements lock: build a new golden image"):
-            check_golden_lock(source, prefix)
-
-    @pytest.mark.parametrize("present", ["source", "venv"])
-    def test_a_lock_on_one_side_only_is_refused(self, tmp_path: Path, present: str) -> None:
-        source, prefix = self.trees(tmp_path)
-        ((source if present == "source" else prefix) / LOCK_FILE).write_bytes(b"idna==3.20\n")
-
-        with pytest.raises(GoldenImageError):
-            check_golden_lock(source, prefix)
-
-    def test_a_directory_in_the_place_of_a_lock_is_a_mismatch_not_a_crash(self, tmp_path: Path) -> None:
-        source, prefix = self.trees(tmp_path)
-        (source / LOCK_FILE).mkdir()
-        (prefix / LOCK_FILE).write_bytes(b"idna==3.20\n")
-
-        with pytest.raises(GoldenImageError):
-            check_golden_lock(source, prefix)
-
-    @pytest.mark.usefixtures("a_run_that_ends")
-    def test_main_refuses_to_start_before_it_opens_the_state(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-    ) -> None:
-        # A venv and a source tree whose locks differ: the module's own location and the
-        # interpreter's prefix are where the engine looks for them.
-        source, prefix = self.trees(tmp_path)
-        (source / LOCK_FILE).write_bytes(b"idna==3.21\n")
-        (prefix / LOCK_FILE).write_bytes(b"idna==3.20\n")
-        package = source / "nanobot"
-        package.mkdir()
-        (package / "__init__.py").write_bytes(b"")
-        monkeypatch.setattr(nanobot, "__file__", str(package / "__init__.py"))
-        monkeypatch.setattr(sys, "prefix", str(prefix))
-        state = tmp_path / "state"
-
-        code = main([], {"INVISIBLE_DOTS_ENGINE_STATE": str(state), "HOME": str(tmp_path / "home")})
-
-        assert code == 1
-        assert capsys.readouterr().err == f"refusing to start: {LOCK_MISMATCH}\n"
-        assert not state.exists()
 
 
 class TestTheModelUser:

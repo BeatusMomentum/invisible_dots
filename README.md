@@ -406,8 +406,7 @@ talks to chats.
 What protects you:
 
 - The OpenRouter key is never written to the image, the disk or the seed. It
-  is pushed to the Dot after every start and held in the engine's memory only;
-  the engine refuses to start if it finds a credential on disk
+  is pushed to the Dot after every start and held in the engine's memory only
   ([architecture: secrets](docs/architecture.md#43-secrets)).
 - The engine and the computer daemon each run as a user of their own, and the
   model's commands as a third, `dot`, which can reach neither: it cannot read
@@ -689,9 +688,8 @@ again. Running Dots keep running meanwhile: QEMU is not a child of the server.
 Each VM start takes the newest runtime image (our code), so
 `invisible-dots computer <dot> reboot` moves a Dot to it. A Dot keeps the
 golden image it was created on, and new Dots get the newest one. When an update
-changes the engine's dependencies, the engine of a Dot on an older golden image
-refuses to start and says so; this version has no way to move a Dot to a new
-golden image.
+changes the engine's dependencies, a Dot on an older golden image needs a new
+one; this version has no way to move a Dot to a new golden image.
 
 **Uninstalling.** Stop each Dot's computer (`invisible-dots computer <dot>
 stop`) while the server runs, since a VM outlives the server, then stop the

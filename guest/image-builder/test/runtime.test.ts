@@ -5,7 +5,7 @@ import { hostPaths, type HostPaths } from "@invisible-dots/shared";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 // The ISO package's own test reader: it shares no code with the writer.
 import { fileBytes, listFiles, parseIso } from "../../../packages/iso/test/iso-reader.js";
-import { BUILDER_ENGINE_LOCK, defaultAssetRoot, GUEST_UNITS } from "../src/assets.js";
+import { defaultAssetRoot, GUEST_UNITS } from "../src/assets.js";
 import { readManifest, verifyImage, type RuntimeManifest } from "../src/manifest.js";
 import { RUNTIME_ISO_LABEL } from "@invisible-dots/vm-manager";
 import { agentdBuildCommand, assertLinuxAmd64Elf, buildRuntimeIso, defaultRuntimeInputs, runtimeFiles, type RuntimeInputs } from "../src/runtime.js";
@@ -102,7 +102,6 @@ describe("buildRuntimeIso", () => {
         "engine/nanobot/__init__.py",
         "engine/nanobot/dots/main.py",
         "engine/nanobot/templates/agent/tool_contract.md",
-        "engine/requirements.lock",
         "install.sh",
         ...GUEST_UNITS.map((unit) => `units/${unit}`),
       ].sort(),
@@ -113,10 +112,9 @@ describe("buildRuntimeIso", () => {
     expect(read("install.sh")).toEqual(await readFile(join(defaultAssetRoot(), "runtime", "install.sh")));
     expect(read("bin/dot-desktop")).toEqual(await readFile(join(defaultAssetRoot(), "runtime", "dot-desktop.sh")));
     expect(read("units/dot-agentd.service")).toEqual(await readFile(join(defaultAssetRoot(), "units", "dot-agentd.service")));
-    // The engine's source as it is, and the golden image's lock byte for byte: the engine compares the two at every start.
+    // The engine's source as it is.
     expect(read("engine/nanobot/dots/main.py").toString()).toBe("def main(): ...\n");
     expect(read("engine/LICENSE").toString()).toBe("MIT\n");
-    expect(read("engine/requirements.lock")).toEqual(await readFile(join(defaultAssetRoot(), BUILDER_ENGINE_LOCK)));
 
     const manifest = (await readManifest(result.manifest)) as RuntimeManifest;
     expect(manifest).toMatchObject({ kind: "runtime", version: result.version, file: `runtime-${result.version}.iso`, sha256: sha256(image), size_bytes: image.length });
@@ -175,7 +173,7 @@ describe("buildRuntimeIso", () => {
     ]) {
       expect(staged).toContain(path);
     }
-    expect(staged.filter((path) => path.startsWith("engine/") && !/\.(py|md)$|requirements\.lock$|LICENSE$/.test(path))).toEqual([]);
+    expect(staged.filter((path) => path.startsWith("engine/") && !/\.(py|md)$|LICENSE$/.test(path))).toEqual([]);
     expect(staged.some((path) => path.includes("tests/") || path.includes("__pycache__"))).toBe(false);
     // The ISO's own limits (8 levels, names of 64 characters) hold for every one of them.
     const result = await buildRuntimeIso({ inputs: real, paths, now: () => at("08:00:00") });

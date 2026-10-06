@@ -322,8 +322,6 @@ describe("the provisioner", () => {
     // The site-packages directory is asked of the venv's own Python, never written down.
     expect(build).toContain('sysconfig.get_path("purelib")');
     expect(build).toContain('printf \'%s\\n\' "$source_dir" > "$site_packages/invisible-dots-engine.pth"');
-    // The copy of the lock the engine compares with the runtime disk's.
-    expect(build).toContain('install -m 0644 "$lock" "$venv/requirements.lock"');
     expect(build).toContain('TIKTOKEN_CACHE_DIR="$venv/share/tiktoken"');
     expect(build).toContain('chown -R root:root "$venv"');
     expect(build).toContain('chmod -R go-w,a+rX "$venv"');

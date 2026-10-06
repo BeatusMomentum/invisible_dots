@@ -50,8 +50,7 @@ image's SHA-256; `invisible-dots doctor` checks an image against it with
    filled with `uv pip install --require-hashes --only-binary :all:` from
    `engine-requirements.lock` (wheels only, so no build script of a
    third-party package runs as root), a `.pth` file naming the engine's source
-   directory on the runtime disk, a copy of the lock at
-   `/opt/invisible-dots-engine/requirements.lock`, tiktoken's encoding table
+   directory on the runtime disk, tiktoken's encoding table
    prefetched into `share/tiktoken`, and the whole venv owned by root and not
    writable by anyone else. It removes any sudo rule the
    image had (the builder seed gives no user one; each Dot's seed adds a single

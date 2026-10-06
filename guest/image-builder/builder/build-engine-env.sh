@@ -27,8 +27,6 @@ uv pip install --quiet --no-cache --python "$python" --require-hashes --only-bin
 
 site_packages="$("$python" -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
 printf '%s\n' "$source_dir" > "$site_packages/invisible-dots-engine.pth"
-# The copy the engine compares with the runtime disk's at every start.
-install -m 0644 "$lock" "$venv/requirements.lock"
 
 # The tokenizer's table, fetched once now so the engine never fetches it.
 TIKTOKEN_CACHE_DIR="$venv/share/tiktoken" "$python" -c "import tiktoken; tiktoken.get_encoding('cl100k_base')"

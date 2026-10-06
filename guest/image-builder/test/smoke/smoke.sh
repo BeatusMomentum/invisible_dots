@@ -742,21 +742,8 @@ check "any other command is refused" "! su -s /bin/bash dotengine -c '$ENGINE_PY
 check "--version answers" "$ENGINE_PY -I -B -m nanobot --version | grep -q '^invisible_dots engine '"
 # --- the image: the golden venv from the lock, the engine's source from the runtime disk ---
 check "the engine's code is the runtime disk's, found through the venv's .pth file" "[ \"\$(su -s /bin/bash dotengine -c \"$ENGINE_PY -I -B -c 'import nanobot; print(nanobot.__file__)'\")\" = /opt/invisible-dots/engine/nanobot/__init__.py ]"
-check "the venv is root's and dotengine cannot write into it" "[ \"\$(stat -c %U /opt/invisible-dots-engine/requirements.lock)\" = root ] && ! su -s /bin/bash dotengine -c 'touch /opt/invisible-dots-engine/x' 2>/dev/null"
+check "the venv is root's and dotengine cannot write into it" "[ \"\$(stat -c %U /opt/invisible-dots-engine/bin/python)\" = root ] && ! su -s /bin/bash dotengine -c 'touch /opt/invisible-dots-engine/x' 2>/dev/null"
 check "no bytecode was written on the runtime disk (python -B)" "! find /opt/invisible-dots/engine -name __pycache__ | grep -q ."
-check "the venv's lock is the runtime disk's lock" "cmp -s /opt/invisible-dots-engine/requirements.lock /opt/invisible-dots/engine/requirements.lock"
-cp /opt/invisible-dots/engine/requirements.lock /tmp/requirements.lock.orig
-echo '# a lock the golden image was not built from' >> /opt/invisible-dots/engine/requirements.lock
-su -s /bin/bash dotengine -c "timeout 60 bash /tmp/engine.sh" > /tmp/lock-refuse.log 2>&1; LOCK_RC=$?
-check "the engine refuses to start when the runtime disk's lock differs from the venv's" "[ $LOCK_RC = 1 ] && grep -q 'built from another requirements lock: build a new golden image' /tmp/lock-refuse.log"
-cp /tmp/requirements.lock.orig /opt/invisible-dots/engine/requirements.lock
-check "the runtime disk's lock is restored and equal again" "cmp -s /opt/invisible-dots-engine/requirements.lock /opt/invisible-dots/engine/requirements.lock"
-# --- the startup assertion ---
-pkill -9 -u dotengine; sleep 1
-echo "OPENROUTER_API_KEY=$KEY" > /home/dotengine/state/.env; chown dotengine /home/dotengine/state/.env
-su -s /bin/bash dotengine -c "timeout 60 bash /tmp/engine.sh" > /tmp/refuse.log 2>&1
-check "the engine refuses to start with a key in a dotenv file" "grep -q 'refusing to start' /tmp/refuse.log && ! grep -q \"$KEY\" /tmp/refuse.log"
-rm -f /home/dotengine/state/.env
 
 echo "== engine log tail"; tail -25 /tmp/engine.log
 echo "== agentd log tail"; tail -8 /tmp/agentd.log

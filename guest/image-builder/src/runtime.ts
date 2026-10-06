@@ -8,7 +8,6 @@
  *   /bin/dot-agentd              the computer daemon (linux/amd64)
  *   /bin/dot-desktop             ExecStart of dot-desktop.service
  *   /engine/nanobot/...          the engine's source: its .py files and templates
- *   /engine/requirements.lock    the golden image's lock, which the engine compares with its venv's
  *   /engine/LICENSE, /engine/UPSTREAM.md   the engine's license and where it was forked from
  *   /units/*.service             the guest systemd units
  *
@@ -28,7 +27,6 @@ import { writeIso, type IsoEntry } from "@invisible-dots/iso";
 import { hostPaths, replaceFile, type HostPaths } from "@invisible-dots/shared";
 import { RUNTIME_ISO_LABEL } from "@invisible-dots/vm-manager";
 import {
-  BUILDER_ENGINE_LOCK,
   defaultAssetRoot,
   GUEST_UNITS,
   readGuestAsset,
@@ -154,7 +152,7 @@ async function engineSourcePaths(root: string, relative: string, out: string[]):
 }
 
 /** The engine's files at `engine/` on the disk: its package, its license and where it was forked from. */
-async function engineFiles(engineRoot: string, assetRoot: string): Promise<StagedFile[]> {
+async function engineFiles(engineRoot: string): Promise<StagedFile[]> {
   const paths: string[] = [];
   await engineSourcePaths(engineRoot, "nanobot", paths).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") throw new Error(`the engine's source ${join(engineRoot, "nanobot")} does not exist (invisible_engine_dots/ in this repository)`);
@@ -165,8 +163,6 @@ async function engineFiles(engineRoot: string, assetRoot: string): Promise<Stage
   for (const path of paths) files.push(await stageFile(`engine/${path}`, join(engineRoot, path)));
   files.push(await stageFile("engine/LICENSE", join(engineRoot, "LICENSE")));
   files.push(await stageFile("engine/UPSTREAM.md", join(engineRoot, "UPSTREAM.md")));
-  // The golden image's lock, byte for byte: the engine refuses to start on a venv built from another.
-  files.push(stageBytes("engine/requirements.lock", await readGuestAsset(assetRoot, BUILDER_ENGINE_LOCK)));
   return files;
 }
 
@@ -185,7 +181,7 @@ export async function runtimeFiles(inputs: RuntimeInputs, assetRoot: string = de
     stageBytes("install.sh", await readGuestAsset(assetRoot, RUNTIME_INSTALL)),
     stageBytes("bin/dot-desktop", await readGuestAsset(assetRoot, RUNTIME_DESKTOP)),
     await stageFile("bin/dot-agentd", inputs.agentdBinary),
-    ...(await engineFiles(inputs.engineRoot, assetRoot)),
+    ...(await engineFiles(inputs.engineRoot)),
   ];
   for (const unit of GUEST_UNITS) files.push(stageBytes(`units/${unit}`, await readGuestAsset(assetRoot, unitAsset(unit))));
   return files.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));

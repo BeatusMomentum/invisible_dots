@@ -265,19 +265,14 @@ QEMU on the same disk would corrupt it.
   checks that every dependency `invisible_engine_dots/pyproject.toml` declares
   is in it), and it is part of the inputs digest, so a changed package is a new
   image. The build also prefetches tiktoken's `cl100k_base` table into
-  `share/tiktoken` (the engine never fetches it), keeps a copy of the lock at
-  `/opt/invisible-dots-engine/requirements.lock`, and leaves the whole venv
+  `share/tiktoken` (the engine never fetches it) and leaves the whole venv
   owned by root and writable by nobody else.
 - The engine's own code is on the runtime disk, at `/opt/invisible-dots/engine`
-  (its `nanobot` package, the lock, `LICENSE` and `UPSTREAM.md`), and a `.pth`
+  (its `nanobot` package, `LICENSE` and `UPSTREAM.md`), and a `.pth`
   file in the venv's site-packages puts that directory on the venv's path. Our
   code is ours to change often, so a change to it is a new ISO and not an hour
   of golden build (the engine's source is not an input of the golden digest).
-  The two halves are tied together at every start: the engine refuses to run
-  when the lock on the runtime disk differs from the venv's copy ("the golden
-  image's Python environment was built from another requirements lock: build a
-  new golden image"), so a runtime disk that needs another dependency never
-  runs on an older golden image.
+  A runtime disk that needs another dependency needs a new golden image.
 - Every input of the golden image is pinned by content: the cloud image, Node
   and `uv` by SHA-256 (`virtualization/images/base.json`,
   `guest/image-builder/pins.json`), and the whole Python environment of
@@ -586,10 +581,7 @@ locking mode and takes the write lock at once, so a second process on the same
 file fails at open ("another engine owns ...") and refuses to start, and the
 kernel releases the lock the moment the owner dies, so a restart opens it
 again without waiting. Nothing else opens the file; the host reads the guest
-only through the engine's API. The file carries its layout's version in SQLite's
-`user_version`, set when the engine creates it; an engine opens only a file of its
-own version and refuses to start on any other ("the engine database was made by
-another engine version"), because it does not migrate one.
+only through the engine's API.
 
 dot-agentd reads the Dot's home from `DOT_HOME` (default `/home/dot`; the
 units do not set it). `INVISIBLE_DOTS_HOME` is the host's data directory
@@ -631,20 +623,12 @@ exception). That rule has one owner, `packages/shared` (`OPENROUTER_KEY_PATTERN`
 and `OPENROUTER_KEY_RULE`): the host applies it where the key enters, so
 `PUT /api/secrets/openrouter` answers `400 invalid_request` for a key that breaks
 it, and the holder applies the engine's copy of the same two constants again on
-`POST /secrets` (a repository test keeps the copy equal). The one place the
-provider turns a failure into text (`LLMProvider.failure_text`) removes the
-key from it, as a server may echo the Authorization header in its error body; it
-replaces the key in the whole text before the body is cut. The same key again changes nothing:
+`POST /secrets` (a repository test keeps the copy equal). The same key again changes nothing:
 no new provider is built and no running turn is disturbed, so the host's
 pushes at every READY and `agent.started` cost nothing. A new key builds the
 provider of the next turn; a running turn keeps the one it began with. The
 engine reads no credential from its environment: no provider spec names an
-environment variable. It refuses to start when it finds a credential on disk
-anyway (`nanobot/dots/credentials.py`): a dotenv file with an assignment
-(`<state>/.env`, `$HOME/.env`, `$HOME/.nanobot/.env`), a nanobot config file
-(`$HOME/.nanobot/config.json`) holding an `apiKey`, or a variable of its own
-environment whose name ends in KEY, TOKEN, SECRET or PASSWORD and has a value;
-the refusal names where, never what.
+environment variable.
 
 A secret also never travels in an error: a failed push of the key is reported
 by route, status and code only (`the guest did not take the OpenRouter key
@@ -1393,10 +1377,8 @@ answers and any other argument is refused. The process reads its environment
 once, in `main.py`: `INVISIBLE_DOTS_AGENT_SOCKET`,
 `INVISIBLE_DOTS_AGENTD_SOCKET`, `INVISIBLE_DOTS_AGENTD_BIN`,
 `INVISIBLE_DOTS_WORKSPACE`, `INVISIBLE_DOTS_ENGINE_STATE`, and for tests and
-the smoke `INVISIBLE_DOTS_OPENROUTER_URL`. Before it opens anything it checks
-that the runtime disk's `requirements.lock` equals the venv's (section 3.3),
-that no credential is on disk (section 4.3) and that no other engine owns the
-state.
+the smoke `INVISIBLE_DOTS_OPENROUTER_URL`. Before it serves it checks that no
+other engine owns the state.
 
 - Work. One class, `TurnRunner` (`turns.py`), starts every model turn and
   drives nanobot's `AgentRunner` (`nanobot/agent/runner.py`); the `Engine`

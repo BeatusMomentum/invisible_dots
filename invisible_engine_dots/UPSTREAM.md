@@ -169,8 +169,7 @@ rest is deleted, with the tests that pinned it:
   `_PERSISTENT_IDENTICAL_ERROR_LIMIT`, the identical-error counter).
 
 The one text of a provider failure is `LLMProvider.failure_text`: the provider's error
-body or the exception's message, with the key replaced in the whole text before the body
-is cut. The provider's own handling and the base class's `_safe_chat_stream` both use it.
+body or the exception's message. The provider's own handling and the base class's `_safe_chat_stream` both use it.
 
 Kept on purpose, with the reason, for the next cut to decide:
 
