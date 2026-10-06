@@ -11,7 +11,7 @@ import { ensureDir, ENV, hostPaths, type HostPaths } from "@invisible-dots/share
 import { hostDoctorDeps, openRouterCheck, runDoctor, type DoctorDeps } from "@invisible-dots/vm-manager";
 import { loadOrCreateApiToken, loadOrGenerateMasterKey, parseListen, saveMasterKey, type ListenAddress } from "./config.js";
 import { assertNothingEncrypted, openControlPlaneDatabase } from "./database.js";
-import { imageChecks } from "./doctor.js";
+import { createImageChecks } from "./doctor.js";
 import { acquireServerLock } from "./lock.js";
 import { API_VERSION, buildServer, type FastifyInstance } from "./server.js";
 import { createVmDriver } from "./vm-driver.js";
@@ -116,7 +116,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
       ...hostDoctorDeps({
         env,
         home: paths.home,
-        images: () => imageChecks(paths),
+        images: createImageChecks(paths),
         openRouterKey: async () => openRouterCheck((await scheduler.health()).openrouter_configured),
       }),
       ...options.doctor,

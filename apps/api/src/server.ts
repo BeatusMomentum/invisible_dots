@@ -171,8 +171,15 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     return { status: "ok", database, version: API_VERSION, openrouter_configured };
   });
 
-  // The host report `invisible-dots doctor` prints: what is missing for a Dot to run, and the command that fixes it. It runs QEMU's accelerator probe, so it takes a moment.
-  app.get("/api/doctor", async (): Promise<DoctorAnswer> => doctorAnswer(await options.doctor()));
+  // The host report `invisible-dots doctor` prints: what is missing for a Dot to run, and the command that fixes it. It runs QEMU's accelerator probe, so it takes a moment:
+  // one run at a time, and a request that arrives while it runs shares its answer (the onboarding checklist re-checks and polls).
+  let doctorRun: Promise<DoctorAnswer> | undefined;
+  app.get("/api/doctor", (): Promise<DoctorAnswer> => {
+    doctorRun ??= options.doctor().then(doctorAnswer).finally(() => {
+      doctorRun = undefined;
+    });
+    return doctorRun;
+  });
 
   // Dots
 

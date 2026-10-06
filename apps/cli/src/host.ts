@@ -17,7 +17,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { imageChecks, runServer } from "@invisible-dots/api";
+import { createImageChecks, runServer } from "@invisible-dots/api";
 import {
   buildGoldenImage,
   buildRuntimeIso,
@@ -73,7 +73,7 @@ async function openRouterKey(env: Record<string, string | undefined>, fetchImpl?
 
 function doctorDeps(io: CliIo): DoctorDeps {
   const paths = hostPaths(io.env);
-  return hostDoctorDeps({ env: io.env, home: paths.home, images: () => imageChecks(paths), openRouterKey: () => openRouterKey(io.env, io.fetch) });
+  return hostDoctorDeps({ env: io.env, home: paths.home, images: createImageChecks(paths), openRouterKey: () => openRouterKey(io.env, io.fetch) });
 }
 
 function installDeps(io: CliIo): InstallDeps {

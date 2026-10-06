@@ -125,6 +125,37 @@ describe("startServer on an empty INVISIBLE_DOTS_HOME", { timeout: 120_000 }, ()
     expect((await api.doctor()).checks.find((c) => c.id === "openrouter")).toEqual({ id: "openrouter", label: "OpenRouter key", status: "ok", detail: "stored" });
   });
 
+  it("runs one host report at a time: requests that arrive while it runs share its answer", async () => {
+    // The accelerator probe is the slow row; the onboarding checklist asks again and again.
+    const base = healthyDoctor().deps;
+    let probes = 0;
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const acceleratorAccess = async () => {
+      probes += 1;
+      await gate;
+      return base.acceleratorAccess();
+    };
+    const server = await start({ doctor: { ...base, acceleratorAccess } });
+    const api = new InvisibleDotsClient({ baseUrl: server.url, token: server.token });
+
+    const together = Promise.all([api.doctor(), api.doctor(), api.doctor()]);
+    await waitFor(() => probes === 1, "the first request to start the probe");
+    // Time for the other two requests to reach the server while the probe is held.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    release();
+    const [first, second, third] = await together;
+    expect(probes).toBe(1);
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+
+    // Once it has answered, the next request runs it again.
+    await api.doctor();
+    expect(probes).toBe(2);
+  });
+
   it("a restart keeps the token, the key and the data", async () => {
     const first = await start();
     await first.db.secrets.put("global", "openrouter_api_key", "sk-or-kept");
