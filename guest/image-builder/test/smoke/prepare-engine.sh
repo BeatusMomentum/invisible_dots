@@ -14,6 +14,7 @@
 #   runtime disk: the engine's source at /opt/invisible-dots/engine, the files
 #                 runtime.ts stages (every .py, the .md templates, the lock,
 #                 LICENSE, UPSTREAM.md), world-readable as on the ISO
+# The engine suite adds an empty GeoIP file at its fixed path (the engine refuses a golden image without it).
 # The browser suite builds one more thing, as the golden image does it: the apt packages of
 # pins.json (the desktop, Firefox's libraries, ImageMagick) and the Dot's browser
 # (builder/build-browser-env.sh on the hashed mcp-requirements.lock: the MCP server's
@@ -68,6 +69,13 @@ for name in names:
     importlib.import_module(name)
 print('imported', len(names), 'modules from', nanobot.__file__)
 "
+
+if [ "$suite" = engine ]; then
+  # The engine refuses to start on a golden image without the GeoIP database (GUEST_PATHS.geoipDatabase): this
+  # suite's browser is a stand-in that never reads it, so an empty file, root's and read-only as the build leaves
+  # the real one, meets the contract. The browser suite installs the real database below.
+  install -D -m 0444 -o root -g root /dev/null /usr/local/share/invisible-dots/geoip-aio-all.mmdb
+fi
 
 if [ "$suite" = browser ]; then
   # The packages of the golden image (pins.json), as provision.sh installs them.
