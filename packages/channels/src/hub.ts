@@ -23,6 +23,7 @@ import {
   type ChannelSettings,
   type MessageAnswer,
   type MessageOrigin,
+  type StoredEvent,
 } from "@invisible-dots/shared";
 import { ControlPlaneError, errorMessage, notFound, silentLogger, systemClock, type Clock, type Logger } from "@invisible-dots/scheduler";
 import { DEFAULT_BACKOFF, type BackoffOptions } from "./backoff.js";
@@ -38,7 +39,7 @@ export interface ChannelHost {
   sendMessage(idOrName: string, text: string, origin?: MessageOrigin): Promise<MessageAnswer>;
   resolveApproval(id: string, decision: "approve" | "reject"): Promise<ApprovalRecord>;
   requireDot(idOrName: string): Promise<{ id: string; name: string }>;
-  events: Pick<EventLog, "stream" | "userMessage" | "tail" | "appendHost">;
+  events: Pick<EventLog, "stream" | "userMessage" | "tail" | "appendHostIn" | "publish">;
 }
 
 /** What the hub stores through. */
@@ -301,14 +302,17 @@ export class ChannelHub {
     const binding = await this.#binding(dotIdOrName, kind);
     await this.#stop(binding.id);
     const secretNames = this.#types.get(kind)?.secretNames ?? [];
-    await this.#o.db.transaction(async (tx) => {
+    const logged = await this.#o.db.transaction(async (tx) => {
+      // The event first (database events.ts); it commits with the removal it tells of, or neither does.
+      const logged = await this.#changed(tx, binding, "removed");
       await tx.channels.deleteBinding(binding.id);
       for (const name of secretNames) await tx.secrets.delete(binding.dot_id, name);
+      return logged;
     });
+    this.#o.host.events.publish(logged);
     // Whoever still watches the link is told it is over.
     this.#links.publish(binding.id, { state: "failed", detail: "The channel was removed." });
     this.#links.forget(binding.id);
-    await this.#changed(binding, "removed");
   }
 
   async setSettings(dotIdOrName: string, kind: ChannelKind, patch: unknown): Promise<ChannelRecord> {
@@ -323,21 +327,23 @@ export class ChannelHub {
   async setEnabled(dotIdOrName: string, kind: ChannelKind, enabled: boolean): Promise<ChannelRecord> {
     this.#assertOpen();
     const binding = await this.#binding(dotIdOrName, kind);
-    const updated = (await this.#o.db.channels.setEnabled(binding.id, enabled)) ?? binding;
+    const { updated, logged } = await this.#o.db.transaction(async (tx) => {
+      // The event first (database events.ts); it commits with the change it tells of, or neither does.
+      const logged = binding.enabled !== enabled ? await this.#changed(tx, binding, enabled ? "resumed" : "paused") : null;
+      return { updated: (await tx.channels.setEnabled(binding.id, enabled)) ?? binding, logged };
+    });
+    if (logged) this.#o.host.events.publish(logged);
     if (enabled) {
       if (this.#state === "started") this.#run(updated);
     } else {
       await this.#stop(binding.id);
     }
-    if (updated.enabled !== binding.enabled) await this.#changed(updated, enabled ? "resumed" : "paused");
     return this.#record(updated, await this.#o.db.channels.peers(binding.id));
   }
 
-  /** Tell every view of the channel what the person did to it. The change is made already, so a failure to log it must not undo or hide it. */
-  async #changed(binding: ChannelBindingRecord, change: ChannelChange): Promise<void> {
-    await this.#o.host.events
-      .appendHost(binding.dot_id, "channel.changed", { kind: binding.kind, change })
-      .catch((error) => this.#log.warn("could not log a channel change", { binding: binding.id, change, error: errorMessage(error) }));
+  /** Tell every view of the channel what the person did to it: the event is stored in the transaction that makes the change, and published once it committed. */
+  #changed(tx: Parameters<Parameters<ChannelStore["transaction"]>[0]>[0], binding: ChannelBindingRecord, change: ChannelChange): Promise<StoredEvent> {
+    return this.#o.host.events.appendHostIn(tx, binding.dot_id, "channel.changed", { kind: binding.kind, change });
   }
 
   /** A one-time code that pairs a person's chat to the Dot, valid for ten minutes and stored hashed. */
@@ -477,14 +483,20 @@ export class ChannelHub {
   /** Record a status; a change is announced as a `channel.status` event, a repeat is not. */
   async #status(runner: BindingRunner, report: ChannelStatusReport): Promise<void> {
     const detail = report.detail === undefined ? null : (await runner.scrub(report.detail)).slice(0, STATUS_DETAIL_MAX);
-    const changed = await this.#o.db.channels.setStatus(runner.bindingId, report.status, detail, report.account);
-    if (!changed) return;
-    if (this.#types.get(runner.kind)?.scanned) this.#links.publish(runner.bindingId, linkFrame(report, detail));
-    await this.#o.host.events.appendHost(runner.dotId, "channel.status", {
-      kind: runner.kind,
-      status: report.status,
-      ...(detail !== null && { detail }),
+    // The status and its event commit together or neither does; the event first (database events.ts), so a repeat is found out before.
+    const logged = await this.#o.db.transaction(async (tx) => {
+      if (!(await tx.channels.statusWouldChange(runner.bindingId, report.status, detail, report.account))) return null;
+      const logged = await this.#o.host.events.appendHostIn(tx, runner.dotId, "channel.status", {
+        kind: runner.kind,
+        status: report.status,
+        ...(detail !== null && { detail }),
+      });
+      await tx.channels.setStatus(runner.bindingId, report.status, detail, report.account);
+      return logged;
     });
+    if (!logged) return;
+    this.#o.host.events.publish(logged);
+    if (this.#types.get(runner.kind)?.scanned) this.#links.publish(runner.bindingId, linkFrame(report, detail));
   }
 
   /**
@@ -548,15 +560,15 @@ export class ChannelHub {
     const label = attempt.label?.trim().slice(0, LABEL_MAX) || attempt.peerId;
     const hash = hashPairingCode(runner.bindingId, attempt.code);
     const paired = await this.#o.db.transaction(async (tx) => {
-      if (!(await tx.channels.consumePairing(runner.bindingId, hash, this.#clock.now()))) return false;
+      if (!(await tx.channels.consumePairing(runner.bindingId, hash, this.#clock.now()))) return null;
       await tx.channels.upsertPeer({ bindingId: runner.bindingId, peerId: attempt.peerId, chatId: attempt.chatId, role: "owner", label });
-      return true;
+      // The pairing and its event commit together or neither does. Whether the code was good is known only from the
+      // update that uses it, so here the event follows the rows (every other event of a transaction comes first,
+      // database events.ts): no writer of events takes a pairing's or a peer's rows, so this order cannot deadlock.
+      return this.#o.host.events.appendHostIn(tx, runner.dotId, "channel.peer.paired", { kind: runner.kind, peer_id: attempt.peerId, label });
     });
     if (!paired) return false;
-    // The person is paired already; the event only tells the UI, so a failure to log it must not undo or hide the pairing.
-    await this.#o.host.events
-      .appendHost(runner.dotId, "channel.peer.paired", { kind: runner.kind, peer_id: attempt.peerId, label })
-      .catch((error) => this.#log.warn("could not log a pairing", { binding: runner.bindingId, error: errorMessage(error) }));
+    this.#o.host.events.publish(paired);
     const dot = await this.#o.host.requireDot(runner.dotId).catch(() => null);
     await this.#tell(runner, attempt.chatId, `Paired. What you write here now goes to ${dot?.name ?? "your Dot"}, and its answers come back here.`);
     // Whatever waits for an answer is asked of the new owner too.

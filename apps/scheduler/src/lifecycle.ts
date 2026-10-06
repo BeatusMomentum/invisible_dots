@@ -11,7 +11,7 @@
  * lock because the Dot is READY (a delivery, a push) can only meet a stop
  * that has not started yet: every stop takes the Dot out of `#ready` first.
  */
-import type { Database } from "@invisible-dots/database";
+import type { Database, Repositories } from "@invisible-dots/database";
 import type { EventLog } from "@invisible-dots/events";
 import {
   COMPUTER_STOPPED,
@@ -21,6 +21,8 @@ import {
   toRuntimeConfig,
   type DotState,
   type HealthAnswer,
+  type HostEventDataMap,
+  type HostEventType,
   type OutboundEvent,
   type RefusedEvent,
   type StopReason,
@@ -100,6 +102,9 @@ function describeWithoutBody(error: unknown): string {
   return status === 0 ? `the guest was not reached${typeof code === "string" ? ` (${code})` : ""}` : `status ${status}${typeof code === "string" ? `, ${code}` : ""}`;
 }
 
+/** Store a host event through the transaction a change is made in (`Lifecycle.#commit`). */
+type HostLog = <K extends HostEventType>(dotId: string, type: K, data: HostEventDataMap[K]) => Promise<void>;
+
 export class Lifecycle {
   readonly #db: Database;
   readonly #events: EventLog;
@@ -154,25 +159,100 @@ export class Lifecycle {
     return this.#driver.guest({ dotId, port: computer.guest_port }, await this.#db.computers.token(dotId));
   }
 
+  /**
+   * Run `write` in one transaction, and publish what it logged after COMMIT, in order. A change of state and the host
+   * events that tell it commit together or not at all: a control plane killed between two writes leaves the state it
+   * was in before the change (which recovery knows how to finish), never a state nobody was told of. `log` stores a host
+   * event through the transaction. Like every transaction that inserts events and changes other rows, `write` logs first
+   * and writes its rows after (the event insert takes the event-order lock, database events.ts).
+   */
+  async #commit<T>(write: (tx: Repositories, log: HostLog) => Promise<T>): Promise<T> {
+    const { value, logged } = await this.#db.transaction(async (tx) => {
+      const logged: StoredEvent[] = [];
+      const log: HostLog = async (dotId, type, data) => {
+        logged.push(await this.#events.appendHostIn(tx, dotId, type, data));
+      };
+      return { value: await write(tx, log), logged };
+    });
+    for (const event of logged) this.#events.publish(event);
+    return value;
+  }
+
+  /** Log `computer.state` when the computer's row holds another state now; the caller writes the row after its events. */
+  async #logState(tx: Repositories, log: HostLog, dotId: string, state: VmState): Promise<void> {
+    if ((await tx.computers.get(dotId))?.state !== state) await log(dotId, "computer.state", { state });
+  }
+
+  /** Log `dot.updated` for the status ERROR (the other statuses are told by the events of what caused them); the caller writes the row after its events. */
+  async #logDotStatus(tx: Repositories, log: HostLog, dotId: string, status: DotState, error: string | null): Promise<void> {
+    const dot = status === "ERROR" ? await tx.dots.get(dotId) : null;
+    if (dot) await log(dotId, "dot.updated", { name: dot.name, status, error });
+  }
+
   async #setVmState(dotId: string, state: VmState, lastError?: string | null, stopReason?: StopReason): Promise<void> {
-    const before = await this.#db.computers.get(dotId);
-    await this.#db.computers.setState(dotId, state, lastError, stopReason);
-    if (before?.state !== state) await this.#events.appendHost(dotId, "computer.state", { state });
+    await this.#commit(async (tx, log) => {
+      await this.#logState(tx, log, dotId, state);
+      await tx.computers.setState(dotId, state, lastError, stopReason);
+    });
   }
 
   async #setDotStatus(dotId: string, status: DotState, error: string | null = null): Promise<void> {
-    const dot = await this.#db.dots.setStatus(dotId, status, error);
-    if (dot && status === "ERROR") {
-      await this.#events.appendHost(dotId, "dot.updated", { name: dot.name, status, error });
-    }
+    await this.#commit(async (tx, log) => {
+      await this.#logDotStatus(tx, log, dotId, status, error);
+      await tx.dots.setStatus(dotId, status, error);
+    });
+  }
+
+  /**
+   * The computer is up: its process, its images and its state RUNNING, with `computer.state` and `computer.started`,
+   * in one write. From here on the guest is reached through this port.
+   */
+  async #recordStarted(
+    dotId: string,
+    started: { guestPort: number; pid: number; runtimeImage: string },
+    goldenImage: string,
+    extra: Record<string, unknown>,
+  ): Promise<void> {
+    await this.#commit(async (tx, log) => {
+      await this.#logState(tx, log, dotId, "RUNNING");
+      await log(dotId, "computer.started", { guest_port: started.guestPort, runtime_image: started.runtimeImage, ...extra });
+      await tx.computers.setProcess(dotId, { guestPort: started.guestPort, pid: started.pid });
+      await tx.computers.setImages(dotId, goldenImage, started.runtimeImage);
+      await tx.computers.setState(dotId, "RUNNING", null);
+    });
+  }
+
+  /** The computer and the Dot are in ERROR for `message`, with `computer.state` and `dot.updated`, in one write. */
+  async #recordError(dotId: string, message: string): Promise<void> {
+    await this.#commit(async (tx, log) => {
+      await this.#logState(tx, log, dotId, "ERROR");
+      await this.#logDotStatus(tx, log, dotId, "ERROR", message);
+      await tx.computers.setState(dotId, "ERROR", message);
+      await tx.dots.setStatus(dotId, "ERROR", message);
+    });
+  }
+
+  /**
+   * The computer is off: no process, the state STOPPED with the reason, `computer.state` and `computer.stopped`, and
+   * the Dot idle, in one write. Recovery, which finds a computer off that was not recorded as such, leaves a Dot that
+   * is disabled or in ERROR as it is (`keepFailedDot`).
+   */
+  async #recordStopped(dotId: string, reason: StopReason, forced: boolean, keepFailedDot = false): Promise<void> {
+    await this.#commit(async (tx, log) => {
+      await this.#logState(tx, log, dotId, "STOPPED");
+      await log(dotId, "computer.stopped", { reason, forced });
+      const dot = await tx.dots.get(dotId);
+      await tx.computers.setProcess(dotId, null);
+      await tx.computers.setState(dotId, "STOPPED", null, reason);
+      if (dot && !(keepFailedDot && (dot.status === "DISABLED" || dot.status === "ERROR"))) await tx.dots.setStatus(dotId, "IDLE", null);
+    });
   }
 
   /** Record a lifecycle failure on both rows, log it, and rethrow it. */
   async #fail(dotId: string, step: string, error: unknown): Promise<never> {
     const message = `${step} failed: ${errorMessage(error)}`;
     this.#log.error(message, { dotId });
-    await this.#setVmState(dotId, "ERROR", message).catch(() => {});
-    await this.#setDotStatus(dotId, "ERROR", message).catch(() => {});
+    await this.#recordError(dotId, message).catch(() => {});
     throw error instanceof ControlPlaneError ? error : new ControlPlaneError(502, "computer_error", `Dot ${dotId}: ${message}`);
   }
 
@@ -241,15 +321,7 @@ export class Lifecycle {
       await this.#db.computers.setProcess(dotId, null).catch(() => {});
       return this.#fail(dotId, "start", error);
     }
-    // Recorded before anything else: from here on the guest is reached through this port.
-    await this.#db.computers.setProcess(dotId, { guestPort: started.guestPort, pid: started.pid });
-    await this.#db.computers.setImages(dotId, spec.goldenImage, started.runtimeImage);
-    await this.#setVmState(dotId, "RUNNING", null);
-    await this.#events.appendHost(dotId, "computer.started", {
-      guest_port: started.guestPort,
-      runtime_image: started.runtimeImage,
-      ...(started.alreadyRunning ? { already_running: true } : {}),
-    });
+    await this.#recordStarted(dotId, started, spec.goldenImage, started.alreadyRunning ? { already_running: true } : {});
     await this.#readyProcedure(dotId);
   }
 
@@ -434,7 +506,14 @@ export class Lifecycle {
     const computer = await this.#db.computers.get(dotId);
     if (!computer) throw new ControlPlaneError(404, "not_found", `Dot ${dotId} has no computer`);
     if (computer.state === "STOPPED") {
-      if (reason === "user") await this.#setVmState(dotId, "STOPPED", undefined, "user");
+      // The person's stop of a computer that is asleep: it is not started for its automations from now on, which every
+      // view of the computer (its automations note) learns from the event, as it learns of any other stop.
+      if (reason === "user" && computer.stop_reason !== "user") {
+        await this.#commit(async (tx, log) => {
+          await log(dotId, "computer.stopped", { reason, forced: false });
+          await tx.computers.setState(dotId, "STOPPED", undefined, "user");
+        });
+      }
       return;
     }
     if (computer.state === "DELETING" || computer.state === "PROVISIONING") {
@@ -464,10 +543,7 @@ export class Lifecycle {
     } catch (error) {
       return this.#fail(dotId, "stop", error);
     }
-    await this.#db.computers.setProcess(dotId, null);
-    await this.#setVmState(dotId, "STOPPED", null, reason);
-    await this.#events.appendHost(dotId, "computer.stopped", { reason, forced: result.forced });
-    await this.#setDotStatus(dotId, "IDLE");
+    await this.#recordStopped(dotId, reason, result.forced);
   }
 
   /**
@@ -503,14 +579,7 @@ export class Lifecycle {
         await this.#db.computers.setProcess(dotId, null).catch(() => {});
         return this.#fail(dotId, "reboot", error);
       }
-      await this.#db.computers.setProcess(dotId, { guestPort: started.guestPort, pid: started.pid });
-      await this.#db.computers.setImages(dotId, spec.goldenImage, started.runtimeImage);
-      await this.#setVmState(dotId, "RUNNING", null);
-      await this.#events.appendHost(dotId, "computer.started", {
-        guest_port: started.guestPort,
-        runtime_image: started.runtimeImage,
-        reboot: true,
-      });
+      await this.#recordStarted(dotId, started, spec.goldenImage, { reboot: true });
       await this.#readyProcedure(dotId);
     });
   }
@@ -528,8 +597,10 @@ export class Lifecycle {
       } catch (error) {
         return this.#fail(dotId, "delete", error);
       }
-      await this.#db.dots.delete(dotId);
-      await this.#events.appendHost(dotId, "dot.deleted", { name: dot.name });
+      await this.#commit(async (tx, log) => {
+        await log(dotId, "dot.deleted", { name: dot.name });
+        await tx.dots.delete(dotId);
+      });
       this.#log.info("dot deleted", { dotId, name: dot.name });
     });
   }
@@ -652,10 +723,7 @@ export class Lifecycle {
       this.#ready.delete(dotId);
       await this.#stopPump(dotId);
       this.#log.warn("the VM stopped without being asked to", { dotId });
-      await this.#db.computers.setProcess(dotId, null);
-      await this.#setVmState(dotId, "STOPPED", null, "exited");
-      await this.#events.appendHost(dotId, "computer.stopped", { reason: "exited", forced: false });
-      await this.#setDotStatus(dotId, "IDLE");
+      await this.#recordStopped(dotId, "exited", false);
       return true;
     });
     if (recorded && (await this.keepsAwake(dotId))) {
@@ -739,10 +807,8 @@ export class Lifecycle {
         continue;
       }
       if (!vm.exists) {
-        const message = "the VM disk is missing";
         await this.#db.computers.setProcess(dotId, null);
-        await this.#setVmState(dotId, "ERROR", message);
-        await this.#setDotStatus(dotId, "ERROR", message);
+        await this.#recordError(dotId, "the VM disk is missing");
         continue;
       }
       if (vm.state === "RUNNING") {
@@ -753,9 +819,7 @@ export class Lifecycle {
           const reason = computer.stop_reason === "idle" ? "idle" : "user";
           track(dotId, "stop", this.#mutex.run(dotId, () => this.#stopLocked(dotId, reason, false)));
         } else if (vm.guestPort === null) {
-          const message = "QEMU runs but has no forward to the guest port, so the guest cannot be reached";
-          await this.#setVmState(dotId, "ERROR", message);
-          await this.#setDotStatus(dotId, "ERROR", message);
+          await this.#recordError(dotId, "QEMU runs but has no forward to the guest port, so the guest cannot be reached");
         } else {
           // The port comes from the pid file, so a row that missed it (the
           // control plane stopped between the spawn and the update) is
@@ -765,18 +829,16 @@ export class Lifecycle {
           track(dotId, "reattach", this.#mutex.run(dotId, () => this.#adoptRunning(dotId, running)));
         }
       } else if (vm.state === "STOPPED") {
-        if (computer.state !== "STOPPED" || computer.guest_port !== null || computer.pid !== null) {
+        if (computer.state !== "STOPPED") {
           this.#log.info("recovery: computer is off", { dotId, was: computer.state });
-          await this.#db.computers.setProcess(dotId, null);
           // A stop that was under way keeps its reason; a VM that went off with the control plane down exited by itself.
-          await this.#setVmState(dotId, "STOPPED", undefined, computer.stop_reason ?? "exited");
-          const dot = await this.#db.dots.get(dotId);
-          if (dot && dot.status !== "DISABLED" && dot.status !== "ERROR") await this.#setDotStatus(dotId, "IDLE");
+          // Either way the stop is told now: the control plane went down before it could.
+          await this.#recordStopped(dotId, computer.stop_reason ?? "exited", false, true);
+        } else if (computer.guest_port !== null || computer.pid !== null) {
+          await this.#db.computers.setProcess(dotId, null);
         }
       } else {
-        const message = `the VM is ${vm.state}${vm.detail ? `: ${vm.detail}` : ""}`;
-        await this.#setVmState(dotId, "ERROR", message);
-        await this.#setDotStatus(dotId, "ERROR", message);
+        await this.#recordError(dotId, `the VM is ${vm.state}${vm.detail ? `: ${vm.detail}` : ""}`);
       }
     }
     return background;

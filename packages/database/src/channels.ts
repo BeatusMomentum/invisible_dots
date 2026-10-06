@@ -100,6 +100,9 @@ export interface NewChannelPeer {
   label: string;
 }
 
+/** What makes a status report a change: another status, another detail, or (when the report names one) another account. $2 status, $3 detail, $4 account, $5 whether the report names an account. */
+const STATUS_DIFFERS = "(status <> $2::text OR status_detail IS DISTINCT FROM $3::text OR ($5::boolean AND account IS DISTINCT FROM $4::text))";
+
 export class ChannelsRepository {
   constructor(private readonly q: Queryable) {}
 
@@ -168,10 +171,19 @@ export class ChannelsRepository {
   async setStatus(id: string, status: ChannelStatus, detail: string | null, account?: string | null): Promise<boolean> {
     const { rowCount } = await this.q.query(
       `UPDATE channel_bindings SET status = $2::text, status_detail = $3::text, account = CASE WHEN $5::boolean THEN $4::text ELSE account END
-        WHERE id = $1 AND (status <> $2::text OR status_detail IS DISTINCT FROM $3::text OR ($5::boolean AND account IS DISTINCT FROM $4::text))`,
+        WHERE id = $1 AND ${STATUS_DIFFERS}`,
       [id, status, detail, account ?? null, account !== undefined],
     );
     return (rowCount ?? 0) > 0;
+  }
+
+  /**
+   * Whether `setStatus` with these arguments would change something. A transaction that logs the change inserts its
+   * event before it changes the row (database events.ts), so it asks first; the answer is the rule `setStatus` applies.
+   */
+  async statusWouldChange(id: string, status: ChannelStatus, detail: string | null, account?: string | null): Promise<boolean> {
+    const { rows } = await this.q.query(`SELECT 1 FROM channel_bindings WHERE id = $1 AND ${STATUS_DIFFERS}`, [id, status, detail, account ?? null, account !== undefined]);
+    return rows.length > 0;
   }
 
   /** Move the cursor forward; it never moves back. */

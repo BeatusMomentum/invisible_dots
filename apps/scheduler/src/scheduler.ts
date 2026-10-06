@@ -250,17 +250,22 @@ export class Scheduler {
     const token = randomBytes(TOKEN_BYTES).toString("base64url");
     let dot: DotRecord;
     try {
-      dot = await this.db.transaction(async (tx) => {
+      const created = await this.db.transaction(async (tx) => {
+        // The events first: their insert takes the event-order lock (database events.ts). They commit with the rows.
+        const logged = [
+          await this.events.appendHostIn(tx, id, "dot.created", { name: config.name }),
+          await this.events.appendHostIn(tx, id, "computer.state", { state: "PROVISIONING" }),
+        ];
         const record = await tx.dots.insert({ id, config, status: "CREATING" });
         await tx.computers.insert({ dotId: id, vmName: vmName(id), state: "PROVISIONING", token });
-        return record;
+        return { record, logged };
       });
+      dot = created.record;
+      for (const event of created.logged) this.events.publish(event);
     } catch (error) {
       if (error instanceof DotNameTakenError) throw new ControlPlaneError(409, "name_taken", error.message);
       throw error;
     }
-    await this.events.appendHost(id, "dot.created", { name: config.name });
-    await this.events.appendHost(id, "computer.state", { state: "PROVISIONING" });
     this.#log.info("dot created", { dotId: id, name: config.name });
     const provisioning = this.lifecycle.provision(id);
     this.#provisioning.set(id, provisioning);
@@ -291,9 +296,15 @@ export class Scheduler {
         `computer.disk cannot shrink from ${current.config.computer.disk} to ${config.computer.disk}: the filesystem on it would be destroyed`,
       );
     }
-    let updated: DotRecord | null;
+    let saved: { updated: DotRecord; logged: StoredEvent };
     try {
-      updated = await this.db.dots.updateConfig(current.id, config, expectedConfigVersion);
+      saved = await this.db.transaction(async (tx) => {
+        // The event first (database events.ts); it commits with the config it tells of, or neither does.
+        const logged = await this.events.appendHostIn(tx, current.id, "dot.updated", { name: config.name });
+        const updated = await tx.dots.updateConfig(current.id, config, expectedConfigVersion);
+        if (!updated) throw notFound("Dot", idOrName);
+        return { updated, logged };
+      });
     } catch (error) {
       if (error instanceof DotChangedError) {
         throw new ControlPlaneError(409, "dot_changed", `Dot ${current.name} changed after you read it: read it again and apply the change to what it is now`);
@@ -301,19 +312,18 @@ export class Scheduler {
       if (error instanceof DotNameTakenError) throw new ControlPlaneError(409, "name_taken", error.message);
       throw error;
     }
-    if (!updated) throw notFound("Dot", idOrName);
-    await this.#configChanged(updated);
-    return updated;
+    this.events.publish(saved.logged);
+    await this.#pushConfig(saved.updated);
+    return saved.updated;
   }
 
   /**
-   * The Dot's saved config changed (a PATCH, an "always allow"): push it to the guest like a PATCH does and log
-   * `dot.updated`. A failed push does not fail the change: the config is pushed again on the next READY.
+   * The Dot's saved config changed (a PATCH, an "always allow"; `dot.updated` was logged with the change): push it to
+   * the guest. A failed push does not fail the change: the config is pushed again on the next READY.
    */
-  async #configChanged(dot: DotRecord): Promise<void> {
-    let pushed = false;
+  async #pushConfig(dot: DotRecord): Promise<void> {
     try {
-      pushed = await this.lifecycle.syncGuest(dot.id);
+      await this.lifecycle.syncGuest(dot.id);
     } catch (error) {
       this.#log.warn("config saved but the push to the guest failed; it is pushed again on the next READY", {
         dotId: dot.id,
@@ -321,7 +331,6 @@ export class Scheduler {
       });
       this.lifecycle.markSuspect(dot.id);
     }
-    await this.events.appendHost(dot.id, "dot.updated", { name: dot.name, pushed_to_guest: pushed });
   }
 
   async deleteDot(idOrName: string): Promise<AcceptedAnswer> {
@@ -436,18 +445,16 @@ export class Scheduler {
         throw new ControlPlaneError(400, "invalid_request", "scheduled_at must be an ISO 8601 timestamp");
       }
     }
-    const task = await this.db.tasks.insert({
-      id: newId("task"),
-      dotId: dot.id,
-      description: body.description,
-      priority: body.priority ?? 0,
-      scheduledAt,
+    const id = newId("task");
+    const { description } = body;
+    const priority = body.priority ?? 0;
+    const { task, logged } = await this.db.transaction(async (tx) => {
+      // The event first (database events.ts); it commits with the task it tells of, or neither does.
+      const logged = await this.events.appendHostIn(tx, dot.id, "task.created", { task_id: id, description, priority });
+      const task = await tx.tasks.insert({ id, dotId: dot.id, description, priority, scheduledAt });
+      return { task, logged };
     });
-    await this.events.appendHost(dot.id, "task.created", {
-      task_id: task.id,
-      description: task.description,
-      priority: task.priority,
-    });
+    this.events.publish(logged);
     void this.dispatcher.dispatch();
     return task;
   }
@@ -726,6 +733,10 @@ export class Scheduler {
           ...(note !== undefined ? { note } : {}),
           ...(always ? { always } : {}),
         });
+        // "Always allow" changes the Dot's config: that is told by the event of every config change, in the same commit.
+        const dot = always ? await tx.dots.get(existing.dot_id) : null;
+        if (always && !dot) throw notFound("Dot", existing.dot_id);
+        const updated = dot ? await this.events.appendHostIn(tx, existing.dot_id, "dot.updated", { name: dot.name }) : null;
         const resolved = await tx.approvals.resolve(id, decision === "approve" ? "approved" : "rejected", note ?? null);
         if (!resolved) {
           const current = await tx.approvals.get(id);
@@ -735,11 +746,11 @@ export class Scheduler {
         if (always && !reconfigured) throw notFound("Dot", resolved.dot_id);
         if (resolved.task_id) await tx.tasks.transition(resolved.task_id, "RUNNING", { dotId: resolved.dot_id });
         await tx.inbound.enqueue(resolved.dot_id, event);
-        return { logged, resolved, reconfigured };
+        return { logged: [logged, ...(updated ? [updated] : [])], resolved, reconfigured };
       });
       resolved = stored.resolved;
-      this.events.publish(stored.logged);
-      if (stored.reconfigured) await this.#configChanged(stored.reconfigured);
+      for (const logged of stored.logged) this.events.publish(logged);
+      if (stored.reconfigured) await this.#pushConfig(stored.reconfigured);
     } finally {
       release?.();
     }

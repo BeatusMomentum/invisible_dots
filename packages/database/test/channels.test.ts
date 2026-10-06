@@ -92,6 +92,30 @@ describe.each(testAdapters())("channel repository on %s", { timeout: SETUP_TIMEO
     expect(await db.channels.setStatus(record.id, "connecting", null, null)).toBe(false);
   });
 
+  it("statusWouldChange says what setStatus then reports, for every kind of change and of repeat, and writes nothing", async () => {
+    const dot = await db.dots.insert({ id: newId("dot"), config: parseDotConfig(yaml("chan-would")), status: "READY" });
+    const record = await db.channels.createBinding({ id: newId("chb"), dotId: dot.id, kind: "whatsapp", settings, eventCursor: 0 });
+    const reports: [Parameters<typeof db.channels.setStatus>[1], string | null, (string | null)?][] = [
+      ["connecting", null],
+      ["connected", null, "15550001111"],
+      ["connected", null, "15550001111"],
+      ["connected", null],
+      ["connected", "slow"],
+      ["connected", "slow"],
+      ["error", "slow"],
+      ["connecting", null, null],
+      ["connecting", null, null],
+    ];
+    for (const [status, detail, account] of reports) {
+      const would = await db.channels.statusWouldChange(record.id, status, detail, account);
+      const before = await db.channels.bindingById(record.id);
+      expect(await db.channels.statusWouldChange(record.id, status, detail, account)).toBe(would);
+      expect(await db.channels.bindingById(record.id)).toEqual(before);
+      expect(await db.channels.setStatus(record.id, status, detail, account), `${status} ${detail} ${account}`).toBe(would);
+    }
+    expect(await db.channels.statusWouldChange("chb_missing", "connected", null)).toBe(false);
+  });
+
   it("peers: added, updated in place, found by chat, removed", async () => {
     const { record } = await binding("chan-three");
     const base = { bindingId: record.id, peerId: "42", chatId: "42", role: "owner" as const, label: "Ada" };

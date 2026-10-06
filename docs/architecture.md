@@ -1624,6 +1624,23 @@ drew id 10 could commit after one that drew 11, and a client that resumed
 event and changes other rows inserts the event first, so the lock is never
 taken while holding a row lock another event writer waits for.
 
+A host event is stored in the transaction of the change it tells of, and
+published after COMMIT: the Dot or its computer changing state (`dot.created`
+with its rows, `computer.state` and `computer.started` with the process and the
+images, `computer.stopped` with the stopped state and the Dot's status,
+`dot.deleted` with the deletion, `dot.updated` with the saved config, ERROR with
+`dot.updated`), a task (`task.created`), an answer (`approval.resolved`, and
+the `dot.updated` of "always allow"), and what a channel reports or the person
+does to it (`channel.status`, `channel.changed`, `channel.peer.paired`). A
+control plane killed between two writes therefore leaves the state it was in
+before, which recovery knows how to finish (a computer found off that was not
+recorded as stopped is recorded now, with its `computer.stopped`), and never a
+state nobody was told of: the web's views follow the events, so a state without
+its event would stay wrong in them for good. `commit-points.test.ts` of the
+scheduler and of the channel hub kill the process at the last write of a stop, a
+deletion, a creation, a save, a status, a pause, a removal and a pairing, and
+check that neither the state nor the event is there.
+
 Tables: `dots`, `computers`, `tasks`, `task_runs`, `events`, `approvals`,
 `inbound_events`, `secrets`, `channel_bindings`, `channel_peers`,
 `channel_pairings`, `channel_prompts`, `schema_migrations`. Migrations are plain

@@ -82,3 +82,42 @@ async function adminQuery(url: string, sql: string): Promise<void> {
     await admin.end();
   }
 }
+
+/** The repositories a `killedAt` can name. */
+export type KillableRepository = "dots" | "computers" | "tasks" | "channels" | "events" | "approvals";
+
+/**
+ * The database as seen by a process that is killed at one write: once `kill()` is called, `repository.method` inside a
+ * transaction throws, and the transaction rolls back as it does when the connection is lost (kill -9, a power cut). A
+ * test of a commit point uses it to see that what the change wrote before that statement did not commit.
+ */
+export function killedAt(real: Database, repository: KillableRepository, method: string): { db: Database; kill(): void; revive(): void } {
+  const state = { armed: false };
+  const bound = (inner: object, value: unknown) => (typeof value === "function" ? value.bind(inner) : value);
+  const wrapRepository = (target: object) =>
+    new Proxy(target, {
+      get(inner, name) {
+        const value = Reflect.get(inner, name, inner);
+        if (name !== method || typeof value !== "function") return bound(inner, value);
+        return (...args: unknown[]) => {
+          if (state.armed) throw new Error(`killed at ${repository}.${method}`);
+          return (value as (...a: unknown[]) => unknown).apply(inner, args);
+        };
+      },
+    });
+  const wrapTx = (tx: object) =>
+    new Proxy(tx, {
+      get(inner, name) {
+        const value = Reflect.get(inner, name, inner);
+        return name === repository ? wrapRepository(value as object) : bound(inner, value);
+      },
+    });
+  const db = new Proxy(real, {
+    get(inner, name) {
+      const value = Reflect.get(inner, name, inner);
+      if (name === "transaction") return (fn: (tx: object) => Promise<unknown>) => inner.transaction((tx) => fn(wrapTx(tx)));
+      return bound(inner, value);
+    },
+  });
+  return { db: db as Database, kill: () => void (state.armed = true), revive: () => void (state.armed = false) };
+}
