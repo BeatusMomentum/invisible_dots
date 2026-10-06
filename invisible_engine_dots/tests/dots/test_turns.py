@@ -634,12 +634,12 @@ class TestToolTargets:
         ]
         assert "HUNTER2 BODY" not in str(h.events())
 
-    async def test_a_command_is_shown_by_its_first_line_with_its_credentials_masked(
+    async def test_a_command_is_shown_by_its_first_line(
         self, make_harness: MakeHarness
     ) -> None:
         h = make_harness(
             [
-                calls(call("c1", "exec", command="curl -H 'Authorization: Bearer abc123' https://u:pw@e.com/x\necho second")),
+                calls(call("c1", "exec", command="curl https://e.com/x\necho second")),
                 says("done"),
             ],
             {"computer.exec": "allow"},
@@ -650,8 +650,7 @@ class TestToolTargets:
 
         (called,) = h.events_of("tool.called")
         assert called["tool"] == "exec"
-        assert called["target"] == "curl -H 'Authorization: ***' https://e.com/x"
-        assert "abc123" not in str(h.events()) and "pw@" not in str(h.events())
+        assert called["target"] == "curl https://e.com/x"
 
     async def test_a_command_run_in_a_terminal_says_so_and_one_that_was_not_does_not(
         self, make_harness: MakeHarness

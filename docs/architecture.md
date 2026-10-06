@@ -839,17 +839,7 @@ characters (`TOOL_TARGET_MAX`, in code points as the host's schema counts them;
 it refuses a longer, empty or multi-line one), so a client can say "ran `make test`" and not only "exec ok".
 It is a name or a place, never content. The permission table
 (`nanobot/dots/permissions.py`) gives each tool a function that states what of
-its arguments may be shown: `exec` the first line of the command, cut at 120
-characters, redacted by an allowlist and not by the shapes a secret takes: the
-program of each command, its plain words, long options whose name does not say
-they hold a credential, short flags run together (`-rf`), a URL without its
-user and password and with its query values masked, and `host:port` are shown;
-the value of every single-letter option (`-p`, `-u`, `-H`, `-x`; only a plain
-path stays), a value written against its flag (`-phunter2`), the value of a
-`--flag` or `NAME=` named for a credential, a quoted word with spaces, any
-`user:password` word and the word after `Bearer` or `Basic` are masked as `***`
-(a header keeps its name). A secret written as a bare word of a command stays
-visible, so the full command stays with the approval;
+its arguments may be shown: `exec` the first line of the command, as it is;
 `read_file`, `list_dir`, `write_file` and `edit_file` the path; `find_files` the
 query, else the glob, else the path; `grep` the pattern; `apply_patch` the path,
 or `N files, first <path>`; `memory_search` the query; `memory_get` the note
@@ -2260,7 +2250,7 @@ the desktop as the chat's panel shows it (one `FrameView` draws both), with
 "The Dot has control". Browser lists the Dot's identities, open ones first
 (`GET /browser-identities`, read again on each `browser.identity.*` event, so a
 card is never refreshed by a second route): the state in words (Closed is the
-engine's `available`), the last use, the proxy with its password replaced (by `redactProxy`, the rule the engine uses; the web has no rule of its own),
+engine's `available`), the last use, whether it has a proxy of its own (`hasProxy`; the proxy itself never leaves the guest),
 the window of an open one (`.../frame`, every 2 s while the page is in view)
 under a bar with the page the Dot last sent it to, and a mark "The Dot is using
 this now". Both come from the log, not from the identity routes, which know

@@ -186,7 +186,7 @@ export interface OutboundEventDataMap {
     ok: boolean;
     duration_ms: number;
     /**
-     * What the call acted on, in one redacted line of at most TOOL_TARGET_MAX characters: the first
+     * What the call acted on, in one line of at most TOOL_TARGET_MAX characters: the first
      * line of a command, a path, a search term, an action and a name (architecture section 8.3).
      * Never what a person typed into a program or the text a browser field was given. Absent for a
      * call that never started (denied, not offered) and for a tool with nothing to name.

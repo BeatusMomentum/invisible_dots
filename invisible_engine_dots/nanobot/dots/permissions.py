@@ -48,7 +48,7 @@ class ToolEntry:
 
     permission: the key of the host's permission map the tool exercises.
     build: factory taking ToolDeps to instantiate the Tool.
-    target: from the call's arguments, the one redacted line `tool.called` shows of it (None: nothing).
+    target: from the call's arguments, the one line `tool.called` shows of it (None: nothing).
     needs_memory: the tool exists only while the Dot's memory is enabled.
     starts_terminal: from the call's arguments, whether it starts a terminal session.
     needs_managed_identities: the tool exists only while the Dot may manage its browser identities itself

@@ -1,46 +1,13 @@
-"""What of a tool call `tool.called` may show: one redacted line naming the thing the call acted on.
+"""What of a tool call `tool.called` shows: one line naming the thing the call acted on.
 
-`tool.called` leaves the guest and reaches the host's event log, the web UI and the channels. The
-permission table (permissions.py) says, per tool, which function here states what of the call's
-arguments may be seen; nothing else of the arguments travels. A tool that is not in the table has no
-target. Each function takes the arguments as the model sent them (validated and cast by the runner),
-trusts none of their types, and returns None when there is nothing to name.
+The permission table (permissions.py) says, per tool, which function here picks that line from the call's
+arguments; nothing else of the arguments travels in `tool.called`. A tool that is not in the table has no
+target. Each function takes the arguments as the model sent them, trusts none of their types, and returns
+None when there is nothing to name. `permissions.tool_target` cuts every target at `TOOL_TARGET_MAX`
+characters (the host's schema refuses more).
 
-A target is a place or a name, never content: a command's first line, a path, a search term, an
-action and a name. What a person typed into a program (`exec_session` input, a browser field) is
-never one. The command of `exec` can hold a credential, and a command line has no grammar that says
-which word is one, so `redact_command` does not look for the shapes a secret takes in free text: it
-shows an allowlist of what a command line is made of and masks the rest.
-
-Shown: the program of each command, its plain positional words, a long option and its value when
-the option's name does not say it holds a credential, a cluster of up to three short flags (`-rf`),
-a URL without its user and password and with the values of its query masked, `host:port` and
-`host:/path`.
-
-Masked as `***`: the value of every single-letter option (`-p`, `-u`, `-H`, `-x`: the letter says
-nothing of what follows; only a value that is plainly a path stays), a value written against its
-flag (`-phunter2`), the value of a long option or assignment named for a credential (`--password`,
-`--proxy-user`, `API_KEY=`), a quoted word with spaces, any `user:password` word (a colon followed
-by more than a port or a path) and the word after `Bearer` or `Basic`. A header keeps its name
-(`Authorization: ***`).
-
-What stays visible is a secret written as a bare positional word (`echo hunter2`) or as a value
-that starts like a path, which cannot be told from a name; the full command stays behind the
-approval, not here.
-
-A browser call names the identity it acts on and then what it acted on: a URL (as a command's URLs
-are shown), a selector, a key that is a name and not a character, a direction or the coordinates of a
-click. The text of `browser_type` is never in one, and neither is a character sent as a key.
-
-`permissions.tool_target` cuts every target at `TOOL_TARGET_MAX` characters (the host's schema refuses
-more); `exec` cuts earlier, at `EXEC_TARGET_MAX`.
-
-The table also says, per tool, which function states what of the arguments leaves the guest in an
-`approval.requested`, which a person decides on (on the web and, when the Dot's channel is on, in a chat
-that a third party carries): the arguments as they are, except that the proxy of `browser_identity_create`
-is masked and the URL of `browser_navigate` has no user and password. The query of that URL
-stays: it is where a model that was talked into it puts what it sends out, so it is what the approver has to
-see. The text of `browser_type` and the value of `browser_select_option` stay for the same reason.
+The table also says which arguments an `approval.requested` carries: the arguments as they are, except that
+the proxy of `browser_identity_create` is masked and the URL of `browser_navigate` has no user and password.
 """
 
 from __future__ import annotations
@@ -49,167 +16,9 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
-# The longest first line of a command shown, the ellipsis included.
-EXEC_TARGET_MAX = 120
-
 _ELLIPSIS = "…"
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]+")
-_MASK = "***"
-
-# A command line cut into words and operators. A word is a run of characters and quoted pieces; an
-# unterminated quote is left in the gap between tokens, so what follows it is still a word.
-_TOKEN = re.compile(r"""(?:[^\s'"|&;<>()]|'[^']*'|"(?:[^"\\]|\\.)*")+|\|\|?|&&?|;|[<>]+|[()]""")
-_BREAKS = frozenset({"|", "||", "&", "&&", ";", "(", ")"})
-_QUOTED = re.compile(r"""'([^']*)'|"((?:[^"\\]|\\.)*)\"""")
-_PROGRAM = re.compile(r"(?:[A-Za-z]:)?[\w./\\+~-]+")
-_ASSIGNMENT = re.compile(r"([A-Za-z_][\w.-]*)=(.*)", re.DOTALL)
-_OPTION_NAME = re.compile(r"\w[\w.-]*")
-_SHORT_FLAG = re.compile(r"-[A-Za-z]")
-_SHORT_CLUSTER = re.compile(r"-[A-Za-z]{2,3}")
-_PATH = re.compile(r"(?:/|\./|\.\./|~/)[\w./~-]*")
-_PORT_OR_PATH = re.compile(r"[/\\].*|\d+(?:/.*)?")
-_HEADER = re.compile(r"([\w-]+):\s+\S")
 _URL = re.compile(r"(?i)([a-z][a-z0-9+.-]*://)([^/?#]*)(.*)", re.DOTALL)
-_QUERY_VALUE = re.compile(r"([?&;#][^=&#;?/]*=)[^&#;]*")
-# What a name says it holds: a part of it (split at - _ .) that contains one of these, or is one of them.
-_SECRET_PART = re.compile(
-    r"pass|secret|token|credential|key|cookie|bearer|header|^(?:auth|authorization|user|username|login|pw|pwd|jwt)$"
-)
-_SCHEME_WORDS = frozenset({"bearer", "basic"})
-# What a key of `browser_press_key` may be to be shown: a key that is a name (the list below, F1 to F12),
-# alone or after modifiers (Control+Shift+Tab), or a shortcut (Control+a). A character, or any other word,
-# is what a person typed.
-_KEY_NAMES = frozenset(
-    {
-        "Enter", "Tab", "Escape", "Backspace", "Delete", "Insert", "Home", "End", "PageUp", "PageDown",
-        "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Space", "ContextMenu",
-        *(f"F{n}" for n in range(1, 13)),
-    }
-)
-_MODIFIERS = frozenset({"Control", "Alt", "Meta", "ControlOrMeta", "Shift"})
-
-
-def redact_command(line: str) -> str:
-    """The line with everything that may be a credential replaced by `***` (the allowlist is in the module doc)."""
-    out: list[str] = []
-    last = 0
-    at_program = True
-    take_value = False
-    previous = ""
-    for match in _TOKEN.finditer(line):
-        raw = match.group()
-        out.append(line[last : match.start()])
-        last = match.end()
-        is_word = raw not in _BREAKS and raw[0] not in "<>"
-        if not is_word:
-            if raw in _BREAKS:
-                at_program = True
-            take_value, previous = False, ""
-            out.append(raw)
-            continue
-        if at_program:
-            assignment = _ASSIGNMENT.fullmatch(raw)
-            if assignment:
-                out.append(_assigned(*assignment.groups()))
-                continue
-            out.append(raw if _PROGRAM.fullmatch(raw) else _MASK)
-            at_program = False
-        elif raw.startswith("--"):
-            name, equals, value = raw[2:].partition("=")
-            take_value = False
-            if not name and not equals:
-                # `--` ends the options.
-                out.append(raw)
-            elif not _OPTION_NAME.fullmatch(name):
-                out.append(_MASK)
-            elif equals:
-                out.append(f"--{name}={_assigned_value(name, value)}")
-            else:
-                out.append(raw)
-                take_value = _secret_named(name)
-        elif raw.startswith("-") and len(raw) > 1 and not raw[1:].isdigit():
-            if _SHORT_FLAG.fullmatch(raw):
-                out.append(raw)
-                take_value = True
-            else:
-                # Flags run together are shown; a value written against its flag is not.
-                take_value = False
-                if _SHORT_CLUSTER.fullmatch(raw):
-                    out.append(raw)
-                else:
-                    out.append(f"{raw[:2]}{_MASK}" if raw[1].isalnum() else _MASK)
-        elif previous in _SCHEME_WORDS:
-            out.append(_mask_word(raw))
-            take_value = False
-        elif take_value:
-            out.append(raw if _PATH.fullmatch(raw) else _mask_word(raw))
-            take_value = False
-        else:
-            out.append(_shown_word(raw))
-        previous = _unquoted(raw).lower()
-    out.append(line[last:])
-    return "".join(out)
-
-
-def _secret_named(name: str) -> bool:
-    return any(_SECRET_PART.search(part) for part in re.split(r"[-_.]+", name.lower()))
-
-
-def _assigned(name: str, value: str) -> str:
-    return f"{name}={_assigned_value(name, value)}"
-
-
-def _assigned_value(name: str, value: str) -> str:
-    return _MASK if _secret_named(name) else _shown_word(value)
-
-
-def _unquoted(word: str) -> str:
-    quoted = _QUOTED.fullmatch(word)
-    if quoted is None:
-        return word
-    return quoted.group(1) if quoted.group(1) is not None else quoted.group(2)
-
-
-def _mask_word(word: str) -> str:
-    """`***`; a quoted header keeps its name and its quotes: `'Authorization: ***'`."""
-    header = _HEADER.match(_unquoted(word)) if _QUOTED.fullmatch(word) else None
-    return f"{word[0]}{header.group(1)}: {_MASK}{word[0]}" if header else _MASK
-
-
-def _shown_word(word: str) -> str:
-    """A word nothing said to mask: as it is when its shape is a plain one, masked when it may hold a credential."""
-    if not word:
-        return word
-    assignment = _ASSIGNMENT.fullmatch(word)
-    if assignment:
-        return _assigned(*assignment.groups())
-    quoted = _QUOTED.fullmatch(word) is not None
-    if not quoted and ("'" in word or '"' in word):
-        return _MASK
-    inner = _unquoted(word)
-    if any(char.isspace() for char in inner):
-        return _mask_word(word)
-    quote = word[0] if quoted else ""
-    shown = shown_url(inner)
-    if shown is not None:
-        return f"{quote}{shown}{quote}"
-    _, colon, after = inner.partition(":")
-    if colon and after and not _PORT_OR_PATH.fullmatch(after):
-        return _mask_word(word)
-    return word
-
-
-def shown_url(text: str) -> str | None:
-    """The URL without the user and the password of its authority and with the values of its query masked.
-
-    Only the URL's own parts decide, never the characters in it: a quote or a space in a path stays what it is.
-    None when the text is no URL.
-    """
-    url = _URL.fullmatch(text)
-    if url is None:
-        return None
-    scheme, authority, rest = url.groups()
-    return scheme + authority.rpartition("@")[2] + _QUERY_VALUE.sub(lambda m: m.group(1) + _MASK, rest)
 
 
 def without_userinfo(text: str) -> str:
@@ -222,11 +31,7 @@ def without_userinfo(text: str) -> str:
 
 
 def clip(text: str, limit: int) -> str:
-    """The text on one line, at most `limit` characters (code points), cut with an ellipsis.
-
-    The unit is the one the host's schema counts: zod 4 measures a string in code points, so a
-    character outside the BMP is one, here and there.
-    """
+    """The text on one line, at most `limit` characters (code points, as the host's schema counts), cut with an ellipsis."""
     text = _CONTROL.sub(" ", text).strip()
     return text if len(text) <= limit else text[: limit - 1].rstrip() + _ELLIPSIS
 
@@ -241,15 +46,13 @@ def _string(params: Mapping[str, Any], *names: str) -> str:
 
 
 def exec_target(params: Mapping[str, Any]) -> str | None:
+    """The command's first line."""
     command = _string(params, "command", "cmd")
-    if not command:
-        return None
-    return clip(redact_command(command.splitlines()[0]), EXEC_TARGET_MAX)
+    return command.splitlines()[0] if command else None
 
 
 def exec_starts_terminal(params: Mapping[str, Any]) -> bool:
-    """Whether the call asks `exec` for a terminal session (`tty`): the one thing `tool.called` says of a call
-    besides what it acted on, because a client shows "started a terminal session" and not "ran a command"."""
+    """Whether the call asks `exec` for a terminal session (`tty`): a client shows "started a terminal session"."""
     return params.get("tty") is True
 
 
@@ -314,13 +117,9 @@ def no_target(params: Mapping[str, Any]) -> str | None:
     return None
 
 
-def _identity(params: Mapping[str, Any]) -> str:
-    return _string(params, "identity_id")
-
-
 def _on_identity(params: Mapping[str, Any], detail: str | None) -> str | None:
     """`<identity id>: <detail>`, or the id alone; None without an identity."""
-    identity = _identity(params)
+    identity = _string(params, "identity_id")
     if not identity:
         return None
     return f"{identity}: {detail}" if detail else identity
@@ -332,17 +131,12 @@ def identity_name_target(params: Mapping[str, Any]) -> str | None:
 
 
 def identity_target(params: Mapping[str, Any]) -> str | None:
-    return _identity(params) or None
-
-
-def _shown_navigation(url: str) -> str:
-    """The address a person approves: `shown_url`; a text that is no URL is masked whole."""
-    return shown_url(url) or _MASK
+    return _string(params, "identity_id") or None
 
 
 def browser_navigate_target(params: Mapping[str, Any]) -> str | None:
     url = _string(params, "url")
-    return _on_identity(params, _shown_navigation(url) if url else None)
+    return _on_identity(params, without_userinfo(url) if url else None)
 
 
 def browser_selector_target(params: Mapping[str, Any]) -> str | None:
@@ -357,20 +151,8 @@ def browser_click_at_target(params: Mapping[str, Any]) -> str | None:
     return _on_identity(params, None)
 
 
-def _shown_key(key: str) -> str | None:
-    *modifiers, last = key.split("+")
-    if any(part not in _MODIFIERS for part in modifiers):
-        return None
-    if last in _KEY_NAMES:
-        return key
-    # A letter or a digit after Control, Alt or Meta is a shortcut (Shift alone types it).
-    if len(last) == 1 and last.isalnum() and any(part != "Shift" for part in modifiers):
-        return key
-    return None
-
-
 def browser_press_key_target(params: Mapping[str, Any]) -> str | None:
-    return _on_identity(params, _shown_key(_string(params, "key")))
+    return _on_identity(params, _string(params, "key") or None)
 
 
 def browser_scroll_target(params: Mapping[str, Any]) -> str | None:
@@ -389,11 +171,7 @@ def all_arguments(params: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def navigate_arguments(params: Mapping[str, Any]) -> dict[str, Any]:
-    """The arguments of `browser_navigate` with the URL that will be opened, without the user and password of its authority.
-
-    The query and the fragment stay: a person approving a navigation must see what it sends. A text that is no URL
-    is shown as it is (the schema refuses it before it runs).
-    """
+    """The arguments of `browser_navigate` with the URL's user and password left out; the rest as it is."""
     shown = dict(params)
     url = shown.get("url")
     if isinstance(url, str) and url.strip():

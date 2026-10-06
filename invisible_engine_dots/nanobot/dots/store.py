@@ -793,7 +793,7 @@ class ToolIntent:
     started_at: int
     # The notes the call writes, as keys (paths under the memory directory): see memory_tools.memory_keys_written.
     memory_keys: tuple[str, ...] = ()
-    # The redacted line `tool.called` shows of the call (permissions.tool_target); None when there is none.
+    # The line `tool.called` shows of the call (permissions.tool_target); None when there is none.
     target: str | None = None
     # The call started a terminal session (permissions.tool_starts_terminal): `tool.called` says so.
     tty: bool = False

@@ -3,9 +3,9 @@
  * last sent to, and whether it is using one right now. The log is the one record of it: the identity routes know
  * only a state (open, available), and the engine does not say which page a window shows.
  *
- * A browser tool's `tool.called` carries a redacted `target` the engine builds (nanobot/dots/targets.py): the
- * identity's id alone, or `<identity id>: <detail>`, where the detail of `browser_navigate` is the URL as a command's
- * URLs are shown (no user or password, query values masked). `browser_identity_create` names the identity it made,
+ * A browser tool's `tool.called` carries a `target` the engine builds (nanobot/dots/targets.py): the
+ * identity's id alone, or `<identity id>: <detail>`, where the detail of `browser_navigate` is the URL without
+ * its user and password. `browser_identity_create` names the identity it made,
  * not an id, and `browser_identity_list` names nothing, so neither says anything about an identity here.
  */
 import { TOOL_LABELS, toolLabel } from "./events/tool-labels";

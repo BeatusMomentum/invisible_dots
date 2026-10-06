@@ -36,8 +36,8 @@ disk lay them out. This smoke does, in one Linux container, with no QEMU:
   off (run once at the next start, with the `automation.next_run` the host is told on the way, and not again after a `kill -9`),
   approvals that survive a crash, the cost cap that
   stops a task and a chat turn and still holds after a crash, the `spent_usd` the
-  events of tasks and chat answers carry, the `target` of `tool.called` (the command with
-  its credential masked, a token flag and a `curl -U` proxy login alike, the path a file tool wrote and none of the content), the tools offered
+  events of tasks and chat answers carry, the `target` of `tool.called` (the command's first
+  line, the path a file tool wrote and none of the content), the tools offered
   for each permission map (and `GET /tools` through `dot-agentd` saying the same, with `GET /automations` and its refusals), the summary of an outgrown thread going to the
   `models.summary` model with no tool in the request, the text sent to the model, the key reaching no file,
   log or process environment, the browser seams (below), the host's file routes (the TCP port) refusing a symbolic link

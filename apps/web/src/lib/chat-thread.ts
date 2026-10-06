@@ -24,7 +24,7 @@ export interface ToolStep {
   tool: string;
   label: string;
   family: ToolFamily;
-  /** What the call acted on, as the engine reported it (one redacted line); "" when it named nothing. */
+  /** What the call acted on, as the engine reported it (one line); "" when it named nothing. */
   target: string;
   state: ToolState;
   durationMs: number;
