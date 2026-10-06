@@ -13,7 +13,7 @@ import asyncio
 import json
 import os
 import signal
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
@@ -706,19 +706,40 @@ async def test_a_close_waits_for_the_call_in_flight(env: Env) -> None:
     ]
 
 
+async def _until(condition: Callable[[], bool]) -> None:
+    while not condition():
+        await asyncio.sleep(0.01)
+
+
+def _process_exists(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
 async def test_a_launch_that_is_cancelled_leaves_nothing_open_and_the_next_one_works(env: Env) -> None:
     manager = env.manager(open_retry_initial_s=0.05, open_retry_max_s=0.05)
     identity = await manager.create("interrupted")
     write_control(env.mcp_home(identity.id), download_answers=1000)
 
     launching = asyncio.create_task(manager.launch(identity.id))
-    await asyncio.sleep(0.3)
+    # Cancel once the server has answered browser_open, so the launch is inside its retry loop. A fixed
+    # sleep cancelled it before the process had started when the machine was loaded.
+    def asked() -> bool:
+        return any(e["kind"] == "done" and e.get("name") == "browser_open" for e in env.record(identity.id))
+
+    await asyncio.wait_for(_until(asked), 30)
     launching.cancel()
     with pytest.raises(asyncio.CancelledError):
         await launching
 
     assert manager.open_count == 0
-    assert env.record(identity.id)[-1]["kind"] == "exit"
+    # The process is gone. It is not asked for a clean exit record: the SDK ends a server that is slow to
+    # leave after 2 s, which a loaded machine makes slow.
+    (pid,) = [e["pid"] for e in env.record(identity.id) if e["kind"] == "start"]
+    await asyncio.wait_for(_until(lambda: not _process_exists(pid)), 30)
     write_control(env.mcp_home(identity.id), download_answers=0)
     await asyncio.wait_for(manager.launch(identity.id), 30)
     assert manager.is_open(identity.id)
