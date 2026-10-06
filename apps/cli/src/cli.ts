@@ -13,7 +13,7 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import QRCode from "qrcode";
 import { ApiError, type DotSummary, type InvisibleDotsClient, type TaskRecord } from "@invisible-dots/sdk";
-import { CHANNEL_KINDS, DEFAULT_WEB_LISTEN, ENV, type ChannelKind, type ChannelRecord, type StoredEvent } from "@invisible-dots/shared";
+import { CHANNEL_KINDS, DEFAULT_WEB_LISTEN, ENV, type ChannelKind, type ChannelRecord, type ComputerAnswer, type StoredEvent } from "@invisible-dots/shared";
 import { STORE_OPENROUTER_KEY } from "@invisible-dots/vm-manager";
 import { apiUrl, AuthSetupError, connectApi, DEFAULT_URL } from "./api-client.js";
 import { addTelegramChannel } from "./commands.js";
@@ -185,6 +185,12 @@ function oneLine(text: string, max = 60): string {
   return flat.length > max ? `${flat.slice(0, max - 3)}...` : flat;
 }
 
+/** What `status` says about the Dot's automations: when the next one is due, or that the person's stop has paused them. */
+function nextAutomation(computer: ComputerAnswer): string {
+  if (computer.stop_reason === "user") return "paused: the computer was stopped by you (start it to resume)";
+  return computer.next_automation_at ?? "none due";
+}
+
 export function formatEvent(event: StoredEvent): string {
   const { guest_event_id: _id, guest_ts: _ts, ...data } = event.data;
   const detail = Object.keys(data).length > 0 ? ` ${JSON.stringify(data)}` : "";
@@ -338,7 +344,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
             ["computer", `${computer.state}${computer.ready ? ", ready" : ""}${computer.last_error ? ` (last error: ${computer.last_error})` : ""}`],
             ["resources", `${dot.config.computer.cpu} cpu, ${dot.config.computer.memory} memory, ${dot.config.computer.disk} disk, idle_timeout ${dot.config.computer.idle_timeout}`],
             ["last active", computer.last_active_at ?? "never"],
-            ["next automation", computer.next_automation_at ?? "none due"],
+            ["next automation", nextAutomation(computer)],
           ]) +
           "\n" +
           taskRows(tasks.slice(0, 10));
@@ -391,7 +397,8 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
         else if (action === "stop") await c.stopComputer(name);
         else if (action === "reboot") await c.rebootComputer(name);
         else throw new UsageError(`unknown computer action "${action}": use start, stop or reboot`);
-        out({ accepted: true }, `${action} requested; follow it with: invisible-dots logs ${name}\n`);
+        const note = action === "stop" ? `automations are paused while the computer is stopped; resume them with: invisible-dots computer ${name} start\n` : "";
+        out({ accepted: true }, `${action} requested; follow it with: invisible-dots logs ${name}\n${note}`);
         return EXIT.ok;
       }
       case "browser": {

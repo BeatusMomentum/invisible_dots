@@ -1,4 +1,4 @@
-import type { ComputerRecord, VmState } from "@invisible-dots/shared";
+import type { ComputerRecord, StopReason, VmState } from "@invisible-dots/shared";
 import type { SecretBox } from "./crypto.js";
 import { iso, isoRequired, type Queryable } from "./rows.js";
 
@@ -14,6 +14,7 @@ interface ComputerRow {
   event_cursor: number;
   last_active_at: Date | null;
   next_automation_at: Date | null;
+  stop_reason: StopReason | null;
   last_error: string | null;
   updated_at: Date;
 }
@@ -30,6 +31,7 @@ function toRecord(row: ComputerRow): ComputerRecord {
     event_cursor: row.event_cursor,
     last_active_at: iso(row.last_active_at),
     next_automation_at: iso(row.next_automation_at),
+    stop_reason: row.stop_reason,
     last_error: row.last_error,
     updated_at: isoRequired(row.updated_at),
   };
@@ -79,20 +81,23 @@ export class ComputersRepository {
   }
 
   /**
-   * Set the state. `lastError` replaces the stored error when given (null
-   * clears it) and leaves it alone when undefined.
+   * Set the state. `lastError` replaces the stored error when given (null clears it) and leaves it alone when
+   * undefined. `stopReason` is why the computer is going off: it is kept while the state is STOPPING or STOPPED (a
+   * reason given with STOPPING stays for the STOPPED that follows, one given with STOPPED replaces it) and cleared by
+   * any other state, so a computer that runs again carries no reason.
    */
-  async setState(dotId: string, state: VmState, lastError?: string | null): Promise<ComputerRecord | null> {
-    const { rows } =
-      lastError === undefined
-        ? await this.q.query<ComputerRow>(
-            "UPDATE computers SET state = $2, updated_at = now() WHERE dot_id = $1 RETURNING *",
-            [dotId, state],
-          )
-        : await this.q.query<ComputerRow>(
-            "UPDATE computers SET state = $2, last_error = $3, updated_at = now() WHERE dot_id = $1 RETURNING *",
-            [dotId, state, lastError],
-          );
+  async setState(dotId: string, state: VmState, lastError?: string | null, stopReason?: StopReason): Promise<ComputerRecord | null> {
+    const params: unknown[] = [dotId, state, stopReason ?? null];
+    const sets = [
+      "state = $2",
+      "stop_reason = CASE WHEN $2 IN ('STOPPING', 'STOPPED') THEN COALESCE($3, stop_reason) ELSE NULL END",
+      "updated_at = now()",
+    ];
+    if (lastError !== undefined) {
+      params.push(lastError);
+      sets.push(`last_error = $${params.length}`);
+    }
+    const { rows } = await this.q.query<ComputerRow>(`UPDATE computers SET ${sets.join(", ")} WHERE dot_id = $1 RETURNING *`, params);
     return rows[0] ? toRecord(rows[0]) : null;
   }
 
@@ -138,8 +143,9 @@ export class ComputersRepository {
 
   /**
    * The stopped computers whose Dot has an automation due at `by` or before (a time already past counts: the run was
-   * missed and the guest makes it when it starts), so the control plane can start them. A Dot in ERROR, DISABLED or
-   * still being created is left alone, like the one whose work waits behind an unfinished task (`stoppedDotsWithBlockedWork`).
+   * missed and the guest makes it when it starts), so the control plane can start them. A computer the person stopped
+   * (`stop_reason` user) stays off until the person starts it again, and a Dot in ERROR, DISABLED or still being created
+   * is left alone, like the one whose work waits behind an unfinished task (`stoppedDotsWithBlockedWork`).
    */
   async stoppedWithAutomationBy(by: Date): Promise<string[]> {
     const { rows } = await this.q.query<{ dot_id: string }>(
@@ -149,6 +155,7 @@ export class ComputersRepository {
         WHERE c.state = 'STOPPED'
           AND c.next_automation_at IS NOT NULL
           AND c.next_automation_at <= $1
+          AND c.stop_reason IS DISTINCT FROM 'user'
           AND d.status NOT IN ('CREATING', 'DISABLED', 'ERROR')
         ORDER BY c.next_automation_at, c.dot_id`,
       [by],

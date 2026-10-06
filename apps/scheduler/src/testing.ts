@@ -138,6 +138,8 @@ export class FakeGuest implements GuestApi {
   /** When set, `postEvent` fails with it once. */
   failNextPost: Error | null = null;
   boots = 0;
+  /** The guest's clock, in ms since the epoch: what its engine compares the jobs' times with at a boot. */
+  now: () => number = () => Date.now();
   #seq = 0;
   #wakers = new Set<() => void>();
   #streams = new Set<AbortController>();
@@ -152,6 +154,28 @@ export class FakeGuest implements GuestApi {
     this.openrouterKey = null;
     this.agentState = "IDLE";
     this.emit("agent.started", {});
+    this.#catchUp();
+  }
+
+  /**
+   * What the engine does at a start (CronService.start): a job whose time came while the computer was off runs once,
+   * late, and moves on (a recurring job counts its next run from now, a one-time one is over), then the engine reports
+   * the earliest next run when it differs from what the host was last told.
+   */
+  #catchUp(): void {
+    const now = this.now();
+    for (const job of [...this.automations.values()]) {
+      if (!job.enabled || job.next_run_at_ms === null || job.next_run_at_ms > now) continue;
+      const ran = { ...job, last_run_at_ms: now, last_status: "ok" as const, last_error: null };
+      if (job.schedule.kind === "at") {
+        if (job.delete_after_run) this.automations.delete(job.id);
+        else this.automations.set(job.id, { ...ran, enabled: false, next_run_at_ms: null });
+      } else {
+        const every = job.schedule.kind === "every" ? (job.schedule.every_ms ?? 60_000) : 24 * 3_600_000;
+        this.automations.set(job.id, { ...ran, next_run_at_ms: now + every });
+      }
+    }
+    this.#reportNextRun();
   }
 
   /**
@@ -389,8 +413,8 @@ export class FakeGuest implements GuestApi {
 
   /**
    * What the engine does after every change of its jobs: tell the host, with an `automation.next_run` event, when the
-   * earliest enabled one is due (null when none is), once per change (nothing at a boot: the engine has told the
-   * host what it has to).
+   * earliest enabled one is due (null when none is), once per change (also at a boot, when a run made
+   * late moved it: a boot with nothing changed reports nothing, the engine has told the host what it has to).
    */
   #reportNextRun(): void {
     const due = [...this.automations.values()].flatMap((a) => (a.enabled && a.next_run_at_ms !== null ? [a.next_run_at_ms] : []));

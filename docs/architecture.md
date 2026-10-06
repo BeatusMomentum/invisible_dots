@@ -1538,7 +1538,7 @@ Tables: `dots`, `computers`, `tasks`, `task_runs`, `events`, `approvals`,
 SQL files applied in order at start.
 
 - `dots(id text pk, name text unique, config jsonb, status text, error text null, config_version int default 1, created_at, updated_at)`: `config_version` grows with every save of `config` (`updateConfig`, `setPermission`, and `0009_removed_config_names` once for each Dot it rewrites) and with nothing else, while `updated_at` also moves with every status change; the PATCH precondition is on the version
-- `computers(dot_id pk fk, vm_name, guest_port int null, pid int null, state text, golden_image text, runtime_image text, token_enc bytea, event_cursor bigint default 0, last_active_at, next_automation_at timestamptz null, last_error, updated_at)`: `guest_port` and `pid` are null while no QEMU runs, and `guest_port` is not unique (a crashed VM's row may name a port since reused); both are copies of `qemu.json` (section 3.2), which wins on reconciliation; `next_automation_at` is the guest's last `automation.next_run` report (migration `0010_computer_next_automation`), null while none is due or nothing was reported, and it is the guest's report: nothing else of the row moves with it
+- `computers(dot_id pk fk, vm_name, guest_port int null, pid int null, state text, golden_image text, runtime_image text, token_enc bytea, event_cursor bigint default 0, last_active_at, next_automation_at timestamptz null, stop_reason text null, last_error, updated_at)`: `guest_port` and `pid` are null while no QEMU runs, and `guest_port` is not unique (a crashed VM's row may name a port since reused); both are copies of `qemu.json` (section 3.2), which wins on reconciliation; `next_automation_at` is the guest's last `automation.next_run` report (migration `0010_computer_next_automation`), null while none is due or nothing was reported, and it is the guest's report: nothing else of the row moves with it; `stop_reason` (`idle`, `user` or `exited`, same migration) is why the computer is STOPPING or STOPPED and is null in every other state (section 9.5)
 - `tasks(id text pk, dot_id fk, description, priority int, status, created_at, scheduled_at, started_at, finished_at, summary, error, spent_usd double precision default 0)`: `spent_usd` is the highest `spent_usd` the guest reported on the task's events (section 5.4), recorded by the host in the transaction that stores each event, so a late or repeated event never lowers it and a cancelled task the guest keeps working on still counts; a task whose guest never reported spend stays 0
 - `task_runs(id pk, task_id fk, started_at, delivered_at, finished_at, outcome)`: `delivered_at` is set when the guest accepted the run's `task.created`
 - `events(id bigserial pk, dot_id, type, data jsonb, source 'host'|'guest', guest_seq bigint, created_at)`, unique `(dot_id, guest_seq)`, and unique `(dot_id, data->origin->>binding_id, data->origin->>external_id)` for a `user.message` with an origin: a channel message is stored once, by the channel's own id, in the transaction that stores it, so a redelivery after any failure finds the first one and the Dot gets it once (section 9.8)
@@ -1646,7 +1646,7 @@ A Dot's automations (section 8.8) run in its guest, which is off while the
 Dot sleeps, so the host starts the computer for them. The guest reports, with
 `automation.next_run` (section 5.4), when its earliest enabled automation is due,
 and the host keeps it in `computers.next_automation_at`. The scheduler's pass
-(every `dispatchIntervalMs`, 5 s) starts every STOPPED computer whose Dot is not
+(every `dispatchIntervalMs`, 5 s) starts every STOPPED computer that the person did not stop (below) and whose Dot is not
 in ERROR, DISABLED or CREATING and whose next automation is due within the
 wake lead time (`lifecycle.automationWakeLeadMs`, 90 s by default: a start
 reaches READY with some to spare) or is already past, a run missed while the
@@ -1654,14 +1654,38 @@ host or the computer was down, which the guest makes as it starts. The same
 condition is part of "has work" for the idle sleep, in the idle check and
 again under the Dot's lock, so a computer is not put to sleep when a run is
 due within the lead time, and with an automation every minute it stays up.
-A computer the person stopped is started again by the same rule when a run is
-within the lead time, as it is for a message or a task. The start is the
-ordinary one (the key and the config are pushed), and the run itself is the
-guest's: the host decides only when the computer starts.
+The start is the ordinary one (the key and the config are pushed), and the run
+itself is the guest's: the host decides only when the computer starts.
+
+An explicit stop by the person wins over the automations. Why a computer is off
+is recorded with it (`computers.stop_reason`: `idle` for the sleep above,
+`user` for the person's stop through `POST /computer/stop`, the CLI or the
+web, `exited` for a VM that stopped by itself), kept while the computer is
+STOPPING or STOPPED and cleared by any start. A computer the person stopped is
+not started for its automations, missed or due, until the person starts it
+again: they are paused while it is stopped, and the CLI (`status`, `computer
+stop`) and the web (the stop confirmation) say so. A message or a task for it
+still starts it, as it does for any stopped Dot, and from that start on it
+sleeps and wakes for its automations like any other. The person's stop of a
+computer that is already asleep is recorded too. A stop that the control plane
+was interrupted in is finished for the reason it was asked for.
+
+"Has work" is one definition, `Lifecycle.keepsAwake`: a task or inbound work for
+the Dot, or an automation due within the lead time (a past one included). The
+idle check, the idle stop under the lock and the restart after an unexpected
+exit all read it.
 
 A VM that stops
 without being asked (the guest powered itself off, QEMU crashed) is recorded
-as STOPPED, and started again at once when its Dot still has work.
+as STOPPED, and started again at once when `keepsAwake` says the Dot still has
+work.
+
+`next_automation_at` arrives only from a guest that ran. A Dot that was asleep
+when migration `0010` was applied has none stored, so it is not woken for its
+automations (and misses their runs) until it starts for another reason: a
+message, a task, or the person. Its guest then reports its next run at that
+start, and the automations are woken for from there on. The host does not boot
+every sleeping Dot once at an upgrade to ask.
 
 ### 9.6 API
 

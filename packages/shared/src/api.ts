@@ -9,7 +9,7 @@
 import type { DotConfig } from "./config.js";
 import type { ChannelKind, ChannelStatus, MessageOrigin, StoredEvent } from "./events.js";
 import type { BrowserIdentity, FileEntry, SystemAnswer } from "./protocol.js";
-import type { ApprovalStatus, DotState, TaskState, VmState } from "./states.js";
+import type { ApprovalStatus, DotState, StopReason, TaskState, VmState } from "./states.js";
 
 export interface DotRecord {
   id: string;
@@ -50,6 +50,11 @@ export interface ComputerRecord {
    * nothing was reported. A computer that is stopped is started shortly before this time (architecture section 9.5).
    */
   next_automation_at: string | null;
+  /**
+   * Why the computer is off (or going off): set while it is STOPPING or STOPPED, null otherwise. A computer the person
+   * stopped (`user`) is not started for its automations until the person starts it again (architecture section 9.5).
+   */
+  stop_reason: StopReason | null;
   /** The last lifecycle failure (start, READY procedure, stop), null after a success. */
   last_error: string | null;
   updated_at: string;

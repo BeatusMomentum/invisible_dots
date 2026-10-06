@@ -152,6 +152,44 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect((await db.computers.get(dot.id))?.next_automation_at).toBeNull();
   });
 
+  it("computers: stop_reason is kept through STOPPING and STOPPED and cleared by any other state", async () => {
+    const dot = await seedDot(db, "stop-reason");
+    expect((await db.computers.get(dot.id))?.stop_reason).toBeNull();
+
+    // A reason given with STOPPING stays for the STOPPED that follows (the interrupted stop and its recovery rely on it).
+    expect((await db.computers.setState(dot.id, "STOPPING", undefined, "idle"))?.stop_reason).toBe("idle");
+    expect((await db.computers.setState(dot.id, "STOPPED"))?.stop_reason).toBe("idle");
+    // The person's stop of a computer that is already off replaces it.
+    expect((await db.computers.setState(dot.id, "STOPPED", undefined, "user"))?.stop_reason).toBe("user");
+    expect((await db.computers.setState(dot.id, "STOPPED", null))?.stop_reason).toBe("user");
+    // Running again, in any way, clears it.
+    expect((await db.computers.setState(dot.id, "STARTING"))?.stop_reason).toBeNull();
+    expect((await db.computers.setState(dot.id, "STOPPED", null, "exited"))?.stop_reason).toBe("exited");
+    expect((await db.computers.setState(dot.id, "ERROR", "boom"))?.stop_reason).toBeNull();
+    await expect(db.query("UPDATE computers SET stop_reason = 'bored' WHERE dot_id = $1", [dot.id])).rejects.toThrow();
+  });
+
+  it("computers: stoppedWithAutomationBy leaves out the computers the person stopped, until they run again", async () => {
+    const dot = await seedDot(db, "stopped-by-person");
+    await db.computers.setNextAutomation(dot.id, Date.parse("2030-01-01T10:00:00Z"));
+    const by = new Date("2030-01-01T10:30:00Z");
+    const listed = async () => (await db.computers.stoppedWithAutomationBy(by)).includes(dot.id);
+
+    await db.computers.setState(dot.id, "STOPPED", null, "user");
+    expect(await listed()).toBe(false);
+    await db.computers.setState(dot.id, "STOPPED", null, "idle");
+    expect(await listed()).toBe(true);
+    await db.computers.setState(dot.id, "STOPPED", null, "exited");
+    expect(await listed()).toBe(true);
+    // A computer stopped before the reason was recorded counts as not stopped by the person.
+    await db.query("UPDATE computers SET stop_reason = NULL WHERE dot_id = $1", [dot.id]);
+    expect(await listed()).toBe(true);
+    await db.computers.setState(dot.id, "STOPPED", null, "user");
+    await db.computers.setState(dot.id, "RUNNING", null);
+    await db.computers.setState(dot.id, "STOPPED", null, "idle");
+    expect(await listed()).toBe(true);
+  });
+
   it("computers: stoppedWithAutomationBy lists the stopped computers whose automation is due by then, earliest first", async () => {
     const at = (iso: string) => Date.parse(iso);
     const seed = async (name: string, state: "STOPPED" | "RUNNING", nextAt: number | null, status: "IDLE" | "ERROR" | "DISABLED" | "CREATING" = "IDLE") => {

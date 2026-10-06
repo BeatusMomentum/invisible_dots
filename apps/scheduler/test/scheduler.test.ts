@@ -461,11 +461,19 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
       expect(await scheduler.idleCheck()).toEqual([dot.id]);
     });
 
+    /** The Dot sleeps as the idle check puts it to sleep: nothing due within the lead, idle for its whole timeout. */
+    async function sleepIdle(scheduler: Scheduler, clock: ManualClock, dotId: string, idleMs = 11 * MIN) {
+      clock.advance(idleMs);
+      expect(await scheduler.idleCheck()).toEqual([dotId]);
+      await scheduler.settle();
+      expect(await db.computers.get(dotId)).toMatchObject({ state: "STOPPED", stop_reason: "idle" });
+    }
+
     it("starts a stopped Dot shortly before its automation is due, and not before", async () => {
       const { scheduler, driver, clock } = makeWithLead();
       const dot = await readyDot(scheduler, "sleeping-job", "10m");
-      const at = await reportDueIn(scheduler, clock, dot.id, 30 * MIN);
-      await scheduler.lifecycle.stop(dot.id, "user");
+      const at = await reportDueIn(scheduler, clock, dot.id, 60 * MIN);
+      await sleepIdle(scheduler, clock, dot.id);
       const boots = driver.guestOf(dot.id).boots;
 
       await scheduler.pass();
@@ -485,30 +493,140 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
       expect(driver.guestOf(dot.id).openrouterKey).toBe("sk-or-test");
     });
 
-    it("starts a stopped Dot whose automation was due while its computer was off, once", async () => {
+    it("wakes a Dot for a missed run once: the guest makes it, the stored time moves on, and the Dot sleeps again", async () => {
       const { scheduler, driver, clock } = makeWithLead();
       const dot = await readyDot(scheduler, "missed-job", "10m");
-      await reportDueIn(scheduler, clock, dot.id, 5 * MIN);
-      await scheduler.lifecycle.stop(dot.id, "user");
+      const guest = driver.guestOf(dot.id);
+      guest.now = () => clock.now().getTime();
+      const at = clock.now().getTime() + 60 * MIN;
+      guest.putAutomation(automation({ schedule: { kind: "every", every_ms: 6 * 60 * MIN }, next_run_at_ms: at }));
+      await waitFor(async () => (await db.computers.get(dot.id))?.next_automation_at === new Date(at).toISOString(), "the report stored");
+      await sleepIdle(scheduler, clock, dot.id);
       clock.advance(3 * 60 * MIN);
-      const boots = driver.guestOf(dot.id).boots;
+      const boots = guest.boots;
 
       await scheduler.pass();
       await waitFor(async () => (await db.computers.get(dot.id))?.state === "RUNNING", "started for the missed run");
       await scheduler.settle();
+      // The guest made the run at its boot and told the host when the next one is: the past time is gone.
+      const ranAt = clock.now().getTime();
+      const next = ranAt + 6 * 60 * MIN;
+      expect(guest.automations.get("job_1")).toMatchObject({ last_run_at_ms: ranAt, next_run_at_ms: next });
+      await waitFor(async () => (await db.computers.get(dot.id))?.next_automation_at === new Date(next).toISOString(), "the next run stored");
+      expect(await scheduler.lifecycle.keepsAwake(dot.id)).toBe(false);
+
+      // So the passes that follow find nothing to start, and the idle check puts the Dot to sleep again.
       await scheduler.pass();
       await scheduler.settle();
+      expect(guest.boots).toBe(boots + 1);
+      await sleepIdle(scheduler, clock, dot.id);
+      await scheduler.pass();
+      await scheduler.settle();
+      expect(guest.boots).toBe(boots + 1);
+      expect(guest.automations.get("job_1")?.last_run_at_ms).toBe(ranAt);
+    });
 
+    it("keeps a Dot the person stopped off, whatever its automations say, until the person starts it again", async () => {
+      const { scheduler, driver, clock } = makeWithLead();
+      const dot = await readyDot(scheduler, "stopped-by-me", "10m");
+      const guest = driver.guestOf(dot.id);
+      guest.now = () => clock.now().getTime();
+      const at = clock.now().getTime() + 5 * MIN;
+      guest.putAutomation(automation({ schedule: { kind: "every", every_ms: 60 * MIN }, next_run_at_ms: at }));
+      await waitFor(async () => (await db.computers.get(dot.id))?.next_automation_at === new Date(at).toISOString(), "the report stored");
+
+      await scheduler.stopComputer(dot.id);
+      await scheduler.settle();
+      expect(await db.computers.get(dot.id)).toMatchObject({ state: "STOPPED", stop_reason: "user" });
+      const boots = guest.boots;
+
+      // The run is past, then an hour of runs are: the Dot stays as the person left it.
+      clock.advance(10 * MIN);
+      await scheduler.pass();
+      clock.advance(60 * MIN);
+      await scheduler.pass();
+      await scheduler.settle();
+      expect(guest.boots).toBe(boots);
+      expect((await db.computers.get(dot.id))?.state).toBe("STOPPED");
+
+      // The person starts it: the guest makes the run it missed, and the reason is gone.
+      await scheduler.startComputer(dot.id);
+      await waitFor(async () => (await db.dots.get(dot.id))?.status === "READY", "READY");
+      expect((await db.computers.get(dot.id))?.stop_reason).toBeNull();
+      const ranAt = clock.now().getTime();
+      expect(guest.automations.get("job_1")?.last_run_at_ms).toBe(ranAt);
+
+      // From then on it sleeps and wakes for its automations like any other. The guest's report of the next run is
+      // activity: the idle timeout counts from it, so it is stored before the clock moves.
+      await waitFor(async () => (await db.computers.get(dot.id))?.next_automation_at === new Date(ranAt + 60 * MIN).toISOString(), "the next run stored");
+      await scheduler.settle();
+      clock.advance(11 * MIN);
+      expect(await scheduler.idleCheck()).toEqual([dot.id]);
+      await scheduler.settle();
+      expect((await db.computers.get(dot.id))?.stop_reason).toBe("idle");
+      clock.advance(60 * MIN);
+      await scheduler.pass();
+      await waitFor(async () => (await db.computers.get(dot.id))?.state === "RUNNING", "woken for the next run");
+      expect(guest.boots).toBe(boots + 2);
+    });
+
+    it("records the person's stop of a computer that is already asleep, and a message still starts it", async () => {
+      const { scheduler, driver, clock } = makeWithLead();
+      const dot = await readyDot(scheduler, "asleep-then-stopped", "10m");
+      await reportDueIn(scheduler, clock, dot.id, 60 * MIN);
+      await sleepIdle(scheduler, clock, dot.id);
+      const boots = driver.guestOf(dot.id).boots;
+
+      await scheduler.stopComputer(dot.id);
+      await scheduler.settle();
+      expect((await db.computers.get(dot.id))?.stop_reason).toBe("user");
+      clock.advance(2 * 60 * MIN);
+      await scheduler.pass();
+      await scheduler.settle();
+      expect(driver.guestOf(dot.id).boots).toBe(boots);
+
+      // The person's stop is about the automations: their own message still starts the computer.
+      await scheduler.sendMessage(dot.id, "are you there");
+      await scheduler.settle();
       expect(driver.guestOf(dot.id).boots).toBe(boots + 1);
+      expect((await db.computers.get(dot.id))?.stop_reason).toBeNull();
+    });
+
+    it("starts a VM that stopped by itself at once when a run is due, by the same rule as the idle sleep", async () => {
+      const { scheduler, driver, clock } = makeWithLead();
+      const dot = await readyDot(scheduler, "self-stopper-job", "10m");
+      await reportDueIn(scheduler, clock, dot.id, LEAD_MS - 10_000);
+      const guest = driver.guestOf(dot.id);
+      const boots = guest.boots;
+
+      // No pass runs here: it is the exit itself that starts the computer again, not the next round of the scheduler.
+      driver.crash(dot.id);
+      await waitFor(async () => (await db.events.list({ dotId: dot.id, types: ["computer.stopped"] })).some((e) => e.data.reason === "exited"), "stop recorded");
+      await waitFor(() => guest.boots === boots + 1 && scheduler.lifecycle.isReady(dot.id), "started again");
+    });
+
+    it("leaves a VM that stopped by itself off when nothing is due, and records that it exited", async () => {
+      const { scheduler, driver, clock } = makeWithLead();
+      const dot = await readyDot(scheduler, "self-stopper-idle", "10m");
+      await reportDueIn(scheduler, clock, dot.id, 5 * 60 * MIN);
+      const boots = driver.guestOf(dot.id).boots;
+
+      driver.crash(dot.id);
+      await waitFor(async () => (await db.computers.get(dot.id))?.state === "STOPPED", "stop recorded");
+      await scheduler.settle();
+      expect(await db.computers.get(dot.id)).toMatchObject({ state: "STOPPED", stop_reason: "exited" });
+      expect(driver.guestOf(dot.id).boots).toBe(boots);
     });
 
     it("leaves a stopped Dot alone that has no automation to run, or whose Dot needs the person", async () => {
       const { scheduler, driver, clock } = makeWithLead();
       const nothing = await readyDot(scheduler, "stopped-nothing", "10m");
       const broken = await readyDot(scheduler, "stopped-broken", "10m");
-      await reportDueIn(scheduler, clock, broken.id, MIN);
-      await scheduler.lifecycle.stop(nothing.id, "user");
-      await scheduler.lifecycle.stop(broken.id, "user");
+      await reportDueIn(scheduler, clock, broken.id, 30 * MIN);
+      // Both slept by themselves (nothing due within the lead): it is the Dot's status that keeps the second one off.
+      clock.advance(11 * MIN);
+      expect((await scheduler.idleCheck()).sort()).toEqual([nothing.id, broken.id].sort());
+      await scheduler.settle();
       await db.dots.setStatus(broken.id, "ERROR", "the person has to look");
       const boots = [driver.guestOf(nothing.id).boots, driver.guestOf(broken.id).boots];
 
@@ -1005,6 +1123,29 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     expect(await db.secrets.get("global", "openrouter_api_key")).toBe("sk-or-test");
   });
 
+  it("recovery: a stop that was interrupted is finished for the reason it was asked for", async () => {
+    const driver = new FakeDriver();
+    const first = make(driver).scheduler;
+    const byIdle = await readyDot(first, "cut-idle");
+    const byPerson = await readyDot(first, "cut-person");
+    const offByIdle = await readyDot(first, "cut-off");
+    await first.close();
+    open.splice(open.indexOf(first), 1);
+
+    // The control plane went down between STOPPING and the end of the stop: two VMs still run, one is already off.
+    await db.computers.setState(byIdle.id, "STOPPING", undefined, "idle");
+    await db.computers.setState(byPerson.id, "STOPPING", undefined, "user");
+    await db.computers.setState(offByIdle.id, "STOPPING", undefined, "idle");
+    driver.crash(offByIdle.id);
+
+    const { scheduler } = make(driver, { dispatchIntervalMs: 60_000, idleCheckIntervalMs: 60_000 });
+    await scheduler.start();
+    await scheduler.settle();
+    expect(await db.computers.get(byIdle.id)).toMatchObject({ state: "STOPPED", stop_reason: "idle" });
+    expect(await db.computers.get(byPerson.id)).toMatchObject({ state: "STOPPED", stop_reason: "user" });
+    expect(await db.computers.get(offByIdle.id)).toMatchObject({ state: "STOPPED", stop_reason: "idle" });
+  });
+
   it("recovery: reattaches to running VMs, marks powered-off ones STOPPED and delivers undelivered tasks", async () => {
     const driver = new FakeDriver();
     const first = make(driver).scheduler;
@@ -1025,7 +1166,7 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     // Reattached through the recorded port: no second QEMU was spawned for the survivor.
     expect(driver.calls.filter((c) => c === `start:${alive.id}`)).toHaveLength(1);
     expect(scheduler.lifecycle.isReady(alive.id)).toBe(true);
-    expect(await db.computers.get(dead.id)).toMatchObject({ state: "STOPPED", guest_port: null, pid: null });
+    expect(await db.computers.get(dead.id)).toMatchObject({ state: "STOPPED", guest_port: null, pid: null, stop_reason: "exited" });
     expect((await db.dots.get(dead.id))?.status).toBe("IDLE");
     // Claimed before the restart, sent after it from the outbox: one run, one task.created.
     const runs = await db.tasks.runs(orphan.id);

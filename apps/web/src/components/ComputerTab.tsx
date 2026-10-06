@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, computerAction, type ComputerAction } from "../lib/api";
-import { allowedActions, computerView, type Usage } from "../lib/computer";
+import { allowedActions, computerView, confirmText, type Usage } from "../lib/computer";
 import { formatBytes, formatDate, formatDuration } from "../lib/format";
 import { useDot } from "./DotShell";
 import { useLiveRefresh } from "./events";
@@ -42,7 +42,7 @@ export function ComputerTab() {
   const running = view.state === "RUNNING" || view.state === "IDLE";
 
   async function act(action: ComputerAction) {
-    if (action !== "start" && !window.confirm(`${action === "stop" ? "Stop" : "Reboot"} this Dot's computer?`)) return;
+    if (action !== "start" && !window.confirm(confirmText(action))) return;
     const ok = await power.run(() => computerAction(api, dotId, action));
     if (ok) computer.reload();
   }

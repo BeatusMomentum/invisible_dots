@@ -19,6 +19,7 @@ import {
   type DotState,
   type HealthAnswer,
   type OutboundEvent,
+  type StopReason,
   type StoredEvent,
   type VmState,
 } from "@invisible-dots/shared";
@@ -70,7 +71,8 @@ export interface LifecycleDeps {
   onReady?: (dotId: string) => void;
 }
 
-export type StopReason = "idle" | "user";
+/** Why a stop is asked for: the idle sleep, or the person (`exited` is only ever recorded, never asked for). */
+export type StopRequest = Exclude<StopReason, "exited">;
 
 /** Part of the error a Dot gets when READY failed only for want of a key; setting a key retries those Dots. */
 export const MISSING_KEY_MESSAGE = "no OpenRouter API key is configured";
@@ -148,9 +150,9 @@ export class Lifecycle {
     return this.#driver.guest({ dotId, port: computer.guest_port }, await this.#db.computers.token(dotId));
   }
 
-  async #setVmState(dotId: string, state: VmState, lastError?: string | null): Promise<void> {
+  async #setVmState(dotId: string, state: VmState, lastError?: string | null, stopReason?: StopReason): Promise<void> {
     const before = await this.#db.computers.get(dotId);
-    await this.#db.computers.setState(dotId, state, lastError);
+    await this.#db.computers.setState(dotId, state, lastError, stopReason);
     if (before?.state !== state) await this.#events.appendHost(dotId, "computer.state", { state });
   }
 
@@ -409,12 +411,19 @@ export class Lifecycle {
     return this.#db.computers.stoppedWithAutomationBy(new Date(this.#clock.now().getTime() + this.#opts.automationWakeLeadMs));
   }
 
-  /** Put the Dot to sleep, or stop it on the user's request (section 9.5). */
-  stop(dotId: string, reason: StopReason): Promise<void> {
+  /**
+   * Put the Dot to sleep, or stop it on the user's request (section 9.5). The reason is recorded with the computer: a
+   * computer the person stopped is not started for its automations until the person starts it again, also when it was
+   * already asleep.
+   */
+  stop(dotId: string, reason: StopRequest): Promise<void> {
     return this.#mutex.run(dotId, async () => {
       const computer = await this.#db.computers.get(dotId);
       if (!computer) throw new ControlPlaneError(404, "not_found", `Dot ${dotId} has no computer`);
-      if (computer.state === "STOPPED") return;
+      if (computer.state === "STOPPED") {
+        if (reason === "user") await this.#setVmState(dotId, "STOPPED", undefined, "user");
+        return;
+      }
       if (computer.state === "DELETING" || computer.state === "PROVISIONING") {
         throw new ControlPlaneError(409, "invalid_state", `Dot ${dotId} cannot be stopped while ${computer.state}`);
       }
@@ -425,7 +434,7 @@ export class Lifecycle {
         return;
       }
       this.#log.info("stopping computer", { dotId, reason });
-      await this.#setVmState(dotId, "STOPPING");
+      await this.#setVmState(dotId, "STOPPING", undefined, reason);
       if (wasReady) {
         try {
           const guest = await this.guest(dotId);
@@ -443,7 +452,7 @@ export class Lifecycle {
         return this.#fail(dotId, "stop", error);
       }
       await this.#db.computers.setProcess(dotId, null);
-      await this.#setVmState(dotId, "STOPPED", null);
+      await this.#setVmState(dotId, "STOPPED", null, reason);
       await this.#events.appendHost(dotId, "computer.stopped", { reason, forced: result.forced });
       await this.#setDotStatus(dotId, "IDLE");
     });
@@ -619,8 +628,9 @@ export class Lifecycle {
   /**
    * The QEMU of a READY Dot exited without a stop from the control plane: the
    * guest powered itself off, or QEMU crashed or was killed. The computer is
-   * recorded as stopped; when the Dot still has work, it is started again so
-   * its guest picks that work up (section 9.5).
+   * recorded as stopped; when the Dot still has work (`keepsAwake`: a task, or
+   * an automation due within the wake lead time), it is started again so its
+   * guest picks that work up (section 9.5).
    */
   async #exited(dotId: string): Promise<void> {
     const recorded = await this.#mutex.run(dotId, async () => {
@@ -631,12 +641,12 @@ export class Lifecycle {
       await this.#stopPump(dotId);
       this.#log.warn("the VM stopped without being asked to", { dotId });
       await this.#db.computers.setProcess(dotId, null);
-      await this.#setVmState(dotId, "STOPPED", null);
+      await this.#setVmState(dotId, "STOPPED", null, "exited");
       await this.#events.appendHost(dotId, "computer.stopped", { reason: "exited", forced: false });
       await this.#setDotStatus(dotId, "IDLE");
       return true;
     });
-    if (recorded && (await this.#db.tasks.hasWork(dotId, this.#clock.now()))) {
+    if (recorded && (await this.keepsAwake(dotId))) {
       this.#log.info("the Dot still has work, starting its computer again", { dotId });
       this.#runInBackground("restart after an unexpected stop", dotId, () => this.ensureReady(dotId));
     }
@@ -710,8 +720,9 @@ export class Lifecycle {
       if (vm.state === "RUNNING") {
         if (computer.state === "STOPPING") {
           this.#log.info("recovery: finishing an interrupted stop", { dotId });
+          // The reason the stop was asked for was recorded with STOPPING; setting RUNNING clears it.
           await this.#db.computers.setState(dotId, "RUNNING");
-          track(dotId, "stop", this.stop(dotId, "user"));
+          track(dotId, "stop", this.stop(dotId, computer.stop_reason === "idle" ? "idle" : "user"));
         } else if (vm.guestPort === null) {
           const message = "QEMU runs but has no forward to the guest port, so the guest cannot be reached";
           await this.#setVmState(dotId, "ERROR", message);
@@ -728,7 +739,8 @@ export class Lifecycle {
         if (computer.state !== "STOPPED" || computer.guest_port !== null || computer.pid !== null) {
           this.#log.info("recovery: computer is off", { dotId, was: computer.state });
           await this.#db.computers.setProcess(dotId, null);
-          await this.#setVmState(dotId, "STOPPED");
+          // A stop that was under way keeps its reason; a VM that went off with the control plane down exited by itself.
+          await this.#setVmState(dotId, "STOPPED", undefined, computer.stop_reason ?? "exited");
           const dot = await this.#db.dots.get(dotId);
           if (dot && dot.status !== "DISABLED" && dot.status !== "ERROR") await this.#setDotStatus(dotId, "IDLE");
         }
