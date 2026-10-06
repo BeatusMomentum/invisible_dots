@@ -7,6 +7,7 @@ import { api } from "../../lib/api";
 import { childPath, previewPlan } from "../../lib/files";
 import { formatBytes } from "../../lib/format";
 import { ErrorAlert } from "../ErrorAlert";
+import { Markdown } from "../markdown";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 
@@ -33,8 +34,9 @@ async function download(dotId: string, folder: string, name: string): Promise<vo
  * One file of the Dot's computer: its text, or its picture, and a button that saves it. Only what a page may safely
  * show is shown (`fileType` says which: images a page draws, text including markup and script as plain text), and a
  * file too big for a glance, or of another kind, is offered as a download alone. Nothing here can change the file.
+ * `markdown` shows a text file as Markdown (the Dot's memory notes are written in it) instead of as it is written.
  */
-export function FilePreview({ dotId, folder, entry }: { dotId: string; folder: string; entry: FileEntry }) {
+export function FilePreview({ dotId, folder, entry, markdown = false }: { dotId: string; folder: string; entry: FileEntry; markdown?: boolean }) {
   const plan = previewPlan(entry);
   const path = childPath(folder, entry.name);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -110,6 +112,10 @@ export function FilePreview({ dotId, folder, entry }: { dotId: string; folder: s
         <p className="text-sm text-muted-foreground">This file is not text, whatever its name says. Download it to open it.</p>
       ) : loaded.text === "" ? (
         <p className="text-sm text-muted-foreground">The file is empty.</p>
+      ) : markdown ? (
+        <div tabIndex={0} aria-label={`Contents of ${entry.name}`} className="max-h-[32rem] overflow-auto">
+          <Markdown>{loaded.text}</Markdown>
+        </div>
       ) : (
         <pre tabIndex={0} aria-label={`Contents of ${entry.name}`} className="max-h-[32rem] overflow-auto rounded-md bg-muted p-3 font-mono text-xs break-words whitespace-pre-wrap">
           {loaded.text}

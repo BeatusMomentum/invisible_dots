@@ -3,7 +3,7 @@
  * sends, answered from memory, and `/api/stream` as a live SSE body the test pushes events into. `install()` puts
  * it behind the global `fetch`, which is where the web client's SDK looks.
  */
-import { COMPUTER_STOPPED, computerIsUp, MAX_EVENT_PAGE, type ApprovalRecord, type BrowserIdentity, type ComputerAnswer, type DoctorCheck, type DotConfig, type DotSummary, type StoredEvent, type SystemAnswer, type ToolInfo } from "@invisible-dots/shared/browser";
+import { COMPUTER_STOPPED, computerIsUp, MAX_EVENT_PAGE, type ApprovalRecord, type Automation, type BrowserIdentity, type ComputerAnswer, type DoctorCheck, type DotConfig, type DotSummary, type StoredEvent, type SystemAnswer, type ToolInfo } from "@invisible-dots/shared/browser";
 import type { TaskRecord } from "@invisible-dots/sdk";
 import { vi } from "vitest";
 
@@ -11,7 +11,8 @@ export function dotRecord(id: string, change: Partial<DotSummary> = {}): DotSumm
   return {
     id,
     name: id,
-    config: { goal: `the goal of ${id}` } as DotConfig,
+    // The API parses every config with the schema's defaults, so these two always exist on a real record.
+    config: { goal: `the goal of ${id}`, permissions: {}, memory: { enabled: true } } as unknown as DotConfig,
     status: "READY",
     error: null,
     created_at: "2026-01-01T00:00:00Z",
@@ -83,6 +84,16 @@ export class FakeControlPlane {
     { name: "exec_session", permission: "computer.exec", offered: true, description: "Use a command session." },
     { name: "read_file", permission: "files.read", offered: true, description: "Read a file." },
   ];
+  /** The automations `GET /api/dots/:id/automations` lists; null answers 409 computer_stopped, as a stopped computer does. */
+  automations: Automation[] | null = [];
+  /** Every pause, resume and delete of an automation, as "PATCH id {body}" or "DELETE id", in order. */
+  automationActions: string[] = [];
+  /** Answer an automation's pause, resume or delete with this error instead of doing it. */
+  failAutomation: { status: number; error: string; message: string } | null = null;
+  /** The body of every `PATCH /api/dots/:id`, as the browser sent it. */
+  updates: Array<{ config: unknown; expected_config_version?: number }> = [];
+  /** Answer `PATCH /api/dots/:id` with this error instead of saving. */
+  failUpdate: { status: number; error: string; message: string } | null = null;
   /** The most events one `GET .../events` page holds (the real route's is 1000). */
   eventPage = MAX_EVENT_PAGE;
   /** Answer `GET .../events` with this status instead of the log. */
@@ -279,6 +290,18 @@ export class FakeControlPlane {
       const record = this.dots.find((d) => d.id === address) ?? this.dots.find((d) => d.name === address);
       if (!record) return json({ error: "not_found", message: "no such Dot" }, 404);
       const rest = dot[2] ?? "";
+      if (rest === "" && method === "PATCH") {
+        const body = JSON.parse(String(init?.body)) as { config: DotConfig; expected_config_version?: number };
+        this.updates.push(body);
+        if (this.failUpdate) return json({ error: this.failUpdate.error, message: this.failUpdate.message }, this.failUpdate.status);
+        if (body.expected_config_version !== undefined && body.expected_config_version !== record.config_version) {
+          return json({ error: "dot_changed", message: `Dot ${record.name} changed after you read it` }, 409);
+        }
+        record.config = body.config;
+        record.config_version += 1;
+        this.push(record.id, "dot.updated", { name: record.name });
+        return json(record);
+      }
       if (rest === "") return json(record);
       if (rest === "tasks" && method === "GET") return json({ tasks: this.tasks.filter((t) => t.dot_id === record.id) });
       if (rest === "tasks" && method === "POST") {
@@ -371,6 +394,24 @@ export class FakeControlPlane {
       if (/^browser-identities\/[^/]+\/frame$/.test(rest)) {
         if (this.failPicture) return json({ error: this.failPicture.error, message: this.failPicture.message }, this.failPicture.status);
         return new Response(Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]), { headers: { "content-type": "image/jpeg" } });
+      }
+      if (rest === "automations" && method === "GET") {
+        return this.automations === null ? json({ error: "computer_stopped", message: "the computer is STOPPED" }, 409) : json({ automations: this.automations });
+      }
+      const automation = /^automations\/([^/]+)$/.exec(rest);
+      if (automation && (method === "PATCH" || method === "DELETE")) {
+        const id = decodeURIComponent(automation[1]!);
+        const body = method === "PATCH" ? (JSON.parse(String(init?.body)) as { enabled: boolean }) : null;
+        this.automationActions.push(body === null ? `DELETE ${id}` : `PATCH ${id} ${JSON.stringify(body)}`);
+        if (this.failAutomation) return json({ error: this.failAutomation.error, message: this.failAutomation.message }, this.failAutomation.status);
+        const found = (this.automations ?? []).find((a) => a.id === id);
+        if (!found) return json({ error: "not_found", message: `no automation "${id}"` }, 404);
+        if (body === null) {
+          this.automations = (this.automations ?? []).filter((a) => a.id !== id);
+          return new Response(null, { status: 204 });
+        }
+        Object.assign(found, { enabled: body.enabled, next_run_at_ms: body.enabled ? Date.now() + 60_000 : null });
+        return json(found);
       }
       if (rest === "tools") return this.tools === null ? json({ error: "computer_stopped", message: "the computer is STOPPED" }, 409) : json({ tools: this.tools });
       if (rest === "usage") return json({ dot_id: record.id, since: searchParams.get("since"), spent_usd: searchParams.get("since") ? this.spentUsd : this.spentTotalUsd });

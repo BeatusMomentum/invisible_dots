@@ -259,6 +259,15 @@ describe("what the Dot did between its messages", () => {
     expect(screen.queryByText("from-a-task.md")).toBeNull();
   });
 
+  it("leads the chip of a saved note to the note in the Memory page", async () => {
+    plane.store("d1", "user.message", { text: "remember Rome" });
+    plane.store("d1", "tool.called", call({ tool: "write_file", target: "/home/dot/memory/trips/rome.md" }));
+    plane.store("d1", "memory.written", { key: "trips/rome.md" });
+    await renderChat();
+    const link = (await screen.findByText("trips/rome.md")).closest("a");
+    expect(link?.getAttribute("href")).toBe("/dots/d1/memory?note=trips%2Frome.md");
+  });
+
   /** An approval the chat asked for: in the log, and in the host's list of what waits. */
   function ask(id: string, change: { tool?: string; permission?: string; arguments?: Record<string, unknown>; reason?: string } = {}) {
     const data = { tool: "exec", permission: "computer.exec", arguments: {}, reason: "", ...change };

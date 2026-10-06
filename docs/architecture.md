@@ -1908,6 +1908,38 @@ reads while the computer is off: what it was given, what it uses (`GET /computer
 embeds the guest's `system` while it runs), the images, why the last start failed,
 the model spend today and in total, and Start, Reboot and Stop.
 
+The Memory page (`/dots/<id>/memory`) has two views, named in the address
+(`?view=notes|automations`, Notes when it says nothing). Both read the Dot's own
+computer, so a computer that is not running is said, with Start, as on the Computer
+page. Notes are the files the Dot wrote under `/home/dot/memory`, read only (the Dot
+owns them): there is no notes route, so the list walks the folder with
+`GET /files/list`, level by level, at most 40 folders and 4 deep (it says when it
+stopped short), newest written first, with a search by name. The open note is in the
+address (`?note=trips/rome.md`, the key `memory.written` reports) and is looked up in
+that list, never read by the path in the address; a `.md` note is shown as Markdown
+by the one renderer the chat uses and any other text as it is written. A note the
+Dot writes while the page is open (`memory.written`) is tinted in the list and shown
+as a chip ("added" when the list had no such note, "updated" when it had) that leads
+to it, and the list is read again after it and after a turn ends, which also catches
+a note written through a command, an event the engine does not report. The chat's
+"Remembered" chip leads to the same address. Above the notes, a switch sets
+`memory.enabled`: the page sends the whole config with that field changed and
+`expected_config_version`, the version of the config it read, so a config that
+changed meanwhile (another tab, an "Always allow") is refused with 409
+`dot_changed`, said, and read again, never undone; with memory off the engine
+offers no memory tool and does not name the notes in the prompt, and the notes
+on the disk stay readable. Automations are the jobs the Dot's cron tool made
+(`GET /automations`): the schedule in words (`lib/automations.ts` puts the
+common cron shapes in words and shows any other as the expression, always with
+the zone it is read in, which is the computer's when the job names none), the
+next run, how the last run ended and what the Dot is told, a switch that pauses
+or resumes it (`PATCH /automations/<id>`) and a delete after a question. The
+engine reports the last run only, not a history, so the card shows that one. The
+person does not create one here: an automation is the Dot's act and the
+`automations` permission asks by default, so the empty list says how one comes to
+be by what the config does with that permission. The list is read again when the
+cron tool is called, after a decision on an approval and when a run ends.
+
 ### 9.8 Messaging channels
 
 A person can talk to a Dot from a chat (Telegram, WhatsApp). This is the control

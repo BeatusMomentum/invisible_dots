@@ -13,6 +13,7 @@ export const DOT_TABS = [
   { slug: "tasks", label: "Tasks" },
   { slug: "timeline", label: "Timeline" },
   { slug: "computer", label: "Computer" },
+  { slug: "memory", label: "Memory" },
   { slug: "settings", label: "Settings" },
 ] as const;
 

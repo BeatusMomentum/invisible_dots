@@ -1,11 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { computerIsUp } from "@invisible-dots/shared/browser";
 import { COMPUTER_VIEW_LABELS, COMPUTER_VIEWS, computerHref, type ComputerQuery } from "../../lib/computer-view";
-import { cn } from "../../lib/utils";
 import { useDot } from "../DotShell";
 import { Skeleton } from "../ui/skeleton";
+import { ViewTabs } from "../view-tabs";
 import { BrowserTab } from "./browser-tab";
 import { ComputerOff } from "./computer-off";
 import { FilesTab } from "./files-tab";
@@ -26,24 +25,7 @@ export function ComputerView({ query }: { query: ComputerQuery }) {
 
   return (
     <div className="space-y-5">
-      <nav aria-label="Computer views">
-        <ul className="inline-flex gap-1 rounded-lg bg-muted p-1">
-          {COMPUTER_VIEWS.map((view) => (
-            <li key={view}>
-              <Link
-                href={computerHref(dotId, { view })}
-                aria-current={query.view === view ? "page" : undefined}
-                className={cn(
-                  "block rounded-md px-3 py-1 text-sm text-muted-foreground transition-colors hover:text-foreground",
-                  query.view === view && "bg-background font-medium text-foreground shadow-xs",
-                )}
-              >
-                {COMPUTER_VIEW_LABELS[view]}
-              </Link>
-            </li>
-          ))}
-        </ul>
-      </nav>
+      <ViewTabs label="Computer views" views={COMPUTER_VIEWS} labels={COMPUTER_VIEW_LABELS} current={query.view} hrefOf={(view) => computerHref(dotId, { view })} />
 
       <Body query={query} dotId={dotId} state={state} />
     </div>
