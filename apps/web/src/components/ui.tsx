@@ -44,7 +44,9 @@ export function useResource<T>(load: () => Promise<T>, key: string): Resource<T>
   }, []);
 
   useEffect(() => {
+    // Another key is another resource: what the last one said (its data, its error) is not this one's.
     setData(undefined);
+    setError(null);
     reload();
   }, [key, reload]);
 

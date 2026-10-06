@@ -70,6 +70,12 @@ describe("Needs you", () => {
     expect(cardNames()).toEqual(["early", "late"]);
     expect(within(cards()[0]!).getByText("fares")).toBeTruthy();
     expect(within(cards()[1]!).getByText("mailer")).toBeTruthy();
+    // Each card shows the face of its Dot (decorative: the name is said in words beside it), so cards of several Dots are told apart at a glance.
+    for (const [card, initial] of [[cards()[0]!, "F"], [cards()[1]!, "M"]] as const) {
+      const face = card.querySelector("[data-ring]");
+      expect(face?.textContent).toBe(initial);
+      expect(face?.closest("[aria-hidden=true]")).not.toBeNull();
+    }
     expect(screen.getByRole("heading", { name: /Waiting for your answer/ }).textContent).toContain("2");
     expect(within(screen.getByRole("navigation", { name: "Inbox sections" })).getByLabelText("2 need you")).toBeTruthy();
   });
@@ -301,6 +307,19 @@ describe("the keyboard", () => {
     expect(selected()).toEqual(["first"]);
   });
 
+  it("says which card is selected when j or k moves, since the selection is drawn and not focused", async () => {
+    await renderInbox();
+    await waitFor(() => expect(cards()).toHaveLength(3));
+    const spoken = () => screen.getAllByRole("status").map((status) => status.textContent).filter((text) => /\d of \d/.test(text ?? ""));
+    expect(spoken()).toEqual([]);
+    await userEvent.keyboard("j");
+    expect(spoken()).toEqual(["fares: Wants to open a page. 2 of 3."]);
+    await userEvent.keyboard("jj");
+    expect(spoken()).toEqual(["fares: Wants to run a command. 3 of 3."]);
+    await userEvent.keyboard("k");
+    expect(spoken()).toEqual(["fares: Wants to open a page. 2 of 3."]);
+  });
+
   it("allows the selected card once with a, and denies it with d, and moves nowhere by itself", async () => {
     await renderInbox();
     await waitFor(() => expect(cards()).toHaveLength(3));
@@ -442,7 +461,7 @@ describe("History", () => {
     const table = await screen.findByRole("table");
     expect(within(table).getAllByRole("row")).toHaveLength(51);
     const history = () => plane.approvalQueries.filter((q) => q.status?.includes("approved"));
-    expect(history()).toEqual([{ status: ["approved", "rejected", "expired"], limit: 50, order: "desc", before: null }]);
+    expect(history()).toEqual([{ status: ["approved", "rejected", "expired"], limit: 50, order: "desc", before: null, dot_id: null }]);
 
     await userEvent.click(screen.getByRole("button", { name: "Show older answers" }));
     await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(101));
@@ -480,10 +499,24 @@ describe("History", () => {
   });
 
   it("says so when none of the newest answers is under the filters while older ones remain", async () => {
+    // The Dot is chosen in the database; the permission is not (the route has no such filter), so it is the one a page can come up empty under.
     plane.approvals = Array.from({ length: 60 }, (_, i) => approvalRecord(`a${i}`, "d1", { status: "approved", resolved_at: hoursAgo(i + 1) }));
-    await renderInbox({ tab: "history", dot: "d2" });
+    await renderInbox({ tab: "history", permission: "files.write" });
     expect(await screen.findByText("None of the newest answers are under these filters.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Show older answers" })).toBeTruthy();
+  });
+
+  it("asks the control plane for the Dot's own answers, so that its history is not hunted for among every Dot's pages", async () => {
+    plane.approvals = [
+      ...Array.from({ length: 60 }, (_, i) => approvalRecord(`m${i}`, "d2", { status: "approved", resolved_at: hoursAgo(i + 1) })),
+      approvalRecord("mine", "d1", { status: "rejected", resolved_at: hoursAgo(500) }),
+    ];
+    await renderInbox({ tab: "history", dot: "d1" });
+    const table = await screen.findByRole("table");
+    // The one answer of this Dot is on the first page though sixty newer answers belong to another Dot.
+    expect(within(table).getAllByRole("row")).toHaveLength(2);
+    expect(plane.approvalQueries.filter((q) => q.status?.includes("approved")).map((q) => q.dot_id)).toEqual(["d1"]);
+    expect(screen.queryByRole("button", { name: "Show older answers" })).toBeNull();
   });
 
   it("reads the log again when an approval is answered, and says when it cannot be read", async () => {

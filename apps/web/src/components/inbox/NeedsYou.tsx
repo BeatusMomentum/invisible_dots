@@ -143,7 +143,7 @@ export function NeedsYou({ filter }: { filter: Filter }) {
   const unlinked = otherThings ? relinks.items.filter((relink) => filter.dotId === null || relink.dot_id === filter.dotId) : [];
   const waitingCount = asks.filter((ask) => !answers.settled.has(ask.id)).length;
 
-  const keys = useInboxKeys(asks, answers, true);
+  const keys = useInboxKeys(asks, answers, true, (dotId) => names.get(dotId) ?? dotId);
   const loading = (approvals.data === undefined && !approvals.error) || (dots.data === undefined && !dots.error);
   // "Nothing needs you" is said only once everything has been read, failed tasks and channels included: the approvals do not wait for them.
   const empty = !loading && !failedTasks.loading && !relinks.loading && asks.length === 0 && broken.length === 0 && failed.length === 0 && unlinked.length === 0;

@@ -9,6 +9,7 @@ import { relativeTime } from "../../lib/time";
 import { cn } from "../../lib/utils";
 import { ErrorAlert } from "../ErrorAlert";
 import { ApprovalCard as ApprovalCardElement } from "../elements/approval-card";
+import { DotAvatar } from "../shell/DotAvatar";
 import { FAMILY_ICON } from "../tool-family-icon";
 import { APPROVAL_NOTE_MAX } from "@invisible-dots/shared/browser";
 import { Button } from "../ui/button";
@@ -69,8 +70,16 @@ export function ApprovalCard({ ask, answers, dotName, selected = false, classNam
 
   const subtitle = (
     <>
-      {dotName ? <span className="font-medium text-foreground">{dotName}</span> : null}
-      {dotName ? " · " : null}
+      {dotName ? (
+        <>
+          {/* The Dot's face, so cards of several Dots are told apart at a glance; its name is said beside it. */}
+          <span aria-hidden="true" className="mr-1.5 inline-flex align-middle">
+            <DotAvatar id={ask.dotId} name={dotName} ring="waiting" size="xs" />
+          </span>
+          <span className="font-medium text-foreground">{dotName}</span>
+          {" · "}
+        </>
+      ) : null}
       <span>{info ? `${info.label} (${RISK_LABEL[info.risk].toLowerCase()})` : ask.permission}</span>
       {" · "}
       <Link href={where.href} className="underline underline-offset-2 hover:text-foreground">

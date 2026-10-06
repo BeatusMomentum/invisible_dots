@@ -68,7 +68,7 @@ export type TaskState = (typeof TASK_STATES)[number];
 /** A task in one of these states never runs again. */
 export const TERMINAL_TASK_STATES: readonly TaskState[] = ["COMPLETED", "FAILED", "CANCELLED"];
 
-/** How many of a Dot's tasks (the newest) `GET /api/dots/:id/tasks` answers with; older ones are not reachable. */
+/** How many of a Dot's tasks (the newest created first) `GET /api/dots/:id/tasks` answers with at most; `before` (the id of the last one of the page) goes on, older. */
 export const TASK_LIST_LIMIT = 200;
 
 /**

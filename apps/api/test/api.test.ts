@@ -484,7 +484,18 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     expect(newestOne.map((a) => a.id)).toEqual([ids[0]]);
     expect((await api.listApprovals(["approved", "rejected", "expired"], { order: "desc", limit: 1, before: ids[0]! })).map((a) => a.id)).toEqual([ids[1]]);
 
+    // Of one Dot, chosen in the database: by id or by name, and a Dot that does not exist has none.
+    const other = await readyDot("asks-rarely");
+    const otherAsk = driver.guestOf(other.id).requestApproval(undefined);
+    await waitFor(async () => (await api.listApprovals("pending", { dot: other.id })).length === 1, "the other Dot's approval");
+    expect((await api.listApprovals("pending", { dot: other.id })).map((a) => a.id)).toEqual([otherAsk]);
+    expect((await api.listApprovals("pending", { dot: "asks-rarely" })).map((a) => a.id)).toEqual([otherAsk]);
+    expect((await api.listApprovals(["approved", "rejected"], { dot: dot.id, order: "desc" })).map((a) => a.id)).toEqual([ids[0], ids[1]]);
+    expect(await api.listApprovals("pending", { dot: "dot_nobody" })).toEqual([]);
+
     const get = async (query: string) => (await fetch(`${base}/api/approvals?${query}`, { headers: { authorization: `Bearer ${TOKEN}` } })).status;
+    expect(await get("dot_id=")).toBe(400);
+    expect(await get(`dot_id=${dot.id}&dot_id=${other.id}`)).toBe(400);
     expect(await get("status=approved,maybe")).toBe(400);
     expect(await get("status=")).toBe(400);
     expect(await get("status=approved&status=rejected")).toBe(400);
@@ -528,6 +539,34 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     await waitFor(async () => (await api.messages(dot.id)).length === 2, "reply");
     expect((await api.messages(dot.id)).map((m) => m.role)).toEqual(["user", "assistant"]);
     await expect(api.sendMessage(dot.id, "  ")).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("tasks: the newest first, a page at a time, and a cursor that goes on through the rest", async () => {
+    const dot = await readyDot("many-tasks");
+    const other = await readyDot("other-tasks");
+    const made: string[] = [];
+    for (const description of ["one", "two", "three", "four", "five"]) {
+      made.push((await api.createTask(dot.id, { description })).id);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    const foreign = (await api.createTask(other.id, { description: "not mine" })).id;
+    const newestFirst = [...made].reverse();
+    expect((await api.listTasks(dot.id)).map((t) => t.id)).toEqual(newestFirst);
+    const first = await api.listTasks(dot.id, { limit: 2 });
+    expect(first.map((t) => t.id)).toEqual(newestFirst.slice(0, 2));
+    const second = await api.listTasks(dot.id, { limit: 2, before: first.at(-1)!.id });
+    expect(second.map((t) => t.id)).toEqual(newestFirst.slice(2, 4));
+    expect((await api.listTasks(dot.id, { limit: 2, before: second.at(-1)!.id })).map((t) => t.id)).toEqual(newestFirst.slice(4));
+    expect(await api.listTasks(dot.id, { before: made[0]! })).toEqual([]);
+    // Another Dot's task is no cursor here, and nothing of it is listed.
+    expect(await api.listTasks(dot.id, { before: foreign })).toEqual([]);
+
+    const get = async (query: string) => (await fetch(`${base}/api/dots/${dot.id}/tasks?${query}`, { headers: { authorization: `Bearer ${TOKEN}` } })).status;
+    expect(await get("limit=0")).toBe(400);
+    expect(await get("limit=201")).toBe(400);
+    expect(await get("limit=x")).toBe(400);
+    expect(await get("before=")).toBe(400);
+    expect(await get("limit=200&before=nobody")).toBe(200);
   });
 
   it("messages: the newest page of a long conversation, and a cursor that goes back through the rest", async () => {

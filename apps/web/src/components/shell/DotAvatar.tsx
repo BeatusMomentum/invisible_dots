@@ -11,6 +11,7 @@ const RING_CLASS: Record<RingState, string> = {
 };
 
 const SIZE_CLASS = {
+  xs: { outer: "size-6 border", initial: "text-[0.625rem]", badge: "size-2" },
   sm: { outer: "size-8", initial: "text-xs", badge: "size-2.5" },
   md: { outer: "size-10", initial: "text-sm", badge: "size-3" },
   lg: { outer: "size-12", initial: "text-base", badge: "size-3.5" },

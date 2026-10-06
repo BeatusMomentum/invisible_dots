@@ -1821,7 +1821,7 @@ DELETE /api/dots/:id                 destroys the VM and its disk, then deletes 
 POST   /api/dots/:id/messages        body: { text }
 GET    /api/dots/:id/messages        ?limit=&order=asc|desc&before=<event id>   conversation, from the event log (a user message carries `origin` when it came through a channel); oldest first by default, at most 500 a page; `order=desc` is the newest first and `before` (the `event_id` of the oldest message of the previous page, desc only) goes on, older, from there
 POST   /api/dots/:id/tasks           body: { description, priority?, scheduled_at? }
-GET    /api/dots/:id/tasks
+GET    /api/dots/:id/tasks           ?limit=&before=<task id>   the newest created first, at most 200 a page; `before` (the id of the last task of the previous page) goes on, older
 GET    /api/tasks/:id
 POST   /api/tasks/:id/cancel
 
@@ -1847,7 +1847,7 @@ DELETE /api/dots/:id/channels/:kind  unlink: the channel stops, its token (Whats
 POST   /api/dots/:id/channels/:kind/pairing   201 { code, deep_link, message, expires_at }: a one-time code, valid ten minutes; `message` is what to send the account to pair
 DELETE /api/dots/:id/channels/:kind/peers/:peer   revoke a paired person
 
-GET    /api/approvals                ?status=<a,b>&limit=&order=asc|desc&before=<id>   `status` is one or several of pending|approved|rejected|expired; oldest first by default, `order=desc` is the newest first by the time of the last change (the answer, for an answered one) and `before` (the id of the last row of the previous page, desc only) goes on from there
+GET    /api/approvals                ?status=<a,b>&dot_id=<id or name>&limit=&order=asc|desc&before=<id>   `dot_id` keeps the approvals of one Dot, in the database; `status` is one or several of pending|approved|rejected|expired; oldest first by default, `order=desc` is the newest first by the time of the last change (the answer, for an answered one) and `before` (the id of the last row of the previous page, desc only) goes on from there
 POST   /api/approvals/:id/approve    body: { note?, always?: true }   `always` also sets the approval's permission to `allow` in the Dot's config in the same transaction (then pushed like a PATCH, `dot.updated` logged); `approval.resolved` carries `always: true`
 POST   /api/approvals/:id/reject     body: { note? }
 

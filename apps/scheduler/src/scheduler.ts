@@ -460,9 +460,10 @@ export class Scheduler {
     return task;
   }
 
-  async listTasks(idOrName: string): Promise<TaskRecord[]> {
+  /** The Dot's tasks, the newest created first, at most TASK_LIST_LIMIT a page; `before` (the id of the last task of the previous page) goes on, older. */
+  async listTasks(idOrName: string, page: { limit?: number; before?: string } = {}): Promise<TaskRecord[]> {
     const dot = await this.requireDot(idOrName);
-    return this.db.tasks.listByDot(dot.id);
+    return this.db.tasks.listByDot(dot.id, page);
   }
 
   async getTask(id: string): Promise<TaskRecord> {
@@ -675,11 +676,13 @@ export class Scheduler {
   // Approvals
 
   /** The approvals of one status or several (every one when omitted); `page` is what the approvals repository's `list` takes. */
-  listApprovals(
+  async listApprovals(
     status?: ApprovalStatus | readonly ApprovalStatus[],
-    page: { limit?: number; order?: ListOrder; before?: string } = {},
+    page: { limit?: number; order?: ListOrder; before?: string; dot?: string } = {},
   ): Promise<ApprovalRecord[]> {
-    return this.db.approvals.list({ status, ...page });
+    const { dot, ...rest } = page;
+    // Of one Dot (by id or name; the history of a deleted Dot is read by id, as the event log's is), in the database.
+    return this.db.approvals.list({ status, ...rest, ...(dot === undefined ? {} : { dotId: await this.#historyDotId(dot) }) });
   }
 
   /**

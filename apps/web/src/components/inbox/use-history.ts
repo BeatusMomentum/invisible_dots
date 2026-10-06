@@ -20,9 +20,10 @@ export interface History {
 
 /**
  * The answered approvals, read from the control plane newest first one page at a time (`order=desc`, `before` the id
- * of the last one held): the list is never cut at its newest end, however many approvals the Dots have asked for.
+ * of the last one held): the list is never cut at its newest end, however many approvals the Dots have asked for. With a
+ * `dotId` they are that Dot's, chosen in the database: a Dot's history is not hunted for among the pages of every Dot's.
  */
-export function useHistory(): History {
+export function useHistory(dotId: string | null): History {
   const [held, setHeld] = useState<HistoryRows | undefined>(undefined);
   const [error, setError] = useState<unknown>(null);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -39,7 +40,7 @@ export function useHistory(): History {
     reloading.current = true;
     setLoadingMore(false);
     api
-      .listApprovals(ANSWERED_APPROVAL_STATUSES, { order: "desc", limit: HISTORY_PAGE })
+      .listApprovals(ANSWERED_APPROVAL_STATUSES, { order: "desc", limit: HISTORY_PAGE, ...(dotId === null ? {} : { dot: dotId }) })
       .then((page) => {
         if (mine !== generation.current) return;
         setHeld((previous) => newestHistoryPage(previous, page));
@@ -51,7 +52,7 @@ export function useHistory(): History {
       .finally(() => {
         if (mine === generation.current) reloading.current = false;
       });
-  }, []);
+  }, [dotId]);
 
   const loadMore = useCallback(() => {
     const at = current.current;
@@ -59,7 +60,7 @@ export function useHistory(): History {
     const mine = ++generation.current;
     setLoadingMore(true);
     api
-      .listApprovals(ANSWERED_APPROVAL_STATUSES, { order: "desc", limit: HISTORY_PAGE, before: at.cursor })
+      .listApprovals(ANSWERED_APPROVAL_STATUSES, { order: "desc", limit: HISTORY_PAGE, before: at.cursor, ...(dotId === null ? {} : { dot: dotId }) })
       .then((page) => {
         if (mine !== generation.current) return;
         setHeld((previous) => (previous === undefined ? previous : olderHistoryPage(previous, page)));
@@ -71,9 +72,11 @@ export function useHistory(): History {
       .finally(() => {
         if (mine === generation.current) setLoadingMore(false);
       });
-  }, []);
+  }, [dotId]);
 
   useEffect(() => {
+    // Another Dot's history is not this one's: nothing of the rows held is kept, and the page is read from its newest end.
+    setHeld(undefined);
     reload();
     return () => void generation.current++;
   }, [reload]);

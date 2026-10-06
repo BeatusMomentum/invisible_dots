@@ -205,8 +205,9 @@ export class InvisibleDotsClient {
     return this.#json("POST", `/api/dots/${enc(idOrName)}/tasks`, { body: request });
   }
 
-  async listTasks(idOrName: string): Promise<TaskRecord[]> {
-    return (await this.#json<TasksAnswer>("GET", `/api/dots/${enc(idOrName)}/tasks`)).tasks;
+  /** The Dot's tasks, the newest created first, at most TASK_LIST_LIMIT; `before` (the id of the last task of the previous page) goes on, older. */
+  async listTasks(idOrName: string, page: { limit?: number; before?: string } = {}): Promise<TaskRecord[]> {
+    return (await this.#json<TasksAnswer>("GET", `/api/dots/${enc(idOrName)}/tasks`, { query: { limit: page.limit, before: page.before } })).tasks;
   }
 
   getTask(taskId: string): Promise<TaskRecord> {
@@ -346,14 +347,15 @@ export class InvisibleDotsClient {
    * The approvals with one status or any of several (every one when omitted), oldest first and at most
    * `APPROVAL_LIST_LIMIT`. With `order: "desc"` they come newest first by the time of their last change (the answer,
    * for an answered one), so a `limit` keeps the newest, and `before` (the id of the last approval of the previous
-   * page) pages on from there; `before` needs `order: "desc"`.
+   * page) pages on from there; `before` needs `order: "desc"`. With `dot` (an id or a name) only that Dot's.
    */
   async listApprovals(
     status?: ApprovalStatus | readonly ApprovalStatus[],
-    page: { limit?: number; order?: ListOrder; before?: string } = {},
+    page: { limit?: number; order?: ListOrder; before?: string; dot?: string } = {},
   ): Promise<ApprovalRecord[]> {
     const statuses = status === undefined ? undefined : typeof status === "string" ? status : status.join(",");
-    return (await this.#json<ApprovalsAnswer>("GET", "/api/approvals", { query: { status: statuses, ...page } })).approvals;
+    const { dot, ...rest } = page;
+    return (await this.#json<ApprovalsAnswer>("GET", "/api/approvals", { query: { status: statuses, ...rest, dot_id: dot } })).approvals;
   }
 
   /** Allow what the Dot asked for; with `always` its permission is also set to `allow` in the Dot's config. */

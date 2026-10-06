@@ -35,13 +35,13 @@ function Answer({ status }: { status: string }) {
  */
 export function History({ filter }: { filter: { dotId: string | null; permission: string | null } }) {
   const { dots } = useShell();
-  const history = useHistory();
+  const history = useHistory(filter.dotId);
   useLiveRefresh(history.reload, ["approval.requested", "approval.resolved"]);
   const names = useMemo(() => new Map((dots.data ?? []).map((dot) => [dot.id, dot.name])), [dots.data]);
 
   const rows = useMemo(
-    () => (history.rows ?? []).filter((row) => matchesFilters(filter.dotId, filter.permission, row.dot_id, row.permission)),
-    [history.rows, filter.dotId, filter.permission],
+    () => (history.rows ?? []).filter((row) => matchesFilters(null, filter.permission, row.dot_id, row.permission)),
+    [history.rows, filter.permission],
   );
 
   return (

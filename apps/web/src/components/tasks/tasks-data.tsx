@@ -1,5 +1,6 @@
 "use client";
 
+import { TASK_LIST_LIMIT } from "@invisible-dots/shared/browser";
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "../../lib/api";
 import { mergeTaskEvents, progressOfEvent, readTaskProgress, readTaskStory, taskIdOf, type TaskProgress } from "../../lib/task-events";
@@ -25,9 +26,19 @@ export interface TaskProgressReads {
   retry: (taskId: string) => void;
 }
 
+/** The tasks older than the newest page: whether there may be some, reading them, and why that failed. */
+export interface OlderTasks {
+  available: boolean;
+  loading: boolean;
+  error: unknown;
+  load: () => void;
+}
+
 interface TasksData {
   dotId: string;
+  /** The newest page of the Dot's tasks, with the older pages the person asked for after it; `reload` reads the newest page again. */
   tasks: Resource<Task[]>;
+  older: OlderTasks;
   progress: TaskProgressReads;
 }
 
@@ -45,15 +56,68 @@ export function useTasks(): TasksData {
  * task's whole story is read only when its drawer opens (`useTaskStory`).
  */
 export function TasksProvider({ dotId, children }: { dotId: string; children: ReactNode }) {
-  const tasks = useResource(() => api.listTasks(dotId), `tasks:${dotId}`);
-  useLiveRefresh(tasks.reload, TASK_EVENTS);
+  const newest = useResource(() => api.listTasks(dotId), `tasks:${dotId}`);
+  useLiveRefresh(newest.reload, TASK_EVENTS);
+  const { older, tasks } = useOlderTasks(dotId, newest);
   const runningKey = (tasks.data ?? [])
     .filter((task) => isRunning(task.status))
     .map((task) => task.id)
     .join(",");
   const progress = useTaskProgress(dotId, runningKey);
-  const value = useMemo<TasksData>(() => ({ dotId, tasks, progress }), [dotId, tasks, progress]);
+  const value = useMemo<TasksData>(() => ({ dotId, tasks, older, progress }), [dotId, tasks, older, progress]);
   return <Context.Provider value={value}>{children}</Context.Provider>;
+}
+
+/** The newest first, as the control plane lists them (created, then id). */
+function newestFirst(a: Task, b: Task): number {
+  return Date.parse(b.created_at) - Date.parse(a.created_at) || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0);
+}
+
+/**
+ * The tasks past the newest page, read a page at a time on request with the id of the last task held as the cursor. The
+ * newest page is read again whenever something changes, and a task that a newer one pushed off it is not lost: every task
+ * seen is kept (a task is never deleted), the newest page's copy of it being the current one.
+ */
+function useOlderTasks(dotId: string, newest: Resource<Task[]>): { tasks: Resource<Task[]>; older: OlderTasks } {
+  const [seen, setSeen] = useState<ReadonlyMap<string, Task>>(new Map());
+  const [ended, setEnded] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  useEffect(() => {
+    if (newest.data !== undefined) setSeen((current) => withTasks(current, newest.data!));
+  }, [newest.data]);
+
+  const joined = useMemo(() => {
+    if (newest.data === undefined) return undefined;
+    return [...withTasks(seen, newest.data).values()].sort(newestFirst);
+  }, [newest.data, seen]);
+
+  const cursor = joined?.at(-1)?.id;
+  const full = newest.data !== undefined && newest.data.length >= TASK_LIST_LIMIT;
+  const load = useCallback(() => {
+    if (cursor === undefined || loading) return;
+    setLoading(true);
+    setError(null);
+    api
+      .listTasks(dotId, { before: cursor })
+      .then((page) => {
+        setSeen((current) => withTasks(current, page));
+        setEnded(page.length < TASK_LIST_LIMIT);
+      })
+      .catch(setError)
+      .finally(() => setLoading(false));
+  }, [dotId, cursor, loading]);
+
+  const tasks = useMemo<Resource<Task[]>>(() => ({ ...newest, data: joined }), [newest, joined]);
+  return { tasks, older: { available: full && !ended, loading, error, load } };
+}
+
+/** `known` and `tasks`, a task in both once, as `tasks` has it. */
+function withTasks(known: ReadonlyMap<string, Task>, tasks: readonly Task[]): Map<string, Task> {
+  const next = new Map(known);
+  for (const task of tasks) next.set(task.id, task);
+  return next;
 }
 
 /** The newer of two reports: the id of the event says which, whether it was read or came live. */

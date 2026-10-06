@@ -3,7 +3,7 @@
  * sends, answered from memory, and `/api/stream` as a live SSE body the test pushes events into. `install()` puts
  * it behind the global `fetch`, which is where the web client's SDK looks.
  */
-import { COMPUTER_STOPPED, CONVERSATION_LIST_LIMIT, computerIsUp, MAX_EVENT_PAGE, type ApprovalRecord, type Automation, type BrowserIdentity, type ChannelKind, type ChannelLinkFrame, type ChannelRecord, type ChannelSettings, type ComputerAnswer, type DoctorCheck, type DotConfig, type DotSummary, type StoredEvent, type SystemAnswer, type ToolInfo } from "@invisible-dots/shared/browser";
+import { COMPUTER_STOPPED, CONVERSATION_LIST_LIMIT, TASK_LIST_LIMIT, computerIsUp, MAX_EVENT_PAGE, type ApprovalRecord, type Automation, type BrowserIdentity, type ChannelKind, type ChannelLinkFrame, type ChannelRecord, type ChannelSettings, type ComputerAnswer, type DoctorCheck, type DotConfig, type DotSummary, type StoredEvent, type SystemAnswer, type ToolInfo } from "@invisible-dots/shared/browser";
 import type { TaskRecord } from "@invisible-dots/sdk";
 import { vi } from "vitest";
 
@@ -83,10 +83,12 @@ export class FakeControlPlane {
   eventQueries: Array<{ after: number; before?: number; limit: number; types: string[] | null; tools: string[] | null; taskId: string | null; order: string | null }> = [];
   /** What the shell asked for to know the agent's state when a page opened: the newest `agent.state` or `agent.started`. */
   agentQueries: Array<{ after: number; before?: number; limit: number; types: string[] | null; tools: string[] | null; taskId: string | null; order: string | null }> = [];
+  /** What each `GET .../tasks` asked for. */
+  taskQueries: Array<{ limit: number | null; before: string | null }> = [];
   /** While set, `GET /api/stream` answers 503, as a control plane that does not answer does. */
   streamDown = false;
   /** What each `GET /api/approvals` asked for. */
-  approvalQueries: Array<{ status: string[] | null; limit: number | null; order: string | null; before: string | null }> = [];
+  approvalQueries: Array<{ status: string[] | null; limit: number | null; order: string | null; before: string | null; dot_id: string | null }> = [];
   /** The body of every `POST /api/dots/:id/tasks`, as the browser sent it. */
   createdTasks: unknown[] = [];
   /** Answer `POST /api/dots/:id/tasks` with this error instead of 201. */
@@ -325,10 +327,11 @@ export class FakeControlPlane {
       const limit = searchParams.get("limit") === null ? null : Number(searchParams.get("limit"));
       const order = searchParams.get("order");
       const before = searchParams.get("before");
-      this.approvalQueries.push({ status, limit, order, before });
+      const dotId = searchParams.get("dot_id");
+      this.approvalQueries.push({ status, limit, order, before, dot_id: dotId });
       // The real route: oldest first, or with order=desc the newest by last change, a cursor being the id of the last row seen.
       const changed = (a: ApprovalRecord) => Date.parse(a.resolved_at ?? a.created_at);
-      const listed = this.approvals.filter((a) => !status || status.includes(a.status));
+      const listed = this.approvals.filter((a) => (!status || status.includes(a.status)) && (dotId === null || a.dot_id === dotId));
       const ordered = order === "desc" ? [...listed].sort((a, b) => changed(b) - changed(a) || b.id.localeCompare(a.id)) : listed;
       const from = before === null ? 0 : ordered.findIndex((a) => a.id === before) + 1 || ordered.length;
       return json({ approvals: ordered.slice(from, from + (limit ?? 500)) });
@@ -382,7 +385,15 @@ export class FakeControlPlane {
         return json({ accepted: true }, 202);
       }
       if (rest === "") return json(record);
-      if (rest === "tasks" && method === "GET") return json({ tasks: this.tasks.filter((t) => t.dot_id === record.id) });
+      if (rest === "tasks" && method === "GET") {
+        // The real route: the newest created first, at most TASK_LIST_LIMIT a page, `before` the id of the last task of the page before.
+        const limit = Math.min(Number(searchParams.get("limit") ?? TASK_LIST_LIMIT), TASK_LIST_LIMIT);
+        const before = searchParams.get("before");
+        this.taskQueries.push({ limit: searchParams.has("limit") ? limit : null, before });
+        const newest = this.tasks.filter((t) => t.dot_id === record.id).sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at) || (a.id < b.id ? 1 : -1));
+        const from = before === null ? 0 : newest.findIndex((t) => t.id === before) + 1 || newest.length;
+        return json({ tasks: newest.slice(from, from + limit) });
+      }
       if (rest === "tasks" && method === "POST") {
         const body = JSON.parse(String(init?.body)) as { description: string; priority?: number; scheduled_at?: string };
         this.createdTasks.push(body);

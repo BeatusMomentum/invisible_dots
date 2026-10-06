@@ -217,5 +217,12 @@ test("a Dot with more tasks than the host lists says so, and one with fewer does
 
   await make(TASK_LIST_LIMIT - 1, TASK_LIST_LIMIT + 5);
   await page.reload();
-  await expect(page.getByRole("status").filter({ hasText: `The newest ${TASK_LIST_LIMIT} tasks are listed` })).toBeVisible();
+  const notice = page.getByRole("status").filter({ hasText: `The newest ${TASK_LIST_LIMIT} tasks are listed` });
+  await expect(notice).toBeVisible();
+  await expect(page.getByRole("region", { name: /^Queue/ }).getByRole("listitem")).toHaveCount(TASK_LIST_LIMIT);
+
+  // The tasks past the newest page are reached: read on request, joined to the queue, and the notice is gone.
+  await notice.getByRole("button", { name: "Show older tasks" }).click();
+  await expect(page.getByRole("region", { name: /^Queue/ }).getByRole("listitem")).toHaveCount(TASK_LIST_LIMIT + 4);
+  await expect(notice).toHaveCount(0);
 });

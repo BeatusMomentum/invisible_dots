@@ -31,6 +31,7 @@ import {
   CHANNEL_KINDS,
   LIST_ORDERS,
   MAX_EVENT_PAGE,
+  TASK_LIST_LIMIT,
   type ApprovalStatus,
   type AutomationListAnswer,
   type ChannelKind,
@@ -250,10 +251,14 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     return reply.code(201).send(task);
   });
 
-  app.get<{ Params: Params }>(
-    "/api/dots/:id/tasks",
-    async (request): Promise<TasksAnswer> => ({ tasks: await scheduler.listTasks(request.params.id) }),
-  );
+  // The newest tasks first; `before` (the id of the last task of the previous page) goes on, older.
+  app.get<{ Params: Params; Querystring: { limit?: unknown; before?: unknown } }>("/api/dots/:id/tasks", async (request): Promise<TasksAnswer> => {
+    const limit = intParam(request.query.limit, "limit", TASK_LIST_LIMIT);
+    if (limit === 0) throw bad(`limit must be between 1 and ${TASK_LIST_LIMIT}`);
+    const { before } = request.query;
+    if (before !== undefined && (typeof before !== "string" || before === "")) throw bad("before must be the id of a task");
+    return { tasks: await scheduler.listTasks(request.params.id, { limit, before }) };
+  });
 
   app.get<{ Params: Params }>("/api/tasks/:id", async (request) => scheduler.getTask(request.params.id));
 
@@ -397,8 +402,9 @@ export function buildServer(options: ServerOptions): FastifyInstance {
 
   // Approvals
 
-  app.get<{ Querystring: { status?: unknown; limit?: unknown; order?: unknown; before?: unknown } }>("/api/approvals", async (request): Promise<ApprovalsAnswer> => {
-    const { status, order, before } = request.query;
+  app.get<{ Querystring: { status?: unknown; limit?: unknown; order?: unknown; before?: unknown; dot_id?: unknown } }>("/api/approvals", async (request): Promise<ApprovalsAnswer> => {
+    const { status, order, before, dot_id: dotId } = request.query;
+    if (dotId !== undefined && (typeof dotId !== "string" || dotId === "")) throw bad("dot_id must be the id or the name of one Dot");
     if (status !== undefined && typeof status !== "string") throw bad("status must be one list, comma-separated");
     const statuses = status?.split(",").map((one) => one.trim());
     if (statuses?.some((one) => !(APPROVAL_STATUSES as readonly string[]).includes(one))) {
@@ -408,7 +414,7 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     if (limit === 0) throw bad(`limit must be between 1 and ${APPROVAL_LIST_LIMIT}`);
     if (before !== undefined && (typeof before !== "string" || before === "")) throw bad("before must be the id of an approval");
     return {
-      approvals: await scheduler.listApprovals(statuses as ApprovalStatus[] | undefined, { limit, order: orderParam(order, before), before }),
+      approvals: await scheduler.listApprovals(statuses as ApprovalStatus[] | undefined, { limit, order: orderParam(order, before), before, dot: dotId }),
     };
   });
 

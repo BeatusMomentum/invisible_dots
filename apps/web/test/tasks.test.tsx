@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
+import { TASK_LIST_LIMIT } from "@invisible-dots/shared/browser";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DotShell } from "../src/components/DotShell";
@@ -114,6 +115,42 @@ describe("the Tasks page", () => {
     expect(within(row).getByText("$0.40")).toBeTruthy();
     expect(within(row).getByText("All done")).toBeTruthy();
     expect(within(row).getByText("4m 0s")).toBeTruthy();
+  });
+
+  it("lists the newest page, and reads the older ones when asked, joining them to what is shown", async () => {
+    // 205 queued tasks, one created a minute after the other: the newest 200 are the first page, five are past it.
+    const base = Date.now() - 3_600_000;
+    plane.tasks = Array.from({ length: TASK_LIST_LIMIT + 5 }, (_, i) => taskRecord(`q${String(i).padStart(3, "0")}`, { created_at: new Date(base + i * 1000).toISOString() }));
+    await renderTasks();
+    const queue = await screen.findByRole("region", { name: /^Queue/ });
+    expect(within(queue).getAllByRole("listitem")).toHaveLength(TASK_LIST_LIMIT);
+    expect(screen.queryByText("task q000")).toBeNull();
+    const notice = screen.getByRole("status", { name: "" });
+    expect(notice.textContent).toContain(`The newest ${TASK_LIST_LIMIT} tasks are listed`);
+    const pagedQueries = () => plane.taskQueries.filter((query) => query.before !== null);
+    expect(pagedQueries()).toEqual([]);
+
+    await userEvent.click(within(notice).getByRole("button", { name: "Show older tasks" }));
+    await waitFor(() => expect(within(screen.getByRole("region", { name: /^Queue/ })).getAllByRole("listitem")).toHaveLength(TASK_LIST_LIMIT + 5));
+    expect(screen.getByText("task q000")).toBeTruthy();
+    // The page went on after the last task of the newest one, and the list ended there: nothing more to ask for.
+    expect(pagedQueries()).toEqual([{ limit: null, before: "q005" }]);
+    expect(screen.queryByRole("button", { name: "Show older tasks" })).toBeNull();
+
+    // A task that arrives is read with the newest page again, and the older ones stay.
+    plane.tasks.push(taskRecord("q999", { created_at: new Date().toISOString() }));
+    act(() => plane.push("d1", "task.created", { task_id: "q999" }));
+    await waitFor(() => expect(screen.getByText("task q999")).toBeTruthy());
+    expect(screen.getByText("task q000")).toBeTruthy();
+    expect(within(screen.getByRole("region", { name: /^Queue/ })).getAllByRole("listitem")).toHaveLength(TASK_LIST_LIMIT + 6);
+  });
+
+  it("does not offer older tasks to a Dot whose tasks fit a page", async () => {
+    plane.tasks = Array.from({ length: TASK_LIST_LIMIT - 1 }, (_, i) => taskRecord(`f${i}`));
+    await renderTasks();
+    await screen.findByRole("region", { name: /^Queue/ });
+    expect(screen.queryByRole("button", { name: "Show older tasks" })).toBeNull();
+    expect(screen.queryByText(/tasks are listed/)).toBeNull();
   });
 
   it("links every task to its own address", async () => {

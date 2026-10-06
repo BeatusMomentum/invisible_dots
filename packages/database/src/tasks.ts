@@ -125,11 +125,17 @@ export class TasksRepository {
     return rows[0] ? toTask(rows[0]) : null;
   }
 
-  async listByDot(dotId: string, options: { status?: TaskState; limit?: number } = {}): Promise<TaskRecord[]> {
+  /**
+   * The Dot's tasks, the newest created first, at most `limit` (default TASK_LIST_LIMIT). `before` (the id of the last
+   * task of the previous page) goes on, older, from there; an id that is not a task of this Dot lists nothing.
+   */
+  async listByDot(dotId: string, options: { status?: TaskState; limit?: number; before?: string } = {}): Promise<TaskRecord[]> {
     const { rows } = await this.q.query<TaskRow>(
-      `SELECT * FROM tasks WHERE dot_id = $1 AND ($2::text IS NULL OR status = $2)
-       ORDER BY created_at DESC, id DESC LIMIT $3`,
-      [dotId, options.status ?? null, options.limit ?? TASK_LIST_LIMIT],
+      `SELECT * FROM tasks
+        WHERE dot_id = $1 AND ($2::text IS NULL OR status = $2)
+          AND ($4::text IS NULL OR (created_at, id) < (SELECT created_at, id FROM tasks WHERE id = $4 AND dot_id = $1))
+        ORDER BY created_at DESC, id DESC LIMIT $3`,
+      [dotId, options.status ?? null, options.limit ?? TASK_LIST_LIMIT, options.before ?? null],
     );
     return rows.map(toTask);
   }

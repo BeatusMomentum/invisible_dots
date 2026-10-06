@@ -393,6 +393,13 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect(listed).toHaveLength(TASK_LIST_LIMIT);
     expect(listed.map((t) => t.id)).not.toContain(ids[0]);
     expect(await db.tasks.listByDot(dot.id, { limit: TASK_LIST_LIMIT + 1 })).toHaveLength(TASK_LIST_LIMIT + 1);
+    // The oldest is reached by the cursor: a page goes on after the last task of the one before, and the end is empty.
+    const rest = await db.tasks.listByDot(dot.id, { before: listed.at(-1)!.id });
+    expect(rest.map((t) => t.id)).toEqual([ids[0]]);
+    expect(await db.tasks.listByDot(dot.id, { before: ids[0]! })).toEqual([]);
+    expect(await db.tasks.listByDot(dot.id, { before: "task_nobody" })).toEqual([]);
+    const another = await seedDot(db, "task-list-cursor-elsewhere");
+    expect(await db.tasks.listByDot(another.id, { before: listed.at(-1)!.id })).toEqual([]);
   });
 
   it("tasks: claim skips busy Dots, honours priority and scheduled_at, and never hands one Dot two tasks", async () => {

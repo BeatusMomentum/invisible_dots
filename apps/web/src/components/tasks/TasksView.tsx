@@ -6,6 +6,7 @@ import { groupTasks } from "../../lib/task-view";
 import { useNow } from "../../lib/use-now";
 import { useDot } from "../DotShell";
 import { ErrorAlert } from "../ErrorAlert";
+import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
 import { HistoryTable } from "./history-table";
 import { NewTaskDialog } from "./new-task-dialog";
@@ -40,7 +41,7 @@ function Section({ title, count, children }: { title: string; count?: number; ch
 }
 
 function Sections() {
-  const { dotId, tasks } = useTasks();
+  const { dotId, tasks, older } = useTasks();
   // Whether a scheduled task is due yet is read against this clock; a minute's accuracy is the page's promise.
   const now = useNow(15_000);
   const sections = useMemo(() => groupTasks(tasks.data ?? [], now), [tasks.data, now]);
@@ -60,12 +61,17 @@ function Sections() {
         </div>
       ) : null}
 
-      {tasks.data !== undefined && tasks.data.length >= TASK_LIST_LIMIT ? (
-        <p role="status" className="rounded-lg border bg-muted px-3 py-2 text-sm">
-          The newest {TASK_LIST_LIMIT} tasks are listed. If the Dot has more, the older ones are not shown here, and the queue
-          below leaves out any of them that still wait.
-        </p>
+      {older.available ? (
+        <div role="status" className="flex flex-wrap items-center gap-3 rounded-lg border bg-muted px-3 py-2 text-sm">
+          <span>
+            The newest {TASK_LIST_LIMIT} tasks are listed. The Dot has older ones, which the queue and the history below do not include until they are read.
+          </span>
+          <Button type="button" variant="outline" size="sm" disabled={older.loading} onClick={older.load}>
+            {older.loading ? "Loading" : "Show older tasks"}
+          </Button>
+        </div>
       ) : null}
+      <ErrorAlert error={older.error} title="Could not load the older tasks" />
 
       {tasks.data !== undefined && tasks.data.length === 0 ? (
         <div className="rounded-lg border border-dashed p-8 text-center">
