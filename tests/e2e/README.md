@@ -54,7 +54,7 @@ tested by `tests/repo/e2e.test.ts` on every push:
 | o | the key is in no event row read back after the delete, and in no file of the run's logs, `logs/` or the embedded database's directory |
 
 Steps k and l end the computer, not the engine alone. The engine runs as
-`dotengine` and dot-agentd, and so everything the model runs, as `dot`, and no
+`dotengine`, dot-agentd as `dotagentd` and everything the model runs as `dot`, and no
 rule lets one end the other (architecture 4.1): that is the isolation, and it
 means no process outside the guest's root can kill just the engine. The
 engine's own `kill -9` recovery is proved by the engine smoke

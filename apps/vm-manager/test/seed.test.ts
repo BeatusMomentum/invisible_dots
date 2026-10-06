@@ -41,21 +41,32 @@ describe("the seed of a Dot", () => {
     const config = userData.write_files.find((file: { path: string }) => file.path === "/etc/invisible-dots/config.json");
     expect(JSON.parse(config.content)).toEqual({ dotId: DOT, token: 'tok"en' });
     expect(config.permissions).toBe("0600");
-    expect(config.owner).toBe("dot:dot");
+    // dot-agentd's own user owns it: nothing the model runs (user dot) can read the token (section 4.1).
+    expect(config.owner).toBe("dotagentd:dotagentd");
     expect(userData.mounts[0][0]).toBe(`LABEL=${RUNTIME_ISO_LABEL}`);
     expect(userData.mounts[0][1]).toBe("/opt/invisible-dots");
     expect(userData.hostname).toBe(guestHostname(DOT));
     expect(parse(seed.metaData)).toEqual({ "instance-id": seed.instanceId, "local-hostname": guestHostname(DOT) });
   });
 
-  it("lets dot run exactly the poweroff dot-agentd starts as root, and nothing else (section 4.1)", async () => {
+  it("lets dot-agentd's user run exactly the poweroff it starts as root, and nothing else, and dot, the model's user, nothing (section 4.1)", async () => {
     const userData = parse(renderSeed(await loadSeedTemplates(), DOT, "token").userData);
-    const dot = userData.users.find((user: { name: string }) => user.name === "dot");
-    expect(dot.sudo).toBe("ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff");
+    const user = (name: string) => userData.users.find((entry: { name: string }) => entry.name === name);
+    expect(user("dotagentd").sudo).toBe("ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff");
+    expect(user("dot").sudo).toBe(false);
+    const dot = user("dot");
     expect(dot.groups).toEqual(["audio", "video", "systemd-journal"]);
+    // dot-agentd's user has no group, no login and no home to speak of.
+    expect(user("dotagentd")).not.toHaveProperty("groups");
+    expect(user("dotagentd").shell).toBe("/usr/sbin/nologin");
     // cloud-init applies groups only where it creates the user, the golden image's builder seed: the two must agree.
     const builder = parse(await readFile(fileURLToPath(new URL("../../../guest/image-builder/builder/user-data.yaml", import.meta.url)), "utf8"));
-    expect(builder.users.find((user: { name: string }) => user.name === "dot").groups).toEqual(dot.groups);
+    const builderUser = (name: string) => builder.users.find((entry: { name: string }) => entry.name === name);
+    expect(builderUser("dot").groups).toEqual(dot.groups);
+    for (const key of ["gecos", "homedir", "no_create_home", "shell", "lock_passwd"]) {
+      expect(builderUser("dotagentd")[key], key).toEqual(user("dotagentd")[key]);
+    }
+    expect(builderUser("dotagentd")).not.toHaveProperty("groups");
     // The argv dot-agentd runs (guest/dot-agentd server.go DefaultPowerOff) is the command the rule names.
     const server = await readFile(fileURLToPath(new URL("../../../guest/dot-agentd/internal/agentd/server.go", import.meta.url)), "utf8");
     expect(server).toContain('var DefaultPowerOff = []string{"sudo", "-n", "systemctl", "poweroff"}');

@@ -530,8 +530,8 @@ async function stopComputer(dotId: string, pid: number): Promise<number> {
 /**
  * The computer is killed with SIGKILL, the way a power cut ends it: nothing
  * of the engine inside gets to shut down. The engine cannot be killed alone
- * from outside, by design (it runs as dotengine, the model's commands and
- * dot-agentd as dot, and no rule lets one end the other), so the VM is what
+ * from outside, by design (it runs as dotengine, dot-agentd as dotagentd and the
+ * model's commands as dot, and no rule lets one end another), so the VM is what
  * dies. The control plane must notice, record `computer.stopped` with
  * `reason: "exited"`, and, because the Dot still has a task, start the
  * computer again by itself (architecture section 9.5). Returns when the new

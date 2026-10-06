@@ -21,6 +21,11 @@ type Options struct {
 	Token string
 	// Home is the directory relative file paths and the exec cwd resolve against.
 	Home string
+	// RunAs is the user the model's commands, the file operations done for
+	// the model and the screenshot run as. The daemon runs as a user of its
+	// own and changes to this one for each of them (architecture 4.1); nil
+	// runs them as the daemon's own user, for tests and development.
+	RunAs *Account
 	// AgentSocket is the unix socket of invisible-dots-agent.
 	AgentSocket string
 	// Display is the X display screenshots capture and exec children inherit.
@@ -85,8 +90,9 @@ const (
 	DefaultRunDir       = "/run/invisible-dots"
 	DefaultAgentdSocket = DefaultRunDir + "/agentd.sock"
 	// DefaultAgentSocket is the engine's API, in a directory the engine's user
-	// owns and dot cannot write (architecture 4.2): nothing of dot's can put
-	// another socket in its place and take the key the host pushes.
+	// owns and only this daemon's group may enter (architecture 4.2): nothing
+	// of the model's can reach it or put another socket in its place and take
+	// the key the host pushes.
 	DefaultAgentSocket = "/run/invisible-dots-agent/agent.sock"
 	DefaultDisplay     = ":0"
 	// DefaultListenAddr uses port 1024, the one QEMU's forward targets
@@ -100,18 +106,17 @@ const (
 )
 
 // DefaultPowerOff is how the guest powers itself off when the host stops the
-// VM (architecture 3.4). dot runs it through sudo, which the seed grants
-// without a password; -n makes a missing grant fail at once instead of
-// waiting for a password nobody will type.
+// VM (architecture 3.4). The daemon's user runs it through sudo, which the
+// seed grants without a password; -n makes a missing grant fail at once
+// instead of waiting for a password nobody will type.
 var DefaultPowerOff = []string{"sudo", "-n", "systemctl", "poweroff"}
 
 // routes builds the mux of either listener. The remote one (the TCP port,
 // token required) also carries the agent proxy and the poweroff: the agent
 // would only be talking to itself through the proxy, and the poweroff route
-// is how the control plane stops a VM. Leaving it off the agent's socket is
-// not a guarantee that the agent cannot power its computer off (it can run
-// the same sudo command); the control plane records such an exit and starts
-// the VM again when work waits (architecture section 5.2).
+// is how the control plane stops a VM. The control plane records an exit
+// nobody asked for and starts the VM again when work waits (architecture
+// section 5.2).
 func (s *Server) routes(remote bool) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /v1/health", s.handleHealth)
@@ -138,9 +143,9 @@ func (s *Server) routes(remote bool) *http.ServeMux {
 	return mux
 }
 
-// LocalHandler serves agentd.sock: no token (the socket is 0660, owned by dot
-// with the engine's group, in a directory only they reach), no agent proxy
-// and no poweroff, and the process route.
+// LocalHandler serves agentd.sock: no token (the socket is 0660, owned by the
+// daemon's user with the engine's group, in a directory only they reach), no
+// agent proxy and no poweroff, and the process route.
 func (s *Server) LocalHandler() http.Handler {
 	return s.accessLog("local", s.routes(false))
 }

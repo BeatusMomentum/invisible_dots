@@ -93,6 +93,10 @@ const ALLOWED: Record<string, { owner: string; lines: string[] }> = {
   // dot-agentd ships for linux/amd64 only. These build constraints let its
   // package compile and its tests run on a Windows development host; no
   // shipped binary contains the !unix side.
+  // The account the model's work runs as: the user lookup, the thread's file-system identity and the daemon's
+  // capabilities are Linux calls (passwd, setfsuid, prctl).
+  "guest/dot-agentd/internal/agentd/account_linux.go": { owner: "LookupAccount(), actAs() and the capability calls on the guest", lines: ["//go:build linux"] },
+  "guest/dot-agentd/internal/agentd/account_other.go": { owner: "test-host compile stub of LookupAccount() and actAs()", lines: ["//go:build !linux"] },
   "guest/dot-agentd/internal/agentd/exec_other.go": { owner: "test-host compile stub of setProcessGroup", lines: ["//go:build !unix"] },
   "guest/dot-agentd/internal/agentd/exec_unix.go": { owner: "setProcessGroup on the guest", lines: ["//go:build unix"] },
   "guest/dot-agentd/internal/agentd/listen_other.go": { owner: "test-host compile stub of listenUnixPrivate", lines: ["//go:build !unix"] },

@@ -6,19 +6,26 @@ RequiresMountsFor=/opt/invisible-dots
 
 [Service]
 Type=simple
-User=dot
-Group=dot
-WorkingDirectory=/home/dot
-Environment=HOME=/home/dot
-# Screenshots and exec use the desktop; the health check looks up
-# invisible-playwright-mcp, which uv installed in ~/.local/bin.
+# The daemon has a user of its own (architecture 4.1): the Dot's token is its
+# file, agentd.sock is its socket, and nothing the model runs shares its uid.
+# It starts every command of the model, every file operation done for the
+# model and the screenshot as dot (`--run-as`, default dot), which takes three
+# capabilities and nothing else: CAP_SETUID and CAP_SETGID to change to dot,
+# CAP_KILL to end a process group of dot's. At start the daemon empties its
+# ambient set, so what it starts holds none of them.
+User=dotagentd
+Group=dotagentd
+AmbientCapabilities=CAP_SETUID CAP_SETGID CAP_KILL
+# Screenshots and exec use the desktop; the PATH is the one the model's
+# commands get (uv installed invisible-playwright-mcp in dot's ~/.local/bin).
+# HOME, USER, LOGNAME and SHELL of those commands are dot's, set by the daemon.
 Environment=DISPLAY=:0
 Environment=PATH=/home/dot/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # dot-agentd's default listen address is all guest addresses on TCP 1024: QEMU's
 # user-mode NAT delivers the host's port forward to the guest's 10.0.2.15, not
 # to its loopback. The golden image enables no firewall, so nothing in the
 # guest stands between the forward and the port; every request still needs the
-# Dot's token (architecture 5.1).
+# Dot's token (architecture 5.1), which only this user can read.
 ExecStart=/opt/invisible-dots/bin/dot-agentd
 Restart=on-failure
 RestartSec=2

@@ -8,20 +8,28 @@ hostname: {{hostname}}
 preserve_hostname: false
 manage_etc_hosts: true
 
-# The golden image already has the user (it owns the browser engine cache),
+# The golden image already has the users (dot owns the browser engine cache),
 # created by the image builder's seed with the same groups as here; cloud-init
 # does not add groups to a user that exists, so that seed is where they take
 # effect, and a test keeps the two lists equal. The sudo rule is written here,
-# per instance: dot may run exactly one command as root, the poweroff
-# dot-agentd starts when the host stops the VM (section 5.2); everything the
-# agent runs is otherwise dot's own.
+# per instance, and it is dotagentd's, the computer daemon's own user: it may
+# run exactly one command as root, the poweroff dot-agentd starts when the host
+# stops the VM (section 5.2). dot, whose account every command of the model runs
+# as, has none.
 users:
   - name: dot
     gecos: invisible_dots agent
     shell: /bin/bash
     lock_passwd: true
-    sudo: "ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff"
+    sudo: false
     groups: [audio, video, systemd-journal]
+  - name: dotagentd
+    gecos: invisible_dots computer daemon
+    homedir: /nonexistent
+    no_create_home: true
+    shell: /usr/sbin/nologin
+    lock_passwd: true
+    sudo: "ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff"
 disable_root: true
 ssh_pwauth: false
 
@@ -29,10 +37,11 @@ write_files:
   # The Dot's identity and the one secret in the seed (architecture 4.2, 4.3).
   # dot-agentd listens on TCP port 1024, which QEMU forwards from a port on
   # the host's 127.0.0.1 (section 5.1); it answers 401 to any request whose
-  # bearer token is not this one. Deferred so it runs after the users module
-  # has created `dot`.
+  # bearer token is not this one. Only dotagentd, the user dot-agentd runs as,
+  # can read it: nothing the model runs can. Deferred so it runs after the
+  # users module has created the users.
   - path: /etc/invisible-dots/config.json
-    owner: dot:dot
+    owner: dotagentd:dotagentd
     permissions: "0600"
     defer: true
     content: {{bootConfigJson}}

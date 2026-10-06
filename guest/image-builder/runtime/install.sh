@@ -16,6 +16,7 @@ die() { log "error: $*"; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || die "must run as root"
 id dot >/dev/null 2>&1 || die "user dot does not exist (is this a golden image?)"
+id dotagentd >/dev/null 2>&1 || die "user dotagentd does not exist (a golden image from before dot-agentd had its own user): build a new golden image"
 id dotengine >/dev/null 2>&1 || die "user dotengine does not exist (a golden image from before the engine had its own user)"
 [ -x /opt/invisible-dots-engine/bin/python ] || die "the golden image has no engine environment (a golden image from before the nanobot engine): build a new golden image"
 version="$(cat "$runtime/VERSION" 2>/dev/null || echo unknown)"
@@ -23,13 +24,15 @@ log "installing runtime $version from $runtime"
 
 # The two sockets (architecture 4.2), each in a directory its server owns and
 # only the other side may enter, setgid so the socket gets that side's group:
-# /run/invisible-dots/agentd.sock, dot-agentd's (dot), reached by the engine;
-# /run/invisible-dots-agent/agent.sock, the engine's (dotengine), reached by
-# dot-agentd. dot cannot write the engine's directory, so nothing of dot's
-# can take the place of the socket the host pushes the key to.
+# /run/invisible-dots/agentd.sock, dot-agentd's (dotagentd), reached by the
+# engine (group dotengine); /run/invisible-dots-agent/agent.sock, the engine's
+# (dotengine), reached by dot-agentd (group dotagentd). dot, whose processes
+# are the model's, is in neither group: it cannot enter either directory, so
+# it cannot talk to the engine, and nothing of its can take the place of the
+# socket the host pushes the key to.
 # tmpfiles recreates both on every boot before the units start.
 tmpfiles=/etc/tmpfiles.d/invisible-dots.conf
-printf 'd /run/invisible-dots 2750 dot dotengine -\nd /run/invisible-dots-agent 2750 dotengine dot -\n' > "$tmpfiles.new"
+printf 'd /run/invisible-dots 2750 dotagentd dotengine -\nd /run/invisible-dots-agent 2750 dotengine dotagentd -\n' > "$tmpfiles.new"
 mv -f "$tmpfiles.new" "$tmpfiles"
 systemd-tmpfiles --create "$tmpfiles"
 

@@ -144,6 +144,51 @@ class TestTheSocket:
         assert not socket_path.exists()
 
 
+class TestThePeer:
+    """The socket refuses a process that runs as the user of the model's commands, whatever the directory's mode."""
+
+    async def test_a_refused_peer_changes_nothing_and_learns_nothing(self, make_api: Callable[..., Any]) -> None:
+        api: Api = await make_api(refused_uids=frozenset({os.getuid()}))
+        event = {"id": "approval-1", "type": "approval.received", "ts": TS, "data": {"approval_id": "x", "decision": "approved"}}
+
+        answers = [
+            await api.call("GET", "/health"),
+            await api.call("PUT", "/config", runtime_config_body(permissions=ALLOW_ALL)),
+            await api.call("POST", "/events", event),
+            await api.call("POST", "/secrets", {"openrouter_api_key": "sk-or-1"}),
+            await api.call("POST", "/prepare-sleep"),
+            await api.call("GET", "/events/stream?after=0"),
+        ]
+
+        for answer in answers:
+            assert (answer.status, answer.json["error"]) == (403, "forbidden_peer")
+            assert answer.json["message"] == "this socket serves dot-agentd only"
+        assert api.h.engine.config is None
+        assert api.h.count("dots_inbound") == 0
+        assert not api.h.engine.is_suspending()
+
+    async def test_another_users_peer_is_served(self, make_api: Callable[..., Any]) -> None:
+        api: Api = await make_api(refused_uids=frozenset({os.getuid() + 1}))
+
+        assert (await api.call("GET", "/health")).status == 200
+        assert (await api.call("PUT", "/config", runtime_config_body())).status == 204
+
+    async def test_a_peer_the_kernel_cannot_name_is_refused_when_anyone_is_to_be(
+        self, make_api: Callable[..., Any], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        api: Api = await make_api(refused_uids=frozenset({0}))
+        monkeypatch.delattr("socket.SO_PEERCRED")
+
+        answer = await api.call("GET", "/health")
+
+        assert (answer.status, answer.json["error"]) == (403, "forbidden_peer")
+
+    async def test_nobody_is_refused_when_no_user_is_named(self, make_api: Callable[..., Any]) -> None:
+        api: Api = await make_api()
+
+        assert (await api.call("GET", "/health")).status == 200
+
+
 class TestHealth:
     async def test_reports_the_state_the_key_and_the_checks(self, make_api: Callable[..., Any]) -> None:
         api: Api = await make_api(key=False)

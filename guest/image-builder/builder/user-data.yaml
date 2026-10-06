@@ -4,7 +4,7 @@
 # and the Node and uv tarballs: runcmd mounts it again and runs the
 # provisioner, which reports on the serial console and powers the VM off.
 hostname: idots-golden-builder
-# dot gets no sudo rule here: provision.sh runs as root and reaches dot
+# No user gets a sudo rule here: provision.sh runs as root and reaches dot
 # through root's own `sudo -u`. A rule written now would stay in the golden
 # image, and each Dot's seed only adds its own rule next to it (section 4.1).
 # The groups are set here, where the user is created: cloud-init does not
@@ -17,6 +17,17 @@ users:
     lock_passwd: true
     sudo: false
     groups: [audio, video, systemd-journal]
+  # The computer daemon's own user (architecture 4.1): it runs dot-agentd, holds
+  # the Dot's token and owns agentd.sock, and starts everything of the model's
+  # as dot. No process of the model's has its uid, so none can read the token
+  # or stop the daemon. No home, no login, no group.
+  - name: dotagentd
+    gecos: invisible_dots computer daemon
+    homedir: /nonexistent
+    no_create_home: true
+    shell: /usr/sbin/nologin
+    lock_passwd: true
+    sudo: false
   # The engine's own user (architecture 4.1): it runs the engine (the nanobot
   # fork, Python), holds the key and owns the engine's state; the model's
   # commands run as dot.

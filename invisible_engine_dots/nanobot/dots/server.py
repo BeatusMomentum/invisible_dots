@@ -2,7 +2,10 @@
 
 The host reaches it as `/v1/agent/...` through dot-agentd, which checked the
 Dot's token already. The socket's directory admits only the engine's user and
-dot-agentd's, so this server does no authentication of its own.
+dot-agentd's, so this server does no authentication of its own. It does refuse
+one thing the directory already keeps out: a peer that runs as the user of the
+model's commands (SO_PEERCRED), so that a directory mode changed by mistake
+does not leave the Dot's permissions and approvals to its own model.
 
 The server logs a request's method, path and status, never a body: the body of
 `POST /secrets` is the OpenRouter key.
@@ -14,6 +17,8 @@ import asyncio
 import json
 import os
 import re
+import socket
+import struct
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from urllib.parse import unquote
@@ -133,6 +138,20 @@ class _Stream:
         self.wake.set()
 
 
+def peer_uid(request: web.Request) -> int | None:
+    """The user id of the process on the other end of the request's unix socket, as the kernel recorded it
+    when that process connected; None when the kernel cannot say."""
+    option = getattr(socket, "SO_PEERCRED", None)
+    sock = request.transport.get_extra_info("socket") if request.transport is not None else None
+    if option is None or sock is None:
+        return None
+    try:
+        _pid, uid, _gid = struct.unpack("3i", sock.getsockopt(socket.SOL_SOCKET, option, struct.calcsize("3i")))
+    except OSError:
+        return None
+    return int(uid)
+
+
 class AgentServer:
     def __init__(
         self,
@@ -143,6 +162,7 @@ class AgentServer:
         automations: CronService,
         max_body_bytes: int = MAX_BODY_BYTES,
         heartbeat_s: float = HEARTBEAT_S,
+        refused_uids: frozenset[int] = frozenset(),
     ) -> None:
         self._engine = engine
         self._key_holder = key_holder
@@ -150,10 +170,11 @@ class AgentServer:
         self._automations = automations
         self._max_body = max_body_bytes
         self._heartbeat_s = heartbeat_s
+        self._refused_uids = refused_uids
         self._streams: set[_Stream] = set()
         self._runner: web.AppRunner | None = None
         self._socket_path: Path | None = None
-        self._app = web.Application(middlewares=[self._errors])
+        self._app = web.Application(middlewares=[self._errors, self._peers])
         self._app.router.add_route("*", "/{tail:.*}", self._handle)
 
     # --- the socket ---------------------------------------------------------
@@ -211,6 +232,21 @@ class AgentServer:
         if request.path != AGENT_ROUTES["events_stream"]:
             logger.debug("request method={} path={} status={}", request.method, request.path, response.status)
         return response
+
+    @web.middleware
+    async def _peers(
+        self, request: web.Request, handler: Callable[[web.Request], Awaitable[web.StreamResponse]]
+    ) -> web.StreamResponse:
+        """Refuse a request from a process that runs as one of `refused_uids`, the user of the model's commands.
+
+        A peer whose user the kernel cannot name is refused too, when there is anyone to refuse: a check that
+        passes on an error would be open exactly when it is needed."""
+        if self._refused_uids:
+            uid = peer_uid(request)
+            if uid is None or uid in self._refused_uids:
+                logger.warning("a request was refused for its peer uid={} method={} path={}", uid, request.method, request.path)
+                raise HttpError(403, "forbidden_peer", "this socket serves dot-agentd only")
+        return await handler(request)
 
     async def _handle(self, request: web.Request) -> web.StreamResponse:
         # The path as sent: a route is matched on it and an identity id is decoded from it, once.

@@ -37,7 +37,7 @@ func clearEnv(t *testing.T) {
 	for _, name := range []string{
 		"INVISIBLE_DOTS_GUEST_CONFIG", "DOT_HOME", "INVISIBLE_DOTS_HOME", "INVISIBLE_DOTS_RUN_DIR",
 		"INVISIBLE_DOTS_AGENTD_SOCKET", "INVISIBLE_DOTS_AGENT_SOCKET", "INVISIBLE_DOTS_AGENTD_LISTEN",
-		"INVISIBLE_DOTS_DISPLAY", "INVISIBLE_DOTS_IMPORT_BIN", "INVISIBLE_DOTS_LOG_LEVEL",
+		"INVISIBLE_DOTS_DISPLAY", "INVISIBLE_DOTS_IMPORT_BIN", "INVISIBLE_DOTS_LOG_LEVEL", "INVISIBLE_DOTS_RUN_AS",
 	} {
 		t.Setenv(name, "")
 	}
@@ -55,6 +55,10 @@ func TestParseFlagsDefaultsMatchTheContract(t *testing.T) {
 	}
 	if s.configPath != "/etc/invisible-dots/config.json" || s.home != "/home/dot" {
 		t.Errorf("got %+v", s)
+	}
+	// The model's commands run as dot, not as the daemon's own user (architecture 4.1).
+	if s.runAs != "dot" {
+		t.Errorf("run-as %q", s.runAs)
 	}
 	if filepath.ToSlash(s.agentdSocket) != "/run/invisible-dots/agentd.sock" ||
 		filepath.ToSlash(s.agentSocket) != "/run/invisible-dots-agent/agent.sock" {
@@ -249,5 +253,25 @@ func TestServeReportsAnInvalidListenAddress(t *testing.T) {
 	// A failed start must not leave the unix socket it already opened.
 	if _, err := os.Lstat(s.agentdSocket); !os.IsNotExist(err) {
 		t.Errorf("agentd.sock left behind: %v", err)
+	}
+}
+
+func TestServeRefusesToStartWhenTheUserForTheModelDoesNotExist(t *testing.T) {
+	dir := shortTempDir(t)
+	cfg := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(cfg, []byte(`{"dotId":"d","token":"t"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := settings{
+		configPath: cfg, home: dir, agentdSocket: filepath.Join(dir, "agentd.sock"), agentSocket: filepath.Join(dir, "agent.sock"),
+		listen: "127.0.0.1:0", runAs: "no-such-user-for-the-model",
+	}
+	err := serve(context.Background(), s, slog.New(slog.NewTextHandler(io.Discard, nil)), nil)
+	if err == nil {
+		t.Fatal("the daemon started with nobody to run the model's commands as")
+	}
+	// Refused before anything listens: a daemon that cannot change to the Dot's user must not serve.
+	if _, err := os.Lstat(s.agentdSocket); !os.IsNotExist(err) {
+		t.Errorf("agentd.sock opened: %v", err)
 	}
 }

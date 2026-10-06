@@ -7,7 +7,7 @@
 #   AGENTD_BIN   dot-agentd for linux/amd64, built from that tree
 #   SMOKE_SUITE  engine (smoke.sh, the default) or browser (browser/smoke.sh)
 # What this builds:
-#   users:       dot and dotengine, as builder/user-data.yaml makes them
+#   users:       dot, dotagentd and dotengine, as builder/user-data.yaml makes them
 #   golden image: guest/image-builder/builder/build-engine-env.sh on the hashed
 #                 engine lock (the script provision.sh runs), after the same
 #                 packages and the same uv the builder VM has
@@ -35,9 +35,11 @@ apt-get install -y -qq sudo procps jq curl ca-certificates python3 >/dev/null
 builder=$TREE/guest/image-builder/builder
 engine_src=$TREE/invisible_engine_dots
 
-# The golden image's users (builder/user-data.yaml): dot runs the model's commands and the browser, dotengine
-# the engine. Both exist before anything is installed, as in the builder VM.
+# The golden image's users (builder/user-data.yaml): dot runs the model's commands and the browser, dotagentd
+# the computer daemon that starts them (no home, no group but its own), dotengine the engine. All three exist
+# before anything is installed, as in the builder VM.
 useradd -m -s /bin/bash dot
+useradd -M -d /nonexistent -s /usr/sbin/nologin dotagentd
 useradd -m -s /usr/sbin/nologin -G dot dotengine
 chmod 0750 /home/dot
 

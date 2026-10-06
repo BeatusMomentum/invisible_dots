@@ -13,14 +13,36 @@ sections 4 and 5.2). It serves:
   DHCP-assigned user-network address; nothing outside the host's forward can
   reach that interface.
 - `/run/invisible-dots/agentd.sock` (mode 0660; its directory, setgid to the
-  engine's group, admits only `dot` and `dotengine`), for the engine: the
+  engine's group, admits only `dotagentd`, the user the daemon runs as, and
+  `dotengine`), for the engine: the
   same routes, no token, no `/v1/agent` proxy and no `POST /v1/system/poweroff`
   (powering the VM off is the control plane's decision), plus `POST /v1/proc`,
   the process route the engine runs the model's commands through.
 
+## Who it runs as
+
+The daemon has a user of its own (`dotagentd`, architecture 4.1), and starts
+everything it does for the model as `dot`: every command (`POST /v1/exec`, the
+process route), every file operation of the file routes of both listeners (the
+thread that serves a request has dot's file-system user and groups, so what it
+opens or creates is dot's and is checked as dot's; the TCP listener's home
+confinement is decided on top of that), a pseudo-terminal (opened as dot, so dot
+owns it) and the screenshot. The environment of those programs is the daemon's
+with `HOME`, `USER`, `LOGNAME` and `SHELL` of dot's account.
+
+That takes `CAP_SETUID`, `CAP_SETGID` (change to dot) and `CAP_KILL` (end a
+process group of dot's), which the unit gives as `AmbientCapabilities`. At start
+the daemon checks it holds them, and empties its ambient capability set in every
+thread, so no program it starts holds them: with the set left full, a command of
+the model would keep `CAP_SETUID` across exec. That needs a binary built without
+cgo (the build below), and refuses to start otherwise. `--run-as` names the
+user; `--run-as=` (empty; the variable cannot be empty), or the daemon's own user named, leaves the work with the
+daemon's own uid, which is for tests and development: the daemon warns of it in
+its log, because it is the arrangement that let the model read the token.
+
 `dot-agentd relay [--socket P] [--cwd DIR] [--tty] [--env NAME=VALUE]...
 [--env-from NAME]... -- PROGRAM [ARGS...]` is the client of `POST /v1/proc`: it
-runs the program as `dot`, copies its own stdin, stdout and stderr through, and
+runs the program as `dot` (the daemon changes to that user for it), copies its own stdin, stdout and stderr through, and
 exits with the program's code (128 + the signal number for a signal).
 `--env-from NAME` adds to the program's environment the variable `NAME` of the
 relay's own environment (exit 2 when it is not set): a secret goes this way,
@@ -44,7 +66,10 @@ go vet ./... && go test -count=1 ./...
 ```
 
 The exec and screenshot tests need a unix system with `bash`; on Windows they
-are compiled out or skipped.
+are compiled out or skipped. The tests that run work as another user take root and
+a build without cgo, so they carry the build tag `privileged`
+(`CGO_ENABLED=0 go test -tags privileged ./internal/agentd`, as root); the smoke's
+`run.sh` runs them in a root container and fails on a skipped one.
 
 ## Configuration
 
@@ -60,6 +85,7 @@ Every flag has an environment variable; a flag on the command line wins.
 | `--listen` | `INVISIBLE_DOTS_AGENTD_LISTEN` | `0.0.0.0:1024`; an IP literal and a port, e.g. `127.0.0.1:18024` for development outside a VM |
 | `--display` | `INVISIBLE_DOTS_DISPLAY` | `:0` |
 | `--import-bin` | `INVISIBLE_DOTS_IMPORT_BIN` | `import` |
+| `--run-as` | `INVISIBLE_DOTS_RUN_AS` | `dot`; `--run-as=` runs the model's work as the daemon's own user |
 | `--log-level` | `INVISIBLE_DOTS_LOG_LEVEL` | `info` |
 
 The token is always required: there is no mode that serves the remote routes
@@ -69,8 +95,9 @@ without it.
 
 - `bash`, for `POST /v1/exec` (`bash -lc <command>`).
 - `sudo` and systemd, for `POST /v1/system/poweroff`: it runs
-  `sudo -n systemctl poweroff`, which the seed allows the user `dot` without a
-  password, and which is the only command `dot` may run as root.
+  `sudo -n systemctl poweroff`, which the seed allows the user `dotagentd` (the
+  one the daemon runs as) without a password, and which is the only command that
+  user may run as root; `dot`, the model's user, has no sudo rule.
 - `imagemagick`, for `GET /v1/screenshot`: it runs
   `import -window root -display :0 png:-` against the Xvfb display.
 

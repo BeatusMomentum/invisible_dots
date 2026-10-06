@@ -16,7 +16,7 @@ import (
 )
 
 // ProcRequest is the body of POST /v1/proc: a program to run as the Dot's
-// user, streamed both ways over the connection that asked for it.
+// user (Options.RunAs), streamed both ways over the connection that asked for it.
 type ProcRequest struct {
 	// Argv is the program and its arguments, run as they are (no shell).
 	Argv []string `json:"argv"`
@@ -108,12 +108,12 @@ func (s *Server) handleProc(w http.ResponseWriter, r *http.Request) {
 		}
 		cwd = p
 	}
-	if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
+	if !s.isDirectory(cwd) {
 		writeError(w, http.StatusBadRequest, "invalid_cwd", "cwd "+cwd+" is not an existing directory")
 		return
 	}
 
-	proc, err := startProc(req.Argv, cwd, env, req.TTY)
+	proc, err := startProc(req.Argv, cwd, env, req.TTY, s.opts.RunAs)
 	if err != nil {
 		s.log.Error("proc failed to start", "error", err)
 		writeError(w, http.StatusInternalServerError, "proc_failed", err.Error())
