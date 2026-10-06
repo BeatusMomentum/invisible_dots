@@ -4,5 +4,9 @@ import { IdentitiesTab } from "../../../../../components/IdentitiesTab";
 export const metadata: Metadata = { title: "Browser identities" };
 
 export default function Page() {
-  return <IdentitiesTab />;
+  return (
+    <div className="legacy">
+      <IdentitiesTab />
+    </div>
+  );
 }

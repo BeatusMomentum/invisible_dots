@@ -24,8 +24,8 @@ export function useDot(): DotContextValue {
 const HEADER_EVENTS = ["dot.updated", "computer.state", "computer.started", "computer.stopped", "agent.state"];
 
 /**
- * The page of one Dot: its header (S4), the tab bar, and the tab's body. The bodies of the tabs that have not been
- * redesigned yet still use the old stylesheet, which `legacy` scopes to them.
+ * The page of one Dot: its header (S4), the tab bar, and the tab's body. A tab that has not been redesigned yet puts
+ * the `legacy` class on its own page; the shell does not, so a redesigned tab is never under the old stylesheet.
  */
 export function DotShell({ dotId, children }: { dotId: string; children: ReactNode }) {
   const dot = useResource(() => api.getDot(dotId), dotId);
@@ -35,7 +35,7 @@ export function DotShell({ dotId, children }: { dotId: string; children: ReactNo
     <DotContext.Provider value={{ dotId, dot }}>
       <DotHeader dotId={dotId} dot={dot} />
       <DotTabs dotId={dotId} />
-      <section className="legacy mt-4">{children}</section>
+      <section className="mt-4">{children}</section>
     </DotContext.Provider>
   );
 }

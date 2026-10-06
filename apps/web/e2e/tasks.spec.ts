@@ -166,3 +166,87 @@ test("the Tasks page and its drawer fit a phone: no sideways scroll at 390 px", 
   await expect(page.getByRole("dialog", { name: long })).toBeVisible();
   expect(await overflow()).toBeLessThanOrEqual(0);
 });
+
+/**
+ * What the eye gets from the page, which the role queries above cannot see: the colors the browser computed and the
+ * markers it drew. Read in the page, with the canvas turning any color syntax into the pixels it paints.
+ */
+async function lookOf(page: import("@playwright/test").Page, selector: string) {
+  return page.locator(selector).first().evaluate((element) => {
+    const context = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("no canvas");
+    const rgba = (color: string): [number, number, number, number] => {
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = "#000";
+      context.fillStyle = color;
+      context.fillRect(0, 0, 1, 1);
+      const [r = 0, g = 0, b = 0, a = 0] = context.getImageData(0, 0, 1, 1).data;
+      return [r, g, b, a / 255];
+    };
+    const luminance = ([r, g, b]: number[]) => {
+      const [lr = 0, lg = 0, lb = 0] = [r, g, b].map((v) => {
+        const s = (v ?? 0) / 255;
+        return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+      });
+      return 0.2126 * lr + 0.7152 * lg + 0.0722 * lb;
+    };
+    // The surface under the element: the nearest ancestor that paints one.
+    let surface: [number, number, number, number] = rgba(getComputedStyle(document.body).backgroundColor);
+    for (let node: Element | null = element; node; node = node.parentElement) {
+      const painted = rgba(getComputedStyle(node).backgroundColor);
+      if (painted[3] > 0.99) {
+        surface = painted;
+        break;
+      }
+    }
+    const style = getComputedStyle(element);
+    const [high, low] = [luminance(rgba(style.color)), luminance(surface)].sort((a, b) => b - a);
+    return {
+      contrast: ((high ?? 0) + 0.05) / ((low ?? 0) + 0.05),
+      listStyle: style.listStyleType,
+      paddingLeft: style.paddingLeft,
+    };
+  });
+}
+
+for (const scheme of ["light", "dark"] as const) {
+  test(`the Tasks page is drawn by its own styles, not the old stylesheet's: readable buttons, no list markers (${scheme})`, async ({ signedIn: page, harness }) => {
+    await page.emulateMedia({ colorScheme: scheme });
+    const dot = await harness.createDot(`tasks-look-${scheme}`);
+    const guest = harness.driver.guestOf(dot.id);
+    holdTasks(guest);
+    await harness.api.createTask(dot.id, { description: "Occupy the Dot" });
+    await harness.api.createTask(dot.id, { description: "Waits in the queue" });
+    await harness.api.createTask(dot.id, { description: "Waits for its time", scheduled_at: new Date(Date.now() + 26 * 3_600_000).toISOString() });
+    const early = await harness.api.createTask(dot.id, { description: "Dropped early", scheduled_at: new Date(Date.now() + 27 * 3_600_000).toISOString() });
+    await harness.api.cancelTask(early.id);
+    await page.goto(`${harness.webUrl}/dots/${dot.id}/tasks`);
+    await expect(page.getByRole("region", { name: /^History/ }).getByRole("row", { name: /Dropped early/ })).toBeVisible();
+    await expect(page.getByRole("region", { name: /^Queue/ }).getByRole("article", { name: "Waits in the queue" })).toBeVisible();
+    await expect(page.getByRole("region", { name: /^Scheduled/ }).getByRole("article", { name: "Waits for its time" })).toBeVisible();
+
+    // The old stylesheet is scoped to the pages that still use it: this is not one of them.
+    await expect(page.locator(".legacy")).toHaveCount(0);
+
+    for (const list of ["section[aria-labelledby=tasks-running] ul", "section[aria-labelledby=tasks-scheduled] ul", "section[aria-labelledby=tasks-queue] ol"]) {
+      const look = await lookOf(page, list);
+      expect(look.listStyle, list).toBe("none");
+      expect(look.paddingLeft, list).toBe("0px");
+    }
+    const buttons: Record<string, string> = {
+      "the Cancel button": "section[aria-labelledby=tasks-running] button:has-text('Cancel')",
+      "a history filter": "section[aria-labelledby=tasks-history] button[aria-pressed=false]",
+      "the pressed history filter": "section[aria-labelledby=tasks-history] button[aria-pressed=true]",
+      "the new task button": "button:has-text('New task')",
+    };
+    for (const [name, selector] of Object.entries(buttons)) {
+      expect((await lookOf(page, selector)).contrast, name).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+}
+
+test("a Dot's tab that is still in the old design keeps the old stylesheet", async ({ signedIn: page, harness }) => {
+  const dot = await harness.createDot("tasks-legacy");
+  await page.goto(`${harness.webUrl}/dots/${dot.id}/settings`);
+  await expect(page.locator(".legacy")).toHaveCount(1);
+});

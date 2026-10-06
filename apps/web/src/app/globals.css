@@ -3,7 +3,9 @@
  * not moved to the new design yet (legacy.css, scoped to `.legacy`, shrinking with every step).
  *
  * The order of the layers matters: the old rules sit above Tailwind's base (so the old screens keep their look) and
- * below components and utilities (so a new component is never overridden by an old rule).
+ * below components and utilities. A utility beats an old rule only for the properties it sets, so what keeps a new
+ * screen safe from the old rules is the scope: a screen that has moved never carries `.legacy` (e2e/tasks.spec.ts
+ * checks it for the Tasks page).
  */
 @layer theme, base, legacy, components, utilities;
 
