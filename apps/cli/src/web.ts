@@ -47,7 +47,7 @@ export interface WebServer {
 
 export interface WebServerOptions {
   build: WebBuild;
-  /** Port 0 is refused: the person has to know where to go. */
+  /** A fixed port: the person has to know where to go (parseListen refuses port 0 for this setting). */
   listen: { host: string; port: number };
   /** The control plane's address, where the web server's proxy sends `/api`. */
   apiUrl: string;
@@ -74,13 +74,16 @@ const READY_POLL_MS = 100;
  * to listen (Next's PORT and HOSTNAME), where the API is, which data
  * directory holds `api.token` (read on every request, so a rotated token
  * takes effect), the API token itself only when the server was given it that
- * way, and the extra host names its Host check allows.
+ * way, and the extra host names its Host check allows. `parentPid` is the
+ * server's own pid: the web server exits when that process is gone, so a
+ * `kill -9` of the server does not leave it holding the port.
  */
-export function webEnvironment(options: Pick<WebServerOptions, "env" | "listen" | "apiUrl">): Record<string, string> {
-  const { env, listen, apiUrl } = options;
+export function webEnvironment(options: Pick<WebServerOptions, "env" | "listen" | "apiUrl"> & { parentPid: number }): Record<string, string> {
+  const { env, listen, apiUrl, parentPid } = options;
   return {
     ...allowlistedEnvironment(env, [...BASE_CHILD_ENV_VARS, ENV.HOME, ENV.TOKEN, ENV.WEB_ALLOWED_HOSTS]),
     [ENV.URL]: apiUrl,
+    [ENV.WEB_PARENT_PID]: String(parentPid),
     PORT: String(listen.port),
     HOSTNAME: listen.host,
   };
@@ -122,14 +125,14 @@ export async function startWebServer(options: WebServerOptions): Promise<WebServ
     throw new WebStartError(`the web client is not built (${build.missing} does not exist); build it with: ${WEB_BUILD_COMMAND}`);
   }
   if (options.signal?.aborted) throw new WebStartError("stopped before the web client started");
-  if (listen.port === 0) throw new WebStartError(`${ENV.WEB_LISTEN} needs a fixed port`);
   const url = urlOf(listen);
   // Something else answering there would make the wait below succeed for the wrong server.
   if (await answers(url)) {
     throw new WebStartError(`${url} is already in use; free the port or set ${ENV.WEB_LISTEN} to another host:port`);
   }
   // The server script chdirs into its own directory, so that is where it starts: never the server's directory.
-  const child = (options.start ?? startProcess)(process.execPath, [build.entry], { cwd: dirname(build.entry), env: webEnvironment(options) });
+  const env = webEnvironment({ ...options, parentPid: process.pid });
+  const child = (options.start ?? startProcess)(process.execPath, [build.entry], { cwd: dirname(build.entry), env });
 
   let exited = false;
   let started = false;

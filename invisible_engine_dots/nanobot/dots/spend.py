@@ -11,8 +11,10 @@ session:
   for nothing.
 - `TurnSpend.check` runs before every iteration of the runner and raises `CostCapReached`
   when the session has spent the cap: the turn ends as a failure whose text is the exception's.
-- `TurnSpend.ensure_priced` runs before the turn's final answer is written (which delivers it and
-  completes a task), so the last response of a turn is held to the same rule as the others.
+- `TurnSpend.ensure_priced` runs before anything is done on the word of a response: before the
+  tool calls of an assistant message are written (so they never run) and before the turn's final
+  answer is written (which delivers it and completes a task). The last response of a turn is held
+  to the same rule as the others, and so is one that asks for tools.
 
 The spend lives in `dots_spend`, keyed by the session. A task's row is never reset, so the
 cap holds across a restart, an approval and a resume. The chat's row is emptied by the answer
@@ -22,10 +24,11 @@ next: a call parked for approval, a restart or a sleep does not start the count 
 A request cannot be priced before it is answered, so the cap stops the turn from starting
 another request: it may be exceeded by the last one, and an answer that crosses the cap is
 delivered. A response that reports no cost leaves the cap unenforceable, so the turn fails
-rather than carry on unmetered: at its next check, or, when that response was the last one, before
-its answer is written (the answer is not delivered and the task does not complete). The
-note lives in the same ledger row as the money, written in the same transaction, so a restart
-does not forget it; it goes where the row goes (the chat's answer takes it).
+rather than carry on unmetered: before the response is acted on (its tool calls do not run, its
+answer is not delivered and the task does not complete) or, for a request the runner does not
+commit (a summary), at the next check. The note lives in the same ledger row as the money,
+written in the same transaction, so a restart does not forget it; it goes where the row goes
+(the chat's answer takes it).
 
 What the ledger cannot hold is the cost of a request that never completed: OpenRouter reports
 the cost in the last chunk of a stream, so a stream that stalled or was cut has none to count
@@ -101,8 +104,8 @@ class TurnSpend:
     def ensure_priced(self) -> None:
         """Raise `CostCapReached` when a request of the session reported no cost.
 
-        `check` runs before a request, so the last response of a turn is never checked by it; the
-        cap itself does not apply here, because an answer that crosses it is delivered.
+        `check` runs before a request, so a response is never checked by it before it is acted on;
+        the cap itself does not apply here, because an answer that crosses it is delivered.
         """
         if self._store.read(lambda conn: dots_store.has_unpriced(conn, self._session_key)):
             raise CostCapReached(_UNPRICED_TEXT)

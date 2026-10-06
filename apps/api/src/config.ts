@@ -22,11 +22,20 @@ export interface ListenAddress {
   port: number;
 }
 
-/**
- * Parse `host:port`, `[v6]:port` or a bare port (which binds 127.0.0.1).
- * `variable` is the setting the value came from, named in the error.
- */
-export function parseListen(value: string = DEFAULT_LISTEN, variable: string = ENV.LISTEN): ListenAddress {
+/** What differs between the settings parseListen reads. */
+export interface ListenSetting {
+  /** The environment variable the value came from, named in the errors. */
+  variable: string;
+  /** The address shown as the example in the error: the setting's own default. */
+  example: string;
+  /** Whether port 0 (the system picks one) is refused, for a server whose address the person has to be told. */
+  fixedPort: boolean;
+}
+
+export const API_LISTEN: ListenSetting = { variable: ENV.LISTEN, example: DEFAULT_LISTEN, fixedPort: false };
+
+/** Parse `host:port`, `[v6]:port` or a bare port (which binds 127.0.0.1). */
+export function parseListen(value: string = DEFAULT_LISTEN, setting: ListenSetting = API_LISTEN): ListenAddress {
   const text = value.trim();
   let host = "127.0.0.1";
   let portText = text;
@@ -41,8 +50,9 @@ export function parseListen(value: string = DEFAULT_LISTEN, variable: string = E
   }
   const port = Number(portText);
   if (!host || !/^\d+$/.test(portText) || port < 0 || port > 65535) {
-    throw new Error(`${variable} must look like "127.0.0.1:8787", got "${value}"`);
+    throw new Error(`${setting.variable} must look like "${setting.example}", got "${value}"`);
   }
+  if (setting.fixedPort && port === 0) throw new Error(`${setting.variable} needs a fixed port, got "${value}"`);
   return { host, port };
 }
 

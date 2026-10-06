@@ -1199,6 +1199,19 @@ class TestTheCostCap:
         )
         assert len(h.provider.requests) == 1
 
+    async def test_the_tool_calls_of_a_response_with_no_cost_do_not_run(self, make_harness: MakeHarness) -> None:
+        h = make_harness([calls(call("c1", "list_dir", path=".")), says("never asked")], limits=cap_limits(1))
+        h.provider.default_cost = None
+        session = h.start_task()
+
+        outcome = await h.run(TurnUnit(session, "t1", (OpeningMessage("do it"),)))
+
+        assert outcome == TurnOutcome.failed(NO_COST_TEXT)
+        assert len(h.provider.requests) == 1
+        # The turn does not act on a response it could not price: no call was recorded or run.
+        assert roles(h.messages(session)) == ["user"]
+        assert h.events_of("tool.called") == []
+
     async def test_a_final_answer_with_no_cost_fails_the_task_instead_of_completing_it(
         self, make_harness: MakeHarness
     ) -> None:

@@ -30,7 +30,17 @@ describe("server settings", () => {
     expect(parseListen("[::1]:8787")).toEqual({ host: "::1", port: 8787 });
     expect(parseListen("8080")).toEqual({ host: "127.0.0.1", port: 8080 });
     expect(() => parseListen("localhost:http")).toThrow(/INVISIBLE_DOTS_LISTEN/);
-    expect(() => parseListen("localhost:http", "INVISIBLE_DOTS_WEB_LISTEN")).toThrow(/INVISIBLE_DOTS_WEB_LISTEN must look like/);
+    expect(parseListen("127.0.0.1:0")).toEqual({ host: "127.0.0.1", port: 0 });
+    expect(() => parseListen("localhost:http")).toThrow('INVISIBLE_DOTS_LISTEN must look like "127.0.0.1:8787", got "localhost:http"');
+  });
+
+  it("names the setting it was asked for, with its own example, and refuses port 0 only where the setting needs a fixed port", () => {
+    const web = { variable: "INVISIBLE_DOTS_WEB_LISTEN", example: "127.0.0.1:3000", fixedPort: true };
+    expect(parseListen("127.0.0.1:3100", web)).toEqual({ host: "127.0.0.1", port: 3100 });
+    expect(() => parseListen("localhost:http", web)).toThrow('INVISIBLE_DOTS_WEB_LISTEN must look like "127.0.0.1:3000", got "localhost:http"');
+    expect(() => parseListen("70000", web)).toThrow(/must look like/);
+    expect(() => parseListen("0", web)).toThrow('INVISIBLE_DOTS_WEB_LISTEN needs a fixed port, got "0"');
+    expect(() => parseListen("127.0.0.1:0", web)).toThrow(/needs a fixed port/);
   });
 
   it("creates the API token once and reads it back; the environment wins; short tokens are refused", async () => {

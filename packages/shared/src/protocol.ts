@@ -69,6 +69,8 @@ export const ENV = {
   WEB_LISTEN: "INVISIBLE_DOTS_WEB_LISTEN",
   /** Extra host names (comma separated) the web server may be reached by, besides loopback. */
   WEB_ALLOWED_HOSTS: "INVISIBLE_DOTS_WEB_ALLOWED_HOSTS",
+  /** The pid of the `invisible-dots server` that started the web server, which exits once that process is gone. */
+  WEB_PARENT_PID: "INVISIBLE_DOTS_WEB_PARENT_PID",
   /** The API token itself, instead of the api.token file: the server's token, or the one a client sends. */
   TOKEN: "INVISIBLE_DOTS_TOKEN",
   /** Where clients (CLI, web server) reach the API. Default http://127.0.0.1:8787. */

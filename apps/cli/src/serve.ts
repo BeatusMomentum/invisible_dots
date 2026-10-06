@@ -5,7 +5,7 @@
  * Ctrl+C while the web client is starting must still close the database),
  * and a stop closes the web client first, then the control plane.
  */
-import type { ListenAddress, StartServerOptions } from "@invisible-dots/api";
+import type { ListenAddress, ListenSetting, StartServerOptions } from "@invisible-dots/api";
 import { DEFAULT_WEB_LISTEN, ENV, type HostPaths } from "@invisible-dots/shared";
 import type { Logger } from "@invisible-dots/vm-manager";
 import { locateWebBuild, type WebServer, type WebServerOptions } from "./web.js";
@@ -14,7 +14,7 @@ import { locateWebBuild, type WebServer, type WebServerOptions } from "./web.js"
 export interface ServeDeps {
   startServer(options: StartServerOptions): Promise<{ url: string; paths: HostPaths; close(): Promise<void> }>;
   untilStopSignal(close: () => Promise<void>, logger: Logger, signals?: NodeJS.EventEmitter): Promise<void>;
-  parseListen(value: string, variable: string): ListenAddress;
+  parseListen(value: string, setting: ListenSetting): ListenAddress;
   startWebServer(options: WebServerOptions): Promise<WebServer>;
 }
 
@@ -29,10 +29,13 @@ export interface ServeOptions {
   signals?: NodeJS.EventEmitter;
 }
 
+/** The web client's listen address: its own default shown in the error, and a port the person can be told. */
+const WEB_LISTEN: ListenSetting = { variable: ENV.WEB_LISTEN, example: DEFAULT_WEB_LISTEN, fixedPort: true };
+
 export async function serve(options: ServeOptions, deps: ServeDeps): Promise<void> {
   const { env, logger } = options;
   // Parsed before anything starts, so a bad INVISIBLE_DOTS_WEB_LISTEN fails the command at once.
-  const webListen = options.web ? deps.parseListen(env[ENV.WEB_LISTEN]?.trim() || DEFAULT_WEB_LISTEN, ENV.WEB_LISTEN) : undefined;
+  const webListen = options.web ? deps.parseListen(env[ENV.WEB_LISTEN]?.trim() || DEFAULT_WEB_LISTEN, WEB_LISTEN) : undefined;
   const server = await deps.startServer({ env, logger });
   logger.info(`API token in ${server.paths.apiTokenPath}; stop with Ctrl+C (Dots keep running)`);
 

@@ -924,9 +924,11 @@ on from what it had spent); the chat's spend starts again with each answer it gi
 restart does not reset it.
 A lowered cap applies from the next turn, like the step limit. A response that
 reports no cost fails the turn, `stopped: OpenRouter reported
-no cost for a request, so limits.max_cost_per_task_usd cannot be enforced`, at
-its next check or, when it was the last response, before its answer is written
-(the answer is not delivered, the task does not complete). The note is a column
+no cost for a request, so limits.max_cost_per_task_usd cannot be enforced`,
+before anything is done on that response: its tool calls are not written and do
+not run, or its answer is not delivered and the task does not complete (a
+summary request is not acted on this way, so the failure comes at the next
+check). The note is a column
 of the same ledger row as the money (`dots_spend.unpriced`), so a restart does
 not forget it: the cap never runs blind. A request abandoned by a sleep may have cost something
 that was never reported; that gap is at most one request a sleep.
@@ -1540,10 +1542,16 @@ starts it: the build `npm run build --workspace @invisible-dots/web` leaves
 (Next's standalone server and the browser files beside it, assembled by
 `apps/web/scripts/standalone.mjs`) is run with `node` as a child process of the
 server, on `INVISIBLE_DOTS_WEB_LISTEN` (default `127.0.0.1:3000`), with
-`INVISIBLE_DOTS_URL` set to the control plane's address. The child gets an
+`INVISIBLE_DOTS_URL` set to the control plane's address; the setting is read
+before anything starts, so a malformed value or port 0 (the person has to be
+told where to go) fails the command at once. The child gets an
 allowlisted environment, not the server's: the data directory (so it reads
 `api.token` itself on every request), `INVISIBLE_DOTS_TOKEN` only when the
 server was given the token that way, and `INVISIBLE_DOTS_WEB_ALLOWED_HOSTS`.
+It also gets the server's pid (`INVISIBLE_DOTS_WEB_PARENT_PID`) and exits when
+that process is gone (`apps/web/src/instrumentation.ts`), so a `kill -9` of the
+server does not leave an orphan holding the port: a stop signal ends the child
+through the server, anything else through the child itself.
 The web client is a companion, not a dependency: when it is not built, its
 port is taken or it exits, the server logs why and the control plane and the
 command line go on; `server --no-web` does not start it. A stop signal closes

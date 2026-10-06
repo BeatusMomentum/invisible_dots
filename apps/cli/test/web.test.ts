@@ -1,8 +1,10 @@
+import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { locateWebBuild, startWebServer, webEnvironment, WebStartError, type WebServer, type WebServerOptions } from "../src/web.js";
 
@@ -88,12 +90,14 @@ describe("webEnvironment", () => {
       },
       listen: { host: "127.0.0.1", port: 3000 },
       apiUrl: "http://127.0.0.1:8787",
+      parentPid: 4242,
     });
     expect(env).toEqual({
       PATH: "/bin",
       INVISIBLE_DOTS_HOME: "/data",
       INVISIBLE_DOTS_WEB_ALLOWED_HOSTS: "dots.example",
       INVISIBLE_DOTS_URL: "http://127.0.0.1:8787",
+      INVISIBLE_DOTS_WEB_PARENT_PID: "4242",
       PORT: "3000",
       HOSTNAME: "127.0.0.1",
     });
@@ -104,6 +108,7 @@ describe("webEnvironment", () => {
       env: { INVISIBLE_DOTS_TOKEN: "token-from-the-environment" },
       listen: { host: "127.0.0.1", port: 3000 },
       apiUrl: "http://127.0.0.1:8787",
+      parentPid: 4242,
     });
     expect(env.INVISIBLE_DOTS_TOKEN).toBe("token-from-the-environment");
   });
@@ -118,6 +123,7 @@ describe("startWebServer", { timeout: 30_000 }, () => {
     expect(body.env.PORT).toBe(String(port));
     expect(body.env.HOSTNAME).toBe("127.0.0.1");
     expect(body.env.INVISIBLE_DOTS_URL).toBe("http://127.0.0.1:8787");
+    expect(body.env.INVISIBLE_DOTS_WEB_PARENT_PID).toBe(String(process.pid));
     expect(body.env.DATABASE_URL).toBeUndefined();
     // It runs in its own directory, never the server's.
     expect(realpathSync.native(body.cwd)).toBe(realpathSync.native(root));
@@ -168,10 +174,61 @@ describe("startWebServer", { timeout: 30_000 }, () => {
     await expect(start(entry, { signal: controller.signal })).rejects.toThrow("stopped while the web client was starting");
   });
 
-  it("does not start at all when the build is incomplete, or the port is 0", async () => {
+  it("does not start at all when the build is incomplete", async () => {
     await expect(start("/nowhere/server.js", { build: { entry: "/nowhere/server.js", missing: "/nowhere/server.js" } })).rejects.toThrow(
       "the web client is not built (/nowhere/server.js does not exist); build it with: npm run build --workspace @invisible-dots/web",
     );
-    await expect(start("/nowhere/server.js", { listen: { host: "127.0.0.1", port: 0 } })).rejects.toThrow("INVISIBLE_DOTS_WEB_LISTEN needs a fixed port");
+  });
+});
+
+describe("a server that is killed outright", { timeout: 60_000 }, () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const watcher = pathToFileURL(join(here, "..", "..", "web", "src", "lib", "parent.ts")).href;
+  const webModule = pathToFileURL(join(here, "..", "src", "web.ts")).href;
+
+  it("does not leave the web server holding its port: it exits once its parent is gone", async () => {
+    // Windows ends a Node child with its parent on its own (libuv puts children in a job object), so the
+    // orphan this guards against is a POSIX one; the web server's own exit is what keeps both the same.
+    // What the web build's instrumentation.ts does with the pid it is given, around a plain HTTP server.
+    const entry = await script(`
+      import { createServer } from "node:http";
+      import { exitWhenParentGone, parentPidFrom } from ${JSON.stringify(watcher)};
+      createServer((req, res) => res.end("ok")).listen(Number(process.env.PORT), process.env.HOSTNAME);
+      const exists = (pid) => { try { process.kill(pid, 0); return true; } catch (error) { return error.code === "EPERM"; } };
+      const parentPid = parentPidFrom(process.env.INVISIBLE_DOTS_WEB_PARENT_PID);
+      if (parentPid !== undefined) exitWhenParentGone(parentPid, { exists, onGone: () => process.exit(0), intervalMs: 100 });
+    `);
+    const port = await freePort();
+    // The server stand-in: a process that starts the web server and then waits to be killed.
+    const parentScript = join(root, "parent.mjs");
+    await writeFile(
+      parentScript,
+      `
+      import { startWebServer } from ${JSON.stringify(webModule)};
+      const web = await startWebServer({
+        build: { entry: ${JSON.stringify(entry)}, missing: undefined },
+        listen: { host: "127.0.0.1", port: ${port} },
+        apiUrl: "http://127.0.0.1:8787",
+        env: { PATH: process.env.PATH },
+        onUnexpectedExit: () => undefined,
+      });
+      console.log(web.url);
+      setInterval(() => {}, 1000);
+    `,
+    );
+    const parent = spawn(process.execPath, ["--import", "tsx", parentScript], { stdio: ["ignore", "pipe", "inherit"], cwd: join(here, "..") });
+    try {
+      const url = await new Promise<string>((resolve, reject) => {
+        parent.once("exit", () => reject(new Error("the stand-in server exited before the web server answered")));
+        parent.stdout.once("data", (chunk: Buffer) => resolve(chunk.toString().trim()));
+      });
+      expect((await fetch(url)).status).toBe(200);
+      parent.kill("SIGKILL");
+      await expect
+        .poll(() => fetch(url, { signal: AbortSignal.timeout(500) }).then(() => "still answering", () => "gone"), { timeout: 15_000, interval: 200 })
+        .toBe("gone");
+    } finally {
+      parent.kill("SIGKILL");
+    }
   });
 });

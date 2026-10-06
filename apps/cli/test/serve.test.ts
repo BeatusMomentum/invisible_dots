@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { parseListen } from "@invisible-dots/api";
 import type { HostPaths } from "@invisible-dots/shared";
 import { serve, type ServeDeps } from "../src/serve.js";
 import type { WebServer, WebServerOptions } from "../src/web.js";
@@ -50,11 +51,7 @@ function harness(over: { webStart?: (options: WebServerOptions) => Promise<WebSe
         stopped = resolve;
         emitter?.once("SIGINT", () => void close().then(resolve));
       }),
-    parseListen: (value, variable) => {
-      const at = value.lastIndexOf(":");
-      if (!/^\d+$/.test(value.slice(at + 1))) throw new Error(`${variable} must look like "127.0.0.1:8787", got "${value}"`);
-      return { host: value.slice(0, at), port: Number(value.slice(at + 1)) };
-    },
+    parseListen,
     startWebServer:
       over.webStart ??
       (async (options) => {
@@ -104,6 +101,21 @@ describe("serve", () => {
   it("fails before starting anything when INVISIBLE_DOTS_WEB_LISTEN is malformed", async () => {
     const h = harness();
     await expect(h.run({ web: true, env: { INVISIBLE_DOTS_WEB_LISTEN: "three-thousand" } })).rejects.toThrow(/INVISIBLE_DOTS_WEB_LISTEN must look like/);
+    expect(h.log).toEqual([]);
+  });
+
+  it("names the web client's own default, not the API's, when INVISIBLE_DOTS_WEB_LISTEN is malformed", async () => {
+    const h = harness();
+    await expect(h.run({ web: true, env: { INVISIBLE_DOTS_WEB_LISTEN: "three-thousand" } })).rejects.toThrow(
+      'INVISIBLE_DOTS_WEB_LISTEN must look like "127.0.0.1:3000", got "three-thousand"',
+    );
+  });
+
+  it("fails before starting anything when INVISIBLE_DOTS_WEB_LISTEN names port 0", async () => {
+    const h = harness();
+    await expect(h.run({ web: true, env: { INVISIBLE_DOTS_WEB_LISTEN: "127.0.0.1:0" } })).rejects.toThrow(
+      'INVISIBLE_DOTS_WEB_LISTEN needs a fixed port, got "127.0.0.1:0"',
+    );
     expect(h.log).toEqual([]);
   });
 
