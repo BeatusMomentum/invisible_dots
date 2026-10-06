@@ -176,10 +176,11 @@ describe("the browsers", () => {
 
     plane.store("d1", "tool.called", { tool: "browser_navigate", permission: "browser.navigate", decision: "allow", ok: true, duration_ms: 90, target: "a: https://example.com/fares" }, secondsAgo(600));
     plane.requests.length = 0;
+    plane.eventQueries.length = 0;
     await renderComputer({ view: "browser" });
     const next = await screen.findByRole("region", { name: "Window of Alpha" });
     await waitFor(() => expect(within(next).getByLabelText("Page the Dot last opened").textContent).toBe("https://example.com/fares"));
-    expect(requested(/GET \/api\/dots\/d1\/events$/)).toHaveLength(1);
+    expect(plane.eventQueries).toHaveLength(1);
   });
 
   it("reads only the newest window of the browser calls in one request, however long the log of the Dot's other tools is", async () => {
@@ -212,7 +213,7 @@ describe("the browsers", () => {
     await renderComputer({ view: "browser" });
     await screen.findByRole("article", { name: "Alpha" });
     expect(screen.getByText(/No browser is open/)).toBeTruthy();
-    expect(requested(/\/events$/)).toEqual([]);
+    expect(plane.eventQueries).toEqual([]);
   });
 
   it("closes an open browser at once, and says so; the list follows the control plane", async () => {

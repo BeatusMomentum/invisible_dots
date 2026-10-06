@@ -68,7 +68,7 @@ describe("the Tasks page", () => {
     await renderTasks();
     expect(await screen.findByText("No tasks yet")).toBeTruthy();
     expect(screen.getByRole("button", { name: "New task" })).toBeTruthy();
-    expect(requested(/\/events$/)).toEqual([]);
+    expect(plane.eventQueries).toEqual([]);
   });
 
   it("says so when the tasks cannot be loaded", async () => {

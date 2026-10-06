@@ -61,6 +61,40 @@ describe("what the live stream says about a Dot", () => {
   });
 });
 
+describe("what the live stream says when the computer goes off", () => {
+  it("ends the agent's state and what its task reported, whatever stops it: a stop, a state other than running, an error", () => {
+    const working = [event("a", "agent.state", { state: "THINKING" }), event("a", "task.progress", { task_id: "t1", text: "reading" })];
+    for (const off of [event("a", "computer.stopped", { reason: "user" }), event("a", "computer.state", { state: "STOPPING" }), event("a", "computer.state", { state: "STOPPED" }), event("a", "computer.state", { state: "ERROR" }), event("a", "computer.state", { state: "STARTING" })]) {
+      const live = fold([off], null, fold(working));
+      expect(liveOf(live, "a"), off.type + JSON.stringify(off.data)).toMatchObject({ agent: null, progress: null });
+    }
+  });
+
+  it("keeps it while the computer runs, and does not touch another Dot's", () => {
+    const live = fold([event("a", "agent.state", { state: "THINKING" }), event("b", "agent.state", { state: "EXECUTING" })]);
+    expect(applyLiveEvent(live, event("a", "computer.state", { state: "RUNNING" }), null)).toBe(live);
+    expect(liveOf(applyLiveEvent(live, event("a", "computer.stopped"), null), "b").agent).toBe("EXECUTING");
+  });
+
+  it("is told again by the agent that comes up: a state after the stop is the new one", () => {
+    const live = fold([event("a", "agent.state", { state: "THINKING" }), event("a", "computer.stopped"), event("a", "agent.started"), event("a", "agent.state", { state: "IDLE" })]);
+    expect(liveOf(live, "a").agent).toBe("IDLE");
+  });
+
+  it("is not undone by an event of the log that is older than what is known (a read of the newest agent event arriving late)", () => {
+    const stale = event("a", "agent.state", { state: "EXECUTING" });
+    const live = fold([event("a", "agent.state", { state: "THINKING" }), event("a", "computer.stopped")]);
+    expect(applyLiveEvent(live, stale, "a")).toBe(live);
+    // And a newer one is taken.
+    expect(liveOf(applyLiveEvent(live, event("a", "agent.state", { state: "IDLE" }), "a"), "a").agent).toBe("IDLE");
+  });
+
+  it("is what the log says when nothing newer is known: the newest agent event read for a page opened mid-turn", () => {
+    expect(liveOf(applyLiveEvent({}, event("a", "agent.state", { state: "EXECUTING" }), "a"), "a").agent).toBe("EXECUTING");
+    expect(liveOf(applyLiveEvent({}, event("a", "agent.started"), "a"), "a").agent).toBeNull();
+  });
+});
+
 describe("what a running task last reported", () => {
   it("is the newest progress line of the Dot, until that task ends", () => {
     let live = fold([event("a", "task.progress", { task_id: "t1", text: "reading" }), event("a", "task.progress", { task_id: "t1", text: "writing" })]);

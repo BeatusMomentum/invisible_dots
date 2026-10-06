@@ -18,6 +18,7 @@ import { useResource, type Resource } from "../ui";
 const DOT_EVENTS = ["dot.created", "dot.updated", "dot.deleted", "computer.state", "computer.started", "computer.stopped"];
 const APPROVAL_EVENTS = ["approval.requested", "approval.resolved", "task.cancelled", "task.completed", "task.failed"];
 const FAILED_TASK_EVENTS = ["task.failed"];
+const AGENT_EVENTS = ["agent.state", "agent.started"];
 const CHANNEL_EVENTS = ["channel.status", "channel.changed"];
 const HEALTH_INTERVAL_MS = 30_000;
 
@@ -70,6 +71,24 @@ export function AttentionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (openDotId) setLive((current) => markRead(current, openDotId));
   }, [openDotId]);
+  // A page opened in the middle of a turn: the stream says nothing of what began before it, so the newest agent event
+  // of the log is read, for the Dot whose page is open and whose computer runs (a stopped one has no agent).
+  const openRuns = openDotId !== null && (dots.data ?? []).some((dot) => (dot.id === openDotId || dot.name === openDotId) && dot.computer_state === "RUNNING");
+  useEffect(() => {
+    if (!openDotId || !openRuns) return;
+    let current = true;
+    api.events(openDotId, { types: AGENT_EVENTS, limit: 1, order: "desc" }).then(
+      ([newest]) => {
+        if (current && newest) setLive((now) => applyLiveEvent(now, newest, openDotId));
+      },
+      () => {
+        // The state of the agent is a convenience: the stored status of the Dot says what it can.
+      },
+    );
+    return () => {
+      current = false;
+    };
+  }, [openDotId, openRuns]);
 
   // Dismissals are read after mount: the server render has no storage, and the first render must match it.
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());

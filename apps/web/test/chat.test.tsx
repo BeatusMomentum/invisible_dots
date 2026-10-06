@@ -389,7 +389,7 @@ describe("what the Dot did between its messages", () => {
     plane.store("d1", "tool.called", call({ tool: "grep", target: "deep" }));
     await renderChat();
     expect(await screen.findByText("deep")).toBeTruthy();
-    expect(requested(/\/events$/)).toHaveLength(2);
+    expect(plane.eventQueries).toHaveLength(2);
     expect(plane.eventQueries.map((q) => q.types)).toEqual([CHAT_ACTIVITY_EVENT_TYPES, CHAT_ACTIVITY_EVENT_TYPES]);
   });
 
@@ -422,6 +422,39 @@ describe("while the Dot works", () => {
     expect(await screen.findByText("Running a tool...", { selector: ".shimmer" })).toBeTruthy();
     act(() => plane.push("d1", "agent.state", { state: "IDLE" }));
     await waitFor(() => expect(screen.queryByText("Running a tool...", { selector: ".shimmer" })).toBeNull());
+  });
+
+  it("says what the Dot is doing when the page was opened in the middle of its turn, from the newest agent event of the log", async () => {
+    plane.store("d1", "user.message", { text: "dig" });
+    plane.store("d1", "agent.state", { state: "IDLE" });
+    plane.store("d1", "agent.state", { state: "THINKING" });
+    plane.store("d1", "tool.called", call({ tool: "read_file", target: "a.md" }));
+    await renderChat();
+    const label = await screen.findByText("Thinking...", { selector: ".shimmer" });
+    expect(label.closest("[role=status]")?.textContent).toContain("Last step: read a file a.md");
+    // One request, for the newest of the two types that tell: the log is not read for this.
+    expect(plane.agentQueries).toEqual([{ after: 0, limit: 1, types: ["agent.state", "agent.started"], tools: null, taskId: null, order: "desc" }]);
+    act(() => plane.push("d1", "agent.state", { state: "IDLE" }));
+    await waitFor(() => expect(screen.queryByText("Thinking...", { selector: ".shimmer" })).toBeNull());
+  });
+
+  it("does not say it of a computer that is stopped, and does not ask", async () => {
+    plane.dots = [dotRecord("d1", { name: "fares", computer_state: "STOPPED" })];
+    plane.store("d1", "agent.state", { state: "THINKING" });
+    await renderChat();
+    await screen.findByText(/Sending a message wakes it/);
+    expect(plane.agentQueries).toEqual([]);
+    expect(document.querySelector(".shimmer")).toBeNull();
+  });
+
+  it("stops saying the Dot is thinking when its computer is stopped in the middle of the turn", async () => {
+    plane.store("d1", "user.message", { text: "dig" });
+    await renderChat();
+    act(() => plane.push("d1", "agent.state", { state: "THINKING" }));
+    await screen.findByText("Thinking...", { selector: ".shimmer" });
+    act(() => plane.push("d1", "computer.stopped", { reason: "user", forced: false }));
+    await waitFor(() => expect(screen.queryByText("Thinking...", { selector: ".shimmer" })).toBeNull());
+    expect(document.querySelector(".shimmer")).toBeNull();
   });
 
   it("does not show the row while the Dot waits for the person", async () => {

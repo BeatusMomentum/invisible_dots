@@ -81,6 +81,8 @@ export class FakeControlPlane {
   events: StoredEvent[] = [];
   /** What each `GET .../events` asked for, so a test can see that a page cut by type was asked for by type. */
   eventQueries: Array<{ after: number; before?: number; limit: number; types: string[] | null; tools: string[] | null; taskId: string | null; order: string | null }> = [];
+  /** What the shell asked for to know the agent's state when a page opened: the newest `agent.state` or `agent.started`. */
+  agentQueries: Array<{ after: number; before?: number; limit: number; types: string[] | null; tools: string[] | null; taskId: string | null; order: string | null }> = [];
   /** What each `GET /api/approvals` asked for. */
   approvalQueries: Array<{ status: string[] | null; limit: number | null; order: string | null; before: string | null }> = [];
   /** The body of every `POST /api/dots/:id/tasks`, as the browser sent it. */
@@ -396,7 +398,9 @@ export class FakeControlPlane {
         const order = searchParams.get("order");
         const before = searchParams.has("before") ? Number(searchParams.get("before")) : undefined;
         if (before !== undefined && order !== "desc") return json({ error: "invalid_request", message: "before pages a list in order=desc" }, 400);
-        this.eventQueries.push({ after, ...(before === undefined ? {} : { before }), limit, types: types ?? null, tools: tools ?? null, taskId, order });
+        const query = { after, ...(before === undefined ? {} : { before }), limit, types: types ?? null, tools: tools ?? null, taskId, order };
+        // The shell's one read of the agent's newest state is kept apart, so a test of what a view reads sees its own requests.
+        (types?.length === 2 && types.includes("agent.state") && types.includes("agent.started") ? this.agentQueries : this.eventQueries).push(query);
         // `tools` narrows tool.called only, `order=desc` is the newest first and the limit keeps the newest.
         const kept = this.events.filter(
           (e) =>
