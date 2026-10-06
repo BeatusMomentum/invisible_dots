@@ -24,20 +24,29 @@ image's SHA-256; `invisible-dots doctor` checks an image against it with
    each Dot's overlay is larger and cloud-init grows the filesystem).
 3. Writes the builder seed with `@invisible-dots/iso`: one ISO labelled
    `cidata` holding `user-data`, `meta-data`, `provision.sh`, `pins.env`,
-   `mcp-requirements.lock`, both tarballs, `engine-requirements.lock` and
-   `build-engine-env.sh`. The engine's own source is not on it: it is ours, so
-   it travels on the runtime ISO.
+   `mcp-requirements.lock`, both tarballs, `engine-requirements.lock`,
+   `build-engine-env.sh` and `build-browser-env.sh`. The engine's own source is
+   not on it: it is ours, so it travels on the runtime ISO.
 4. Boots it once with the QEMU the host runs Dots with, on the accelerator
    the vm-manager chose (`-accel kvm` or `-accel whpx`, never emulation), the
    same machine, CPU model and devices as a Dot (its command line is built
    from the vm-manager's `machineArgs()`). `provision.sh` installs the
    apt packages (Xvfb, a minimal XFCE, the browser's libraries, ImageMagick
-   for dot-agentd's screenshots), Node, uv, then as user `dot` a virtual
-   environment in `~/.local/share/invisible-dots/mcp` filled with
-   `uv pip install --require-hashes -r mcp-requirements.lock`, links its
-   `invisible-playwright-mcp` into `~/.local/bin`, and runs
-   `invisible-playwright fetch` from that environment, so the cached browser
-   engine is the one the MCP server expects. It then builds the engine's Python
+   for dot-agentd's screenshots), Node, uv, then builds the Dot's browser with
+   `build-browser-env.sh <lock> ~dot/.local/share/invisible-dots/mcp`, as user
+   `dot`: a virtual environment filled with
+   `uv pip install --require-hashes -r mcp-requirements.lock`, its
+   `invisible-playwright-mcp` linked into `~/.local/bin`, and
+   `invisible-playwright fetch` run from that environment, so the cached browser
+   engine is the one the MCP server expects. The same script then fetches the
+   GeoIP database that a launch with the timezone left to `auto` needs (the
+   latest build of `daijro/geoip-all-in-one` on the day of the build), so a Dot's
+   first launch downloads nothing; its release is recorded in the manifest as
+   `geoip-database`, and a launch checks for a newer one and keeps this one when
+   GitHub cannot be reached. The browser smoke runs the same script. The only
+   browser a Dot has is that server: a test refuses any other browser or browser
+   library among the apt packages, the lock and the build scripts. `provision.sh`
+   then builds the engine's Python
    environment with `build-engine-env.sh <lock> /opt/invisible-dots-engine
    /opt/invisible-dots/engine`: a venv from `/usr/bin/python3` (CPython 3.12)
    filled with `uv pip install --require-hashes --only-binary :all:` from
@@ -140,3 +149,13 @@ hashed lock, as `provision.sh` builds it, and the engine's source staged as the 
 ISO stages it. `test/smoke/run.sh` is the entry, and the `smoke` job of
 `.github/workflows/tests.yml` runs it; its README says what it proves and how to run it
 from Linux or WSL.
+
+## The browser smoke
+
+`test/smoke/run.sh --suite browser` runs the same two daemons with the Dot's real browser:
+the apt packages of `pins.json`, the browser built by `builder/build-browser-env.sh` on the
+hashed `mcp-requirements.lock`, the runtime disk's `dot-desktop` script (Xvfb and XFCE on
+`:0`), and the stand-in model navigating, reading and taking screenshots of pages served
+from the container. The `browser-smoke` job of `.github/workflows/tests.yml` runs it, and
+the `gate` job needs it. It needs the network for the downloads of the build and for the
+egress address of a launch. The README of `test/smoke/` lists what it pins.

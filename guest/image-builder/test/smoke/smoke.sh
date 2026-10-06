@@ -12,10 +12,8 @@
 #   SMOKE: <passed> passed, <failed> failed, <skipped> skipped
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 set -uo pipefail
-PASS=0; FAIL=0
-ok() { echo "PASS: $*"; PASS=$((PASS+1)); }
-bad() { echo "FAIL: $*"; FAIL=$((FAIL+1)); }
-check() { if eval "$2"; then ok "$1"; else bad "$1"; fi; }
+# The guest, the daemons and the helpers every smoke shares (see lib.sh).
+source "$HERE/lib.sh"
 
 # The checks that pin a removal from the model's text: each runs only when its
 # name is in PIN_REMOVALS, otherwise it is reported as skipped. The engine has
@@ -25,15 +23,13 @@ check() { if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 #                 Guardian, elevated)
 #   exec-schema   the exec tool's parameter schema has no "elevated" property
 PIN_REMOVALS="${PIN_REMOVALS-prompt-text exec-schema}"
-SKIP=0
 pinned() { case " $PIN_REMOVALS " in *" $1 "*) return 0;; esac; return 1; }
 check_pinned() { # name, label, command
   if pinned "$1"; then check "$2" "$3"; else echo "SKIP: $2 (pin '$1' is not in PIN_REMOVALS yet)"; SKIP=$((SKIP+1)); fi
 }
 
 # >>> request checks
-# The stand-in for OpenRouter appends every request it receives, whole, to FULL.
-FULL="${FULL:-/tmp/fake-full.jsonl}"
+# The stand-in for OpenRouter appends every request it receives, whole, to FULL (lib.sh's).
 # sys: a request's system prompt, the text of its system and developer
 # messages, whether the content is a string or a list of parts.
 # exec_tool: the exec tool as offered ({name, description, parameters}), or null.
@@ -57,36 +53,17 @@ req_banned_seen() {
 }
 # <<< request checks
 
-ENGINE_PY=/opt/invisible-dots-engine/bin/python
-
-# --- the golden image's users (builder/user-data.yaml) and the runtime disk ---
-useradd -m -s /bin/bash dot
-useradd -m -s /usr/sbin/nologin -G dot dotengine
-chmod 0750 /home/dot
-mkdir -p /opt/invisible-dots/bin /etc/invisible-dots /run
-cp "$AGENTD_BIN" /opt/invisible-dots/bin/dot-agentd; chmod 0755 /opt/invisible-dots/bin/dot-agentd
-# install.sh's directory and socket steps (the systemd parts do not run here).
-install -d -o dot -g dotengine -m 2750 /run/invisible-dots
-install -d -o dotengine -g dot -m 2750 /run/invisible-dots-agent
-install -d -o dot -g dot -m 2775 /home/dot/workspace
-install -d -o dotengine -g dotengine -m 0700 /home/dotengine /home/dotengine/state
+# --- the runtime disk (the golden image's users, dot and dotengine, are prepare-engine.sh's) ---
+lay_out_guest
 # The engine needs no privilege: no sudoers rule, no config directory.
 check "the engine has no sudo rule (no /etc/sudoers.d/invisible-dots-engine, no sudo for dotengine)" "[ ! -e /etc/sudoers.d/invisible-dots-engine ] && ! su -s /bin/bash dotengine -c 'sudo -n true' >/dev/null 2>&1"
 check "no sudoers file names dotengine (the old engine's rule is gone with the config installer)" "! grep -rqs dotengine /etc/sudoers /etc/sudoers.d"
 check "dotengine is in no group but its own and dot" "[ \"\$(id -nG dotengine | tr ' ' '\n' | sort | tr '\n' ' ')\" = 'dot dotengine ' ]"
-TOKEN="smoke-token-$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-printf '{"dotId":"dot_smoke","token":"%s"}' "$TOKEN" > /etc/invisible-dots/config.json
-chown dot:dot /etc/invisible-dots/config.json; chmod 0600 /etc/invisible-dots/config.json
+write_host_token
 check "the engine cannot read the host's token (/etc/invisible-dots/config.json is dot's, 0600)" "[ \"\$(stat -c '%U:%G %a' /etc/invisible-dots/config.json)\" = 'dot:dot 600' ] && ! su -s /bin/bash dotengine -c 'cat /etc/invisible-dots/config.json' >/dev/null 2>&1"
 
-# --- the stand-in for OpenRouter ---
-# The key has this one owner; the stand-in gets it on its command line (not its environment: a check
-# below asserts that no process environment holds it) and refuses to start without it.
-KEY=sk-or-v1-smoke-0123456789abcdef
-# (Copied out of the tree under test, where the unprivileged user may not reach it, and out of
-# the directories the key sweeps below read: the stand-in holds the key in its memory.)
-install -D -m 0644 "$HERE/fake_openrouter.py" /usr/local/lib/smoke-fake/fake_openrouter.py
-su -s /bin/bash nobody -c "python3 /usr/local/lib/smoke-fake/fake_openrouter.py 9999 $KEY" > /tmp/fake.log 2>&1 &
+# --- the stand-in for OpenRouter (the key is lib.sh's) ---
+start_fake_openrouter
 # --- the stand-in for invisible-playwright-mcp ---
 # The engine's own test fake (the one owner of what a stand-in answers) and the tool list it serves, as
 # captured from the pinned server, copied out of the tree under test where dot may reach them. It runs on
@@ -98,37 +75,10 @@ for tools in "$ENGINE_TESTS"/fixtures/mcp-tools-*.json; do install -D -m 0644 "$
 FAKE_MCP=/usr/local/lib/smoke-fake/invisible-playwright-mcp
 printf '#!/bin/sh\nexec /opt/invisible-dots-engine/bin/python -I -B %s/fakes/fake_mcp_server.py "$@"\n' "$FAKE_MCP_DIR" > "$FAKE_MCP"
 chmod 0755 "$FAKE_MCP"
-# --- dot-agentd as dot ---
-su -s /bin/bash dot -c "HOME=/home/dot /opt/invisible-dots/bin/dot-agentd --listen 127.0.0.1:1024" > /tmp/agentd.log 2>&1 &
-# --- the engine as dotengine, restarted when it dies, as systemd would (KillMode=control-group:
-#     every process of the engine goes with it). The unit's environment, plus the stand-in. ---
-cat > /tmp/engine.sh <<'EOF'
-export HOME=/home/dotengine
-export PATH=/home/dot/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-export TIKTOKEN_CACHE_DIR=/opt/invisible-dots-engine/share/tiktoken
-export INVISIBLE_DOTS_ENGINE_STATE=/home/dotengine/state
-export INVISIBLE_DOTS_AGENT_SOCKET=/run/invisible-dots-agent/agent.sock INVISIBLE_DOTS_AGENTD_SOCKET=/run/invisible-dots/agentd.sock
-export INVISIBLE_DOTS_AGENTD_BIN=/opt/invisible-dots/bin/dot-agentd INVISIBLE_DOTS_WORKSPACE=/home/dot/workspace
-export INVISIBLE_DOTS_OPENROUTER_URL=http://127.0.0.1:9999/api/v1 INVISIBLE_DOTS_NETWORK_CHECK=127.0.0.1:9999
-export INVISIBLE_DOTS_MCP_COMMAND=/usr/local/lib/smoke-fake/invisible-playwright-mcp
-umask 0002
-cd /home/dotengine
-exec /opt/invisible-dots-engine/bin/python -I -B -m nanobot
-EOF
-chmod 0755 /tmp/engine.sh
-start_engine() { su -s /bin/bash dotengine -c "bash /tmp/engine.sh" >> /tmp/engine.log 2>&1 & }
-start_engine
-
-H=(-sS -H "Authorization: Bearer $TOKEN")
-api() { curl "${H[@]}" "$@"; }
-A=http://127.0.0.1:1024/v1/agent
-wait_health() {
-  for _ in $(seq 1 180); do
-    if api "$A/health" 2>/dev/null | grep -q '"status":"ok"'; then return 0; fi
-    sleep 1
-  done
-  return 1
-}
+# --- dot-agentd as dot, the engine as dotengine with the stand-in as its browser program ---
+MCP_COMMAND=$FAKE_MCP
+start_guest_daemons
+init_host_side
 check "the engine answers /health through dot-agentd" "wait_health"
 echo "health: $(api http://127.0.0.1:1024/v1/health)"
 check "the engine runs as dotengine" "pgrep -u dotengine -f 'python.*-m nanobot' >/dev/null && ! pgrep -u root -f 'python.*-m nanobot' >/dev/null"
@@ -139,37 +89,17 @@ check "agent.sock is in the engine's directory, group dot, 0660" "[ \"\$(stat -c
 check "agentd.sock is dot's, group dotengine, 0660" "[ \"\$(stat -c '%U:%G %a' /run/invisible-dots/agentd.sock)\" = 'dot:dotengine 660' ]"
 check "dot cannot write the engine's socket directory" "! su -s /bin/bash dot -c 'touch /run/invisible-dots-agent/x' 2>/dev/null"
 
-# The decision for every permission, as the host's toRuntimeConfig sends it; changed below.
-echo '{"computer.exec":"allow"}' > /tmp/perms.json; chmod 0644 /tmp/perms.json
-echo true > /tmp/memory.json; chmod 0644 /tmp/memory.json   # the config's memory.enabled
-echo '{"managed_by_dot":true,"max_identities":20,"max_open":3}' > /tmp/browser.json; chmod 0644 /tmp/browser.json   # the config's browser.identities
-echo '{}' > /tmp/models.json; chmod 0644 /tmp/models.json     # the config's models (the summary role)
-echo 32000 > /tmp/context.json; chmod 0644 /tmp/context.json # the config's limits.context_tokens
-push() {
-  api -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d "{\"openrouter_api_key\":\"$KEY\"}" "$A/secrets"
-  echo -n " "
-  api -o /dev/null -w '%{http_code}' -X PUT -H 'content-type: application/json' -d '{"name":"smoke","goal":"Answer the smoke test.","model":{"provider":"openrouter","id":"openai/gpt-4o-mini"},"browser":{"identities":'"$(cat /tmp/browser.json)"'},"permissions":'"$(cat /tmp/perms.json)"',"models":'"$(cat /tmp/models.json)"',"memory":{"enabled":'"$(cat /tmp/memory.json)"'},"limits":{"max_steps_per_task":60,"context_tokens":'"$(cat /tmp/context.json)"',"max_cost_per_task_usd":1}}' "$A/config"
-}
-{ declare -f api push; echo "H=(-sS -H 'Authorization: Bearer $TOKEN'); A=$A; KEY=$KEY; push"; } > /tmp/push.sh
+# The decision for every permission, as the host's toRuntimeConfig sends it (lib.sh's reset_config and
+# push); the files are changed below.
+reset_config
+write_push_script
 check "the host pushes the key and the config (204 204)" "[ \"\$(push)\" = '204 204' ]"
 sleep 3
 check "the state directory is dotengine's, 0700" "[ \"\$(stat -c '%U:%G %a' /home/dotengine/state)\" = 'dotengine:dotengine 700' ]"
 check "dot cannot read the engine's state" "! su -s /bin/bash dot -c 'ls /home/dotengine/state' >/dev/null 2>&1"
 
-# The event stream, read the way the host reads it: from its last seq,
-# reconnecting after a drop, pushing the key and the config on agent.started.
-STREAM=/tmp/host-stream.txt
-bash "$HERE/host-stream.sh" "$TOKEN" "$STREAM" "bash /tmp/push.sh" &
-SPID=$!
-ev() { local id=$1 type=$2 data=$3; api -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d "{\"id\":\"$id\",\"type\":\"$type\",\"ts\":\"2026-10-04T10:00:00Z\",\"data\":$data}" "$A/events"; }
-wait_event() { # file, jq filter
-  for _ in $(seq 1 120); do
-    # -s and any(): jq -e alone judges only the LAST event read, not whether one matched.
-    if grep '^data: ' "$1" | sed 's/^data: //' | jq -s -e "any(.[]; $2)" >/dev/null 2>&1; then return 0; fi
-    sleep 1
-  done
-  return 1
-}
+# The event stream, read the way the host reads it (lib.sh's start_host_stream).
+start_host_stream
 check "user.message accepted (202)" "[ \"\$(ev msg-1 user.message '{\"text\":\"hello\"}')\" = 202 ]"
 check "the same user.message again is accepted and ignored (202)" "[ \"\$(ev msg-1 user.message '{\"text\":\"hello\"}')\" = 202 ]"
 check "message.assistant answers it, in_reply_to msg-1" "wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-1\" and .data.text==\"hello from the stand-in\"'"
@@ -208,7 +138,6 @@ start_engine
 check "the restarted engine answers /health" "wait_health"
 STREAM2=$STREAM
 check "agent.started after the restart, read by the reconnected host" "wait_event $STREAM2 '.type==\"agent.started\" and .seq > $LAST'"
-wait_key() { for _ in $(seq 1 60); do api "$A/health" | grep -q '"openrouter_configured":true' && return 0; sleep 1; done; return 1; }
 check "the host pushed the key again on agent.started" "wait_key"
 check "the cut call is reported once as interrupted" "wait_event $STREAM2 '.type==\"tool.called\" and .data.task_id==\"t2\" and .data.interrupted==true'"
 check "the task resumes and completes" "wait_event $STREAM2 '.type==\"task.completed\" and .data.task_id==\"t2\"'"
@@ -217,10 +146,6 @@ check "a message after the restart is answered" "[ \"\$(ev msg-2 user.message '{
 # The engine ends a command by killing the relay it started, in the relay's own process group; nothing
 # else tells dot-agentd. On the closed socket dot-agentd must end the remote process group: the shell,
 # the foreground command and the background child alike. (The stand-in names every call "call_0".)
-gone_within() { # seconds, pattern: no process of dot matches it
-  for _ in $(seq 1 $(($1*5))); do pgrep -u dot -f "$2" >/dev/null || return 0; sleep 0.2; done
-  return 1
-}
 ev task-ev-5 task.created '{"task_id":"t5","description":"RUN-EXEC sleep 61 & sleep 62; echo late5 > /home/dot/workspace/late5.txt","priority":0}' >/dev/null
 for _ in $(seq 1 60); do pgrep -u dot -f 'sleep 62' >/dev/null && pgrep -u dot -f 'sleep 61' >/dev/null && break; sleep 1; done
 check "t5's command and its background child run as dot" "pgrep -u dot -f 'sleep 62' >/dev/null && pgrep -u dot -f 'sleep 61' >/dev/null"
@@ -275,7 +200,6 @@ check "the task t6 the stop cut resumes and completes" "wait_event $STREAM '.typ
 # --- approvals (architecture 8.4): ask parks the call, the decision survives kill -9 ---
 echo '{"computer.exec":"ask"}' > /tmp/perms.json
 check "the host pushes a config where exec asks (204 204)" "[ \"\$(push)\" = '204 204' ]"
-st() { api "$A/state"; }
 ev task-ev-3 task.created '{"task_id":"t3","description":"RUN-EXEC echo approved-ran > /home/dot/workspace/approved.txt; echo approved-out","priority":0}' >/dev/null
 check "approval.requested for t3's exec, with its exact arguments" "wait_event $STREAM '.type==\"approval.requested\" and .data.task_id==\"t3\" and .data.tool==\"exec\" and .data.permission==\"computer.exec\" and (.data.arguments.command|test(\"approved-ran\"))'"
 AP3=$(grep '^data: ' $STREAM | sed 's/^data: //' | jq -r 'select(.type=="approval.requested" and .data.task_id=="t3") | .data.approval_id' | head -1)
@@ -398,15 +322,6 @@ wait_fakes() { # n: the stand-in's processes of dot number n within 10 s
   for _ in $(seq 1 50); do [ "$(fakes_running)" = "$1" ] && return 0; sleep 0.2; done
   return 1
 }
-health_is() { api "$A/health" | jq -e ".browser.identities==$1 and .browser.open==$2" >/dev/null; } # identities, open
-say() { [ "$(ev "$1" user.message "$(jq -nc --arg t "$2" '{text:$t}')")" = 202 ]; } # id, text
-tool_turn() { # n, tool, arguments json: a chat turn whose model calls the tool, waited for until it answered
-  say "msg-bt-$1" "RUN-TOOL $2 $3" && wait_event $STREAM ".type==\"message.assistant\" and .data.in_reply_to==\"msg-bt-$1\""
-}
-new_identity() { api -X POST -H 'content-type: application/json' -d "$(jq -nc --arg n "$1" '{name:$n}')" "$A/browser-identities" | jq -r .id; }
-identity_named() { api "$A/browser-identities" | jq -r --arg n "$1" '[.identities[] | select(.name == $n)][0].id'; }
-launched() { wait_event $STREAM ".type==\"browser.identity.launched\" and .data.identity_id==\"$1\""; }
-closed() { wait_event $STREAM ".type==\"browser.identity.closed\" and .data.identity_id==\"$1\""; }
 call_seen() { jq -s -e --arg tool "$2" "any(.[]; .kind==\"call\" and .name==\$tool and $3)" "$(rec "$1")" >/dev/null; } # id, tool, jq condition on the call
 # The first start of the id's process: its working directory and environment, as dot's process had them.
 mcp_env_ok() { # id, expected STEALTHFOX_PROXY ("" for none)
@@ -574,11 +489,10 @@ check_pinned prompt-text "no request's system prompt or exec description names /
 check_pinned exec-schema "no request's exec tool schema has an elevated property" "req_exec_schema_clean"
 
 sleep 3
-pkill -f host-stream.sh; kill $SPID 2>/dev/null; wait $SPID 2>/dev/null
+stop_host_stream
 # Everything committed, read again from 0: what the host received across the crash must be exactly that.
 ALL=/tmp/stream-all.txt
 timeout 5 curl "${H[@]}" -N "$A/events/stream?after=0" > "$ALL" 2>/dev/null
-seqs() { grep '^id: ' "$1" | sed 's/^id: //'; }
 check "seqs of the full stream are 1..N without a gap" "[ \"\$(seqs $ALL | tr '\n' ' ')\" = \"\$(seq 1 \$(seqs $ALL | wc -l) | tr '\n' ' ')\" ]"
 check "the host received every event exactly once across the crash (no loss, no repeat)" "[ \"\$(seqs $STREAM | tr '\n' ' ')\" = \"\$(seqs $ALL | tr '\n' ' ')\" ]"
 check "event ids are unique" "[ \"\$(grep '^data: ' $ALL | sed 's/^data: //' | jq -r .id | sort | uniq -d | wc -l)\" = 0 ]"
@@ -592,7 +506,7 @@ echo "event types: $(grep '^data: ' $ALL | sed 's/^data: //' | jq -r .type | sor
 check "the key is in no file of the engine, the config or the Dot" "! grep -rIl \"$KEY\" /home/dotengine /etc/invisible-dots /home/dot /run/invisible-dots /run/invisible-dots-agent 2>/dev/null | grep -q ."
 check "the key is in no SQLite file either" "! find /home/dotengine -type f -exec grep -l -a \"$KEY\" {} + 2>/dev/null | grep -q ."
 check "the key is in no engine log" "! grep -rIl \"$KEY\" /tmp/engine.log 2>/dev/null | grep -q ."
-check "the key is not in the environment of any process" "! grep -a -l \"$KEY\" /proc/[0-9]*/environ 2>/dev/null | grep -q ."
+check "the key is not in the environment of any process" "! environ_holds \"$KEY\""
 # --- a graceful stop: SIGTERM, as systemd stops the unit (TimeoutStopSec=30) ---
 echo "engine processes before the stop:"; ps -o pid,ppid,etimes,args -u dotengine | cut -c1-160
 EPID=$(pgrep -o -u dotengine -f 'python.*-m nanobot')

@@ -10,6 +10,10 @@
 #   run.sh --archive <tar file>  the tar of `git archive <commit>`: the tree
 #                                exactly as committed, without the working
 #                                tree's untracked files
+#   run.sh --suite browser ...   the browser smoke (browser/smoke.sh: the real
+#                                invisible-playwright-mcp and Firefox) instead
+#                                of the engine smoke (smoke.sh); the other
+#                                arguments are the same
 #
 # Needs only docker. Runs from Linux (plain paths) and from WSL. Nothing is
 # kept between runs: the tree is mounted read-only, everything built goes to
@@ -23,16 +27,24 @@ set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 tree_dir=$(cd "$HERE/../../../.." && pwd)
 archive=""
+usage="usage: run.sh [--suite engine|browser] [<directory> | --archive <tar file>]"
+suite=engine
+if [ "${1:-}" = "--suite" ]; then
+  [ $# -ge 2 ] || { echo "$usage" >&2; exit 2; }
+  suite=$2
+  case "$suite" in engine|browser) ;; *) echo "$usage" >&2; exit 2 ;; esac
+  shift 2
+fi
 case "${1:-}" in
   "") ;;
   --archive)
-    [ $# -eq 2 ] || { echo "usage: run.sh [<directory> | --archive <tar file>]" >&2; exit 2; }
+    [ $# -eq 2 ] || { echo "$usage" >&2; exit 2; }
     archive=$(cd "$(dirname "$2")" && pwd)/$(basename "$2")
     [ -f "$archive" ] || { echo "run.sh: no such file: $2" >&2; exit 2; }
     ;;
-  -*) echo "usage: run.sh [<directory> | --archive <tar file>]" >&2; exit 2 ;;
+  -*) echo "$usage" >&2; exit 2 ;;
   *)
-    [ $# -eq 1 ] || { echo "usage: run.sh [<directory> | --archive <tar file>]" >&2; exit 2; }
+    [ $# -eq 1 ] || { echo "$usage" >&2; exit 2; }
     tree_dir=$(cd "$1" && pwd)
     ;;
 esac
@@ -74,8 +86,10 @@ docker run --rm -v "$run_id":/work "${tree_mount[@]}" \
 pin_env=()
 if [ -n "${PIN_REMOVALS+set}" ]; then pin_env=(-e PIN_REMOVALS); fi
 set +e
-docker run --rm --name "$run_id" -v "$run_id":/work "${tree_mount[@]}" \
-  -e TREE="$tree" -e AGENTD_BIN=/work/dot-agentd "${pin_env[@]}" \
+# --shm-size: Firefox keeps its shared memory in /dev/shm, and docker's 64 MB default is too small for it
+# (a VM's is half its RAM).
+docker run --rm --name "$run_id" --shm-size=1g -v "$run_id":/work "${tree_mount[@]}" \
+  -e TREE="$tree" -e AGENTD_BIN=/work/dot-agentd -e SMOKE_SUITE="$suite" "${pin_env[@]}" \
   ubuntu:24.04 bash "$tree/guest/image-builder/test/smoke/prepare-engine.sh" 2>&1 | tee "$log"
 status=${PIPESTATUS[0]}
 set -e

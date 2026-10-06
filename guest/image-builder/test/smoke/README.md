@@ -56,7 +56,37 @@ and the checks read that file. What they pin:
 - a proxy password is in no approval, event, engine log or `dot-agentd` log; `/health` counts the identities
   and the open ones.
 
-The real server and a real Firefox are not run by this smoke.
+The real server and a real Firefox are not run by this smoke: they are the browser smoke's (below).
+
+## The browser smoke
+
+`browser/smoke.sh` runs the Dot's real browser. The golden image's apt packages (`pins.json`:
+the desktop, Firefox's libraries, ImageMagick) are installed, the browser is built by
+`builder/build-browser-env.sh` on the hashed `builder/mcp-requirements.lock` (the MCP server's
+environment, the browser engine, the GeoIP database: the script `provision.sh` runs), the
+runtime disk's `dot-desktop` script starts Xvfb and an XFCE session on `:0` as dot, and the Dot
+runs as in the engine smoke with no stand-in for the browser: the engine finds
+`invisible-playwright-mcp` on its PATH. Only the model is a stand-in, and the pages the browser
+opens are served from the container. The browser needs the network twice, at the build (the
+engine, the GeoIP file) and at a launch (the egress address, for the timezone). What it pins:
+
+- the model launches an identity and the real server answers that its browser is open; Firefox
+  and the server run as `dot`, the server with the profile, its home, a real window on `:0` and
+  none of the engine's variables nor the key, and nothing of the browser runs as `dotengine`;
+- the model navigates to a page, reads its text and takes a snapshot, and what the page says
+  reaches the model's request; a screenshot reaches the next request as an image part that is a
+  real PNG of the page, with the page's own color in it, and the engine's database holds no
+  picture, only the placeholder;
+- the screenshot of a page of random pixels, a PNG of more than 500 kB, crosses the relay whole
+  and the server still answers after it;
+- `GET /v1/screenshot` of `dot-agentd` shows the desktop with the page in it;
+- the profile's `.stealth-identity.json` is identical after the model closes the identity and
+  launches it again, and after a `kill -9` of the engine in the middle of a session, which ends
+  the server and Firefox and leaves the profile locked: the next launch works with that stale
+  lock; what a page stored in the profile (localStorage) before the model's close, and before
+  SIGTERM, which asks the browser to close, is still there after the next launch;
+- the key is in no file, process environment or log, the browser's included, and the identity's
+  events are all in the stream.
 
 ## Run it
 
@@ -68,6 +98,7 @@ guest/image-builder/test/smoke/run.sh                  # the repository this scr
 guest/image-builder/test/smoke/run.sh /path/to/tree    # another checkout
 git archive --format=tar -o head.tar HEAD
 guest/image-builder/test/smoke/run.sh --archive head.tar   # the commit as committed
+guest/image-builder/test/smoke/run.sh --suite browser      # the browser smoke (same arguments after it)
 ```
 
 The same command runs from a Linux shell and from WSL on a Windows host (use the
@@ -87,9 +118,11 @@ removes the volume and the container on exit.
 
 | file | what it is |
 |---|---|
-| `run.sh` | the entry: builds `dot-agentd` in `golang:1.26`, starts `ubuntu:24.04` with the tree, checks the exit status and the summary line |
-| `prepare-engine.sh` | in the container: `uv`, the engine's environment, the staged engine source; then it runs `smoke.sh` |
-| `smoke.sh` | the checks; prints `PASS:` or `FAIL:` per check and the summary line |
+| `run.sh` | the entry: builds `dot-agentd` in `golang:1.26`, starts `ubuntu:24.04` with the tree, checks the exit status and the summary line; `--suite browser` runs the browser smoke |
+| `prepare-engine.sh` | in the container: the golden image's users, `uv`, the engine's environment, the staged engine source (and for the browser suite the apt packages and the browser); then it runs the suite's checks |
+| `lib.sh` | what both suites share: the guest laid out as `install.sh` lays it out, `dot-agentd` and the engine started and restarted, the key and config push, the event stream and the helpers that read it |
+| `smoke.sh` | the engine smoke's checks; prints `PASS:` or `FAIL:` per check and the summary line |
+| `browser/smoke.sh` | the browser smoke's checks, same output |
 | `fake_openrouter.py` | the stand-in for OpenRouter's chat completions: answers by the last message (`RUN-EXEC <cmd>` makes it call the engine's `exec` tool, `SAY-RUN-EXEC <text> :: <cmd>` the same with `<text>` written beside the call, `WRITE-NOTE <path> :: <text>` a `write_file` into `/home/dot/memory/<path>`, `FIND-NOTE <word>` a `memory_search`, `REPEAT-EXEC <cmd>` an `exec` after every result too, a `COST <usd>` line the cost every response reports in its usage, `RUN-TOOL <name> <json>` a call of any tool with those arguments) and logs every request whole |
 | `host-stream.sh` | the fake host's event reader: reads `/v1/agent/events/stream` from its last `seq`, reconnects after a drop, pushes the key and the config on every `agent.started` |
 
@@ -102,6 +135,7 @@ run.
 ## In CI
 
 The `smoke` job of `.github/workflows/tests.yml` runs `run.sh` on the checkout, on
-`ubuntu-latest`, and the `gate` job needs it like every other job.
+`ubuntu-latest`, and the `gate` job needs it like every other job. The `browser-smoke` job
+runs `run.sh --suite browser` the same way, and the `gate` job needs it too.
 `tests/repo/engine-smoke.test.ts` keeps the files, the job and the exit rule from
 drifting apart.
