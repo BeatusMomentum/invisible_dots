@@ -120,7 +120,7 @@ engine) and at a launch (the egress address, for the timezone, and the library's
   a launch brings back the same person (the seed file is unchanged);
 - a proxy is not judged at create: one without a port, which the library cannot use, is kept as written (201, the
   answer says only `hasProxy`), and the model's launch of it fails with the library's own refusal, which names the
-  missing port, with the password in nothing the model is sent; an identity with a proxy of its own, an
+  missing port; an identity with a proxy of its own, an
   explicit option (a small authenticating proxy
   of the smoke, `browser/proxy.py`, whose credentials come by its environment) launches: its egress
   lookup went through the proxy with the credentials. The real server saves the proxy with its password in

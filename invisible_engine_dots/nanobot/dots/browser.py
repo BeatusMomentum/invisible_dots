@@ -36,7 +36,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import functools
 import json
 import posixpath
 import re
@@ -44,13 +43,11 @@ import sqlite3
 from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
-from urllib.parse import quote, unquote, urlsplit
 
 from loguru import logger
 
 from nanobot.agent.tools.base import ToolResult
 from nanobot.agent.tools.mcp import MCPProvider, MCPServerConfig
-from nanobot.agent.tools.mcp_stderr import StderrFilter
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.dots import store as dots_store
 from nanobot.dots.computer import Computer
@@ -587,8 +584,6 @@ class BrowserManager:
             env=self._computer.spawn_env(secrets=secrets),
             tool_timeout=self._request_timeout_s,
             images=True,
-            # The server's stderr is the engine's journal: what it writes there goes through the same scrub.
-            stderr_filter=_proxy_stderr_filter(proxy) if proxy else None,
         )
 
     def _live_sessions(self) -> list[_Session]:
@@ -682,7 +677,7 @@ class BrowserManager:
         wrapper = session.registry.get(self._tool_name(tool))
         if wrapper is None:
             raise ValueError(f"the browser server has no tool {tool}")
-        return _scrub_result(await wrapper.execute(**{**arguments, "browser": MAIN_BROWSER}), session.proxy)
+        return await wrapper.execute(**{**arguments, "browser": MAIN_BROWSER})
 
     async def _open_browser(self, session: _Session) -> None:
         """`browser_open` with nothing but the browser role: the environment is the one source of the profile
@@ -818,114 +813,3 @@ class BrowserManager:
                 self._emit_closed(identity_id)
             logger.info("browser identity {} closed", identity_id)
 
-
-def _escaped_forms(text: str) -> set[str]:
-    """`text` as it is, and as it reads inside a Python string literal or a JSON string.
-
-    A traceback or a log line shows a value through `repr` (which doubles a backslash and, in a string that
-    holds both kinds of quote, escapes the single one) or through `json.dumps` (which escapes a quote, a
-    backslash and a non-ASCII character), so those are the other texts to find. Both quote styles of `repr`
-    are covered, since which one it picks depends on the whole string the value is part of.
-    """
-    doubled = text.replace("\\", "\\\\")
-    return {
-        found
-        for found in (
-            text,
-            repr(text)[1:-1],
-            doubled,
-            doubled.replace("'", "\\'"),
-            json.dumps(text)[1:-1],
-            json.dumps(text, ensure_ascii=False)[1:-1],
-        )
-        if found
-    }
-
-
-# What replaces a proxy that carries credentials, and what replaces one of its secrets, in a text of the server. Neither
-# shows a user.
-_PROXY_HIDDEN = "[proxy]"
-_SECRET_HIDDEN = "***"
-
-
-@functools.lru_cache(maxsize=64)
-def _proxy_scrubber(proxy: str) -> tuple[re.Pattern[str], dict[str, str]] | None:
-    """What to find in a text of the server and what to put there, for one stored proxy; None when it holds no secret.
-
-    invisible-playwright-mcp reads the proxy itself and, when it refuses one, quotes it whole in its error
-    (`proxy URL 'socks5://user:pass@host' has no port`); it has nothing that hides a secret in what it says,
-    so this is ours. A proxy with no user and no password has no secret: what the library says of it (its
-    scheme, host and port, which it prints as its own safe form) is left as it is.
-
-    The library splits the URL into a server, a user and a password (percent-decoded), so what it or Firefox
-    repeats is not only the URL as stored but the password alone, as written, decoded or encoded again (`quote`
-    with `safe=""` and with its default `safe="/"`), the user and the password together, or the Basic
-    credentials of a `Proxy-Authorization` header. A traceback also writes the URL and the password escaped
-    (`repr`, JSON). All of them are found in one pass, longest first, so that the text put in place of one is
-    never searched again. A password too short to be told from the text around it is hidden too: the page text
-    it garbles is the price of a password that leaves nowhere. The credentials are cut out of the URL by the
-    standard library's `urlsplit`, the way the library cuts them; a URL that cannot be cut is hidden whole.
-    """
-    try:
-        parts = urlsplit(proxy.strip())
-        written_user, written_password = parts.username or "", parts.password or ""
-    except ValueError:
-        written_user = written_password = ""
-        unreadable = True
-    else:
-        unreadable = False
-    if not (written_user or written_password or unreadable):
-        return None
-    replacements = {found: _PROXY_HIDDEN for url in {proxy, proxy.strip()} for found in _escaped_forms(url)}
-    user, password = unquote(written_user), unquote(written_password)
-    users = {written_user, user, quote(user, safe="")}
-    passwords = {form for form in (written_password, password, quote(password, safe=""), quote(password)) if form}
-    for form in users:
-        for secret in passwords:
-            replacements[f"{form}:{secret}"] = _SECRET_HIDDEN
-    if password:
-        replacements[base64.b64encode(f"{user}:{password}".encode()).decode()] = _SECRET_HIDDEN
-    for secret in passwords:
-        for found in _escaped_forms(secret):
-            replacements.setdefault(found, _SECRET_HIDDEN)
-    pattern = re.compile("|".join(re.escape(found) for found in sorted(replacements, key=len, reverse=True)))
-    return pattern, replacements
-
-
-def _proxy_stderr_filter(proxy: str) -> StderrFilter:
-    """The scrub of one proxy as a filter for the server's stderr, with the length of the longest text it finds.
-
-    A proxy with no secret in it gets the filter too, which then changes nothing: the stderr of a server that was
-    handed a proxy always takes the one road, through the pipe.
-    """
-    scrubber = _proxy_scrubber(proxy)
-    longest = max((len(found) for found in scrubber[1]), default=1) if scrubber else 1
-    return StderrFilter(lambda text: _scrub(text, proxy), longest)
-
-
-def _scrub(text: str, proxy: str | None) -> str:
-    """A text of the server with the proxy it may echo, and its credentials in any form, hidden."""
-    scrubber = _proxy_scrubber(proxy) if proxy else None
-    if scrubber is None:
-        return text
-    pattern, replacements = scrubber
-    return pattern.sub(lambda found: replacements[found.group(0)], text)
-
-
-def _scrub_result(result: Any, proxy: str | None) -> Any:
-    """What a call of the server returned, with the proxy hidden wherever it is named.
-
-    This is the one place that answers of the server enter the engine, so a tool result, an error and a
-    frame all leave it free of the password, and so does everything the caller writes to the transcript.
-    """
-    if not proxy:
-        return result
-    if isinstance(result, str):
-        scrubbed = _scrub(str(result), proxy)
-        return ToolResult(scrubbed, is_error=result.is_error) if isinstance(result, ToolResult) else scrubbed
-    return [
-        {**block, "text": _scrub(str(block.get("text", "")), proxy)}
-        if isinstance(block, Mapping) and block.get("type") == "text"
-        else block
-        for block in result
-    ]

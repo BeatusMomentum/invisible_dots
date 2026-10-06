@@ -256,7 +256,7 @@ proxy_up() { for _ in $(seq 1 20); do (exec 3<>/dev/tcp/127.0.0.1/8099) 2>/dev/n
 check "the authenticating proxy of the smoke is up" "proxy_up"
 check "a proxy is not judged at create: one the library cannot use (no port) is kept as written, and the answer says only that the identity has one" "[ \"\$(api -o /tmp/bid-noport.json -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{\"name\":\"noport\",\"proxy\":\"http://$PROXY_USER:$PROXY_PASSWORD@127.0.0.1\"}' $A/browser-identities)\" = 201 ] && jq -e '.hasProxy == true and (has(\"proxy\") | not)' /tmp/bid-noport.json >/dev/null && ! grep -qF $PROXY_PASSWORD /tmp/bid-noport.json"
 NOPORT=$(jq -r .id /tmp/bid-noport.json)
-check "the model's launch of it fails with the library's own refusal, which names the missing port, and what the model is sent holds no password" "tool_turn 39 browser_identity_launch '{\"identity_id\":\"$NOPORT\"}' && sent_to_model 'has no port' && ! sent_to_model $PROXY_PASSWORD && [ -z \"\$(session_pids $NOPORT)\" ]"
+check "the model's launch of it fails with the library's own refusal, which names the missing port" "tool_turn 39 browser_identity_launch '{\"identity_id\":\"$NOPORT\"}' && sent_to_model 'has no port' && [ -z \"\$(session_pids $NOPORT)\" ]"
 check "the host deletes it: nothing of it is left but its events" "[ \"\$(api -o /dev/null -w '%{http_code}' -X DELETE $A/browser-identities/$NOPORT)\" = 204 ] && [ ! -e $BROWSERS/$NOPORT ] && [ ! -e $MCP_HOMES/$NOPORT ] && [ \"\$(api $A/browser-identities | jq '.identities | length')\" = 1 ]"
 CODE2=$(api -o /tmp/bid-2.json -w '%{http_code}' -X POST -H 'content-type: application/json' -d "{\"name\":\"proxied\",\"proxy\":\"http://$PROXY_USER:$PROXY_PASSWORD@127.0.0.1:8099\"}" "$A/browser-identities")
 ID2=$(jq -r .id /tmp/bid-2.json)
@@ -287,7 +287,7 @@ ALL=/tmp/stream-all.txt
 timeout 5 curl "${H[@]}" -N "$A/events/stream?after=0" > "$ALL" 2>/dev/null
 check "seqs of the full stream are 1..N without a gap" "[ \"\$(seqs $ALL | tr '\n' ' ')\" = \"\$(seq 1 \$(seqs $ALL | wc -l) | tr '\n' ' ')\" ]"
 check "the identity's events are all there: created three times, launched six times, closed four times (the model's close, SIGTERM, the browser that was lost and the proxied identity's close; kill -9 reports nothing), deleted twice" "grep '^data: ' $ALL | sed 's/^data: //' | jq -s -e '([.[] | select(.type==\"browser.identity.created\")] | length) == 3 and ([.[] | select(.type==\"browser.identity.launched\")] | length) == 6 and ([.[] | select(.type==\"browser.identity.closed\")] | length) == 4 and ([.[] | select(.type==\"browser.identity.deleted\")] | length) == 2' >/dev/null"
-check "the proxy password is in no event of the whole stream, no engine log and no dot-agentd log" "! grep -qF $PROXY_PASSWORD $ALL /tmp/engine.log /tmp/agentd.log"
+check "the proxy password is in no event of the whole stream and no dot-agentd log" "! grep -qF $PROXY_PASSWORD $ALL /tmp/agentd.log"
 check "the key is in no file of the engine, the config or the Dot (the browser's profile and cache included)" "! grep -rIl \"$KEY\" /home/dotengine /etc/invisible-dots /home/dot /run/invisible-dots /run/invisible-dots-agent 2>/dev/null | grep -q ."
 check "the key is not in the environment of any process, Firefox's included" "! environ_holds \"$KEY\""
 check "the key is in no engine log and no dot-agentd log" "! grep -q \"$KEY\" /tmp/engine.log /tmp/agentd.log"

@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 from fakes.browser_manager import mcp_home
-from fakes.fake_mcp_server import install_fake_mcp, proxy_forms, read_record, write_control
+from fakes.fake_mcp_server import install_fake_mcp, read_record, write_control
 from fakes.local_computer import LocalComputer
 
 from nanobot.agent.tools.base import ToolResult
@@ -27,8 +27,6 @@ from nanobot.dots import store as dots_store
 from nanobot.dots.browser import (
     BrowserIdentityError,
     BrowserManager,
-    _proxy_stderr_filter,
-    _scrub,
     result_is_error,
     result_text,
 )
@@ -374,194 +372,6 @@ async def test_reports_a_browser_that_did_not_start_and_leaves_nothing_open(env:
     assert manager.open_count == 0
     assert env.event_types() == ["browser.identity.created"]
     assert env.record(identity.id)[-1]["kind"] == "exit"
-
-
-async def test_what_the_server_says_of_the_proxy_reaches_the_caller_hidden(env: Env) -> None:
-    manager = env.manager()
-    identity = await manager.create("echo", "http://user:s3cret@proxy.test:8080")
-    write_control(env.mcp_home(identity.id), fail_open=True, echo_proxy=True)
-
-    with pytest.raises(BrowserIdentityError) as failed:
-        await manager.launch(identity.id)
-
-    assert "[proxy]" in failed.value.message
-    assert "s3cret" not in failed.value.message and "proxy.test" not in failed.value.message
-
-
-async def test_what_a_page_tool_returns_of_the_proxy_is_hidden_in_results_and_in_errors(env: Env) -> None:
-    manager = env.manager()
-    identity = await manager.create("echo pages", "http://user:s3cret@proxy.test:8080")
-    write_control(env.mcp_home(identity.id), echo_proxy_on_pages=True)
-    await manager.launch(identity.id)
-
-    failed = await manager.call_tool(identity.id, "browser_navigate", {"url": "https://example.org/"})
-    read = await manager.call_tool(identity.id, "browser_read_text", {})
-
-    assert result_is_error(failed) and not result_is_error(read)
-    for result in (failed, read):
-        assert "[proxy]" in result_text(result)
-        assert "s3cret" not in result_text(result) and "proxy.test" not in result_text(result)
-
-
-# The credentials of the first proxy are written percent-encoded, with a lowercase escape, so the password as
-# written, decoded and encoded again are different strings. The second one has a quote, a backslash and a slash
-# in its password: its repr, its JSON-escaped text and `quote` with the default `safe="/"` differ from those too.
-ENCODED_PROXY = "http://us%40er:p%40ss%3aword@proxy.test:8080"
-ESCAPING_PROXY = "http://us%40er:p%22a%5cb%2fc%27d%40e@proxy.test:8080"
-PASSWORD_FORMS = (
-    "password_as_written",
-    "password_decoded",
-    "password_encoded_again",
-    "password_encoded_keeping_slash",
-    "password_repr",
-    "password_json",
-    "basic_credentials",
-)
-# How many of PASSWORD_FORMS are different strings for each proxy.
-DISTINCT_FORMS = {ENCODED_PROXY: 4, ESCAPING_PROXY: 7}
-
-
-def password_secrets(proxy: str) -> list[str]:
-    """The strings of `proxy` that must reach no answer, no journal and no transcript."""
-    forms = proxy_forms(proxy)
-    secrets = list(dict.fromkeys(forms[name] for name in PASSWORD_FORMS))
-    assert len(secrets) == DISTINCT_FORMS[proxy]
-    return secrets
-
-
-async def journal_until(capfd: pytest.CaptureFixture[str], marker: str) -> str:
-    """What the engine wrote to its stderr, which the journal keeps, until `marker` is in it."""
-    journal = ""
-    async with asyncio.timeout(15):
-        while marker not in journal:
-            journal += capfd.readouterr().err
-            await asyncio.sleep(0.02)
-    return journal
-
-
-@pytest.mark.parametrize("proxy", [ENCODED_PROXY, ESCAPING_PROXY])
-@pytest.mark.parametrize("form", sorted(proxy_forms(ENCODED_PROXY)))
-async def test_the_password_leaves_in_no_form_a_server_can_repeat_it(env: Env, proxy: str, form: str) -> None:
-    manager = env.manager()
-    identity = await manager.create("forms", proxy)
-    mcp_home = env.mcp_home(identity.id)
-    secrets = password_secrets(proxy)
-
-    write_control(mcp_home, fail_open=True, echo_proxy_as=form)
-    with pytest.raises(BrowserIdentityError) as failed_launch:
-        await manager.launch(identity.id)
-    write_control(mcp_home, echo_proxy_as=form)
-    await manager.launch(identity.id)
-    failed = await manager.call_tool(identity.id, "browser_navigate", {"url": "https://example.org/"})
-    read = await manager.call_tool(identity.id, "browser_read_text", {})
-
-    assert result_is_error(failed) and not result_is_error(read)
-    # The whole URL is replaced by "[proxy]" and a piece of its credentials by "***".
-    hidden = "[proxy]" if form.startswith("url_") else "***"
-    for said in (failed_launch.value.message, result_text(failed), result_text(read)):
-        assert hidden in said
-        for secret in secrets:
-            assert secret not in said
-
-
-@pytest.mark.parametrize("proxy", [ENCODED_PROXY, ESCAPING_PROXY])
-async def test_the_password_does_not_reach_the_journal_through_the_stderr_of_the_server(
-    env: Env, capfd: pytest.CaptureFixture[str], proxy: str
-) -> None:
-    manager = env.manager()
-    identity = await manager.create("journal", proxy)
-    write_control(env.mcp_home(identity.id), stderr_proxy=True)
-    secrets = password_secrets(proxy)
-    capfd.readouterr()
-
-    await manager.launch(identity.id)
-    journal = await journal_until(capfd, "[stderr written]")
-    await manager.close(identity.id)
-
-    # Everything the server wrote got through with the credentials hidden: a line for each form, and the long
-    # line, which the pump has to cut, so a password may be split across two reads.
-    for name in proxy_forms(proxy):
-        assert f"[{name}] " in journal
-    assert "[url] [proxy]" in journal
-    assert journal.count("padding") >= 40_000
-    assert "***" in journal
-    for secret in secrets:
-        assert secret not in journal
-
-
-async def test_the_stderr_of_a_server_with_a_proxy_without_a_password_reaches_the_journal_as_it_is(
-    env: Env, capfd: pytest.CaptureFixture[str]
-) -> None:
-    manager = env.manager()
-    identity = await manager.create("open proxy", "http://proxy.test:8080")
-    write_control(env.mcp_home(identity.id), stderr_proxy=True)
-    capfd.readouterr()
-
-    await manager.launch(identity.id)
-    journal = await journal_until(capfd, "[stderr written]")
-
-    assert "[url] http://proxy.test:8080\n" in journal
-    assert "***" not in journal
-
-
-def test_a_password_with_a_backslash_and_both_quotes_is_hidden_in_a_traceback_and_in_json() -> None:
-    # Written raw in the URL, as a user may paste it: `repr` doubles the backslash and escapes the single quote
-    # (the URL holds both kinds), `json.dumps` escapes the double quote and the backslash.
-    proxy = "http://us\"er:pa\"ss\\w'rd@proxy.test:8080"
-    password = "pa\"ss\\w'rd"
-    texts = [
-        str(ValueError(f"proxy URL {proxy!r} is not valid")),
-        json.dumps({"error": f"cannot use {proxy}"}),
-        json.dumps({"password": password}),
-        f"{{'password': {password!r}}}",
-        f"proxy password {password}",
-    ]
-
-    for text in texts:
-        scrubbed = _scrub(text, proxy)
-        assert scrubbed != text
-        for piece in ("w'rd", "w\\'rd", "w\\\\'rd", "ss\\\\w", "pa\\\"ss", "pa\"ss"):
-            assert piece not in scrubbed, (piece, scrubbed)
-
-
-@pytest.mark.parametrize(
-    ("proxy", "said", "scrubbed"),
-    [
-        ("socks5://user@proxy.test:1080", "refused socks5://user@proxy.test:1080", "refused [proxy]"),
-        ("http://[::1", "refused http://[::1", "refused [proxy]"),
-        ("socks5://proxy.test:1080", "refused socks5://proxy.test:1080", "refused socks5://proxy.test:1080"),
-        ("not a url", "refused not a url", "refused not a url"),
-    ],
-    ids=["a user alone", "a URL that cannot be read", "no credentials", "not a URL"],
-)
-def test_a_proxy_is_hidden_when_it_carries_credentials_or_cannot_be_read_and_otherwise_left_alone(
-    proxy: str, said: str, scrubbed: str
-) -> None:
-    # What the library prints of a proxy with nothing secret in it (scheme, host, port) is its own safe form.
-    assert _scrub(said, proxy) == scrubbed
-
-
-def test_the_stderr_filter_of_a_proxy_knows_the_longest_text_it_hides() -> None:
-    # No rule bounds the length of a proxy, and an escaped form is up to 12 times longer than the password.
-    password = "\U0001f98a" * 3000
-    proxy = f"http://user:{password}@proxy.test:8080"
-
-    found = _proxy_stderr_filter(proxy)
-
-    assert found.longest_match >= len(json.dumps(f"user:{password}")[1:-1])
-    assert found.longest_match >= len(proxy)
-    assert found.scrub(f"log {json.dumps(password)[1:-1]} end") == "log *** end"
-
-
-async def test_a_proxy_without_a_password_leaves_what_the_server_says_as_it_is(env: Env) -> None:
-    manager = env.manager()
-    identity = await manager.create("open proxy", "http://proxy.test:8080")
-    write_control(env.mcp_home(identity.id), echo_proxy_on_pages=True)
-    await manager.launch(identity.id)
-
-    read = await manager.call_tool(identity.id, "browser_read_text", {})
-
-    assert result_text(read) == "page behind http://proxy.test:8080"
 
 
 async def test_reports_a_command_that_cannot_be_started_without_its_arguments(env: Env) -> None:

@@ -1571,22 +1571,8 @@ state.
   echoes text the page controls, and a page that writes the sentence closes nothing. The manager hears of the end
   when it happens, from the client's transport, so a process that dies while idle
   is closed at once, frees its slot of `max_open`, and the next action says
-  `not_open`; a file never claims an open browser for a process that is gone. Text
-  a page tool returns, and its errors, have a proxy that carries credentials hidden
-  (the whole URL as `[proxy]`, a piece of its credentials as `***`; `invisible-playwright-mcp`
-  quotes the URL it refuses in its own error and has nothing that hides a secret, so this
-  scrub is invisible_dots's own) and its password in no form: the server splits the URL into a user and a decoded password, so
-  the password alone, as written, decoded or encoded again (`quote` with and without
-  `safe=""`), the user with it, the Basic credentials of a header, and the URL and the
-  password as a traceback or a JSON log line writes them (`repr`, JSON escapes) are hidden
-  as well (a short password garbles the page text it also occurs in, which is the price
-  of one that leaves nowhere). The server's stderr, which would reach the engine's
-  journal, goes through the same scrub: `connect_mcp_servers` gives a server whose
-  config has a `stderr_filter` a pipe instead of the inherited stderr, and a thread
-  writes each line, filtered, to the engine's stderr (a line the filter fails on is
-  withheld, never written raw; a line too long for one piece is cut keeping back the
-  length of the longest text the filter finds, so a password of any length is whole
-  in the next piece). A close calls
+  `not_open`; a file never claims an open browser for a process that is gone. What a page
+  tool returns reaches the model as the server wrote it. A close calls
   `browser_close` first, so Firefox flushes its profile, then ends the process.
   Every `browser.identity.*` event commits with the row change it describes.
   The model's identity and page tools (`browser_tools.py`) and the routes of

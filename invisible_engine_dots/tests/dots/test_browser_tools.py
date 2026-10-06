@@ -346,14 +346,14 @@ async def test_delete_removes_the_identity_and_its_profile(env: Env) -> None:
     assert env.manager.get(identity_id) is None
 
 
-async def test_a_launch_the_server_refuses_is_an_error_result_without_the_proxy_password(env: Env) -> None:
+async def test_a_launch_the_server_refuses_is_an_error_result(env: Env) -> None:
     identity = await env.manager.create("failing", "http://user:hunter2@proxy.test:8080")
-    write_control(mcp_home(env.tmp_path, identity.id), fail_open=True, echo_proxy=True)
+    write_control(mcp_home(env.tmp_path, identity.id), fail_open=True)
 
     result = await env.run("browser_identity_launch", identity_id=identity.id)
 
     assert isinstance(result, ToolResult) and result.is_error
-    assert "did NOT start" in result and "hunter2" not in result
+    assert "did NOT start" in result
     assert not env.manager.is_open(identity.id)
 
 

@@ -21,7 +21,6 @@ from nanobot.agent.tools.mcp import (
     _sanitize_name,
     connect_mcp_servers,
 )
-from nanobot.agent.tools.mcp_stderr import StderrFilter
 from nanobot.agent.tools.registry import ToolRegistry, is_tool_error_result
 
 _PROXY_ENV_VARS = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy")
@@ -1203,38 +1202,6 @@ async def test_connect_mcp_servers_passes_stdio_cwd(
         await stack.aclose()
 
     assert captured["cwd"] == "/tmp/nanobot-mcp-test"
-
-
-@pytest.mark.asyncio
-async def test_connect_mcp_servers_gives_a_server_with_a_stderr_filter_a_pipe_and_the_others_the_default(
-    fake_mcp_runtime: dict[str, object | None],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    fake_mcp_runtime["session"] = _make_fake_session(["demo"])
-    started: dict[str, dict[str, object]] = {}
-
-    @asynccontextmanager
-    async def _capturing_stdio_client(params: object, **kwargs: object):
-        started[params.command] = kwargs
-        yield object(), object()
-
-    monkeypatch.setattr(sys.modules["mcp.client.stdio"], "stdio_client", _capturing_stdio_client)
-
-    stacks = await connect_mcp_servers(
-        {
-            "filtered": MCPServerConfig(command="filtered", stderr_filter=StderrFilter(lambda text: text, 1)),
-            "plain": MCPServerConfig(command="plain"),
-        },
-        ToolRegistry(),
-    )
-    for stack in stacks.values():
-        await stack.aclose()
-
-    # A filtered server's stderr is a real file (the process inherits its descriptor) and ours is closed after the
-    # start; one without a filter is started as before, with the SDK's default.
-    assert hasattr(started["filtered"]["errlog"], "fileno")
-    assert started["filtered"]["errlog"].closed
-    assert started["plain"] == {}
 
 
 # ---------------------------------------------------------------------------
