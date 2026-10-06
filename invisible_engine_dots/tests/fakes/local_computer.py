@@ -13,7 +13,6 @@ real local path, so a test can use pytest's tmp_path directly.
 from __future__ import annotations
 
 import asyncio
-import os
 import stat as stat_module
 import sys
 import tempfile
@@ -28,6 +27,7 @@ from nanobot.dots.computer import (
     Entry,
     FileTooLargeError,
     RunResult,
+    kill_process_group,
 )
 
 FAKE_RELAY = Path(__file__).with_name("fake_relay.py")
@@ -172,7 +172,7 @@ class LocalComputer:
                 process.communicate(stdin or None), timeout=timeout_s
             )
         except asyncio.TimeoutError:
-            os.killpg(process.pid, 9)
+            await kill_process_group(process)
             stdout, stderr = await process.communicate()
             return RunResult(124, self._virtual(stdout), self._virtual(stderr), timed_out=True)
         return RunResult(
