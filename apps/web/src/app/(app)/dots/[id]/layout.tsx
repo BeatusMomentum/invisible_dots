@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { DotShell } from "../../../../components/DotShell";
-import { EventStreamProvider } from "../../../../components/events";
+import { DotEventScope } from "../../../../components/events";
 
 export default async function DotLayout({
   children,
@@ -11,8 +11,8 @@ export default async function DotLayout({
 }) {
   const { id } = await params;
   return (
-    <EventStreamProvider dotId={id}>
+    <DotEventScope dotId={id}>
       <DotShell dotId={id}>{children}</DotShell>
-    </EventStreamProvider>
+    </DotEventScope>
   );
 }

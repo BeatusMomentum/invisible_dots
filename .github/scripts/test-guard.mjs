@@ -11,10 +11,11 @@
 //
 // <report>  vitest's JSON report (--reporter=json --outputFile) for the
 //           vitest suites, the output of `go test -json` for "go", and a
-//           JUnit XML report (a file ending in .xml, pytest --junitxml) for
-//           the Python engine.
-// --suite   the entry of the floors file to apply: vitest, postgres, go or
-//           pytest.
+//           JUnit XML report (a file ending in .xml: pytest --junitxml for
+//           the Python engine, Playwright's junit reporter for the web
+//           client's browser tests).
+// --suite   the entry of the floors file to apply: vitest, postgres, go,
+//           pytest or playwright.
 // --floors  default .github/test-floors.json. The entry is chosen by the
 //           host this runs on (linux, win32), so CI and the pre-push hook
 //           read the same numbers from the same file.
@@ -34,7 +35,7 @@ function fail(message) {
 
 const args = process.argv.slice(2);
 const reportPath = args.shift();
-const usage = "usage: test-guard.mjs <report> --suite <vitest|postgres|go|pytest> [--floors <file>]";
+const usage = "usage: test-guard.mjs <report> --suite <vitest|postgres|go|pytest|playwright> [--floors <file>]";
 if (!reportPath) fail(usage);
 let suite;
 let floorsPath = ".github/test-floors.json";
@@ -121,7 +122,7 @@ function xmlAttributes(tag) {
  * "<classname> <name>".
  */
 function junitTests() {
-  if (!/<testsuites?[\s>]/.test(text)) fail(`${reportPath} is not a JUnit XML report; run pytest with --junitxml`);
+  if (!/<testsuites?[\s>]/.test(text)) fail(`${reportPath} is not a JUnit XML report; run pytest with --junitxml or Playwright with the junit reporter`);
   const tests = [];
   const classes = new Set();
   for (const match of text.matchAll(/<testcase\b([^>]*?)(\/?)>/g)) {

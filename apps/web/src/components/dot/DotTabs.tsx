@@ -1,0 +1,58 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { cn } from "../../lib/utils";
+import { Badge } from "../ui/badge";
+import { useDotAttention } from "../shell/attention";
+
+/**
+ * The tabs that exist today. Each later step of the redesign swaps an entry for its replacement (activity, memory,
+ * channels, ...) in the same commit that adds the page, so no tab ever leads nowhere.
+ */
+export const DOT_TABS = [
+  { slug: "chat", label: "Chat" },
+  { slug: "tasks", label: "Tasks" },
+  { slug: "timeline", label: "Timeline" },
+  { slug: "approvals", label: "Approvals" },
+  { slug: "identities", label: "Browser identities" },
+  { slug: "computer", label: "Computer" },
+  { slug: "settings", label: "Settings" },
+] as const;
+
+/** The tab bar: a row of links, scrolling sideways when the screen is too narrow for all of them. */
+export function DotTabs({ dotId }: { dotId: string }) {
+  const path = usePathname() ?? "";
+  const { pendingApprovals } = useDotAttention(dotId);
+  const base = `/dots/${encodeURIComponent(dotId)}`;
+
+  return (
+    <nav aria-label="Dot sections" className="-mx-4 mt-4 overflow-x-auto border-b px-4 md:mx-0 md:px-0">
+      <ul className="flex min-w-max gap-1">
+        {DOT_TABS.map((tab) => {
+          const href = `${base}/${tab.slug}`;
+          const current = path === href || path.startsWith(`${href}/`);
+          return (
+            <li key={tab.slug}>
+              <Link
+                href={href}
+                aria-current={current ? "page" : undefined}
+                className={cn(
+                  "-mb-px flex items-center gap-1.5 border-b-2 border-transparent px-3 py-2 text-sm text-muted-foreground transition-colors hover:text-foreground",
+                  current && "border-primary font-medium text-foreground",
+                )}
+              >
+                {tab.label}
+                {tab.slug === "approvals" && pendingApprovals > 0 ? (
+                  <Badge role="img" className="bg-warn-soft px-1.5 text-warn" aria-label={`${pendingApprovals} waiting`}>
+                    {pendingApprovals}
+                  </Badge>
+                ) : null}
+              </Link>
+            </li>
+          );
+        })}
+      </ul>
+    </nav>
+  );
+}

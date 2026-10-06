@@ -1,25 +1,18 @@
 import type { ReactNode } from "react";
-import { ApiHealth } from "../../components/ApiHealth";
-import { MainNav } from "../../components/MainNav";
-import { SignOutButton } from "../../components/SignOutButton";
+import { EventStreamProvider } from "../../components/events";
+import { AttentionProvider } from "../../components/shell/attention";
+import { AppShell } from "../../components/shell/AppShell";
 
 /**
- * Everything behind the session: the header with the navigation, the API
- * check and the sign-out button. The login page lives outside this group on
- * purpose, because it has no session and so nothing here may call the API.
+ * Everything behind the session: one live stream, what needs the person, and the frame with the rail. The login
+ * page lives outside this group on purpose, because it has no session and so nothing here may call the API.
  */
 export default function AppLayout({ children }: { children: ReactNode }) {
   return (
-    <>
-      <header className="site-header">
-        <span className="brand">invisible_dots</span>
-        <MainNav />
-        <span className="header-end">
-          <ApiHealth />
-          <SignOutButton />
-        </span>
-      </header>
-      <main id="main">{children}</main>
-    </>
+    <EventStreamProvider>
+      <AttentionProvider>
+        <AppShell>{children}</AppShell>
+      </AttentionProvider>
+    </EventStreamProvider>
   );
 }

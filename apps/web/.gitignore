@@ -1,2 +1,5 @@
 .next/
 next-env.d.ts
+# Playwright's output: traces of a failed run, and the JUnit report CI reads
+test-results/
+playwright-report.xml

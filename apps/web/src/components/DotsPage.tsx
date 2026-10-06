@@ -7,7 +7,7 @@ import { api } from "../lib/api";
 import { formatDate } from "../lib/format";
 import { truncate } from "../lib/timeline";
 import { EXAMPLE_CONFIG } from "../lib/yaml";
-import { StreamIndicator, useLiveRefresh } from "./events";
+import { useLiveRefresh } from "./events";
 import { ErrorBox, StatusBadge, useAction, useResource } from "./ui";
 
 const LIST_EVENTS = [
@@ -28,7 +28,6 @@ export function DotsPage() {
     <>
       <div className="page-head">
         <h1>Dots</h1>
-        <StreamIndicator />
       </div>
       <ErrorBox error={dots.error} title="Could not load Dots" />
       {dots.data && dots.data.length === 0 ? <p className="muted">No Dots yet. Create one below.</p> : null}

@@ -1,7 +1,9 @@
 "use client";
 
+import { LogOutIcon } from "lucide-react";
 import { useState } from "react";
-import { signOut } from "../lib/session";
+import { signOut } from "../../lib/session";
+import { Button } from "../ui/button";
 
 /** Ends the session of this browser and returns to the login page. */
 export function SignOutButton() {
@@ -18,13 +20,14 @@ export function SignOutButton() {
 
   return (
     <>
-      <button type="button" className="secondary" onClick={onClick} disabled={state.pending}>
+      <Button type="button" variant="ghost" size="sm" className="justify-start text-muted-foreground" onClick={onClick} disabled={state.pending}>
+        <LogOutIcon />
         {state.pending ? "Signing out..." : "Sign out"}
-      </button>
+      </Button>
       {state.error ? (
-        <span className="tone-error" role="alert">
+        <p className="text-xs text-danger" role="alert">
           {state.error}
-        </span>
+        </p>
       ) : null}
     </>
   );

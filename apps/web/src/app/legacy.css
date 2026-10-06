@@ -1,0 +1,474 @@
+/*
+ * The stylesheet the web client had before the redesign, kept for the screens that have not moved yet. It is scoped
+ * to `.legacy` (the page bodies that still use it carry that class), so it can neither reach the new shell nor be
+ * reached by it, and it reads the design tokens, so it follows the theme. Each step that replaces a screen deletes
+ * the rules that screen used; the step that replaces the last one deletes this file.
+ *
+ * Tailwind's reset removes what browsers give by default; the first rules put back the ones these screens relied on.
+ */
+.legacy {
+  --legacy-radius: 6px;
+  font-size: 0.9375rem;
+
+  p {
+    margin: 1em 0;
+  }
+
+  ul,
+  ol {
+    margin: 1em 0;
+    padding-left: 1.25rem;
+    list-style: revert;
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-weight: 600;
+  }
+
+  a {
+    color: var(--primary);
+  }
+
+  code,
+  pre,
+  textarea.code {
+    font-family: var(--font-code);
+    font-size: 0.9em;
+  }
+
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  h1 {
+    font-size: 1.6rem;
+    margin: 0;
+  }
+
+  h2 {
+    font-size: 1.2rem;
+    margin: 1.25rem 0 0.75rem;
+  }
+
+  h3 {
+    font-size: 1.05rem;
+    margin: 0 0 0.75rem;
+  }
+
+  .page-head,
+  .toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .toolbar h2,
+  .toolbar h3 {
+    margin: 0;
+  }
+
+  .page-head {
+    margin-bottom: 0.75rem;
+  }
+
+  .muted {
+    color: var(--muted-foreground);
+  }
+
+  .small {
+    font-size: 0.82rem;
+  }
+
+  .pre-wrap {
+    white-space: pre-wrap;
+  }
+
+  .text-error {
+    color: var(--danger);
+  }
+
+  .text-ok {
+    color: var(--ok);
+  }
+
+  .card {
+    border: 1px solid var(--border);
+    border-radius: var(--legacy-radius);
+    padding: 1rem;
+    margin: 1rem 0;
+    background: var(--background);
+  }
+
+  .card h2:first-child {
+    margin-top: 0;
+  }
+
+  .notice {
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--warn);
+    background: var(--warn-soft);
+    border-radius: var(--legacy-radius);
+    padding: 1rem;
+  }
+
+  .notice h2 {
+    margin-top: 0;
+  }
+
+  .danger-zone {
+    border-color: var(--danger);
+  }
+
+  .grid-2 {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 1rem;
+  }
+
+  .grid-2 .card {
+    margin: 1rem 0 0;
+  }
+
+  .row {
+    display: flex;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .row > div {
+    flex: 1 1 220px;
+  }
+
+  label {
+    display: block;
+    font-weight: 600;
+    margin: 0.5rem 0 0.25rem;
+  }
+
+  label.inline {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-weight: normal;
+    margin: 0;
+  }
+
+  .hint {
+    color: var(--muted-foreground);
+    font-size: 0.85rem;
+    margin: 0 0 0.35rem;
+  }
+
+  input[type="text"],
+  input[type="password"],
+  input[type="number"],
+  input[type="datetime-local"],
+  textarea {
+    width: 100%;
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: var(--legacy-radius);
+    background: var(--background);
+    color: var(--foreground);
+    font: inherit;
+  }
+
+  textarea {
+    resize: vertical;
+  }
+
+  textarea.code {
+    font-family: var(--font-code);
+    line-height: 1.4;
+    tab-size: 2;
+  }
+
+  button {
+    font: inherit;
+    padding: 0.4rem 0.9rem;
+    border-radius: var(--legacy-radius);
+    border: 1px solid var(--primary);
+    background: var(--primary);
+    color: var(--primary-foreground);
+    cursor: pointer;
+  }
+
+  button.secondary {
+    background: transparent;
+    color: var(--primary);
+  }
+
+  button.danger {
+    background: transparent;
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+
+  button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+    flex-wrap: wrap;
+  }
+
+  .error-box {
+    border: 1px solid var(--danger);
+    background: var(--danger-soft);
+    color: var(--foreground);
+    padding: 0.6rem 0.8rem;
+    border-radius: var(--legacy-radius);
+    margin: 0.75rem 0;
+    white-space: pre-wrap;
+  }
+
+  .error-box ul {
+    margin: 0.4rem 0 0;
+    padding-left: 1.25rem;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 0.05rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+
+  .tone-ok {
+    color: var(--ok);
+    background: var(--ok-soft);
+  }
+
+  .tone-warn {
+    color: var(--warn);
+    background: var(--warn-soft);
+  }
+
+  .tone-error {
+    color: var(--danger);
+    background: var(--danger-soft);
+  }
+
+  .tone-info {
+    color: var(--info);
+    background: var(--info-soft);
+  }
+
+  .tone-neutral {
+    color: var(--muted-foreground);
+    background: var(--muted);
+  }
+
+  .table-wrap {
+    overflow-x: auto;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  th,
+  td {
+    text-align: left;
+    vertical-align: top;
+    padding: 0.5rem 0.6rem;
+    border-bottom: 1px solid var(--border);
+  }
+
+  th {
+    font-size: 0.85rem;
+    color: var(--muted-foreground);
+    font-weight: 600;
+  }
+
+  .chat {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .messages {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+  }
+
+  .message {
+    max-width: 80%;
+    padding: 0.6rem 0.8rem;
+    border-radius: var(--legacy-radius);
+    border: 1px solid var(--border);
+  }
+
+  .message-user {
+    align-self: flex-end;
+    background: var(--info-soft);
+  }
+
+  .message-assistant {
+    align-self: flex-start;
+    background: var(--muted);
+  }
+
+  .message-meta {
+    display: flex;
+    gap: 0.75rem;
+    font-size: 0.78rem;
+    color: var(--muted-foreground);
+    margin-bottom: 0.2rem;
+  }
+
+  .message-text {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .chat-form {
+    display: flex;
+    gap: 0.5rem;
+    align-items: flex-end;
+    margin-top: 1rem;
+    position: sticky;
+    bottom: 0;
+    background: var(--background);
+    padding: 0.5rem 0;
+  }
+
+  .timeline {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .timeline-item {
+    border-left: 3px solid var(--border);
+    padding: 0.4rem 0 0.4rem 0.8rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .tone-border-ok {
+    border-left-color: var(--ok);
+  }
+
+  .tone-border-warn {
+    border-left-color: var(--warn);
+  }
+
+  .tone-border-error {
+    border-left-color: var(--danger);
+  }
+
+  .tone-border-info {
+    border-left-color: var(--info);
+  }
+
+  .timeline-head {
+    display: flex;
+    gap: 0.6rem;
+    align-items: baseline;
+    flex-wrap: wrap;
+  }
+
+  .timeline-title {
+    font-weight: 600;
+  }
+
+  .timeline-detail {
+    overflow-wrap: anywhere;
+  }
+
+  .approvals {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .approval-head {
+    display: flex;
+    gap: 0.6rem;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  .code-block {
+    background: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: var(--legacy-radius);
+    padding: 0.6rem;
+    overflow-x: auto;
+  }
+
+  .facts {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 0.3rem 1rem;
+    margin: 0 0 0.75rem;
+  }
+
+  .facts dt {
+    color: var(--muted-foreground);
+  }
+
+  .facts dd {
+    margin: 0;
+  }
+
+  .meter-row {
+    margin: 0.5rem 0;
+  }
+
+  .meter-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    gap: 1rem;
+  }
+
+  meter {
+    width: 100%;
+    height: 0.9rem;
+  }
+
+  .screenshot {
+    margin: 0.75rem 0 0;
+  }
+
+  .screenshot img {
+    max-width: 100%;
+    height: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--legacy-radius);
+    display: block;
+  }
+
+  @media (max-width: 640px) {
+    .message {
+      max-width: 100%;
+    }
+  }
+
+  .chat-form textarea {
+    flex: 1;
+  }
+}

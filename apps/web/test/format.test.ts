@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { allowedActions, computerView } from "../src/lib/computer";
-import { formatBytes, formatDuration, maskProxy, statusTone } from "../src/lib/format";
+import { formatBytes, formatDuration, formatUsd, maskProxy, startOfToday, statusTone } from "../src/lib/format";
 import type { DotConfig } from "../src/lib/types";
 
 const GIB = 1024 ** 3;
@@ -71,5 +71,26 @@ describe("computerView", () => {
     expect(allowedActions("STOPPED")).toEqual({ start: true, stop: false, reboot: false });
     expect(allowedActions("RUNNING")).toEqual({ start: false, stop: true, reboot: true });
     expect(allowedActions("STARTING")).toEqual({ start: false, stop: false, reboot: false });
+  });
+});
+
+describe("spend", () => {
+  it("shows cents, a trace as under a cent, and nothing as zero", () => {
+    expect(formatUsd(0)).toBe("$0.00");
+    expect(formatUsd(0.004)).toBe("<$0.01");
+    expect(formatUsd(0.01)).toBe("$0.01");
+    expect(formatUsd(0.4249)).toBe("$0.42");
+    expect(formatUsd(12)).toBe("$12.00");
+    expect(formatUsd(-1)).toBe("-");
+    expect(formatUsd(Number.NaN)).toBe("-");
+    expect(formatUsd(undefined)).toBe("-");
+  });
+
+  it("takes today to start at the local midnight", () => {
+    const noon = new Date(2026, 9, 5, 12, 34, 56);
+    const start = new Date(startOfToday(noon));
+    expect(start.getFullYear()).toBe(2026);
+    expect([start.getMonth(), start.getDate(), start.getHours(), start.getMinutes(), start.getSeconds()]).toEqual([9, 5, 0, 0, 0]);
+    expect(startOfToday(noon)).toMatch(/Z$/);
   });
 });

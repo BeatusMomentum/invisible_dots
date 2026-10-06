@@ -186,7 +186,7 @@ jobs:
         run: bash guest/image-builder/test/smoke/run.sh
 
   web:
-    name: the web client builds
+    name: the web client builds and passes its browser tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -199,6 +199,26 @@ jobs:
         env:
           NEXT_TELEMETRY_DISABLED: "1"
         run: npm run build --workspace @invisible-dots/web
+      - name: install the browser the tests drive
+        run: npx playwright install --with-deps chromium
+      # Each worker starts the real control plane (over a fake VM layer) and the built web client; see
+      # apps/web/e2e/harness.ts. The JUnit report lands in apps/web/playwright-report.xml.
+      - name: browser tests
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+        run: npm run test:e2e --workspace @invisible-dots/web
+      # Playwright exits 0 when a spec file stopped being collected or a test skipped itself, so what ran is
+      # counted against the same floors file.
+      - name: refuse a run with too few tests or an unexpected skip
+        if: always()
+        run: node .github/scripts/test-guard.mjs apps/web/playwright-report.xml --suite playwright
+      - name: keep the traces of a failed run
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: apps/web/test-results
+          if-no-files-found: ignore
 
   english:
     name: the repository is English

@@ -70,3 +70,16 @@ export function maskProxy(proxy: string | null | undefined): string {
   if (!proxy) return "";
   return proxy.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/]*@/i, "$1***@");
 }
+
+/** Model spend in US dollars: cents above a cent, "<$0.01" for a trace, "$0.00" for nothing. */
+export function formatUsd(usd: number | null | undefined): string {
+  if (typeof usd !== "number" || !Number.isFinite(usd) || usd < 0) return "-";
+  if (usd === 0) return "$0.00";
+  if (usd < 0.01) return "<$0.01";
+  return `$${usd.toFixed(2)}`;
+}
+
+/** The start of the local day of `now`, as an ISO 8601 instant: what "today" means for a spend figure. */
+export function startOfToday(now: Date = new Date()): string {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+}

@@ -6,8 +6,10 @@ The MIT license in `LICENSE` covers this repository, except:
   is under `invisible_engine_dots/LICENSE` and the nested notice listed in
   its section below.
 
-That fork, and the text this repository's history holds through the earlier
-TypeScript engine, come with the notices below.
+That fork, the text this repository's history holds through the earlier
+TypeScript engine, and the web client's files that derive from other projects
+(each starts with a `Derived from` comment naming its source, and the project
+has a section below) come with the notices below.
 
 ## Open Multi-Agent
 
@@ -116,3 +118,33 @@ build installs them from PyPI as the wheels their publishers released, pinned
 by hash in `guest/image-builder/builder/engine-requirements.lock`, each under
 its own license. The runtime disk carries the fork's own source with its
 `LICENSE` and `UPSTREAM.md` (`/opt/invisible-dots/engine/` in the guest).
+
+## shadcn/ui
+
+The primitives in `apps/web/src/components/ui/` and `apps/web/src/lib/utils.ts`
+were generated from shadcn/ui (https://github.com/shadcn-ui/ui, commit
+0e3abd65) and changed; each file's first comment says what changed.
+
+```text
+MIT License
+
+Copyright (c) 2023 shadcn
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```

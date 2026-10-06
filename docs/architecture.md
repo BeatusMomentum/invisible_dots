@@ -1526,13 +1526,13 @@ token and listens on the host's loopback, which every guest reaches as
   answers with the cookie `idots_session`: an HMAC of the token, never the
   token itself, so it changes when the token does. It is `HttpOnly` (no
   script reads it) and `SameSite=Strict` (no other site's page makes the
-  browser send it). `DELETE /session` clears it; the header's "Sign out"
+  browser send it). `DELETE /session` clears it; the rail's "Sign out"
   button sends it and then loads `/login` afresh.
 - Every proxied request without that session answers
   `401 { error: "login_required" }` with the header
   `x-invisible-dots-login: required`, before the API is contacted; the page
   then goes to `/login?next=<the page>`. `/login` is the one page that never
-  does: it is outside the route group that holds the header (the API check
+  does: it is outside the route group that holds the rail (the API check
   and the sign-out button), calls nothing, and a refusal seen from it
   redirects nowhere, because loading it again could only meet the same
   refusal. After signing in, `next` is followed only when it is a path of
@@ -1541,6 +1541,21 @@ token and listens on the host's loopback, which every guest reaches as
   defence against DNS rebinding and cross-site pages only: they are written
   by the client, so they never let a request through on their own. The Host
   must be loopback or listed in `INVISIBLE_DOTS_WEB_ALLOWED_HOSTS`.
+
+The pages are React with Tailwind CSS 4. `src/app/tokens.css` is the one place
+that holds a color, a radius or a typeface (a light and a dark set, each pair
+checked for WCAG AA contrast by a test), `globals.css` maps it into Tailwind,
+and the primitives in `src/components/ui/` are shadcn/ui source, copied in
+(`THIRD_PARTY_NOTICES.md`). Every signed-in page sits in one frame: the rail
+(the Dots with a ring around each avatar that says what it is doing, the
+approvals that wait, the state of the API and of the live stream, the theme,
+sign out) and, for a Dot, its header and tab bar. One live stream serves all of
+it; `lib/attention.ts` is the single owner of what needs the person, and the
+rail badges, the avatar ring, the tab title and the favicon all read it. The
+screens that have not been redesigned yet keep their rules in `legacy.css`,
+scoped to `.legacy`. The browser tests (`apps/web/e2e`, Playwright) start the
+real control plane in-process over the fake VM layer and the built web client
+against it (`e2e/harness.ts`), so a test drives what a Dot's computer does.
 
 ## 10. Out of scope for this version
 

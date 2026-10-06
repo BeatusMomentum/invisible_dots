@@ -48,7 +48,6 @@ export function TimelineTab() {
   }, [loadPage]);
 
   useLiveEvents((event) => {
-    if (event.dot_id && event.dot_id !== dotId) return;
     setEvents((current) => mergeEvents(current, [event]));
   });
 
