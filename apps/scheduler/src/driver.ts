@@ -5,6 +5,8 @@
  */
 import type {
   AgentStateAnswer,
+  Automation,
+  AutomationListAnswer,
   BrowserIdentity,
   BrowserIdentityListAnswer,
   ComputerResources,
@@ -15,6 +17,7 @@ import type {
   InboundEvent,
   OutboundEvent,
   SystemAnswer,
+  ToolListAnswer,
   VmState,
 } from "@invisible-dots/shared";
 
@@ -36,6 +39,10 @@ export interface GuestApi {
   createBrowserIdentity(body: CreateBrowserIdentityRequest): Promise<BrowserIdentity>;
   getBrowserIdentity(id: string): Promise<BrowserIdentity>;
   deleteBrowserIdentity(id: string): Promise<void>;
+  listAutomations(): Promise<AutomationListAnswer>;
+  setAutomationEnabled(id: string, enabled: boolean): Promise<Automation>;
+  deleteAutomation(id: string): Promise<void>;
+  listTools(): Promise<ToolListAnswer>;
   prepareSleep(timeoutMs?: number): Promise<void>;
   screenshot(): Promise<Uint8Array>;
   /** The bytes of a file; a file larger than `maxBytes` is refused with status 413 and code `FILE_TOO_LARGE`. */

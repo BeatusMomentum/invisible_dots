@@ -200,6 +200,9 @@ export const AGENT_ROUTES = {
   state: "/state",
   browserIdentities: "/browser-identities",
   browserIdentity: (id: string) => `/browser-identities/${encodeURIComponent(id)}`,
+  automations: "/automations",
+  automation: (id: string) => `/automations/${encodeURIComponent(id)}`,
+  tools: "/tools",
   prepareSleep: "/prepare-sleep",
 } as const;
 
@@ -346,6 +349,67 @@ export interface CreateBrowserIdentityRequest {
 /** `GET /browser-identities`. */
 export interface BrowserIdentityListAnswer {
   identities: BrowserIdentity[];
+}
+
+export const AUTOMATION_SCHEDULE_KINDS = ["at", "every", "cron"] as const;
+export type AutomationScheduleKind = (typeof AUTOMATION_SCHEDULE_KINDS)[number];
+
+/** When an automation runs: only the fields its kind uses are present. */
+export interface AutomationSchedule {
+  kind: AutomationScheduleKind;
+  /** `at`: the moment, in milliseconds since the epoch. */
+  at_ms?: number;
+  /** `every`: the interval in milliseconds. */
+  every_ms?: number;
+  /** `cron`: a cron expression, read in `tz` (the computer's zone when absent). */
+  expr?: string;
+  tz?: string;
+}
+
+export type AutomationRunStatus = "ok" | "error" | "skipped";
+
+/** One automation of a Dot: a job its cron tool made, as `GET /automations` lists it. Times are milliseconds since the epoch. */
+export interface Automation {
+  id: string;
+  name: string;
+  enabled: boolean;
+  schedule: AutomationSchedule;
+  /** What the Dot is told when the automation runs. */
+  message: string;
+  /** Null while the automation is paused or has no run left. */
+  next_run_at_ms: number | null;
+  last_run_at_ms: number | null;
+  last_status: AutomationRunStatus | null;
+  last_error: string | null;
+  /** A one-time automation that removes itself after it ran. */
+  delete_after_run: boolean;
+  created_at_ms: number;
+}
+
+/** `GET /automations`: every automation, paused ones too. */
+export interface AutomationListAnswer {
+  automations: Automation[];
+}
+
+/** `PATCH /automations/:id` body: the one thing the person changes. The answer is the automation. */
+export interface SetAutomationEnabledRequest {
+  enabled: boolean;
+}
+
+/** One tool of the Dot, as `GET /tools` shows it (the engine owns the table: nanobot/dots/permissions.py). */
+export interface ToolInfo {
+  name: string;
+  /** The key of the Dot config's `permissions` the tool exercises. */
+  permission: string;
+  /** Whether the model is offered the tool now: its permission is not denied (and, for a memory tool, memory is on). */
+  offered: boolean;
+  /** What the tool's schema tells the model it does. */
+  description: string;
+}
+
+/** `GET /tools`, in the engine's table order, which groups the tools by permission. */
+export interface ToolListAnswer {
+  tools: ToolInfo[];
 }
 
 /** Every error body, on the host API and in the guest (section 9.6). */

@@ -640,6 +640,10 @@ command detached into another session outlives it.
 | `POST /browser-identities` | `{ name, proxy? }` | `201 BrowserIdentity` (the engine: `501 not_implemented`) |
 | `GET /browser-identities/:id` | | `BrowserIdentity` (the engine: `404`) |
 | `DELETE /browser-identities/:id` | | `204` (the engine: `501 not_implemented`) |
+| `GET /automations` | | `{ automations: Automation[] }`: every cron job of the Dot, paused ones too, as `{ id, name, enabled, schedule: { kind: "at"\|"every"\|"cron", at_ms?, every_ms?, expr?, tz? }, message, next_run_at_ms, last_run_at_ms, last_status, last_error, delete_after_run, created_at_ms }`; times are milliseconds since the epoch, `next_run_at_ms` is `null` while a job is paused |
+| `PATCH /automations/:id` | `{ enabled: bool }` | `200 Automation` (a job already in that state is not touched: resuming a running job does not move its next run); `404 not_found`, `400 invalid_automation` |
+| `DELETE /automations/:id` | | `204`; `404 not_found`, `409 protected` for a system job |
+| `GET /tools` | | `{ tools: [{ name, permission, offered, description }] }`: the engine's tool table (section 8.8) in its order; `offered` is whether the model is offered the tool now (its permission is not `deny`, and a memory tool needs memory on; before the first config, none); `description` is the one in the tool's schema |
 | `POST /prepare-sleep` | | `204` after the state is flushed and browser sessions are closed; the agent then starts no new work. A model request in flight is abandoned; a tool in flight gets up to 20 seconds to finish and record its result, then is aborted (section 8.7). A `POST /secrets` (the READY procedure of a VM whose stop failed, so no shutdown followed) lifts that, and so does a new inbound event |
 
 Outbound events are written to an outbox table in the Dot's database before
@@ -1300,7 +1304,11 @@ state.
   `ask` by default) adds and removes them. A firing is recorded as a durable
   inbound row, `automation.fired`, once per firing, and the chat answers it as
   an input: the opening message reads `[Automation "<name>" fired] <message>`
-  and the answer is a `message.assistant` without `in_reply_to`.
+  and the answer is a `message.assistant` without `in_reply_to`. The person
+  lists, pauses and removes the jobs through `GET /automations`, `PATCH` and
+  `DELETE /automations/:id` (section 5.3), served from the same service object
+  the tool uses; the person does not make one. `GET /tools` shows the permission
+  table with what the model is offered now.
 - Prepare-sleep and SIGTERM. The engine stops taking new work; a turn with no
   tool running is cancelled at once; a turn with a tool running gets up to 20
   seconds, in which the tool's result commits and the next iteration abandons
@@ -1519,6 +1527,10 @@ POST   /api/approvals/:id/reject     body: { note? }
 GET    /api/dots/:id/events          ?after=<id>&limit=&types=<a,b>&task_id=   `types` are event type names (an unknown one is a 400), `task_id` keeps the events whose `data.task_id` it is
 GET    /api/dots/:id/files/list      ?path=   { path, entries: [{ name, type, size, mtime }] }: a directory under /home/dot (home when omitted)
 GET    /api/dots/:id/files           ?path=   the bytes of a file under /home/dot, at most 16 MiB (413 `file_too_large`)
+GET    /api/dots/:id/automations     { automations: Automation[] }: the Dot's cron jobs (section 5.3); needs the computer running (409 `computer_stopped`)
+PATCH  /api/dots/:id/automations/:automationId   body: { enabled }   pauses or resumes one; answers the automation
+DELETE /api/dots/:id/automations/:automationId   204
+GET    /api/dots/:id/tools           { tools: [{ name, permission, offered, description }] }: the engine's tool table and what the model is offered now; needs the computer running
 GET    /api/dots/:id/usage           ?since=<ISO 8601 timestamp>   { dot_id, since, spent_usd }
 GET    /api/stream                   SSE: every event, ?dot_id= to filter
 PUT    /api/secrets/openrouter       body: { value, dot_id? }
@@ -1555,6 +1567,15 @@ match), and both combine with `after` and `limit`. A chat turn's events carry
 no task. Migration `0007_events_task.sql` adds the expression index the task
 filter reads. A type name no event has (`tool.calls`) is a 400, so a typo does not
 look like a quiet Dot.
+
+`GET /api/dots/:id/automations`, `PATCH` and `DELETE /api/dots/:id/automations/:automationId`
+and `GET /api/dots/:id/tools` pass through to the engine's routes of section 5.3:
+the cron jobs and the tool table are the engine's, and the control plane keeps no
+copy of either. They need the computer running (`409 computer_stopped`), the
+engine's own refusals pass through with their code and status, and a `PATCH` whose
+`enabled` is not a boolean is a `400 invalid_request` before the guest is called.
+A job the Dot makes with its `cron` tool needs the approval of `automations`
+(`ask` by default), so a person sees an automation here only after approving it.
 
 `GET /api/dots/:id/files/list` and `GET /api/dots/:id/files` read the Dot's
 computer through dot-agentd's `GET /v1/files/list` and `GET /v1/files`, and

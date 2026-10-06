@@ -44,6 +44,7 @@ from nanobot.cron.types import CronJob
 from nanobot.dots import store as dots_store
 from nanobot.dots.computer import Computer
 from nanobot.dots.gate import DotsGate, close_open_calls
+from nanobot.dots.permissions import tool_table
 from nanobot.dots.projection import EngineSettings, project
 from nanobot.dots.protocol import (
     TASK_CANCELLED_EVENT,
@@ -166,6 +167,7 @@ class Engine:
         stop_grace_s: float = STOP_GRACE_S,
     ) -> None:
         self._store = store
+        self._registry = base_registry
         self._key_holder = key_holder
         self._workspace = workspace
         self._openrouter_base_url = openrouter_base_url
@@ -221,6 +223,11 @@ class Engine:
             )
 
         return self._store.read(answer)
+
+    def tool_table(self) -> list[dict[str, Any]]:
+        """The Dot's tools and whether the model is offered each now (none before a config arrived)."""
+        offered = self._settings.offered_tools if self._settings else ()
+        return tool_table(self._registry, offered)
 
     def read_outbox_after(self, after: int, limit: int) -> list[dict[str, Any]]:
         return self._store.read(lambda conn: dots_store.read_outbox_after(conn, after, limit))

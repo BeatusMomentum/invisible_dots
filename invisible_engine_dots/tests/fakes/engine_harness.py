@@ -70,6 +70,7 @@ class EngineHarness:
         self.computer = LocalComputer(tmp_path, workspace)
         self.stop_grace_s = stop_grace_s
         self.engines: list[Engine] = []
+        self.cron = CronService(tmp_path / "cron" / "jobs.json")
         self.engine = self.new_engine()
 
     def new_engine(self) -> Engine:
@@ -78,7 +79,7 @@ class EngineHarness:
             ToolDeps(
                 computer=self.computer,
                 exec_session_manager=ExecSessionManager(),
-                cron_service=CronService(self.tmp_path / "cron" / "jobs.json"),
+                cron_service=self.cron,
             )
         )
         engine = Engine(

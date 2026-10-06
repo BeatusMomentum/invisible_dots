@@ -337,6 +337,15 @@ check_offered 3 "memory off: no memory tool even with memory.read allowed" \
   '{"computer.exec":"allow","memory.read":"allow"}' false \
   '["exec","exec_session","list_exec_sessions"]'
 check_offered 4 "an empty permission map offers nothing" '{}' true '[]'
+# GET /tools is the same table seen from the host: the whole table, and `offered` says what the model got.
+# The map of check 3 is pushed again (memory off): the model was offered exactly exec and its two sessions tools.
+offered_with 3b '{"computer.exec":"allow","memory.read":"allow"}' false >/dev/null
+check "GET /tools through dot-agentd lists the 13 tools of the table, each with a description" "api $A/tools | jq -e '(.tools|length)==13 and all(.tools[]; (.description|length)>0 and (.permission|length)>0)' >/dev/null"
+check "GET /tools offers what the model was offered (memory off)" "[ \"\$(api $A/tools | jq -c '[.tools[]|select(.offered)|.name]|sort')\" = '[\"exec\",\"exec_session\",\"list_exec_sessions\"]' ]"
+check "GET /tools names the permission each tool exercises" "api $A/tools | jq -e '(.tools|map({(.name):.permission})|add) | .exec==\"computer.exec\" and .read_file==\"files.read\" and .write_file==\"files.write\" and .memory_get==\"memory.read\" and .cron==\"automations\"' >/dev/null"
+check "GET /automations through dot-agentd lists none for a Dot that made none" "[ \"\$(api $A/automations)\" = '{\"automations\":[]}' ]"
+check "pausing or removing an automation that is not there is a 404 not_found" "[ \"\$(api -o /dev/null -w '%{http_code}' -X PATCH -H 'content-type: application/json' -d '{\"enabled\":false}' $A/automations/none)\" = 404 ] && [ \"\$(api -o /dev/null -w '%{http_code}' -X DELETE $A/automations/none)\" = 404 ]"
+check "a PATCH of an automation whose body is not {enabled: bool} is a 400" "[ \"\$(api -o /dev/null -w '%{http_code}' -X PATCH -H 'content-type: application/json' -d '{\"enabled\":\"yes\"}' $A/automations/none)\" = 400 ]"
 # A call of a tool the model was not offered (the stand-in makes it anyway) never runs: the turn's
 # registry holds only the offered tools, so the call fails as an unknown tool before the gate is asked
 # (design: an unknown tool never reaches the gate; tool.called reports it with decision allow, ok false).

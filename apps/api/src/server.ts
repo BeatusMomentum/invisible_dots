@@ -23,7 +23,15 @@ import type {
   TasksAnswer,
   UsageAnswer,
 } from "@invisible-dots/sdk/types";
-import { APPROVAL_STATUSES, CHANNEL_KINDS, type ApprovalStatus, type ChannelKind, type DoctorCheck } from "@invisible-dots/shared";
+import {
+  APPROVAL_STATUSES,
+  CHANNEL_KINDS,
+  type ApprovalStatus,
+  type AutomationListAnswer,
+  type ChannelKind,
+  type DoctorCheck,
+  type ToolListAnswer,
+} from "@invisible-dots/shared";
 import { doctorAnswer } from "@invisible-dots/vm-manager";
 import { serveFile } from "./file-types.js";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
@@ -43,7 +51,7 @@ export interface ServerOptions {
   heartbeatMs?: number;
 }
 
-type Params = { id: string; identityId: string; kind: string; peer: string };
+type Params = { id: string; identityId: string; automationId: string; kind: string; peer: string };
 type Body = Record<string, unknown> | undefined;
 
 function digest(value: string): Buffer {
@@ -265,6 +273,27 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     await scheduler.deleteIdentity(request.params.id, request.params.identityId);
     return reply.code(204).send();
   });
+
+  // Automations (the Dot's cron jobs) and tools (its table): both are the engine's, so they need the computer running
+
+  app.get<{ Params: Params }>(
+    "/api/dots/:id/automations",
+    async (request): Promise<AutomationListAnswer> => ({ automations: await scheduler.listAutomations(request.params.id) }),
+  );
+
+  app.patch<{ Params: Params }>("/api/dots/:id/automations/:automationId", async (request) =>
+    scheduler.setAutomationEnabled(request.params.id, request.params.automationId, bodyOf(request).enabled),
+  );
+
+  app.delete<{ Params: Params }>("/api/dots/:id/automations/:automationId", async (request, reply) => {
+    await scheduler.deleteAutomation(request.params.id, request.params.automationId);
+    return reply.code(204).send();
+  });
+
+  app.get<{ Params: Params }>(
+    "/api/dots/:id/tools",
+    async (request): Promise<ToolListAnswer> => ({ tools: await scheduler.listTools(request.params.id) }),
+  );
 
   // Channels (the hub never returns a credential, and no route here echoes one)
 

@@ -1,6 +1,6 @@
 import type { Database } from "@invisible-dots/database";
 import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-dots/database/testing";
-import type { StoredEvent } from "@invisible-dots/shared";
+import type { Automation, StoredEvent } from "@invisible-dots/shared";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Scheduler, type SchedulerOptions } from "../src/index.js";
 import { FakeDriver, FakeGuestError, ManualClock, waitFor, waitUntilSettledReady } from "../src/testing.js";
@@ -8,6 +8,21 @@ import { FakeDriver, FakeGuestError, ManualClock, waitFor, waitUntilSettledReady
 
 const yaml = (name: string, idle = "15m") =>
   `name: ${name}\ngoal: keep watch\nmodel:\n  provider: openrouter\n  id: test/model\ncomputer:\n  idle_timeout: ${idle}\n`;
+
+const automation = (over: Partial<Automation> = {}): Automation => ({
+  id: "job_1",
+  name: "daily fares",
+  enabled: true,
+  schedule: { kind: "cron", expr: "0 9 * * 1-5", tz: "Europe/Rome" },
+  message: "check the fares",
+  next_run_at_ms: 1_800_000_000_000,
+  last_run_at_ms: null,
+  last_status: null,
+  last_error: null,
+  delete_after_run: false,
+  created_at_ms: 1_700_000_000_000,
+  ...over,
+});
 
 describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s)", (kind) => {
   let t: TestDatabase;
@@ -530,6 +545,66 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     // A guest that cannot be reached is the Dot's computer not answering, not the caller's fault.
     guest.powerOff();
     await expect(scheduler.readFile(dot.id, "memory/a.md")).rejects.toMatchObject({ status: 502, code: "guest_unavailable" });
+  });
+
+  it("automations: listed, paused and resumed, removed, with the guest's refusals passed through and a bad flag refused first", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "automator");
+    const guest = driver.guestOf(dot.id);
+    guest.putAutomation(automation());
+    guest.putAutomation(automation({ id: "job_2", name: "weekly", enabled: false, next_run_at_ms: null }));
+
+    expect((await scheduler.listAutomations("automator")).map((a) => [a.id, a.enabled])).toEqual([["job_1", true], ["job_2", false]]);
+    expect(await scheduler.setAutomationEnabled(dot.id, "job_1", false)).toMatchObject({ id: "job_1", enabled: false, next_run_at_ms: null });
+    expect(await scheduler.setAutomationEnabled(dot.id, "job_1", true)).toMatchObject({ enabled: true });
+    await scheduler.deleteAutomation(dot.id, "job_2");
+    expect((await scheduler.listAutomations(dot.id)).map((a) => a.id)).toEqual(["job_1"]);
+
+    // A flag that is not a boolean never reaches the guest; what the guest refuses passes through.
+    const calls = guest.calls.length;
+    for (const bad of [undefined, null, "true", 1]) {
+      await expect(scheduler.setAutomationEnabled(dot.id, "job_1", bad)).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+    }
+    expect(guest.calls.length).toBe(calls);
+    await expect(scheduler.deleteAutomation(dot.id, "job_2")).rejects.toMatchObject({ status: 404, code: "not_found" });
+    await expect(scheduler.setAutomationEnabled(dot.id, "nope", true)).rejects.toMatchObject({ status: 404, code: "not_found" });
+  });
+
+  it("tools: the engine's table with what is offered now; an unreachable computer is not an empty table", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "toolbox");
+    const guest = driver.guestOf(dot.id);
+
+    const tools = await scheduler.listTools("toolbox");
+    expect(tools.map((t) => [t.name, t.permission])).toEqual([
+      ["exec", "computer.exec"],
+      ["read_file", "files.read"],
+      ["write_file", "files.write"],
+      ["cron", "automations"],
+    ]);
+    // The config the host pushed has its defaults filled in: nothing is denied, so the model is offered every tool.
+    expect(tools.every((t) => t.offered)).toBe(true);
+    await scheduler.updateDot(dot.id, `${yaml("toolbox")}permissions:
+  automations: deny
+`);
+    await waitFor(async () => (await scheduler.listTools(dot.id)).some((t) => !t.offered), "config pushed");
+    expect((await scheduler.listTools(dot.id)).filter((t) => !t.offered).map((t) => t.name)).toEqual(["cron"]);
+
+    guest.powerOff();
+    await expect(scheduler.listTools(dot.id)).rejects.toMatchObject({ status: 502, code: "guest_unavailable" });
+    await expect(scheduler.listAutomations(dot.id)).rejects.toMatchObject({ status: 502, code: "guest_unavailable" });
+  });
+
+  it("automations and tools need a running computer", async () => {
+    const { scheduler } = make();
+    const dot = await readyDot(scheduler, "tool-sleeper");
+    await scheduler.stopComputer(dot.id);
+    await scheduler.settle();
+
+    await expect(scheduler.listAutomations(dot.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(scheduler.setAutomationEnabled(dot.id, "job_1", true)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(scheduler.deleteAutomation(dot.id, "job_1")).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(scheduler.listTools(dot.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
   });
 
   it("delete removes the Dot's own OpenRouter key and keeps the global one", async () => {

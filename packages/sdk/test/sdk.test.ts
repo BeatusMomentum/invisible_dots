@@ -36,6 +36,33 @@ describe("InvisibleDotsClient", () => {
     expect(seen[0]?.headers.get("authorization")).toBe("Bearer secret-token");
   });
 
+  it("automation and tool methods use the routes the API serves, ids encoded, and unwrap the answers", async () => {
+    const seen: string[] = [];
+    const client = new InvisibleDotsClient({
+      baseUrl: "http://api.test",
+      token: "t",
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        seen.push(`${request.method} ${new URL(request.url).pathname} ${await request.text()}`.trim());
+        if (request.method === "DELETE") return new Response(null, { status: 204 });
+        if (request.method === "PATCH") return new Response(JSON.stringify({ id: "j 1", enabled: false }));
+        if (request.url.endsWith("/tools")) return new Response(JSON.stringify({ tools: [{ name: "exec", permission: "computer.exec", offered: true, description: "Run." }] }));
+        return new Response(JSON.stringify({ automations: [{ id: "j 1" }] }));
+      },
+    });
+
+    expect(await client.listAutomations("a b")).toEqual([{ id: "j 1" }]);
+    expect(await client.setAutomationEnabled("a b", "j 1", false)).toEqual({ id: "j 1", enabled: false });
+    await client.deleteAutomation("a b", "j 1");
+    expect(await client.listTools("a b")).toEqual([{ name: "exec", permission: "computer.exec", offered: true, description: "Run." }]);
+    expect(seen).toEqual([
+      "GET /api/dots/a%20b/automations",
+      'PATCH /api/dots/a%20b/automations/j%201 {"enabled":false}',
+      "DELETE /api/dots/a%20b/automations/j%201",
+      "GET /api/dots/a%20b/tools",
+    ]);
+  });
+
   it("events and file methods send the query the API routes expect, with names and paths encoded", async () => {
     const seen: string[] = [];
     const client = new InvisibleDotsClient({

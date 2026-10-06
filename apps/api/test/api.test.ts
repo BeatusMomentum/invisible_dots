@@ -6,7 +6,7 @@ import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-
 import { Scheduler } from "@invisible-dots/scheduler";
 import { FakeDriver, ManualClock, waitFor, waitUntilSettledReady } from "@invisible-dots/scheduler/testing";
 import { ApiError, InvisibleDotsClient } from "@invisible-dots/sdk";
-import { OPENROUTER_KEY_RULE, type DoctorCheck, type StoredEvent } from "@invisible-dots/shared";
+import { OPENROUTER_KEY_RULE, type Automation, type DoctorCheck, type StoredEvent } from "@invisible-dots/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildServer, type FastifyInstance } from "../src/index.js";
 
@@ -306,6 +306,79 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     await waitFor(async () => (await api.computer(dot.id)).ready, "started again");
     await expect(api.listFiles("no-such-dot")).rejects.toMatchObject({ status: 404 });
     await expect(api.readFile("no-such-dot", "a")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("automations: list, pause, resume and remove over HTTP, and a tool table that follows the permissions", async () => {
+    const dot = await readyDot("automations");
+    const guest = driver.guestOf(dot.id);
+    const job = (over: Partial<Automation>): Automation => ({
+      id: "job_1",
+      name: "daily fares",
+      enabled: true,
+      schedule: { kind: "every", every_ms: 3_600_000 },
+      message: "look",
+      next_run_at_ms: 1_800_000_000_000,
+      last_run_at_ms: null,
+      last_status: null,
+      last_error: null,
+      delete_after_run: false,
+      created_at_ms: 1_700_000_000_000,
+      ...over,
+    });
+    guest.putAutomation(job({}));
+    guest.putAutomation(job({ id: "job_2", name: "paused", enabled: false, next_run_at_ms: null }));
+
+    expect((await api.listAutomations(dot.id)).map((a) => [a.id, a.enabled])).toEqual([["job_1", true], ["job_2", false]]);
+    expect(await api.setAutomationEnabled(dot.id, "job_1", false)).toMatchObject({ id: "job_1", enabled: false, next_run_at_ms: null });
+    expect((await api.listAutomations(dot.id))[0]).toMatchObject({ enabled: false });
+    await api.deleteAutomation(dot.id, "job_2");
+    expect((await api.listAutomations(dot.id)).map((a) => a.id)).toEqual(["job_1"]);
+
+    // The raw routes: no body, a flag that is not a boolean, an unknown job, a missing token.
+    const send = (method: string, path: string, body?: string) =>
+      fetch(`${base}/api/dots/${dot.id}/${path}`, { method, body, headers: { authorization: `Bearer ${TOKEN}`, ...(body ? { "content-type": "application/json" } : {}) } });
+    expect((await send("PATCH", "automations/job_1")).status).toBe(400);
+    const notBoolean = await send("PATCH", "automations/job_1", JSON.stringify({ enabled: "no" }));
+    expect(notBoolean.status).toBe(400);
+    expect(await notBoolean.json()).toMatchObject({ error: "invalid_request" });
+    expect((await send("PATCH", "automations/nope", JSON.stringify({ enabled: true }))).status).toBe(404);
+    expect((await send("DELETE", "automations/nope")).status).toBe(404);
+    expect((await send("DELETE", "automations/job_1")).status).toBe(204);
+    expect((await fetch(`${base}/api/dots/${dot.id}/automations`)).status).toBe(401);
+    expect((await fetch(`${base}/api/dots/${dot.id}/tools`)).status).toBe(401);
+
+    // Tools: the table, and what the model is offered follows the permissions the config pushed.
+    const none = await api.listTools(dot.id);
+    expect(none.map((t) => t.name)).toEqual(["exec", "read_file", "write_file", "cron"]);
+    // The pushed config has the defaults filled in, none of them deny: every tool is offered.
+    expect(none.every((t) => t.offered)).toBe(true);
+    await api.updateDot(dot.id, `${yaml("automations")}permissions:
+  computer.exec: allow
+  files.read: ask
+  files.write: deny
+  automations: deny
+`);
+    await waitFor(async () => (await api.listTools(dot.id)).some((t) => !t.offered), "permissions pushed");
+    expect(Object.fromEntries((await api.listTools(dot.id)).map((t) => [t.name, t.offered]))).toEqual({
+      exec: true,
+      read_file: true,
+      write_file: false,
+      cron: false,
+    });
+  });
+
+  it("automations and tools need a running computer (409 computer_stopped) and a Dot that exists", async () => {
+    const dot = await readyDot("automation-sleeper");
+    await api.stopComputer(dot.id);
+    await scheduler.settle();
+    await expect(api.listAutomations(dot.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(api.setAutomationEnabled(dot.id, "job_1", true)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(api.deleteAutomation(dot.id, "job_1")).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(api.listTools(dot.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await api.startComputer(dot.id);
+    await waitFor(async () => (await api.computer(dot.id)).ready, "started again");
+    await expect(api.listAutomations("no-such-dot")).rejects.toMatchObject({ status: 404 });
+    await expect(api.listTools("no-such-dot")).rejects.toMatchObject({ status: 404 });
   });
 
   it("the stream filters by Dot and replays after an id without duplicates", async () => {

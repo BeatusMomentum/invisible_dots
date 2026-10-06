@@ -7,7 +7,7 @@
  * outbox with monotonically increasing `seq` replayed after a cursor, and
  * browser identities under the same rules as the real agent's, and a small
  * file system (`putFile`) served through the files routes with the real
- * daemon's errors.
+ * daemon's errors, automations (`putAutomation`) and a small tool table.
  */
 import {
   checkIdentityRequest,
@@ -19,6 +19,8 @@ import {
   pollGuestHealth,
   type AgentState,
   type AgentStateAnswer,
+  type Automation,
+  type AutomationListAnswer,
   type BrowserIdentity,
   type BrowserIdentityListAnswer,
   type CreateBrowserIdentityRequest,
@@ -32,6 +34,8 @@ import {
   type OutboundEventDataMap,
   type OutboundEventType,
   type SystemAnswer,
+  type ToolInfo,
+  type ToolListAnswer,
   type VmState,
 } from "@invisible-dots/shared";
 import type {
@@ -105,6 +109,15 @@ export class FakeGuest implements GuestApi {
   readonly identities = new Map<string, BrowserIdentity>();
   /** The files of the guest by absolute path; directories exist where a file is under them (and home always). */
   readonly files = new Map<string, { content: Uint8Array; mtime: Date }>();
+  /** The automations of the Dot by id (its cron tool made them). */
+  readonly automations = new Map<string, Automation>();
+  /** The tools the fake's engine has: the real table's shape, a few rows; `offered` follows the permissions of the config. */
+  readonly tools: Omit<ToolInfo, "offered">[] = [
+    { name: "exec", permission: "computer.exec", description: "Run a shell command on the computer." },
+    { name: "read_file", permission: "files.read", description: "Read a file." },
+    { name: "write_file", permission: "files.write", description: "Write a file." },
+    { name: "cron", permission: "automations", description: "Schedule reminders and recurring tasks." },
+  ];
   readonly calls: string[] = [];
   pendingApproval: { approval_id: string; task_id?: string } | null = null;
   onInbound: InboundHandler = completeEverything;
@@ -314,6 +327,39 @@ export class FakeGuest implements GuestApi {
     if (!identity) throw new FakeGuestError(404, `identity ${id} not found`, "not_found");
     this.identities.delete(id);
     this.emit("browser.identity.deleted", { identity_id: id, name: identity.name });
+  }
+
+  /** Give the Dot an automation (its cron tool made it). */
+  putAutomation(automation: Automation): void {
+    this.automations.set(automation.id, automation);
+  }
+
+  async listAutomations(): Promise<AutomationListAnswer> {
+    this.#reachable("listAutomations");
+    return { automations: [...this.automations.values()] };
+  }
+
+  async setAutomationEnabled(id: string, enabled: boolean): Promise<Automation> {
+    this.#reachable("setAutomationEnabled");
+    const automation = this.automations.get(id);
+    if (!automation) throw new FakeGuestError(404, `no automation "${id}"`, "not_found");
+    if (automation.enabled !== enabled) {
+      const next = { ...automation, enabled, next_run_at_ms: enabled ? Date.now() + 60_000 : null };
+      this.automations.set(id, next);
+      return next;
+    }
+    return automation;
+  }
+
+  async deleteAutomation(id: string): Promise<void> {
+    this.#reachable("deleteAutomation");
+    if (!this.automations.delete(id)) throw new FakeGuestError(404, `no automation "${id}"`, "not_found");
+  }
+
+  async listTools(): Promise<ToolListAnswer> {
+    this.#reachable("listTools");
+    const permissions: Record<string, string | undefined> = this.config?.permissions ?? {};
+    return { tools: this.tools.map((tool) => ({ ...tool, offered: this.config !== null && (permissions[tool.permission] === "allow" || permissions[tool.permission] === "ask") })) };
   }
 
   /** Put a file in the guest's file system (the Dot wrote it). */

@@ -21,6 +21,8 @@ import {
   SseParser,
   type AgentHealthAnswer,
   type AgentStateAnswer,
+  type Automation,
+  type AutomationListAnswer,
   type BrowserIdentity,
   type BrowserIdentityListAnswer,
   type CreateBrowserIdentityRequest,
@@ -35,6 +37,7 @@ import {
   type PostEventAnswer,
   type ProofAnswer,
   type SystemAnswer,
+  type ToolListAnswer,
 } from "@invisible-dots/shared";
 import { GuestRequestError } from "./errors.js";
 import { silentLogger, type Logger } from "./logger.js";
@@ -329,6 +332,24 @@ export class GuestClient {
 
   deleteBrowserIdentity(id: string): Promise<void> {
     return this.noContent({ method: "DELETE", path: this.agentPath(AGENT_ROUTES.browserIdentity(id)) });
+  }
+
+  listAutomations(): Promise<AutomationListAnswer> {
+    return this.json({ path: this.agentPath(AGENT_ROUTES.automations) });
+  }
+
+  /** Pause (`false`) or resume (`true`) an automation; the answer is the automation as it is now. */
+  setAutomationEnabled(id: string, enabled: boolean): Promise<Automation> {
+    return this.json({ method: "PATCH", path: this.agentPath(AGENT_ROUTES.automation(id)), body: { enabled } });
+  }
+
+  deleteAutomation(id: string): Promise<void> {
+    return this.noContent({ method: "DELETE", path: this.agentPath(AGENT_ROUTES.automation(id)) });
+  }
+
+  /** The Dot's tools and whether the model is offered each now. */
+  listTools(): Promise<ToolListAnswer> {
+    return this.json({ path: this.agentPath(AGENT_ROUTES.tools) });
   }
 
   /** Flushes state and closes browser sessions; can take a while with several browsers open. */

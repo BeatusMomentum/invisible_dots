@@ -236,3 +236,29 @@ def test_an_integer_argument_reaches_the_gate_as_the_same_int_however_the_model_
             checked.append(f"{name}.{key}")
     # The walk reached the integer arguments of the table, not none of them.
     assert {"exec.timeout", "read_file.limit", "grep.head_limit", "edit_file.occurrence", "cron.every_seconds"} <= set(checked)
+
+
+# --- the table as GET /tools shows it ----------------------------------------------------------------
+
+
+def test_the_tool_table_has_a_row_per_tool_in_the_order_of_the_permission_table(tmp_path) -> None:
+    from nanobot.dots.permissions import build_registry, tool_table
+
+    registry = build_registry(_deps(tmp_path))
+    rows = tool_table(registry, {"exec", "grep"})
+
+    assert [row["name"] for row in rows] == list(TOOL_PERMISSIONS)
+    for row in rows:
+        assert row["permission"] == TOOL_PERMISSIONS[row["name"]].permission
+        assert row["description"] == registry.get(row["name"]).description
+        assert row["offered"] is (row["name"] in {"exec", "grep"})
+
+
+def test_the_tool_table_refuses_a_registry_that_lacks_a_tool_of_the_table(tmp_path) -> None:
+    from nanobot.dots.permissions import build_registry, tool_table
+
+    registry = build_registry(_deps(tmp_path))
+    registry.unregister("cron")
+
+    with pytest.raises(LookupError, match="cron"):
+        tool_table(registry, ())

@@ -19,6 +19,12 @@ describe("protocol constants", () => {
     expect(AGENT_ROUTES.browserIdentity("a b")).toBe("/browser-identities/a%20b");
   });
 
+  it("names the automation and tool routes, an automation id encoded as one path segment", () => {
+    expect(AGENT_ROUTES.automations).toBe("/automations");
+    expect(AGENT_ROUTES.automation("job 1/x")).toBe("/automations/job%201%2Fx");
+    expect(AGENT_ROUTES.tools).toBe("/tools");
+  });
+
   it("lays out an identity directory", () => {
     expect(identityPaths("shop-ab12cd")).toEqual({
       root: "/home/dot/browsers/shop-ab12cd",

@@ -10,7 +10,7 @@ empty permission and no target.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
@@ -179,6 +179,21 @@ def offered_tools(permissions: Mapping[str, str], *, memory_enabled: bool = True
         if permissions.get(entry.permission) in ("allow", "ask")
         and (memory_enabled or not entry.needs_memory)
     )
+
+
+def tool_table(registry: ToolRegistry, offered: Collection[str]) -> list[dict[str, Any]]:
+    """One row per tool of the table, as `GET /tools` shows it: the name, the permission it exercises,
+    whether the model is offered it now (`offered` is what the projection offers) and what its schema says
+    it does. The rows are in the table's order, which groups the tools by permission."""
+    rows: list[dict[str, Any]] = []
+    for name, entry in TOOL_PERMISSIONS.items():
+        tool = registry.get(name)
+        if tool is None:
+            raise LookupError(f'the registry has no tool "{name}" of the permission table')
+        rows.append(
+            {"name": name, "permission": entry.permission, "offered": name in offered, "description": tool.description}
+        )
+    return rows
 
 
 def build_registry(deps: ToolDeps) -> ToolRegistry:

@@ -131,6 +131,34 @@ describe("GuestClient", () => {
     expect(seen.map((s) => s.url)).toContain("/v1/agent/browser-identities/shop-abc123");
   });
 
+  it("calls the automation and tool routes with the id as one encoded path segment", async () => {
+    const row = { id: "job 1", name: "n", enabled: false };
+    const { port, seen } = await serve((req, res) => {
+      switch (`${req.method} ${req.url}`) {
+        case "GET /v1/agent/automations":
+          return json(res, 200, { automations: [row] });
+        case "PATCH /v1/agent/automations/job%201":
+          return json(res, 200, row);
+        case "DELETE /v1/agent/automations/job%201":
+          return res.writeHead(204).end();
+        case "GET /v1/agent/tools":
+          return json(res, 200, { tools: [{ name: "exec", permission: "computer.exec", offered: true, description: "Run." }] });
+        default:
+          return json(res, 404, { error: "not_found", message: req.url });
+      }
+    });
+    const client = new GuestClient(port, TOKEN);
+
+    expect(await client.listAutomations()).toEqual({ automations: [row] });
+    expect(await client.setAutomationEnabled("job 1", false)).toEqual(row);
+    await client.deleteAutomation("job 1");
+    expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["exec"]);
+    expect(JSON.parse(seen[1]!.body)).toEqual({ enabled: false });
+    expect(seen.map((s) => s.auth)).toEqual(Array(4).fill(`Bearer ${TOKEN}`));
+    const missing = await client.deleteAutomation("nope").catch((e: unknown) => e);
+    expect(missing).toMatchObject({ status: 404, code: "not_found" });
+  });
+
   it("turns error bodies into GuestRequestError", async () => {
     const { port } = await serve((_req, res) => json(res, 409, { error: "computer_busy", message: "try later" }));
     const error = await new GuestClient(port, TOKEN).state().catch((e: unknown) => e);

@@ -25,6 +25,8 @@ AGENT_ROUTES = {
     "events_stream": "/events/stream",
     "state": "/state",
     "browser_identities": "/browser-identities",
+    "automations": "/automations",
+    "tools": "/tools",
     "prepare_sleep": "/prepare-sleep",
 }
 

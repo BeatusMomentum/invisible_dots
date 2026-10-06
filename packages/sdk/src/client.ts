@@ -2,7 +2,17 @@
  * Typed client for every route of the control-plane API (architecture
  * section 9.6), built on `fetch` so it runs in Node and in browsers.
  */
-import { SseParser, type ApprovalStatus, type BrowserIdentity, type ChannelKind, type StoredEvent } from "@invisible-dots/shared/browser";
+import {
+  SseParser,
+  type ApprovalStatus,
+  type Automation,
+  type AutomationListAnswer,
+  type BrowserIdentity,
+  type ChannelKind,
+  type StoredEvent,
+  type ToolInfo,
+  type ToolListAnswer,
+} from "@invisible-dots/shared/browser";
 import type {
   AcceptedAnswer,
   ApprovalRecord,
@@ -332,6 +342,27 @@ export class InvisibleDotsClient {
         query: { after: options.after, limit: options.limit, types: options.types?.length ? options.types.join(",") : undefined, task_id: options.taskId },
       })
     ).events;
+  }
+
+  // Automations and tools of the Dot's engine: the computer must be running (409 computer_stopped)
+
+  /** The Dot's automations (the cron jobs it made), paused ones too. */
+  async listAutomations(idOrName: string): Promise<Automation[]> {
+    return (await this.#json<AutomationListAnswer>("GET", `/api/dots/${enc(idOrName)}/automations`)).automations;
+  }
+
+  /** Pause (`false`) or resume (`true`) an automation; the answer is the automation as it is now. */
+  setAutomationEnabled(idOrName: string, automationId: string, enabled: boolean): Promise<Automation> {
+    return this.#json("PATCH", `/api/dots/${enc(idOrName)}/automations/${enc(automationId)}`, { body: { enabled } });
+  }
+
+  async deleteAutomation(idOrName: string, automationId: string): Promise<void> {
+    await this.#json("DELETE", `/api/dots/${enc(idOrName)}/automations/${enc(automationId)}`);
+  }
+
+  /** The Dot's tools, each with the permission it exercises and whether the model is offered it now. */
+  async listTools(idOrName: string): Promise<ToolInfo[]> {
+    return (await this.#json<ToolListAnswer>("GET", `/api/dots/${enc(idOrName)}/tools`)).tools;
   }
 
   // Files of the Dot's computer: read-only, under /home/dot, and the computer must be running (409 computer_stopped)
