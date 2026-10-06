@@ -632,7 +632,7 @@ async def test_a_policy_that_asks_before_navigating_shows_the_person_the_url_and
     assert [entry["name"] for entry in record if entry["kind"] == "call"] == ["browser_open"]
 
 
-async def test_an_approval_to_navigate_shows_the_url_as_the_tool_called_target_does(make_harness: MakeHarness) -> None:
+async def test_an_approval_to_navigate_shows_the_query_it_will_send_and_not_the_user_and_password(make_harness: MakeHarness) -> None:
     permissions = {**ALLOW_ALL, **BROWSER_ALLOWED, "browser.navigate": "ask"}
     h = make_harness([], permissions)
     identity_id = await open_one(h)
@@ -642,8 +642,8 @@ async def test_an_approval_to_navigate_shows_the_url_as_the_tool_called_target_d
     await h.run(chat("open it"))
 
     [asked] = h.events_of("approval.requested")
-    assert asked["arguments"] == {"identity_id": identity_id, "url": "https://example.com/a?token=***&q=***"}
-    assert "pw" not in json.dumps(asked) and "s3cret" not in json.dumps(asked)
+    assert asked["arguments"] == {"identity_id": identity_id, "url": "https://example.com/a?token=s3cret&q=1"}
+    assert "user:pw" not in json.dumps(asked)
     # The call waits with its full arguments, so the approved call goes to the address as asked.
     [pending] = h.store.read(lambda conn: s.list_approvals(conn, "pending"))
     assert pending.arguments["url"] == url

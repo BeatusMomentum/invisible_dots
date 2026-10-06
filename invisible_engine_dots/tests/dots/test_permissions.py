@@ -425,22 +425,23 @@ def test_the_proxy_password_of_an_identity_is_redacted_in_the_arguments_an_appro
     assert tool_arguments("not_a_tool", {"proxy": "http://u:p@h"}) == {"proxy": "http://u:p@h"}
 
 
-def test_the_url_of_a_navigation_is_masked_in_the_arguments_an_approval_shows_as_in_its_target() -> None:
+def test_an_approval_shows_the_url_a_navigation_will_open_without_its_user_and_password() -> None:
     from nanobot.dots.permissions import tool_arguments
 
     ident = "shop-abc123"
     for url in (
         "https://example.com/a?token=s3cret&q=1",
-        "https://u:pw@example.com/",
         "https://example.com/p#access_token=abc",
+        "https://example.com/c?d=exfiltrated",
         "http://example.com",
     ):
-        params = {"identity_id": ident, "url": url}
-        shown = tool_arguments("browser_navigate", params)
-        # One rule: the URL of the arguments is the URL the target shows.
-        assert tool_target("browser_navigate", params) == f"{ident}: {shown['url']}"
-        assert shown["identity_id"] == ident
-    assert tool_arguments("browser_navigate", {"identity_id": ident, "url": "https://u:pw@example.com/a?k=v"})["url"] == "https://example.com/a?k=***"
+        shown = tool_arguments("browser_navigate", {"identity_id": ident, "url": url})
+        # The query is what a prompt-injected model sends out: the approver sees all of it.
+        assert shown == {"identity_id": ident, "url": url}
+    shown = tool_arguments("browser_navigate", {"identity_id": ident, "url": "https://u:pw@example.com/a?k=v"})
+    assert shown["url"] == "https://example.com/a?k=v"
+    # The `target` of `tool.called` is another thing: it is logged, so its query values stay masked.
+    assert tool_target("browser_navigate", {"identity_id": ident, "url": "https://example.com/c?d=exfiltrated"}) == f"{ident}: https://example.com/c?d=***"
     # A call without a URL, or with one that is not text, is as it was.
     assert tool_arguments("browser_navigate", {"identity_id": ident}) == {"identity_id": ident}
     assert tool_arguments("browser_navigate", {"identity_id": ident, "url": 5}) == {"identity_id": ident, "url": 5}
@@ -449,7 +450,7 @@ def test_the_url_of_a_navigation_is_masked_in_the_arguments_an_approval_shows_as
     assert tool_arguments("browser_type", typed) == typed
 
 
-def test_a_quote_or_a_space_in_the_url_of_a_navigation_never_hides_where_the_page_is() -> None:
+def test_a_quote_or_a_space_in_the_url_of_a_navigation_never_hides_where_the_page_is_in_the_target() -> None:
     from nanobot.dots.permissions import tool_arguments
 
     ident = "shop-abc123"
@@ -461,11 +462,13 @@ def test_a_quote_or_a_space_in_the_url_of_a_navigation_never_hides_where_the_pag
         'https://u:pw@attacker.example:8443/a b"c?token=s3 cret': 'https://attacker.example:8443/a b"c?token=***',
     }
     for url, expected in cases.items():
-        params = {"identity_id": ident, "url": url}
-        assert tool_arguments("browser_navigate", params)["url"] == expected
-        assert tool_target("browser_navigate", params) == f"{ident}: {expected}"
-    # A text that is no URL shows nothing of itself.
-    assert tool_arguments("browser_navigate", {"identity_id": ident, "url": "not a url"})["url"] == "***"
+        assert tool_target("browser_navigate", {"identity_id": ident, "url": url}) == f"{ident}: {expected}"
+    # The approval shows the address as asked, minus the user and password.
+    shown = tool_arguments("browser_navigate", {"identity_id": ident, "url": 'https://u:pw@attacker.example:8443/a b"c?token=s3 cret'})
+    assert shown["url"] == 'https://attacker.example:8443/a b"c?token=s3 cret'
+    # A text that is no URL is shown as it is in the approval and masked whole in the target.
+    assert tool_arguments("browser_navigate", {"identity_id": ident, "url": "not a url"})["url"] == "not a url"
+    assert tool_target("browser_navigate", {"identity_id": ident, "url": "not a url"}) == f"{ident}: ***"
 
 
 # --- the table as GET /tools shows it ----------------------------------------------------------------

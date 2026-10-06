@@ -838,10 +838,10 @@ by the engine, at the point where the event is built, and nowhere after it: the
 host, the web UI and a chat prompt (section 9.8) show the arguments as the event
 has them. The engine redacts the proxy URL of `browser_identity_create`, whose
 password is replaced by the rule of `redactProxy()` in
-`packages/shared/src/identity-rules.ts`, and the URL of `browser_navigate`, which
-is shown as the `target` of `tool.called` shows it (no user or password, the
-values of its query masked). The pending call in the Dot's database keeps the
-full arguments, so the approved call is made as asked.
+`packages/shared/src/identity-rules.ts`, and the user and password of the URL of
+`browser_navigate` (the query and the fragment stay: see section 6). The pending
+call in the Dot's database keeps the full arguments, so the approved call is made
+as asked.
 
 An outbound event is handed to the event stream only after the transaction
 that wrote it to the outbox committed: one written inside a transaction that
@@ -964,9 +964,14 @@ ignores anything else.
   replays the placeholder; the model takes another screenshot when it wants one.
 - Secrets in the arguments. The proxy password has no place in anything shown:
   `approval.requested` carries `browser_identity_create`'s proxy with the
-  password replaced and `browser_navigate`'s URL as the `target` of `tool.called`
-  shows it (the parked call keeps the real ones, so the approved call runs as
-  asked), and no `target` of `tool.called` holds typed text. The `text` of
+  password replaced and `browser_navigate`'s URL without its user and password
+  (the parked call keeps the real ones, so the approved call runs as asked), and
+  no `target` of `tool.called` holds typed text; the `target` of a navigation
+  also has the values of its query masked, because it is logged and not decided
+  on. The query of the URL in an approval is not masked (owner decision): a
+  query string is how a model that was talked into it sends data out, so it is
+  what the approver has to see, as with the command of `exec`; a person who does
+  not want it in a chat turns `show_arguments` off. The `text` of
   `browser_type` and the `value` of `browser_select_option` stay in the arguments
   of an approval when `browser.act` is set to `ask`: whether a field is a
   password cannot be known from the arguments, so a person approving typing sees
