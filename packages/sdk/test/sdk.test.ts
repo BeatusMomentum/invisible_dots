@@ -1,4 +1,5 @@
 import type { StoredEvent } from "@invisible-dots/shared";
+import type { PatchDotRequest } from "@invisible-dots/shared/api";
 import { describe, expect, it } from "vitest";
 import { ApiError, InvisibleDotsClient, STREAM_ERROR_EVENT } from "../src/index.js";
 
@@ -48,7 +49,9 @@ describe("InvisibleDotsClient", () => {
       },
     });
     await client.updateDot("a b", "name: a").catch(() => {});
-    const error = await client.updateDot("a b", { name: "a" }, 3).catch((e: unknown) => e);
+    // The wire contract owns the field: the body of a conditional save is a PatchDotRequest.
+    const conditional: PatchDotRequest = { config: { name: "a" }, expected_config_version: 3 };
+    const error = await client.updateDot("a b", conditional.config, conditional.expected_config_version).catch((e: unknown) => e);
     expect(error).toMatchObject({ status: 409, code: "dot_changed" });
     expect(bodies).toEqual([
       'PATCH /api/dots/a%20b {"config":"name: a"}',

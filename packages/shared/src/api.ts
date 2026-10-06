@@ -115,6 +115,11 @@ export interface CreateDotRequest {
 
 export interface PatchDotRequest {
   config: string | Record<string, unknown>;
+  /**
+   * The `config_version` of the Dot as the caller read it. The save is then conditional: a Dot whose config changed
+   * since is a 409 `dot_changed` and nothing is written. Absent, the save is unconditional.
+   */
+  expected_config_version?: number;
 }
 
 export interface CreateTaskRequest {

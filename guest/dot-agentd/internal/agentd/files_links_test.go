@@ -75,6 +75,44 @@ func TestRemoteFilesRefuseLinksThatLeaveHome(t *testing.T) {
 	}
 }
 
+// A link whose target does not exist yet is a way out of home as much as one
+// whose target does: the answer is the same 403, and a write through it creates
+// nothing outside.
+func TestRemoteFilesRefuseDanglingLinksThatLeaveHome(t *testing.T) {
+	f := newFixture(t)
+	outside := t.TempDir()
+	symlinkMust(t, filepath.Join(outside, "missing.txt"), filepath.Join(f.home, "dangfile"))
+	symlinkMust(t, filepath.Join(outside, "missing-dir"), filepath.Join(f.home, "dangdir"))
+	symlinkMust(t, filepath.Join(f.home, "dangfile"), filepath.Join(f.home, "dangchain"))
+	symlinkMust(t, "../"+filepath.Base(outside)+"/relative-missing", filepath.Join(f.home, "dangrel"))
+
+	for _, p := range []string{"dangfile", "dangdir/x", "dangdir/deeper/x", "dangchain", "dangrel", "~/dangdir/x"} {
+		wantRefused(t, f.do(http.MethodGet, filesURL("/v1/files", p), nil))
+		wantRefused(t, f.do(http.MethodPut, filesURL("/v1/files", p), bytes.NewReader([]byte("planted"))))
+	}
+	for _, p := range []string{"dangdir", "dangfile"} {
+		wantRefused(t, f.do(http.MethodGet, filesURL("/v1/files/list", p), nil))
+	}
+	if des, _ := os.ReadDir(outside); len(des) != 0 {
+		t.Errorf("the directory outside home holds %d entries after the refused writes, want none", len(des))
+	}
+}
+
+// A dangling link whose target is inside home is not a way out: reading it is a
+// 404 like any missing file, and a write creates the file at the target.
+func TestRemoteFilesFollowDanglingLinksInsideHome(t *testing.T) {
+	f := newFixture(t)
+	symlinkMust(t, filepath.Join(f.home, "later.txt"), filepath.Join(f.home, "soon"))
+	symlinkMust(t, "no-such-dir", filepath.Join(f.home, "soon-dir"))
+
+	wantStatus(t, f.do(http.MethodGet, filesURL("/v1/files", "soon"), nil), http.StatusNotFound)
+	wantStatus(t, f.do(http.MethodGet, filesURL("/v1/files", "soon-dir/x"), nil), http.StatusNotFound)
+	wantStatus(t, f.do(http.MethodPut, filesURL("/v1/files", "soon-dir/x"), bytes.NewReader([]byte("N"))), http.StatusNoContent)
+	if raw, _ := os.ReadFile(filepath.Join(f.home, "no-such-dir", "x")); string(raw) != "N" {
+		t.Errorf("a write through a dangling link in home wrote %q", raw)
+	}
+}
+
 func TestRemoteFilesRefuseProc(t *testing.T) {
 	if _, err := os.Stat("/proc/self/environ"); err != nil {
 		t.Fatalf("the guest is linux and has /proc: %v", err)

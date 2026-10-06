@@ -36,6 +36,7 @@ import type {
   MessageAnswer,
   MessagesAnswer,
   PatchChannelRequest,
+  PatchDotRequest,
   RejectRequest,
   TaskRecord,
   TasksAnswer,
@@ -173,7 +174,8 @@ export class InvisibleDotsClient {
 
   /** With `expectedConfigVersion` (the `config_version` of the Dot as read), a Dot whose config changed since is a 409 `dot_changed` and nothing is saved. */
   updateDot(idOrName: string, config: string | Record<string, unknown>, expectedConfigVersion?: number): Promise<DotRecord> {
-    return this.#json("PATCH", `/api/dots/${enc(idOrName)}`, { body: { config, ...(expectedConfigVersion !== undefined && { expected_config_version: expectedConfigVersion }) } });
+    const body: PatchDotRequest = { config, ...(expectedConfigVersion !== undefined && { expected_config_version: expectedConfigVersion }) };
+    return this.#json("PATCH", `/api/dots/${enc(idOrName)}`, { body });
   }
 
   deleteDot(idOrName: string): Promise<AcceptedAnswer> {
