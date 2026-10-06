@@ -1,4 +1,4 @@
-import { newId, type TaskState } from "@invisible-dots/shared";
+import { newId, TASK_LIST_LIMIT, type TaskState } from "@invisible-dots/shared";
 import type { TaskRecord, TaskRunRecord } from "@invisible-dots/shared";
 import { InboundRepository, type InboundRecord } from "./inbound.js";
 import { iso, isoRequired, type Queryable } from "./rows.js";
@@ -129,7 +129,7 @@ export class TasksRepository {
     const { rows } = await this.q.query<TaskRow>(
       `SELECT * FROM tasks WHERE dot_id = $1 AND ($2::text IS NULL OR status = $2)
        ORDER BY created_at DESC, id DESC LIMIT $3`,
-      [dotId, options.status ?? null, options.limit ?? 200],
+      [dotId, options.status ?? null, options.limit ?? TASK_LIST_LIMIT],
     );
     return rows.map(toTask);
   }

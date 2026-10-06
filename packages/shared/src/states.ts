@@ -48,6 +48,9 @@ export type TaskState = (typeof TASK_STATES)[number];
 /** A task in one of these states never runs again. */
 export const TERMINAL_TASK_STATES: readonly TaskState[] = ["COMPLETED", "FAILED", "CANCELLED"];
 
+/** How many of a Dot's tasks (the newest) `GET /api/dots/:id/tasks` answers with; older ones are not reachable. */
+export const TASK_LIST_LIMIT = 200;
+
 /**
  * `approvals.status` (section 9.1). An approval is `expired` when its task
  * ended before anybody decided: nothing waits for the decision any more.

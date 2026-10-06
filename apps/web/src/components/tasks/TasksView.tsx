@@ -1,5 +1,6 @@
 "use client";
 
+import { TASK_LIST_LIMIT } from "@invisible-dots/shared/browser";
 import { useSelectedLayoutSegment } from "next/navigation";
 import { useMemo, type ReactNode } from "react";
 import { groupTasks } from "../../lib/task-view";
@@ -59,6 +60,13 @@ function Sections() {
           <Skeleton className="h-24 w-full" />
           <Skeleton className="h-14 w-full" />
         </div>
+      ) : null}
+
+      {tasks.data !== undefined && tasks.data.length >= TASK_LIST_LIMIT ? (
+        <p role="status" className="rounded-lg border bg-muted px-3 py-2 text-sm">
+          The newest {TASK_LIST_LIMIT} tasks are listed. If the Dot has more, the older ones are not shown here, and the queue
+          below leaves out any of them that still wait.
+        </p>
       ) : null}
 
       {tasks.data !== undefined && tasks.data.length === 0 ? (

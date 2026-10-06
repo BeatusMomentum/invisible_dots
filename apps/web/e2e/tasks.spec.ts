@@ -1,4 +1,5 @@
 import type { FakeGuest } from "@invisible-dots/scheduler/testing";
+import { TASK_LIST_LIMIT } from "@invisible-dots/shared";
 import { expect, test } from "./fixtures.js";
 import type { Harness } from "./harness.js";
 
@@ -249,4 +250,22 @@ test("a Dot's tab that is still in the old design keeps the old stylesheet", asy
   const dot = await harness.createDot("tasks-legacy");
   await page.goto(`${harness.webUrl}/dots/${dot.id}/settings`);
   await expect(page.locator(".legacy")).toHaveCount(1);
+});
+
+test("a Dot with more tasks than the host lists says so, and one with fewer does not", async ({ signedIn: page, harness }) => {
+  const dot = await harness.createDot("tasks-many");
+  holdTasks(harness.driver.guestOf(dot.id));
+  const make = async (from: number, to: number) => {
+    for (let start = from; start < to; start += 20) {
+      await Promise.all(Array.from({ length: Math.min(20, to - start) }, (_, i) => harness.api.createTask(dot.id, { description: `Backlog ${start + i}` })));
+    }
+  };
+  await make(0, TASK_LIST_LIMIT - 1);
+  await page.goto(`${harness.webUrl}/dots/${dot.id}/tasks`);
+  await expect(page.getByRole("region", { name: /^Queue/ })).toBeVisible();
+  await expect(page.getByRole("status").filter({ hasText: "tasks are listed" })).toHaveCount(0);
+
+  await make(TASK_LIST_LIMIT - 1, TASK_LIST_LIMIT + 5);
+  await page.reload();
+  await expect(page.getByRole("status").filter({ hasText: `The newest ${TASK_LIST_LIMIT} tasks are listed` })).toBeVisible();
 });

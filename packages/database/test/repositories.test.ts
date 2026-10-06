@@ -1,4 +1,4 @@
-import { newId, parseDotConfig, vmName, type OutboundEvent } from "@invisible-dots/shared";
+import { newId, parseDotConfig, TASK_LIST_LIMIT, vmName, type OutboundEvent } from "@invisible-dots/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DotNameTakenError, TransactionMisuseError, type Database, type Repositories } from "../src/index.js";
 import { createTestDatabase, testAdapters, type TestDatabase } from "../src/testing.js";
@@ -155,6 +155,20 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     await db.tasks.recordSpend(task.id, dot.id, 1.5);
     expect((await db.tasks.get(task.id))?.spent_usd).toBe(1.5);
     expect((await db.tasks.listByDot(dot.id))[0]?.spent_usd).toBe(1.5);
+  });
+
+  it("tasks: a Dot's list is the newest TASK_LIST_LIMIT, and a limit given says otherwise", async () => {
+    const dot = await seedDot(db, "task-list-limit");
+    // Scheduled for tomorrow, so that no claim in the tests after this one takes them.
+    const tomorrow = new Date(Date.now() + 86_400_000);
+    const ids: string[] = [];
+    for (let i = 0; i < TASK_LIST_LIMIT + 1; i++) {
+      ids.push((await db.tasks.insert({ id: newId("task"), dotId: dot.id, description: `task ${i}`, scheduledAt: tomorrow })).id);
+    }
+    const listed = await db.tasks.listByDot(dot.id);
+    expect(listed).toHaveLength(TASK_LIST_LIMIT);
+    expect(listed.map((t) => t.id)).not.toContain(ids[0]);
+    expect(await db.tasks.listByDot(dot.id, { limit: TASK_LIST_LIMIT + 1 })).toHaveLength(TASK_LIST_LIMIT + 1);
   });
 
   it("tasks: claim skips busy Dots, honours priority and scheduled_at, and never hands one Dot two tasks", async () => {
