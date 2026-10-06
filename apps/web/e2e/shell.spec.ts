@@ -147,7 +147,8 @@ test("a focused control keeps an outline under forced colors, where box shadows 
   await page.goto(`${harness.webUrl}/new`);
   await expect(page.getByRole("heading", { name: "Create a Dot" })).toBeVisible();
   const focused = async () => {
-    for (let i = 0; i < 20; i++) {
+    // The first button or field: the rail lists every Dot of the host before it, and a link is drawn with the browser's own focus outline.
+    for (let i = 0; i < 300; i++) {
       await page.keyboard.press("Tab");
       const tag = await page.evaluate(() => document.activeElement?.tagName ?? "");
       if (["BUTTON", "INPUT", "TEXTAREA"].includes(tag)) break;
@@ -160,8 +161,8 @@ test("a focused control keeps an outline under forced colors, where box shadows 
 
   // Ordinary colors: the ring is a shadow, and there is no outline besides it.
   const ordinary = await focused();
-  expect(ordinary.boxShadow).not.toBe("none");
-  expect(ordinary.outlineStyle).toBe("none");
+  expect(ordinary.boxShadow, JSON.stringify(ordinary)).not.toBe("none");
+  expect(ordinary.outlineStyle, JSON.stringify(ordinary)).toBe("none");
 
   // Forced colors: no shadow is drawn, so the indicator is the outline, in a system color.
   await page.emulateMedia({ forcedColors: "active" });
