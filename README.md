@@ -717,7 +717,9 @@ tmp/gates-venv/bin/python -m pip install -r .github/gates-requirements.txt
 - The web client's browser tests: build it (`npm run build --workspace
   @invisible-dots/web`), install the browser they drive (`npx playwright install
   chromium`) and run `npm run test:e2e --workspace @invisible-dots/web`. Each run
-  starts the real control plane over a fake VM layer and the built web client.
+  starts the real control plane over a fake VM layer and the built web client as
+  the product runs it: the standalone server that `invisible-dots server` starts,
+  with its copied static files and the reduced environment it is given.
 - The engine smoke and the browser smoke run the guest's two daemons, and the
   real invisible-playwright-mcp with its Firefox, in Linux containers:
   `bash guest/image-builder/test/smoke/run.sh` (add `--suite browser`); only

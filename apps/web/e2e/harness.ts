@@ -1,11 +1,13 @@
 /**
  * The real control plane and the real web server, for the browser tests: `startServer` of apps/api in this process
  * on a temporary INVISIBLE_DOTS_HOME (PGlite), with FakeDriver for the VM layer, so a test can drive what a Dot's
- * computer does (`driver.guestOf(id)`); and `next start` of the built web client as a child, pointed at it.
+ * computer does (`driver.guestOf(id)`); and the web client as the product ships and runs it: the built standalone
+ * server (`.next/standalone/apps/web/server.js` with its copied static files) started by the CLI's own `startWebServer`,
+ * with the reduced environment `invisible-dots server` gives it (`webEnvironment`), pointed at that control plane.
  * The channels run for real too, on what the hub's own tests use: the Telegram adapter talks to a Bot API server of this
- * process (`bots`) and the WhatsApp adapter to a connection a test plays (`whatsapp`). Only `next build` has to have run before.
+ * process (`bots`) and the WhatsApp adapter to a connection a test plays (`whatsapp`). Only `npm run build --workspace
+ * @invisible-dots/web` has to have run before (the standalone build, not only `next build`).
  */
-import { spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
@@ -17,9 +19,10 @@ import { FakeBotApi, FakeWhatsAppConnector } from "@invisible-dots/channels/test
 import { FakeDriver, waitUntilSettledReady } from "@invisible-dots/scheduler/testing";
 import { InvisibleDotsClient, type DotRecord } from "@invisible-dots/sdk";
 import { ENV, type DoctorCheck } from "@invisible-dots/shared";
+import { locateWebBuild, startWebServer, type WebServer } from "../../cli/src/web.js";
 import { healthyDoctor, ok } from "../../vm-manager/test/doctor-fakes.js";
 
-const WEB_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 const quiet = { debug() {}, info() {}, warn() {}, error() {} };
 
 export interface Harness {
@@ -45,6 +48,8 @@ export interface Harness {
   host: { images: DoctorCheck[] };
   /** A Dot whose computer is up and READY. */
   createDot(name: string, goal?: string): Promise<DotRecord>;
+  /** The control plane stops answering (its server closes) while the web client goes on: what a person sees when the API dies. `close` still cleans up. */
+  stopApi(): Promise<void>;
   close(): Promise<void>;
 }
 
@@ -57,20 +62,6 @@ async function freePort(): Promise<number> {
       probe.close(() => (typeof address === "object" && address ? resolvePort(address.port) : reject(new Error("no port"))));
     });
   });
-}
-
-async function waitForWeb(url: string, child: ChildProcess, output: () => string): Promise<void> {
-  const deadline = Date.now() + 60_000;
-  for (;;) {
-    if (child.exitCode !== null) throw new Error(`next start exited with ${child.exitCode}:\n${output()}`);
-    try {
-      if ((await fetch(`${url}/login`)).ok) return;
-    } catch {
-      // not listening yet
-    }
-    if (Date.now() > deadline) throw new Error(`next start did not answer within 60 s:\n${output()}`);
-    await new Promise((r) => setTimeout(r, 200));
-  }
 }
 
 export interface HarnessOptions {
@@ -105,30 +96,41 @@ export async function startHarness({ withKey = true }: HarnessOptions = {}): Pro
     },
   });
 
-  const port = await freePort();
-  const log: string[] = [];
-  const next = spawn(process.execPath, [join(WEB_ROOT, "../../node_modules/next/dist/bin/next"), "start", "--hostname", "127.0.0.1", "--port", String(port)], {
-    cwd: WEB_ROOT,
-    env: { ...process.env, INVISIBLE_DOTS_HOME: home, [ENV.URL]: control.url, [ENV.TOKEN]: control.token, NEXT_TELEMETRY_DISABLED: "1" },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  next.stdout.on("data", (chunk: Buffer) => log.push(String(chunk)));
-  next.stderr.on("data", (chunk: Buffer) => log.push(String(chunk)));
-  const webUrl = `http://127.0.0.1:${port}`;
-
-  const close = async () => {
-    next.kill();
+  let web: WebServer;
+  let unexpectedExit: string | undefined;
+  try {
+    web = await startWebServer({
+      build: await locateWebBuild(REPO_ROOT),
+      listen: { host: "127.0.0.1", port: await freePort() },
+      apiUrl: control.url,
+      // What `invisible-dots server` has in its own environment: the web server gets the allowlisted part of it.
+      env: { ...process.env, [ENV.HOME]: home, [ENV.TOKEN]: control.token },
+      onUnexpectedExit: (message) => (unexpectedExit = message),
+    });
+  } catch (error) {
     await control.close();
     await bots.close();
     await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-  };
-  try {
-    await waitForWeb(webUrl, next, () => log.join(""));
-  } catch (error) {
-    await close();
     throw error;
   }
+  const webUrl = web.url;
 
+  let apiStopped = false;
+  const stopApi = async () => {
+    if (apiStopped) return;
+    apiStopped = true;
+    await control.close();
+  };
+  const close = async () => {
+    await web.stop();
+    await stopApi();
+    await bots.close();
+    await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  };
+  if (unexpectedExit !== undefined) {
+    await close();
+    throw new Error(unexpectedExit);
+  }
   const api = new InvisibleDotsClient({ baseUrl: control.url, token: control.token });
   // A Dot is not READY until the guest holds a key (the READY procedure pushes it); the fake guest accepts any.
   if (withKey) await api.setOpenRouterKey("sk-or-e2e-0123456789abcdef");
@@ -147,6 +149,7 @@ export async function startHarness({ withKey = true }: HarnessOptions = {}): Pro
       await waitUntilSettledReady(control.scheduler, driver, dot.id, name);
       return dot;
     },
+    stopApi,
     close,
   };
 }
