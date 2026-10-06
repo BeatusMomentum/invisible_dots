@@ -1,22 +1,14 @@
 "use client";
 
-import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { createContext, useContext, type ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { createContext, useContext, useEffect, type ReactNode } from "react";
 import { api } from "../lib/api";
 import type { Dot } from "../lib/types";
-import { StreamIndicator, useLiveRefresh } from "./events";
-import { ErrorBox, StatusBadge, useResource, type Resource } from "./ui";
-
-export const DOT_TABS = [
-  { slug: "chat", label: "Chat" },
-  { slug: "tasks", label: "Tasks" },
-  { slug: "timeline", label: "Timeline" },
-  { slug: "approvals", label: "Approvals" },
-  { slug: "identities", label: "Browser identities" },
-  { slug: "computer", label: "Computer" },
-  { slug: "settings", label: "Settings" },
-] as const;
+import { PanelProvider } from "./computer/panel-state";
+import { DotHeader } from "./dot/DotHeader";
+import { DotTabs } from "./dot/DotTabs";
+import { useLiveRefresh } from "./events";
+import { useResource, type Resource } from "./ui";
 
 interface DotContextValue {
   dotId: string;
@@ -33,38 +25,33 @@ export function useDot(): DotContextValue {
 
 const HEADER_EVENTS = ["dot.updated", "computer.state", "computer.started", "computer.stopped", "agent.state"];
 
+/**
+ * The page of one Dot: its header (S4), the tab bar, and the tab's body.
+ *
+ * The control plane accepts a Dot's name where it takes an id, but the live stream, the rail and the attention state
+ * all name a Dot by its id. So an address that holds a name is replaced by the one that holds the id as soon as the
+ * Dot is known, and the tab's body is not drawn under the name: everything below hears this Dot's events.
+ */
 export function DotShell({ dotId, children }: { dotId: string; children: ReactNode }) {
   const dot = useResource(() => api.getDot(dotId), dotId);
   useLiveRefresh(dot.reload, HEADER_EVENTS);
-  const path = usePathname() ?? "";
-  const base = `/dots/${encodeURIComponent(dotId)}`;
+  const router = useRouter();
+  const pathname = usePathname() ?? "";
+  const canonical = dot.data !== undefined && dot.data.id !== dotId ? dot.data.id : null;
+  useEffect(() => {
+    if (canonical === null) return;
+    // Only the segment that names the Dot changes; the tab, a task's address and the query stay.
+    const address = /^\/dots\/[^/]+/.exec(pathname);
+    if (address) router.replace(`/dots/${encodeURIComponent(canonical)}${pathname.slice(address[0].length)}${window.location.search}${window.location.hash}`);
+  }, [canonical, pathname, router]);
 
   return (
     <DotContext.Provider value={{ dotId, dot }}>
-      <div className="page-head">
-        <h1>{dot.data?.name ?? dotId}</h1>
-        {dot.data ? <StatusBadge status={dot.data.status} label="Dot status" /> : null}
-        {dot.data?.computer_state ? <StatusBadge status={dot.data.computer_state} label="Computer" /> : null}
-        <StreamIndicator />
-      </div>
-      {dot.data?.config?.goal ? <p className="goal">{dot.data.config.goal}</p> : null}
-      <ErrorBox error={dot.error} title="Could not load this Dot" />
-      <nav aria-label="Dot sections" className="tabs">
-        <ul>
-          {DOT_TABS.map((tab) => {
-            const href = `${base}/${tab.slug}`;
-            const current = path === href || path.startsWith(`${href}/`);
-            return (
-              <li key={tab.slug}>
-                <Link href={href} aria-current={current ? "page" : undefined}>
-                  {tab.label}
-                </Link>
-              </li>
-            );
-          })}
-        </ul>
-      </nav>
-      <section className="tab-panel">{children}</section>
+      <PanelProvider>
+        <DotHeader dotId={dotId} dot={dot} />
+        <DotTabs dotId={dotId} />
+        <section className="mt-4">{canonical === null ? children : null}</section>
+      </PanelProvider>
     </DotContext.Provider>
   );
 }

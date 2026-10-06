@@ -98,6 +98,22 @@ export function parseDuration(value: string | number): number | null {
   return ms === 0 ? null : ms;
 }
 
+/**
+ * The range of each number a Dot's config bounds, and the value used when it is left out. The schema below takes
+ * them from here, and so does the web client's form, so a slider can never offer what the API would refuse.
+ */
+export const CONFIG_BOUNDS = {
+  cpu: { min: 1, max: 16, default: 2 },
+  memory: { min: "2gb", max: "64gb", default: "4gb" },
+  disk: { min: "20gb", max: "1024gb", default: "40gb" },
+  idleTimeout: { default: "15m" },
+  maxCostPerTaskUsd: { min: 0.01, max: 100, default: 1 },
+  maxStepsPerTask: { min: 1, max: 1000, default: 60 },
+  contextTokens: { min: 4000, max: 1_000_000, default: 32_000 },
+  maxIdentities: { min: 1, max: 1000, default: 20 },
+  maxOpen: { min: 1, max: 16, default: 3 },
+} as const;
+
 export const DOT_NAME_PATTERN = /^[a-z0-9-]{1,40}$/;
 
 export function isValidDotName(name: string): boolean {
@@ -127,7 +143,7 @@ function sizeField(label: string, min: string, max: string, fallback: string) {
 
 const durationField = z
   .union([z.string(), z.number()])
-  .default("15m")
+  .default(CONFIG_BOUNDS.idleTimeout.default)
   .superRefine((value, ctx) => {
     try {
       parseDuration(value);
@@ -188,26 +204,36 @@ export const dotConfigSchema = z
       }),
     computer: z
       .object({
-        cpu: z.number().int("computer.cpu must be an integer").min(1).max(16).default(2),
-        memory: sizeField("computer.memory", "2gb", "64gb", "4gb"),
-        disk: sizeField("computer.disk", "20gb", "1024gb", "40gb"),
+        cpu: z
+          .number()
+          .int("computer.cpu must be an integer")
+          .min(CONFIG_BOUNDS.cpu.min)
+          .max(CONFIG_BOUNDS.cpu.max)
+          .default(CONFIG_BOUNDS.cpu.default),
+        memory: sizeField("computer.memory", CONFIG_BOUNDS.memory.min, CONFIG_BOUNDS.memory.max, CONFIG_BOUNDS.memory.default),
+        disk: sizeField("computer.disk", CONFIG_BOUNDS.disk.min, CONFIG_BOUNDS.disk.max, CONFIG_BOUNDS.disk.default),
         idle_timeout: durationField,
       })
       .strict()
-      .default({ cpu: 2, memory: "4gb", disk: "40gb", idle_timeout: "15m" }),
+      .default({
+        cpu: CONFIG_BOUNDS.cpu.default,
+        memory: CONFIG_BOUNDS.memory.default,
+        disk: CONFIG_BOUNDS.disk.default,
+        idle_timeout: CONFIG_BOUNDS.idleTimeout.default,
+      }),
     browser: z
       .object({
         identities: z
           .object({
             managed_by_dot: z.boolean().default(true),
-            max_identities: z.number().int().min(1).max(1000).default(20),
-            max_open: z.number().int().min(1).max(16).default(3),
+            max_identities: z.number().int().min(CONFIG_BOUNDS.maxIdentities.min).max(CONFIG_BOUNDS.maxIdentities.max).default(CONFIG_BOUNDS.maxIdentities.default),
+            max_open: z.number().int().min(CONFIG_BOUNDS.maxOpen.min).max(CONFIG_BOUNDS.maxOpen.max).default(CONFIG_BOUNDS.maxOpen.default),
           })
           .strict()
-          .default({ managed_by_dot: true, max_identities: 20, max_open: 3 }),
+          .default({ managed_by_dot: true, max_identities: CONFIG_BOUNDS.maxIdentities.default, max_open: CONFIG_BOUNDS.maxOpen.default }),
       })
       .strict()
-      .default({ identities: { managed_by_dot: true, max_identities: 20, max_open: 3 } }),
+      .default({ identities: { managed_by_dot: true, max_identities: CONFIG_BOUNDS.maxIdentities.default, max_open: CONFIG_BOUNDS.maxOpen.default } }),
     permissions: z
       .record(z.string(), permissionDecision)
       .default({})
@@ -226,14 +252,22 @@ export const dotConfigSchema = z
       .default({ enabled: true }),
     limits: z
       .object({
-        max_steps_per_task: z.number().int().min(1).max(1000).default(60),
+        max_steps_per_task: z.number().int().min(CONFIG_BOUNDS.maxStepsPerTask.min).max(CONFIG_BOUNDS.maxStepsPerTask.max).default(CONFIG_BOUNDS.maxStepsPerTask.default),
         // Prompt tokens a request may use; what is sent is kept under it (section 8.6).
-        context_tokens: z.number().int().min(4000).max(1_000_000).default(32_000),
+        context_tokens: z.number().int().min(CONFIG_BOUNDS.contextTokens.min).max(CONFIG_BOUNDS.contextTokens.max).default(CONFIG_BOUNDS.contextTokens.default),
         // USD a task, or a chat turn, may spend on the model before it stops (section 8.2).
-        max_cost_per_task_usd: z.number().min(0.01).max(100).default(1),
+        max_cost_per_task_usd: z
+          .number()
+          .min(CONFIG_BOUNDS.maxCostPerTaskUsd.min)
+          .max(CONFIG_BOUNDS.maxCostPerTaskUsd.max)
+          .default(CONFIG_BOUNDS.maxCostPerTaskUsd.default),
       })
       .strict()
-      .default({ max_steps_per_task: 60, context_tokens: 32_000, max_cost_per_task_usd: 1 }),
+      .default({
+        max_steps_per_task: CONFIG_BOUNDS.maxStepsPerTask.default,
+        context_tokens: CONFIG_BOUNDS.contextTokens.default,
+        max_cost_per_task_usd: CONFIG_BOUNDS.maxCostPerTaskUsd.default,
+      }),
   })
   .strict()
   .superRefine((config, ctx) => {

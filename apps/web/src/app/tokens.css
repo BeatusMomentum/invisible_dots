@@ -1,0 +1,87 @@
+/*
+ * The design tokens: the one place that holds a color, a radius or a typeface. globals.css maps them into Tailwind
+ * (`@theme inline`), so a utility such as `bg-card` is these values and nothing else. Light is the base; `data-theme`
+ * on <html> is set to the theme in force before the first paint (src/lib/theme.ts).
+ *
+ * Every text and surface pair is checked for WCAG AA contrast by test/tokens.test.ts, which reads this file.
+ */
+:root {
+  color-scheme: light;
+
+  --background: #faf9f7;
+  --foreground: #1c1b1a;
+  --card: #ffffff;
+  --card-foreground: #1c1b1a;
+  --popover: #ffffff;
+  --popover-foreground: #1c1b1a;
+  --muted: #f1efec;
+  --muted-foreground: #5f5b57;
+  --secondary: #f1efec;
+  --secondary-foreground: #1c1b1a;
+  --accent: #ebe8e3;
+  --accent-foreground: #1c1b1a;
+  --border: #e4e1dc;
+  --input: #d6d2cc;
+  --ring: #5b5bd6;
+
+  /* The Dot's identity and the primary action. */
+  --primary: #5b5bd6;
+  --primary-foreground: #ffffff;
+  /* The fill of the primary action under the pointer: a deeper accent, so its text keeps AA (a fill at 90 percent of the accent over a light surface does not). */
+  --primary-hover: #4a4ac4;
+
+  /* Status: saturated color is for status only. Each has a soft surface to sit on. */
+  --ok: #19794a;
+  --ok-soft: #e1f3e8;
+  --warn: #8a5300;
+  --warn-soft: #fdefd0;
+  --danger: #b3261e;
+  --danger-soft: #fde7e5;
+  --info: #1f5fbf;
+  --info-soft: #e3edfb;
+  /* Not text: the ring and badge of a Dot that waits for the person, and the favicon's second dot. */
+  --attention: #c96a00;
+  /* The fill of a destructive button (the text color of an error is --danger). */
+  --destructive: #b3261e;
+  --destructive-foreground: #ffffff;
+
+  --radius: 0.625rem;
+  --font-ui: "Segoe UI Variable", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-code: ui-monospace, "Cascadia Code", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --background: #0f0f10;
+  --foreground: #f4f4f5;
+  --card: #18181a;
+  --card-foreground: #f4f4f5;
+  --popover: #1d1d20;
+  --popover-foreground: #f4f4f5;
+  --muted: #1f1f22;
+  --muted-foreground: #a1a1a8;
+  --secondary: #26262a;
+  --secondary-foreground: #f4f4f5;
+  --accent: #2a2a2f;
+  --accent-foreground: #f4f4f5;
+  --border: #2c2c30;
+  --input: #3a3a40;
+  --ring: #8b8cf0;
+
+  --primary: #8b8cf0;
+  --primary-foreground: #0f0f10;
+  --primary-hover: #a3a4f5;
+
+  --ok: #5fd28f;
+  --ok-soft: #12301f;
+  --warn: #f1c46b;
+  --warn-soft: #3a2d10;
+  --danger: #ff8f86;
+  --danger-soft: #401b18;
+  --info: #8db4f5;
+  --info-soft: #1a2a42;
+  --attention: #f59e0b;
+  --destructive: #c9302c;
+  --destructive-foreground: #ffffff;
+}

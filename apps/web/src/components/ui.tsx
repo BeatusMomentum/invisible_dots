@@ -1,41 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { errorIssues } from "../lib/api";
-import { statusTone } from "../lib/format";
-
-export function StatusBadge({ status, label }: { status: string | null | undefined; label?: string }) {
-  const text = status ?? "UNKNOWN";
-  return (
-    <span className={`badge tone-${statusTone(status)}`}>
-      {label ? <span className="visually-hidden">{label}: </span> : null}
-      {text}
-    </span>
-  );
-}
-
-export function ErrorBox({ error, title }: { error: unknown; title?: string }) {
-  if (!error) return null;
-  const message = error instanceof Error ? error.message : String(error);
-  const issues = errorIssues(error);
-  return (
-    <div className="error-box" role="alert">
-      {title ? <strong>{title}: </strong> : null}
-      {message}
-      {issues.length > 0 ? (
-        <ul>
-          {issues.map((issue, i) => (
-            <li key={i}>
-              {issue.path ? <code>{issue.path}</code> : null}
-              {issue.path ? ": " : null}
-              {issue.message}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
-  );
-}
 
 export interface Resource<T> {
   data: T | undefined;

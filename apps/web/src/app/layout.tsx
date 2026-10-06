@@ -1,7 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
-import { ApiHealth } from "../components/ApiHealth";
-import { MainNav } from "../components/MainNav";
+import { Toaster } from "../components/ui/sonner";
+import { THEME_BOOTSTRAP } from "../lib/theme";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -15,17 +15,20 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    // The theme script sets data-theme before the first paint, so the server's markup has none to agree with.
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
+      </head>
       <body>
-        <a className="skip-link" href="#main">
+        <a
+          className="sr-only z-50 rounded-md bg-card px-3 py-2 text-sm focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
+          href="#main"
+        >
           Skip to content
         </a>
-        <header className="site-header">
-          <span className="brand">invisible_dots</span>
-          <MainNav />
-          <ApiHealth />
-        </header>
-        <main id="main">{children}</main>
+        {children}
+        <Toaster />
       </body>
     </html>
   );

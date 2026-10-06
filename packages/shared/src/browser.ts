@@ -3,6 +3,7 @@ export type * from "./api.js";
 export * from "./config.js";
 export * from "./environment.js";
 export * from "./events.js";
+export * from "./file-kinds.js";
 export * from "./guest-health.js";
 export * from "./identity-rules.js";
 export * from "./ids.js";

@@ -853,8 +853,10 @@ The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
 `task.created`, `task.cancelled`, `approval.resolved`, and the two of a messaging
 channel: `channel.status {kind, status, detail?}` (`kind` is `telegram` or
 `whatsapp`; `status` is `connecting`, `connected`, `needs_relink` or `error`,
-and `detail` never holds a credential) and `channel.peer.paired {kind, peer_id,
-label}`. A channel lives in the control plane only: the Dot never sees one, so
+and `detail` never holds a credential), `channel.peer.paired {kind, peer_id,
+label}` and `channel.changed {kind, change}` (`change` is `paused`, `resumed`
+or `removed`: what the person did, which no status says, so that every view of
+the channel follows it). A channel lives in the control plane only: the Dot never sees one, so
 no inbound or outbound type names it.
 
 The message a person sends is logged as a `user.message` host event
@@ -1014,6 +1016,13 @@ limits:
   context_tokens: 32000                # prompt tokens a request may use, 4000..1000000 (section 8.6)
   max_cost_per_task_usd: 1.00          # USD of model spend of a task or a chat turn, 0.01..100; the last request may exceed it (section 8.2)
 ```
+
+The ranges and defaults of the numbers in that file (`computer.cpu`, `memory`,
+`disk`, the default `idle_timeout`, `limits.max_cost_per_task_usd`,
+`limits.max_steps_per_task`, `limits.context_tokens` and
+`browser.identities.max_identities` and `max_open`) are `CONFIG_BOUNDS` in
+`packages/shared`. The schema takes its numbers from it and
+so does the web client's form, so a slider can never offer what the API refuses.
 
 `models` has one role, `summary`, and no other: the roles are what the engine
 asks a model for, and a role it never asks for would be a setting that does
@@ -1783,7 +1792,7 @@ PATCH  /api/dots/:id                 body: { config, expected_config_version? } 
 DELETE /api/dots/:id                 destroys the VM and its disk, then deletes the Dot, its rows and its own secrets
 
 POST   /api/dots/:id/messages        body: { text }
-GET    /api/dots/:id/messages        conversation, from the event log (a user message carries `origin` when it came through a channel)
+GET    /api/dots/:id/messages        conversation, from the event log (the oldest 500; a user message carries `origin` when it came through a channel)
 POST   /api/dots/:id/tasks           body: { description, priority?, scheduled_at? }
 GET    /api/dots/:id/tasks
 GET    /api/tasks/:id
@@ -1811,11 +1820,11 @@ DELETE /api/dots/:id/channels/:kind  unlink: the channel stops, its token (Whats
 POST   /api/dots/:id/channels/:kind/pairing   201 { code, deep_link, message, expires_at }: a one-time code, valid ten minutes; `message` is what to send the account to pair
 DELETE /api/dots/:id/channels/:kind/peers/:peer   revoke a paired person
 
-GET    /api/approvals                ?status=pending|approved|rejected|expired
+GET    /api/approvals                ?status=<a,b>&limit=&order=asc|desc&before=<id>   `status` is one or several of pending|approved|rejected|expired; oldest first by default, `order=desc` is the newest first by the time of the last change (the answer, for an answered one) and `before` (the id of the last row of the previous page, desc only) goes on from there
 POST   /api/approvals/:id/approve    body: { note?, always?: true }   `always` also sets the approval's permission to `allow` in the Dot's config in the same transaction (then pushed like a PATCH, `dot.updated` logged); `approval.resolved` carries `always: true`
 POST   /api/approvals/:id/reject     body: { note? }
 
-GET    /api/dots/:id/events          ?after=<id>&limit=&types=<a,b>&task_id=   `types` are event type names (an unknown one is a 400), `task_id` keeps the events whose `data.task_id` it is
+GET    /api/dots/:id/events          ?after=<id>&before=<id>&limit=&types=<a,b>&tools=<a,b>&task_id=&order=asc|desc   `types` are event type names (an unknown one is a 400), `tools` narrows `tool.called` to those tools (`data.tool`) and leaves other types alone, `task_id` keeps the events whose `data.task_id` it is, `order=desc` is the newest first so that a `limit` keeps the newest, and `before` (the id of the oldest event of the previous page, desc only) goes on, older, from there
 GET    /api/dots/:id/files/list      ?path=   { path, entries: [{ name, type, size, mtime }] }: a directory under /home/dot (home when omitted)
 GET    /api/dots/:id/files           ?path=   the bytes of a file under /home/dot, at most 16 MiB (413 `file_too_large`)
 GET    /api/dots/:id/automations     { automations: Automation[] }: the Dot's cron jobs (section 5.3); needs the computer running (409 `computer_stopped`)
@@ -1830,8 +1839,17 @@ GET    /api/doctor                   { ok, checks: [{ id, label, status: ok|miss
 ```
 
 `GET /api/health` answers `{ status: "ok", database: "ok", version,
-openrouter_configured }`; the last field is whether a global OpenRouter key is
-stored, which `invisible-dots doctor` reports.
+openrouter_configured, database_kind, data_dir, logs_dir }`; `openrouter_configured`
+is whether a global OpenRouter key is stored, which `invisible-dots doctor`
+reports, and the last three say where the state lives (`pglite` or `pg`,
+`INVISIBLE_DOTS_HOME` as the server resolved it, and its `logs/`), so the web
+client's host settings page can tell the person without their knowing the
+environment variable.
+
+`GET /api/dots/:id/events` returns at most `MAX_EVENT_PAGE` (1000, in
+`packages/shared`) events a call: the store clamps to it, the route refuses a
+larger `limit` with a 400, and a client that pages through the log asks for
+exactly that many, so a shorter page is the last one.
 
 `GET /api/doctor` answers the report of section 11.1 as the server's own host
 sees it, the same rows in the same order as `invisible-dots doctor --json`
@@ -1851,10 +1869,14 @@ total; the task's own `spent_usd` still shows what was heard of it. Like
 `/events`, it reads the history of a deleted Dot by id.
 
 `GET /api/dots/:id/events` filters in the database: `types` is a comma-separated
-list of type names, `task_id` matches `data->>'task_id'` (the one place the
+list of type names, `tools` a comma-separated list of tool names that narrows the
+`tool.called` events (the other types pass), `task_id` matches `data->>'task_id'` (the one place the
 contract puts the task, so the host's `task.created` and `task.cancelled` and
 the guest's `task.*`, `tool.called` and `approval.requested` of a task all
-match), and both combine with `after` and `limit`. A chat turn's events carry
+match), and all combine with `after` and `limit`; `order=desc` reads from the newest
+event back (the limit then counts the newest that the filters keep, and the page is
+newest first), and `before` (an event id, desc only) goes on from there: the events
+older than it, which is how the Activity page pages through a long log. A chat turn's events carry
 no task. Migration `0006_events_task.sql` adds the expression index the task
 filter reads. A type name no event has (`tool.calls`) is a 400, so a typo does not
 look like a quiet Dot.
@@ -1929,15 +1951,291 @@ token and listens on the host's loopback, which every guest reaches as
   answers with the cookie `idots_session`: an HMAC of the token, never the
   token itself, so it changes when the token does. It is `HttpOnly` (no
   script reads it) and `SameSite=Strict` (no other site's page makes the
-  browser send it). `DELETE /session` clears it.
+  browser send it). `DELETE /session` clears it; the rail's "Sign out"
+  button sends it and then loads `/login` afresh.
 - Every proxied request without that session answers
   `401 { error: "login_required" }` with the header
   `x-invisible-dots-login: required`, before the API is contacted; the page
-  then goes to `/login`.
+  then goes to `/login?next=<the page>`. `/login` is the one page that never
+  does: it is outside the route group that holds the rail (the API check
+  and the sign-out button), calls nothing, and a refusal seen from it
+  redirects nowhere, because loading it again could only meet the same
+  refusal. After signing in, `next` is followed only when it is a path of
+  this site other than `/login`.
 - The Host, Origin and `Sec-Fetch-Site` checks stay in front of it, as a
   defence against DNS rebinding and cross-site pages only: they are written
   by the client, so they never let a request through on their own. The Host
   must be loopback or listed in `INVISIBLE_DOTS_WEB_ALLOWED_HOSTS`.
+
+The pages are React with Tailwind CSS 4. `src/app/tokens.css` is the one place
+that holds a color, a radius or a typeface (a light and a dark set, each pair
+checked for WCAG AA contrast by a test), `globals.css` maps it into Tailwind,
+and the primitives in `src/components/ui/` are shadcn/ui source, copied in
+(`THIRD_PARTY_NOTICES.md`). Every signed-in page sits in one frame: the rail
+(the Dots with a ring around each avatar that says what it is doing, the Inbox
+with what needs the person, the state of the API and of the live stream, the theme,
+sign out) and, for a Dot, its header and tab bar. One live stream serves all of
+it; `lib/attention.ts` is the single owner of what needs the person, and the
+rail badges, the avatar ring, the tab title and the favicon all read it. There
+is no other stylesheet: every screen is utilities over the tokens. The browser tests (`apps/web/e2e`, Playwright) start the
+real control plane in-process over the fake VM layer and the built web client
+against it (`e2e/harness.ts`), so a test drives what a Dot's computer does.
+
+Home (`/`) is a card per Dot: its avatar ring, name and goal, the state with the
+recorded reason beside an ERROR, the model, what it spent today, the approvals
+that wait, Open chat and the computer's power menu. Each card's spend pill is
+scoped to its own Dot, so a message of one Dot re-reads only that Dot's usage.
+Search appears above six Dots, and with no Dot the page invites the first, and,
+while this computer is not ready for a Dot, shows the setup checklist under the
+invitation: each check of `GET /api/doctor` and `GET /api/health` that is not
+ready, with the command that fixes it and a button that copies it (setup needs
+an elevated terminal and an image build takes long, so they stay commands the
+person runs), and the key field when no key is stored. The checks run again
+when the person returns to the window while something is missing, and the
+checklist stays, turned green, once the last thing is done. A ready host shows
+none of it. The card has no "last activity": no route returns the newest event
+yet.
+
+Settings (`/settings`, in the rail) are the host's, not a Dot's: the same checks
+(`useHostChecks` is the one list the checklist, this page and the create form's
+preflight draw), the OpenRouter key (a write-only field over
+`PUT /api/secrets/openrouter`; whether one is stored comes from the health
+answer, which the shell shares and asks again after a save, so the rail agrees
+at once; the answer says how many running Dots got it), the theme, Sign out
+(`DELETE /session`) and About: the version, the database kind, the data
+directory and the logs directory, which `GET /api/health` reports for the
+purpose (`database_kind`, `data_dir`, `logs_dir`), and `invisible-dots logs
+<dot>` for a Dot's own logs. The login page is a card with the token field
+focused; it is outside the shell and asks the API nothing.
+
+Create a Dot (`/new`) is a form in three steps (Identity, Brain, Computer and
+safety) with sliders inside `CONFIG_BOUNDS`, the idle timeout, the Careful,
+Balanced and Autonomous permission presets, the cost cap and the optional
+summary model; or the same config as YAML, where the form refuses to take back
+YAML that sets what it has no control for instead of dropping it. The shared
+config schema is the only judge: `lib/dot-form.ts` maps its issues onto the
+controls, and a name another Dot has is refused at once. A preflight panel shows
+what `GET /api/health` reports (the control plane, its database, the OpenRouter
+key) and, below it, the host report of `GET /api/doctor` (QEMU, the accelerator,
+disk, the images), each failing row with the command that fixes it; the doctor's
+own key row is left out, so the key is said once. Submitting is `POST /api/dots`, and then the Dot's chat opens.
+
+A Dot's settings (`/dots/<id>/settings`) are the same config, edited in place:
+one draft of the whole `DotConfig`, as a form (General, Model, Permissions and
+tools, Computer, Browser, Memory, Limits) or as the same YAML, never a second
+model of it. `lib/config-fields.ts` is the one table of what can change (where
+each field lives, its words, when a change reaches the Dot) and gives what the
+page needs from it: the list of changes, the notice a save ends with, and the
+rebase below. Nothing is written until the person has seen the review, which
+lists each changed field from what it is to what it will be; the save is a
+`PATCH` conditional on the `config_version` the edit began from, so a config
+changed meanwhile (another tab, an "Always allow") is refused with 409
+`dot_changed` and never undone. When the host's config moves on under an edit
+that is under way, the edits are kept on top of the new config
+(`lib/config-draft.ts`) and the page says so; a field only the other change
+touched keeps what that change says. The permission editor has one row per
+permission of `PERMISSIONS`, with its words and risk, a three-way allow, ask or
+deny control, the default said, and the tools of the Dot's own table (`GET
+/api/dots/<id>/tools`, so a tool the engine adds shows with no change here)
+with whether the model is offered each: those are as the Dot has its config
+now, so a changed row says its tools show the change once it is saved. A
+permission set to what its default is is saved as no entry. A stopped computer
+has no table: the page says to start it, and the permissions can be set
+meanwhile. A change reaches a running Dot from its next turn (`PUT /config`);
+the computer's size (processors, memory, disk) applies the next time the
+computer starts, and a disk can grow but never shrink. The Danger zone deletes
+the Dot after its name has been typed.
+
+The Dot header's error banner gives the reason and "Open settings", and one way
+back: Reboot while the computer is up (the host reboots only a running
+computer), or Start the computer when the computer itself is in ERROR. Both
+use the power menu's one action, with its confirm while a task runs.
+
+The Tasks page (`/dots/<id>/tasks`) shows a Dot's tasks in four sections:
+Running (the newest `task.progress` line of each task, what it has spent from
+the task row's `spent_usd`, how long it has run, Cancel after a question),
+Scheduled and Queue (in the order the dispatcher takes them: priority, then
+age, then id, which a test pins to the dispatcher's `ORDER BY`), and History (filtered by how the task ended, twenty at a time). A task
+has its own address, `/dots/<id>/tasks/<taskId>`, which opens a drawer over the
+list with its state, its result as markdown or the reason it failed, and its
+story. The task route knows a task by its id alone, so a task of another Dot
+opened under this Dot's address is shown as missing. The story and the progress lines come from the Dot's event log, which
+the page reads from its start, asking only for the event types of a task's
+story (`lib/event-log.ts` is the one function that pages through the route's
+`types` filter) only once a task is running
+or open, and then keeps current from the live stream. The newest progress line of a running task is also under the goal in
+the Dot header. A task that waits for an answer shows its approval as a card on its own card and in its
+drawer, answerable there (see the Inbox below).
+
+The chat (`/dots/<id>/chat`) is the conversation: the person's messages as
+bubbles (one that came through Telegram or WhatsApp says "via Telegram", from
+the `origin` of the message), the Dot's as markdown (no raw HTML, links open in a new tab without a
+referrer, an image is shown as a link to it, a fenced block has a copy button).
+Between them it shows what the Dot did to answer, read from the same event
+log: each `tool.called` that names no task as one quiet line (the words of
+`lib/events/tool-labels.ts`, which a test keeps equal to the engine's tool
+table, then the call's `target`, and how it ended when that was not well; more
+than three in a row fold into one line that opens), each `memory.written` of
+such a call as a chip, and each `approval.requested` that names no task, where it
+was asked, as the approval card while it waits (answerable there) and as a receipt
+line once answered ("Allowed for good" when the answer was "always"). The messages route and the log are two
+views of one log, so a step is placed between two messages by event id
+(`lib/chat-thread.ts`). A message shows as soon as it is sent and is replaced by
+the logged one, which `POST .../messages` names by its `event_id`; one that was
+`queued` says the computer is waking up until the agent reports. While the agent
+thinks or runs a tool a row says so, with the last step. The box grows with the
+text, Enter sends and Shift+Enter adds a line, and an unsent draft is kept per Dot
+in this browser. The header's "Watch the computer" button opens the computer panel
+beside the thread (a sheet below 1024 px): the desktop and each open browser as
+the pictures the host reads from the guest every few seconds while the page is
+visible, with a LIVE badge, a warning when a frame is more than 15 s old, and the
+words "The Dot has control", because nothing the person does there reaches the
+computer.
+
+The Inbox (`/inbox`, in the rail) is where everything that needs the person is,
+from every Dot. Its address holds its whole state: `?tab=history`, `?dot=<id or
+name>` and `?permission=<name>` (the old `/approvals` and `/dots/<id>/approvals`
+redirect to it). "Needs you" lists the waiting approvals, the one that has waited
+longest first, then the Dots in ERROR and the tasks that failed in the last 24
+hours (each dismissable; the dismissals are kept in this browser only, so a
+cleared browser shows them again). No route lists failed tasks of every Dot, so
+the shell reads each Dot's task list (the newest 200, where a recent failure is)
+and keeps the failed ones, and says when some Dot's list could not be read.
+`lib/attention.ts` counts the three, and the rail's Inbox badge, the tab title and
+the favicon all read that one count. The approval card (S7) says what the Dot
+wants to do from the engine's tool table (`lib/events/tool-labels.ts`), the
+permission and its risk (`PERMISSION_INFO`), the Dot's reason, and the call's
+arguments in the form that reads best: a command, a diff for `write_file`,
+`edit_file` and `apply_patch`, an address, a schedule, with the raw arguments
+under Details (a proxy's password is never shown). It is destructive for a
+command, the deletion of a browser identity and a change to a file outside the
+workspace. The answers are Allow once, Always allow and Deny with an optional
+note. Always allow asks first, naming the permission, what it can do and the tools
+it covers (`GET /api/dots/<id>/tools`, when the computer answers), and then
+`POST /api/approvals/<id>/approve` with `always: true`, which changes the Dot's
+config (section 9.6). The host answers 409 `already_resolved` to the second
+answer; the card says the approval was answered somewhere else. An answered card
+stays in place as a receipt until the person leaves the page. Keys: `j` and `k`
+move between the cards, `a` allows the selected one once and `d` denies it; a
+destructive card is not allowed by a key, `a` moves the focus to its Allow once
+button, whose press is the confirmation. History lists every approval that is no
+longer waiting, the last answered first: it asks `GET /api/approvals` for the
+answered statuses with `order=desc` and `limit=50`, and "Show older answers" asks
+for the next page with `before` the last id it holds, so the newest answer is
+listed however many approvals the Dots have asked for. A live refresh reads the
+newest page again and keeps the older rows it reaches (when more was answered in
+between than a page holds, the older rows are dropped and read again on request).
+A channel that needs the person (its login was refused: a revoked Telegram token, a WhatsApp device removed on the phone; one the person paused does not count) is a
+card under "Channels to link again" with what the host says and a link to the Channels page, counts in the Inbox's number, the title and the favicon, and marks
+the Dot in the rail and its Channels tab. The shell reads each Dot's `GET /api/dots/:id/channels` for it and again on `channel.status` and `channel.changed` (the host announces a pause, a resume and a removal, which no status says, so the marks follow them without a reload); a Dot whose channels
+cannot be read is counted and said, not hidden.
+
+The Computer page (`/dots/<id>/computer`) has four views, named in the address
+(`?view=screen|browser|files|usage`, Screen when it says nothing; the old
+`/dots/<id>/identities` redirects to `?view=browser`). The first three read the
+guest and need the computer running: when it is not, they say why and offer
+Start, and a route's own 409 `computer_stopped` gets the same answer. Screen is
+the desktop as the chat's panel shows it (one `FrameView` draws both), with
+"The Dot has control". Browser lists the Dot's identities, open ones first
+(`GET /browser-identities`, read again on each `browser.identity.*` event, so a
+card is never refreshed by a second route): the state in words (Closed is the
+engine's `available`), the last use, the proxy with its user and password hidden,
+the window of an open one (`.../frame`, every 2 s while the page is in view)
+under a bar with the page the Dot last sent it to, and a mark "The Dot is using
+this now". Both come from the log, not from the identity routes, which know
+neither: the `target` of a `tool.called` of a browser tool starts with the
+identity's id (`<id>` or `<id>: <detail>`, the detail of `browser_navigate` being
+its URL as a command's URLs are shown), and a mark lasts 20 s after the call
+(`lib/browser-activity.ts`; the newest 500 events of the browser tools' calls and
+of `browser.identity.launched|closed` are read once while a browser is open,
+newest first and filtered by `types` and `tools` in the database, so the Dot's
+other calls never cross the wire, then followed live and kept to the newest 500;
+a long run of calls to one browser can push another's last navigation out of that
+window, and that browser then shows no page). The page is the last successful navigation after the browser's
+last `launched` or `closed`; a page reached by a link is not known. The person
+creates (a name and an optional proxy, checked by `checkIdentityRequest`, the
+engine's own rule), closes (`POST .../close`, the profile stays, asked first when
+the Dot is working in it) and deletes (asked first, saying that the profile goes)
+browsers; the engine enforces `max_identities` and `max_open` for them as it does
+for the Dot's tools, and the page states them. Files is a read-only walk through
+`/home/dot` (`GET /files/list`, `GET /files`): the folder and the open file are in
+the address, a text file is shown as text and an image as a picture, and
+everything else, and any file over 1 MiB (text) or 8 MiB (image), is a download
+only. What counts as text or an image is `fileType` of `packages/shared`, the one
+table the API serves a file by too (markup and svg are text, so a file the Dot
+wrote is never run); a file named text that holds a NUL byte is not shown. Usage
+reads while the computer is off: what it was given, what it uses (`GET /computer`
+embeds the guest's `system` while it runs), the images, why the last start failed,
+the model spend today and in total, and Start, Reboot and Stop.
+
+The Memory page (`/dots/<id>/memory`) has two views, named in the address
+(`?view=notes|automations`, Notes when it says nothing). Both read the Dot's own
+computer, so a computer that is not running is said, with Start, as on the Computer
+page. Notes are the files the Dot wrote under `/home/dot/memory`, read only (the Dot
+owns them): there is no notes route, so the list walks the folder with
+`GET /files/list`, level by level, at most 40 folders and 4 deep (it says when it
+stopped short), newest written first, with a search by name. The open note is in the
+address (`?note=trips/rome.md`, the key `memory.written` reports) and is looked up in
+that list, never read by the path in the address; a `.md` note is shown as Markdown
+by the one renderer the chat uses and any other text as it is written. A note the
+Dot writes while the page is open (`memory.written`) is tinted in the list and shown
+as a chip ("added" when the list had no such note, "updated" when it had) that leads
+to it, and the list is read again after it and after a turn ends, which also catches
+a note written through a command, an event the engine does not report. The chat's
+"Remembered" chip leads to the same address. Above the notes, a switch sets
+`memory.enabled`: the page sends the whole config with that field changed and
+`expected_config_version`, the version of the config it read, so a config that
+changed meanwhile (another tab, an "Always allow") is refused with 409
+`dot_changed`, said, and read again, never undone; with memory off the engine
+offers no memory tool and does not name the notes in the prompt, and the notes
+on the disk stay readable. Automations are the jobs the Dot's cron tool made
+(`GET /automations`): the schedule in words (`lib/automations.ts` puts the
+common cron shapes in words and shows any other as the expression, always with
+the zone it is read in, which is the computer's when the job names none), the
+next run, how the last run ended and what the Dot is told, a switch that pauses
+or resumes it (`PATCH /automations/<id>`) and a delete after a question. The
+engine reports the last run only, not a history, so the card shows that one. The
+person does not create one here: an automation is the Dot's act and the
+`automations` permission asks by default, so the empty list says how one comes to
+be by what the config does with that permission. The list is read again when the
+cron tool is called, after a decision on an approval and when a run ends.
+
+The Channels page (`/dots/<id>/channels`) is one card per channel the server runs (`available` in `GET /api/dots/:id/channels`): Telegram always,
+WhatsApp only when the server was started with `INVISIBLE_DOTS_WHATSAPP=1`. Telegram not connected asks for the bot's token (a password field, sent once over
+`PUT .../channels/telegram`, emptied at once and never read back); connected, the card shows the bot, pairs a chat (`POST .../pairing`: a link that opens the
+chat with the code ready, its QR code, the words to type, and the ten minutes counting down; the panel closes when `channel.peer.paired` arrives), lists the
+people paired with a Revoke each, and has the three switches of the channel's settings (approvals here, tell me when a task ends, show what the Dot wants to
+run), each saved as it is flipped, a Pause and a Disconnect that says the token and the people go. A refused token shows "Telegram needs a new token" with
+the field to replace it, the people staying paired. WhatsApp first says that the client is unofficial and can get the number banned, then links by scanning:
+the page follows `GET .../whatsapp/qr` (the frames of `ChannelLinkFrame`, reduced to one view by `lib/channel-link.ts`), draws each code itself as an SVG
+from the QR modules (`qrcode`, dark on light in either theme), and ends linked with the number, or failed with the host's reason and "Link again"; a link
+already going on when the page opens is followed. A number counts as linked when the host holds its account, not by the word `connecting` (a server start,
+a Resume or a credential refresh report it again for a number that stays linked): only a login the host says has to be redone, or a link with no account yet,
+goes through the scan. Cancel removes the channel the page's own start made, and only pauses one that holds a linked number or people (Link again on a
+number that needed it), so nothing is deleted without the question that Unlink asks. The page follows `channel.status`, `channel.changed` and
+`channel.peer.paired` live. The browser tests run the real Telegram and WhatsApp adapters against the hub's own fakes (`FakeBotApi`, `FakeWhatsAppConnector`).
+
+The Activity page (`/dots/<id>/activity`; the old `/timeline` address redirects
+to it) is the whole event log of the Dot as readable lines, for the person who
+wants to know exactly what happened. `lib/events/view.ts` describes every type
+the log can hold, written against the data the contract gives that type (a type
+or field added to `packages/shared/src/events.ts` does not compile until it is
+described, and a test fails for a type with no family): a tone, a title, one
+line of detail (cut at 280 characters; under "Data" the event is shown as
+stored), and, for a message that came through a channel, "via Telegram". A
+`tool.called` line names the tool in words, what it acted on (`target`), how it
+ended (ok, failed, denied, interrupted) and the policy decision; `agent.started`
+says "The engine started (the key was sent again)". The families (chat, tasks,
+tools, approvals, browser, computer with the agent, memory, channels, the Dot's
+own config) are chips: the ones chosen become the `types` of the request, so a
+family not chosen is never read, and a live event is kept only if it is of a
+chosen type. The page reads the newest 200 events first (`order=desc`) and
+"Load older events" goes on with `before`, the id of the oldest one held, so the
+cost does not grow with the age of the Dot, and says where the log starts. The
+search is over the lines read so far (title, detail, type, channel), never a
+request of its own, and says so; the order switch only turns the list over. The
+export saves the events on screen, after the search, as JSON Lines (one stored
+event per line, oldest first) named for the Dot and the range of ids.
 
 ### 9.8 Messaging channels
 

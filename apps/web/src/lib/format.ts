@@ -1,4 +1,4 @@
-import type { Tone } from "./timeline";
+import type { Tone } from "./tone";
 
 const UNITS = ["B", "KiB", "MiB", "GiB", "TiB"];
 
@@ -32,6 +32,15 @@ export function formatDuration(seconds: number | null | undefined): string {
   if (h > 0) return `${h}h ${m}m`;
   if (m > 0) return `${m}m ${s % 60}s`;
   return `${s}s`;
+}
+
+/** How long a call took: milliseconds under a second, then seconds with a decimal, then the longer units. */
+export function formatMillis(ms: number | null | undefined): string {
+  if (typeof ms !== "number" || !Number.isFinite(ms) || ms < 0) return "-";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  // 59.95 s and over would round to "60.0 s": it is a minute.
+  if (ms < 59_950) return `${(ms / 1000).toFixed(1)} s`;
+  return formatDuration(Math.round(ms / 1000));
 }
 
 const TONES: Record<string, Tone> = {
@@ -69,4 +78,17 @@ export function statusTone(status: string | null | undefined): Tone {
 export function maskProxy(proxy: string | null | undefined): string {
   if (!proxy) return "";
   return proxy.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/]*@/i, "$1***@");
+}
+
+/** Model spend in US dollars: cents above a cent, "<$0.01" for a trace, "$0.00" for nothing. */
+export function formatUsd(usd: number | null | undefined): string {
+  if (typeof usd !== "number" || !Number.isFinite(usd) || usd < 0) return "-";
+  if (usd === 0) return "$0.00";
+  if (usd < 0.01) return "<$0.01";
+  return `$${usd.toFixed(2)}`;
+}
+
+/** The start of the local day of `now`, as an ISO 8601 instant: what "today" means for a spend figure. */
+export function startOfToday(now: Date = new Date()): string {
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
 }

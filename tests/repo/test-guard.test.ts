@@ -87,6 +87,23 @@ describe("test-guard", () => {
     expect(run(skipped, "pytest", { min_passed: 1, allow_skipped: "^tests[.]a test_later$" }, "report.xml").code).toBe(0);
   });
 
+  it("reads the report Playwright's junit reporter writes, which names the spec file as the class", () => {
+    const playwright = (outcome = "") =>
+      `<testsuites id="" name="" tests="2" failures="0" skipped="0" errors="0" time="1.5">
+<testsuite name="shell.spec.ts" timestamp="2026-10-06T00:06:34.864Z" hostname="chromium" tests="2" failures="0" skipped="0" time="1.2" errors="0">
+<testcase name="the Dot&apos;s page shows its header" classname="shell.spec.ts" time="1.1">
+</testcase>
+<testcase name="signing out" classname="shell.spec.ts" time="0.1">${outcome}</testcase>
+</testsuite>
+</testsuites>`;
+    const accepted = run(playwright(), "playwright", { min_passed: 2, allow_skipped: "" }, "report.xml");
+    expect(accepted.code).toBe(0);
+    expect(accepted.out).toMatch(/playwright on .*: 2 passed, 0 failed, 0 skipped, in 1 files/);
+    expect(run(playwright(), "playwright", { min_passed: 3, allow_skipped: "" }, "report.xml").out).toMatch(/only 2 tests passed, the floor is 3/);
+    expect(run(playwright('<failure message="x">trace</failure>'), "playwright", { min_passed: 1, allow_skipped: "" }, "report.xml").out).toMatch(/1 failed tests/);
+    expect(run(playwright("<skipped/>"), "playwright", { min_passed: 1, allow_skipped: "" }, "report.xml").out).toMatch(/skipped without being allowed to: shell.spec.ts signing out/);
+  });
+
   it("refuses an .xml file that is not a JUnit report", () => {
     const result = run("{}", "pytest", { min_passed: 1, allow_skipped: "" }, "report.xml");
     expect(result.code).toBe(1);
@@ -95,13 +112,13 @@ describe("test-guard", () => {
 
   it("is what CI and the hook run, with the floors of this checkout for both hosts", () => {
     const floors = JSON.parse(readFileSync(join(repo, ".github", "test-floors.json"), "utf8")) as Record<string, Record<string, { min_passed: number }>>;
-    for (const suite of ["vitest", "go"]) {
+    for (const suite of ["vitest", "go", "playwright"]) {
       for (const host of ["linux", "win32"]) expect(floors[suite]?.[host]?.min_passed, `${suite} ${host}`).toBeGreaterThan(0);
     }
     expect(floors.postgres?.linux?.min_passed).toBeGreaterThan(0);
     expect(floors.pytest?.linux?.min_passed).toBeGreaterThan(0);
     const workflow = readFileSync(join(repo, ".github", "workflows", "tests.yml"), "utf8");
-    for (const suite of ["vitest", "postgres", "go", "pytest"]) expect(workflow).toMatch(new RegExp(`test-guard\\.mjs \\S+ --suite ${suite}\\b`));
+    for (const suite of ["vitest", "postgres", "go", "pytest", "playwright"]) expect(workflow).toMatch(new RegExp(`test-guard\\.mjs \\S+ --suite ${suite}\\b`));
     const hook = readFileSync(join(repo, ".githooks", "pre-push"), "utf8");
     expect(hook).toContain("npm run typecheck");
     expect(hook).toContain("node .github/scripts/test-guard.mjs tmp/vitest-report.json --suite vitest");

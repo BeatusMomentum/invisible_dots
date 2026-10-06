@@ -7,6 +7,7 @@
  */
 import { ChannelHub, TelegramChannelType, WhatsAppChannelType, type ChannelType } from "@invisible-dots/channels";
 import type { Database } from "@invisible-dots/database";
+import type { HostFacts } from "@invisible-dots/sdk/types";
 import { errorMessage, prefixedStderrLogger, Scheduler, type ComputerDriver, type Logger, type SchedulerOptions } from "@invisible-dots/scheduler";
 import { ensureDir, ENV, hostPaths, type HostPaths } from "@invisible-dots/shared";
 import { hostDoctorDeps, openRouterCheck, runDoctor, type DoctorDeps } from "@invisible-dots/vm-manager";
@@ -127,7 +128,8 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
       }),
       ...options.doctor,
     };
-    const app = buildServer({ scheduler, channels, doctor: () => runDoctor(doctorDeps), token: token.value, logger });
+    const facts: HostFacts = { database_kind: db.kind, data_dir: paths.home, logs_dir: paths.logsDir };
+    const app = buildServer({ scheduler, channels, doctor: () => runDoctor(doctorDeps), host: facts, token: token.value, logger });
     cleanup.push(() => app.close());
 
     await scheduler.start();

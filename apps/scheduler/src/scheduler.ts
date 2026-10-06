@@ -21,7 +21,10 @@ import type {
 import {
   checkHomePath,
   checkOpenRouterKey,
+  COMPUTER_STOPPED,
+  computerIsUp,
   computerResources,
+  CONVERSATION_LIST_LIMIT,
   DotConfigError,
   isIdentityAnswer,
   isPermission,
@@ -41,6 +44,7 @@ import {
   type DotConfig,
   type FilesListAnswer,
   type InboundEvent,
+  type ListOrder,
   type MessageOrigin,
   type StoredEvent,
   type SystemAnswer,
@@ -374,7 +378,7 @@ export class Scheduler {
     return { message_id: messageId, event_id: logged.id, delivery: await this.#deliver(dotId, messageId) };
   }
 
-  async conversation(idOrName: string, limit = 500): Promise<ConversationMessage[]> {
+  async conversation(idOrName: string, limit = CONVERSATION_LIST_LIMIT): Promise<ConversationMessage[]> {
     const dot = await this.requireDot(idOrName);
     const events = await this.events.query({
       dotId: dot.id,
@@ -532,8 +536,8 @@ export class Scheduler {
 
   async rebootComputer(idOrName: string): Promise<AcceptedAnswer> {
     const dot = await this.requireDot(idOrName);
-    if (dot.computer_state !== "RUNNING") {
-      throw new ControlPlaneError(409, "computer_stopped", `the computer is ${dot.computer_state ?? "missing"}`);
+    if (!computerIsUp(dot.computer_state)) {
+      throw new ControlPlaneError(409, COMPUTER_STOPPED, `the computer is ${dot.computer_state ?? "missing"}`);
     }
     this.#runInBackground("reboot", dot.id, () => this.lifecycle.reboot(dot.id));
     return { accepted: true };
@@ -542,10 +546,10 @@ export class Scheduler {
   /** A guest for a Dot whose computer is running; 409 computer_stopped otherwise (section 9.6). */
   async #runningGuest(idOrName: string): Promise<{ dotId: string; guest: GuestApi }> {
     const dot = await this.requireDot(idOrName);
-    if (dot.computer_state !== "RUNNING") {
+    if (!computerIsUp(dot.computer_state)) {
       throw new ControlPlaneError(
         409,
-        "computer_stopped",
+        COMPUTER_STOPPED,
         `the computer of Dot ${dot.name} is ${dot.computer_state ?? "missing"}; start it first`,
       );
     }
@@ -657,8 +661,12 @@ export class Scheduler {
 
   // Approvals
 
-  listApprovals(status?: ApprovalStatus): Promise<ApprovalRecord[]> {
-    return this.db.approvals.list({ status });
+  /** The approvals of one status or several (every one when omitted); `page` is what the approvals repository's `list` takes. */
+  listApprovals(
+    status?: ApprovalStatus | readonly ApprovalStatus[],
+    page: { limit?: number; order?: ListOrder; before?: string } = {},
+  ): Promise<ApprovalRecord[]> {
+    return this.db.approvals.list({ status, ...page });
   }
 
   /**
@@ -757,13 +765,14 @@ export class Scheduler {
    */
   async listEvents(
     idOrName: string,
-    filter: { after?: number; limit?: number; types?: readonly string[]; taskId?: string } = {},
+    filter: { after?: number; before?: number; limit?: number; types?: readonly string[]; tools?: readonly string[]; taskId?: string; order?: ListOrder } = {},
   ): Promise<StoredEvent[]> {
     const unknown = filter.types?.filter((type) => !isStoredEventType(type)) ?? [];
     if (unknown.length > 0) throw new ControlPlaneError(400, "invalid_request", `unknown event type: ${unknown.join(", ")}`);
     if (filter.taskId === "") throw new ControlPlaneError(400, "invalid_request", "task_id must not be empty");
     const types = filter.types === undefined || filter.types.length === 0 ? undefined : filter.types;
-    return this.events.query({ dotId: await this.#historyDotId(idOrName), after: filter.after, limit: filter.limit, types, taskId: filter.taskId });
+    const tools = filter.tools === undefined || filter.tools.length === 0 ? undefined : filter.tools;
+    return this.events.query({ dotId: await this.#historyDotId(idOrName), after: filter.after, before: filter.before, limit: filter.limit, types, tools, taskId: filter.taskId, order: filter.order });
   }
 
   /** The model spend the Dot's guest reported since `since` (every event when omitted), from the event log. */

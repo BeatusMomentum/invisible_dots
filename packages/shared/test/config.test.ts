@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  CONFIG_BOUNDS,
   computerResources,
   DotConfigError,
   parseDotConfig,
@@ -226,6 +227,70 @@ describe("parseDotConfig", () => {
       expect(error).toBeInstanceOf(DotConfigError);
       expect((error as Error).message).toMatch(/name: .*goal: .*model\.provider: /);
     }
+  });
+});
+
+describe("CONFIG_BOUNDS", () => {
+  const withComputer = (computer: Record<string, unknown>) => ({ ...MINIMAL, computer });
+  const withLimits = (limits: Record<string, unknown>) => ({ ...MINIMAL, limits });
+
+  it("are the defaults the schema applies to a config that leaves the numbers out", () => {
+    const config = parseDotConfig(MINIMAL);
+    expect(config.computer).toEqual({
+      cpu: CONFIG_BOUNDS.cpu.default,
+      memory: CONFIG_BOUNDS.memory.default,
+      disk: CONFIG_BOUNDS.disk.default,
+      idle_timeout: CONFIG_BOUNDS.idleTimeout.default,
+    });
+    expect(config.limits).toEqual({
+      max_steps_per_task: CONFIG_BOUNDS.maxStepsPerTask.default,
+      context_tokens: CONFIG_BOUNDS.contextTokens.default,
+      max_cost_per_task_usd: CONFIG_BOUNDS.maxCostPerTaskUsd.default,
+    });
+    expect(config.browser.identities).toEqual({
+      managed_by_dot: true,
+      max_identities: CONFIG_BOUNDS.maxIdentities.default,
+      max_open: CONFIG_BOUNDS.maxOpen.default,
+    });
+  });
+
+  it("are the range the schema accepts: both ends in, one step outside refused", () => {
+    const { cpu, memory, disk, maxCostPerTaskUsd } = CONFIG_BOUNDS;
+    expect(safeParseDotConfig(withComputer({ cpu: cpu.min })).ok).toBe(true);
+    expect(safeParseDotConfig(withComputer({ cpu: cpu.max })).ok).toBe(true);
+    expect(safeParseDotConfig(withComputer({ cpu: cpu.min - 1 })).ok).toBe(false);
+    expect(safeParseDotConfig(withComputer({ cpu: cpu.max + 1 })).ok).toBe(false);
+    for (const [field, bounds] of [["memory", memory], ["disk", disk]] as const) {
+      const gib = (size: string) => parseSize(size) / 1024 ** 3;
+      expect(safeParseDotConfig(withComputer({ [field]: bounds.min })).ok).toBe(true);
+      expect(safeParseDotConfig(withComputer({ [field]: bounds.max })).ok).toBe(true);
+      expect(safeParseDotConfig(withComputer({ [field]: `${gib(bounds.min) - 1}gb` })).ok).toBe(false);
+      expect(safeParseDotConfig(withComputer({ [field]: `${gib(bounds.max) + 1}gb` })).ok).toBe(false);
+    }
+    expect(safeParseDotConfig(withLimits({ max_cost_per_task_usd: maxCostPerTaskUsd.min })).ok).toBe(true);
+    expect(safeParseDotConfig(withLimits({ max_cost_per_task_usd: maxCostPerTaskUsd.max })).ok).toBe(true);
+    expect(safeParseDotConfig(withLimits({ max_cost_per_task_usd: maxCostPerTaskUsd.min / 2 })).ok).toBe(false);
+    expect(safeParseDotConfig(withLimits({ max_cost_per_task_usd: maxCostPerTaskUsd.max + 1 })).ok).toBe(false);
+  });
+
+  it("are the range of the step, context, identity and open-browser numbers too", () => {
+    const { maxStepsPerTask, contextTokens, maxIdentities, maxOpen } = CONFIG_BOUNDS;
+    const withIdentities = (identities: Record<string, unknown>) => ({ ...MINIMAL, browser: { identities } });
+    for (const [field, bounds] of [["max_steps_per_task", maxStepsPerTask], ["context_tokens", contextTokens]] as const) {
+      expect(safeParseDotConfig(withLimits({ [field]: bounds.min })).ok, `${field} min`).toBe(true);
+      expect(safeParseDotConfig(withLimits({ [field]: bounds.max })).ok, `${field} max`).toBe(true);
+      expect(safeParseDotConfig(withLimits({ [field]: bounds.min - 1 })).ok, `${field} below`).toBe(false);
+      expect(safeParseDotConfig(withLimits({ [field]: bounds.max + 1 })).ok, `${field} above`).toBe(false);
+    }
+    // max_open may not exceed max_identities, so each end of max_open is tried with room to spare.
+    expect(safeParseDotConfig(withIdentities({ max_open: maxOpen.min })).ok).toBe(true);
+    expect(safeParseDotConfig(withIdentities({ max_open: maxOpen.max, max_identities: maxIdentities.max })).ok).toBe(true);
+    expect(safeParseDotConfig(withIdentities({ max_open: maxOpen.min - 1 })).ok).toBe(false);
+    expect(safeParseDotConfig(withIdentities({ max_open: maxOpen.max + 1, max_identities: maxIdentities.max })).ok).toBe(false);
+    expect(safeParseDotConfig(withIdentities({ max_identities: maxIdentities.min, max_open: 1 })).ok).toBe(true);
+    expect(safeParseDotConfig(withIdentities({ max_identities: maxIdentities.max })).ok).toBe(true);
+    expect(safeParseDotConfig(withIdentities({ max_identities: maxIdentities.min - 1 })).ok).toBe(false);
+    expect(safeParseDotConfig(withIdentities({ max_identities: maxIdentities.max + 1 })).ok).toBe(false);
   });
 });
 

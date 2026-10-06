@@ -1,6 +1,6 @@
 /**
- * A YAML emitter for the Dot configuration, so the Settings tab can show the
- * stored (JSON) config as editable YAML. It covers what a config holds:
+ * A YAML emitter for the Dot configuration, so the create form and a Dot's settings can show a
+ * config (JSON) as editable YAML. It covers what a config holds:
  * nested objects, strings, numbers, booleans, null and arrays of those. The
  * API does the parsing and validation when the text is sent back.
  */
@@ -110,33 +110,3 @@ export function toYaml(value: unknown): string {
   emit(value, "", lines, "");
   return `${lines.join("\n")}\n`;
 }
-
-/** Shown in the create form: the example from the architecture document. */
-export const EXAMPLE_CONFIG = `name: fare-watch
-goal: >
-  Check one-way fares from Milan to Lisbon every morning and report the cheapest day.
-instructions: >
-  Write findings to ~/workspace/fares.csv.
-model:
-  provider: openrouter
-  id: z-ai/glm-5.3-flash
-computer:
-  cpu: 2
-  memory: 4gb
-  disk: 40gb
-  idle_timeout: 15m
-browser:
-  identities:
-    managed_by_dot: true
-    max_identities: 20
-    max_open: 3
-permissions:
-  computer.exec: allow
-  browser.identity.delete: ask
-memory:
-  enabled: true
-limits:
-  max_steps_per_task: 60
-  context_tokens: 32000
-  max_cost_per_task_usd: 1.00
-`;

@@ -8,6 +8,13 @@ import { AGENT_STATES, type AgentState, type EventSource, type VmState } from ".
 import { MAX_RUN_AT_MS } from "./protocol.js";
 import { PERMISSIONS, type Permission } from "./tools.js";
 
+/**
+ * The most events one read of the event log returns (`GET /api/dots/:id/events?limit=`): the store clamps to it, the
+ * route refuses more, and a client that pages through the log asks for exactly this many, so a page shorter than it
+ * is the last one.
+ */
+export const MAX_EVENT_PAGE = 1000;
+
 export const INBOUND_EVENT_TYPES = ["user.message", "task.created", "approval.received", "system.event"] as const;
 export type InboundEventType = (typeof INBOUND_EVENT_TYPES)[number];
 
@@ -17,6 +24,14 @@ export type InboundEventType = (typeof INBOUND_EVENT_TYPES)[number];
  * cancel type, so it travels as a system event.
  */
 export const TASK_CANCELLED_SYSTEM_EVENT = "task.cancelled";
+
+/** The events after which a Dot's list of browser identities, or one of them, has changed. */
+export const IDENTITY_EVENT_TYPES = [
+  "browser.identity.created",
+  "browser.identity.deleted",
+  "browser.identity.launched",
+  "browser.identity.closed",
+] as const;
 
 export const OUTBOUND_EVENT_TYPES = [
   "agent.started",
@@ -28,10 +43,7 @@ export const OUTBOUND_EVENT_TYPES = [
   "task.failed",
   "approval.requested",
   "tool.called",
-  "browser.identity.created",
-  "browser.identity.deleted",
-  "browser.identity.launched",
-  "browser.identity.closed",
+  ...IDENTITY_EVENT_TYPES,
   "memory.written",
   "automation.next_run",
 ] as const;
@@ -49,6 +61,7 @@ export const HOST_EVENT_TYPES = [
   "approval.resolved",
   "channel.status",
   "channel.peer.paired",
+  "channel.changed",
 ] as const;
 export type HostEventType = (typeof HOST_EVENT_TYPES)[number];
 
@@ -72,6 +85,10 @@ export type ChannelKind = (typeof CHANNEL_KINDS)[number];
 /** Where a channel's connection stands; `needs_relink` is a login the person has to redo. */
 export const CHANNEL_STATUSES = ["connecting", "connected", "needs_relink", "error"] as const;
 export type ChannelStatus = (typeof CHANNEL_STATUSES)[number];
+
+/** What the person did to a channel that its status does not say: paused it, resumed it, or removed it with its credentials and people. */
+export const CHANNEL_CHANGES = ["paused", "resumed", "removed"] as const;
+export type ChannelChange = (typeof CHANNEL_CHANGES)[number];
 
 /**
  * Where a user message came from when it did not come from the web, the CLI or the SDK: the channel
@@ -221,6 +238,8 @@ export interface HostEventDataMap {
   "channel.status": { kind: ChannelKind; status: ChannelStatus; detail?: string };
   /** A person was paired to the Dot's channel; `peer_id` is the channel's own id for them. */
   "channel.peer.paired": { kind: ChannelKind; peer_id: string; label: string };
+  /** The person paused, resumed or removed a channel (a removed one has no status left to report): every view of the channel follows it. */
+  "channel.changed": { kind: ChannelKind; change: ChannelChange };
 }
 
 export type InboundEvent<T extends InboundEventType = InboundEventType> = {

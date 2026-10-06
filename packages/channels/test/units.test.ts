@@ -6,7 +6,7 @@ import { RateLimiter } from "../src/rate.js";
 describe("the guest protocol", () => {
   it("names no channel: the Dot never sees one", () => {
     for (const type of [...INBOUND_EVENT_TYPES, ...OUTBOUND_EVENT_TYPES]) expect(type).not.toMatch(/channel|telegram|whatsapp/);
-    expect(HOST_EVENT_TYPES.filter((t) => t.startsWith("channel."))).toEqual(["channel.status", "channel.peer.paired"]);
+    expect(HOST_EVENT_TYPES.filter((t) => t.startsWith("channel."))).toEqual(["channel.status", "channel.peer.paired", "channel.changed"]);
   });
 });
 

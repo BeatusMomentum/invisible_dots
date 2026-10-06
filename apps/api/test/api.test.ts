@@ -6,9 +6,10 @@ import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-
 import { Scheduler } from "@invisible-dots/scheduler";
 import { FakeDriver, ManualClock, waitFor, waitUntilSettledReady } from "@invisible-dots/scheduler/testing";
 import { ApiError, InvisibleDotsClient } from "@invisible-dots/sdk";
-import { OPENROUTER_KEY_RULE, type Automation, type DoctorCheck, type StoredEvent } from "@invisible-dots/shared";
+import { MAX_EVENT_PAGE, OPENROUTER_KEY_RULE, type Automation, type DoctorCheck, type StoredEvent } from "@invisible-dots/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { buildServer, type FastifyInstance } from "../src/index.js";
+import { API_VERSION, buildServer, type FastifyInstance } from "../src/index.js";
+import { hostFacts } from "./host-facts.js";
 
 const TOKEN = "test-token-0123456789abcdef";
 
@@ -45,7 +46,7 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
       dispatcher: { retryDelayMs: 0 },
     });
     channels = new ChannelHub({ db, host: scheduler, types: [new FakeChannelType()] });
-    app = buildServer({ scheduler, channels, doctor: async () => REPORT, token: TOKEN, heartbeatMs: 50 });
+    app = buildServer({ scheduler, channels, doctor: async () => REPORT, host: hostFacts(kind), token: TOKEN, heartbeatMs: 50 });
     await app.listen({ host: "127.0.0.1", port: 0 });
     base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
     api = new InvisibleDotsClient({ baseUrl: base, token: TOKEN });
@@ -85,7 +86,7 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
 
   it("health, unknown routes and malformed bodies answer {error, message}", async () => {
     await db.secrets.put("global", "openrouter_api_key", "sk-or-test");
-    expect(await api.health()).toMatchObject({ status: "ok", database: "ok" });
+    expect(await api.health()).toEqual({ status: "ok", database: "ok", version: API_VERSION, openrouter_configured: true, ...hostFacts(kind) });
     const missing = await fetch(`${base}/api/nope`, { headers: { authorization: `Bearer ${TOKEN}` } });
     expect(missing.status).toBe(404);
     expect(await missing.json()).toMatchObject({ error: "not_found" });
@@ -171,7 +172,7 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     expect(events.find((e) => e.type === "task.completed")?.data).toMatchObject({ task_id: task.id });
     const after = events[1]!.id;
     expect((await api.events(dot.id, { after, limit: 2 })).map((e) => e.id)).toEqual(events.slice(2, 4).map((e) => e.id));
-    await expect(api.events(dot.id, { limit: 5000 })).rejects.toMatchObject({ status: 400 });
+    await expect(api.events(dot.id, { limit: MAX_EVENT_PAGE + 1 })).rejects.toMatchObject({ status: 400 });
     await expect(api.cancelTask(task.id)).rejects.toMatchObject({ status: 409, code: "task_finished" });
   });
 
@@ -212,6 +213,26 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     expect((await get("types=tool.called&types=memory.written")).status).toBe(400);
     expect((await get("task_id=a&task_id=b")).status).toBe(400);
     expect((await get("task_id=")).status).toBe(400);
+
+    // Newest first, and a tool filter that narrows tool.called only: the newest browser call is found past the calls of other tools.
+    const browser = { ...call, tool: "browser_navigate", target: "x-1: https://example.com/" };
+    guest.emit("tool.called", browser);
+    guest.emit("tool.called", { ...call, target: "pwd" });
+    guest.emit("tool.called", { ...call, target: "whoami" });
+    await waitFor(async () => (await api.events(dot.id, { types: ["tool.called"] })).length === 5, "more events stored");
+    const newest = await api.events(dot.id, { types: ["tool.called"], order: "desc", limit: 2 });
+    expect(newest.map((e) => e.data.target)).toEqual(["whoami", "pwd"]);
+    const browserCalls = await api.events(dot.id, { types: ["tool.called"], tools: ["browser_navigate", "browser_click"], order: "desc", limit: 1 });
+    expect(browserCalls.map((e) => e.data.target)).toEqual(["x-1: https://example.com/"]);
+    expect((await api.events(dot.id, { types: ["tool.called", "memory.written"], tools: ["browser_click"] })).map((e) => e.type)).toEqual(["memory.written"]);
+    // `before` goes on, older, from the oldest event of a newest-first page, and only there.
+    const calls = await api.events(dot.id, { types: ["tool.called"], order: "desc", limit: 2 });
+    expect((await api.events(dot.id, { types: ["tool.called"], order: "desc", limit: 2, before: calls.at(-1)!.id })).map((e) => e.data.target)).toEqual(["x-1: https://example.com/", "date"]);
+    expect(await get(`before=${calls.at(-1)!.id}`)).toMatchObject({ status: 400, body: { message: "before pages a list in order=desc" } });
+    expect((await get("order=desc&before=-1")).status).toBe(400);
+    expect((await get("order=sideways")).status).toBe(400);
+    expect((await get("order=desc&order=asc")).status).toBe(400);
+    expect((await get("tools=a&tools=b")).status).toBe(400);
     await expect(api.events("no-such-dot", { types: ["tool.called"] })).rejects.toMatchObject({ status: 404 });
   });
 
@@ -446,6 +467,33 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     await expect(api.approve("apr_missing")).rejects.toMatchObject({ status: 404 });
     const raw = await fetch(`${base}/api/approvals?status=maybe`, { headers: { authorization: `Bearer ${TOKEN}` } });
     expect(raw.status).toBe(400);
+  });
+
+  it("approvals: several statuses at once, newest answer first, a limit that keeps the newest and a cursor", async () => {
+    const dot = await readyDot("asks-often");
+    const guest = driver.guestOf(dot.id);
+    const ids = [guest.requestApproval(undefined), guest.requestApproval(undefined), guest.requestApproval(undefined)];
+    await waitFor(async () => (await api.listApprovals("pending")).filter((a) => a.dot_id === dot.id).length === 3, "three pending");
+    await api.reject(ids[1]!, {});
+    await api.approve(ids[0]!, {});
+    const mine = async (...args: Parameters<typeof api.listApprovals>) => (await api.listApprovals(...args)).filter((a) => a.dot_id === dot.id).map((a) => a.id);
+    // Answered, the last answered first (ids[0] after ids[1]); the one still pending is not among them.
+    expect(await mine(["approved", "rejected", "expired"], { order: "desc" })).toEqual([ids[0], ids[1]]);
+    expect(await mine(["pending", "rejected"])).toEqual([ids[1], ids[2]]);
+    const newestOne = await api.listApprovals(["approved", "rejected", "expired"], { order: "desc", limit: 1 });
+    expect(newestOne.map((a) => a.id)).toEqual([ids[0]]);
+    expect((await api.listApprovals(["approved", "rejected", "expired"], { order: "desc", limit: 1, before: ids[0]! })).map((a) => a.id)).toEqual([ids[1]]);
+
+    const get = async (query: string) => (await fetch(`${base}/api/approvals?${query}`, { headers: { authorization: `Bearer ${TOKEN}` } })).status;
+    expect(await get("status=approved,maybe")).toBe(400);
+    expect(await get("status=")).toBe(400);
+    expect(await get("status=approved&status=rejected")).toBe(400);
+    expect(await get("order=newest")).toBe(400);
+    expect(await get("limit=0")).toBe(400);
+    expect(await get("limit=501")).toBe(400);
+    expect(await get(`order=desc&before=${ids[0]}&limit=1`)).toBe(200);
+    expect(await get(`before=${ids[0]}`)).toBe(400);
+    expect(await get("order=desc&before=")).toBe(400);
   });
 
   it("approve with always over HTTP sets the permission in the Dot's config and pushes it", async () => {

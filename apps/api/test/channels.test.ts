@@ -8,6 +8,7 @@ import { FakeDriver, ManualClock, waitFor, waitUntilSettledReady } from "@invisi
 import { InvisibleDotsClient } from "@invisible-dots/sdk";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { buildServer, type FastifyInstance } from "../src/index.js";
+import { hostFacts } from "./host-facts.js";
 
 const API_TOKEN = "test-token-0123456789abcdef";
 const BOT_TOKEN = "123456:SECRET-TOKEN-VALUE";
@@ -46,7 +47,7 @@ describe.each(testAdapters())("channel routes of the control-plane API (%s)", { 
       types: [new TelegramChannelType({ apiRoot: bots.apiRoot, pollSeconds: 30 })],
       backoff: { initialMs: 1, maxMs: 5, jitter: 0 },
     });
-    app = buildServer({ scheduler, channels: hub, doctor: async () => [], token: API_TOKEN });
+    app = buildServer({ scheduler, channels: hub, doctor: async () => [], host: hostFacts(), token: API_TOKEN });
     await scheduler.start();
     await hub.start();
     await app.listen({ host: "127.0.0.1", port: 0 });

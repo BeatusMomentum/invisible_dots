@@ -1,4 +1,4 @@
-import { USAGE_EVENT_TYPES, type EventSource, type OutboundEvent, type StoredEvent } from "@invisible-dots/shared";
+import { MAX_EVENT_PAGE, USAGE_EVENT_TYPES, type EventSource, type ListOrder, type OutboundEvent, type StoredEvent } from "@invisible-dots/shared";
 import { isoRequired, type Queryable } from "./rows.js";
 
 interface EventRow {
@@ -28,15 +28,19 @@ export interface EventQuery {
   dotId?: string;
   /** Only events with an id greater than this. */
   after?: number;
+  /** Only events with an id less than this: the page that goes on, older, from the oldest row of the last one. Needs `order: "desc"`. */
+  before?: number;
   /** Only these types. */
   types?: readonly string[];
   /** Only the events of this task (`data.task_id`). */
   taskId?: string;
-  /** At most this many, oldest first (default 500). */
+  /** Narrows the `tool.called` events to those of these tools (`data.tool`); events of other types are not affected. */
+  tools?: readonly string[];
+  /** At most this many (default 500). */
   limit?: number;
+  /** `asc` (the default) is the oldest first; `desc` the newest first, so a limit keeps the newest. */
+  order?: ListOrder;
 }
-
-export const MAX_EVENT_PAGE = 1000;
 
 /**
  * Key of the transaction-scoped advisory lock every event insert takes
@@ -112,6 +116,17 @@ export class EventsRepository {
       params.push(query.taskId);
       taskFilter = `AND data->>'task_id' = $${params.length}`;
     }
+    let beforeFilter = "";
+    if (query.before !== undefined) {
+      if (query.order !== "desc") throw new Error("events: `before` pages a list in order desc");
+      params.push(query.before);
+      beforeFilter = `AND id < $${params.length}`;
+    }
+    let toolFilter = "";
+    if (query.tools !== undefined) {
+      params.push([...query.tools]);
+      toolFilter = `AND (type <> 'tool.called' OR data->>'tool' = ANY($${params.length}))`;
+    }
     params.push(limit);
     const { rows } = await this.q.query<EventRow>(
       `SELECT * FROM events
@@ -119,7 +134,9 @@ export class EventsRepository {
           AND id > $2
           AND ($3::text[] IS NULL OR type = ANY($3))
           ${taskFilter}
-        ORDER BY id
+          ${toolFilter}
+          ${beforeFilter}
+        ORDER BY id ${query.order === "desc" ? "DESC" : ""}
         LIMIT $${params.length}`,
       params,
     );

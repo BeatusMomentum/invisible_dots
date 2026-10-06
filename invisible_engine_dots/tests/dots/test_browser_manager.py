@@ -75,6 +75,12 @@ class Env:
     def record(self, identity_id: str) -> list[dict[str, Any]]:
         return read_record(self.mcp_home(identity_id))
 
+    async def until_recorded(self, identity_id: str, kind: str, name: str, timeout_s: float = 30) -> None:
+        """Wait until the fake MCP server has recorded an entry: its process start time is not the test's to guess."""
+        async with asyncio.timeout(timeout_s):
+            while not any(e["kind"] == kind and e.get("name") == name for e in self.record(identity_id)):
+                await asyncio.sleep(0.01)
+
     def calls(self, identity_id: str) -> list[tuple[str, dict[str, Any]]]:
         return [(entry["name"], entry["args"]) for entry in self.record(identity_id) if entry["kind"] == "call"]
 
@@ -966,9 +972,7 @@ async def start_slow_launch(env: Env, manager: BrowserManager, name: str) -> tup
     identity = await manager.create(name)
     write_control(env.mcp_home(identity.id), download_answers=100_000)
     launching = asyncio.create_task(manager.launch(identity.id))
-    async with asyncio.timeout(30):
-        while not env.calls(identity.id):
-            await asyncio.sleep(0.02)
+    await env.until_recorded(identity.id, "call", "browser_open")
     return identity.id, launching
 
 

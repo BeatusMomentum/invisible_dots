@@ -103,6 +103,7 @@ describe("InvisibleDotsClient", () => {
     await client.events("a", { after: 4, limit: 10, types: ["tool.called", "memory.written"], taskId: "task_1" });
     await client.events("a", { types: [] });
     await client.events("a", { types: ["tool.called"] });
+    await client.events("a", { order: "desc", before: 90, limit: 200 });
     expect(await client.listFiles("a b")).toEqual({ path: "/home/dot", entries: [] });
     await client.listFiles("a", "memory/trips & more");
     expect([...(await client.readFile("a", "memory/é.md"))]).toEqual([1, 2, 3]);
@@ -111,6 +112,7 @@ describe("InvisibleDotsClient", () => {
       "/api/dots/a/events?after=4&limit=10&types=tool.called%2Cmemory.written&task_id=task_1",
       "/api/dots/a/events",
       "/api/dots/a/events?types=tool.called",
+      "/api/dots/a/events?before=90&limit=200&order=desc",
       "/api/dots/a%20b/files/list",
       "/api/dots/a/files/list?path=memory%2Ftrips+%26+more",
       "/api/dots/a/files?path=memory%2F%C3%A9.md",

@@ -18,18 +18,23 @@ import type {
   EventsAnswer,
   FilesListAnswer,
   HealthResponse,
+  HostFacts,
   IdentitiesAnswer,
   MessagesAnswer,
   TasksAnswer,
   UsageAnswer,
 } from "@invisible-dots/sdk/types";
 import {
+  APPROVAL_LIST_LIMIT,
   APPROVAL_STATUSES,
   CHANNEL_KINDS,
+  LIST_ORDERS,
+  MAX_EVENT_PAGE,
   type ApprovalStatus,
   type AutomationListAnswer,
   type ChannelKind,
   type DoctorCheck,
+  type ListOrder,
   type ToolListAnswer,
 } from "@invisible-dots/shared";
 import { doctorAnswer } from "@invisible-dots/vm-manager";
@@ -46,6 +51,8 @@ export interface ServerOptions {
   channels: ChannelHub;
   /** Runs the host checks of architecture section 11.1 on the machine this server runs on; `startServer` binds the real ones. */
   doctor(): Promise<DoctorCheck[]>;
+  /** What `GET /api/health` says about where the state lives; `startServer` reads it from the paths and the database it opened. */
+  host: HostFacts;
   token: string;
   logger?: Logger;
   heartbeatMs?: number;
@@ -169,7 +176,7 @@ export function buildServer(options: ServerOptions): FastifyInstance {
 
   app.get("/api/health", async (): Promise<HealthResponse> => {
     const { database, openrouter_configured } = await scheduler.health();
-    return { status: "ok", database, version: API_VERSION, openrouter_configured };
+    return { status: "ok", database, version: API_VERSION, openrouter_configured, ...options.host };
   });
 
   // The host report `invisible-dots doctor` prints: what is missing for a Dot to run, and the command that fixes it. It runs QEMU's accelerator probe, so it takes a moment:
@@ -372,12 +379,21 @@ export function buildServer(options: ServerOptions): FastifyInstance {
 
   // Approvals
 
-  app.get<{ Querystring: { status?: string } }>("/api/approvals", async (request): Promise<ApprovalsAnswer> => {
-    const status = request.query.status;
-    if (status !== undefined && !(APPROVAL_STATUSES as readonly string[]).includes(status)) {
-      throw bad(`status must be one of ${APPROVAL_STATUSES.join(", ")}`);
+  app.get<{ Querystring: { status?: unknown; limit?: unknown; order?: unknown; before?: unknown } }>("/api/approvals", async (request): Promise<ApprovalsAnswer> => {
+    const { status, order, before } = request.query;
+    if (status !== undefined && typeof status !== "string") throw bad("status must be one list, comma-separated");
+    const statuses = status?.split(",").map((one) => one.trim());
+    if (statuses?.some((one) => !(APPROVAL_STATUSES as readonly string[]).includes(one))) {
+      throw bad(`status must be one or more of ${APPROVAL_STATUSES.join(", ")}`);
     }
-    return { approvals: await scheduler.listApprovals(status as ApprovalStatus | undefined) };
+    const limit = intParam(request.query.limit, "limit", APPROVAL_LIST_LIMIT);
+    if (limit === 0) throw bad(`limit must be between 1 and ${APPROVAL_LIST_LIMIT}`);
+    if (order !== undefined && !(LIST_ORDERS as readonly unknown[]).includes(order)) throw bad(`order must be one of ${LIST_ORDERS.join(", ")}`);
+    if (before !== undefined && (typeof before !== "string" || before === "")) throw bad("before must be the id of an approval");
+    if (before !== undefined && order !== "desc") throw bad("before pages a list in order=desc");
+    return {
+      approvals: await scheduler.listApprovals(statuses as ApprovalStatus[] | undefined, { limit, order: order as ListOrder | undefined, before }),
+    };
   });
 
   for (const decision of ["approve", "reject"] as const) {
@@ -399,20 +415,28 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     async (request): Promise<UsageAnswer> => scheduler.usage(request.params.id, sinceParam(request.query.since)),
   );
 
-  app.get<{ Params: Params; Querystring: { after?: string; limit?: string; types?: unknown; task_id?: unknown } }>(
+  app.get<{ Params: Params; Querystring: { after?: string; before?: string; limit?: string; types?: unknown; tools?: unknown; task_id?: unknown; order?: unknown } }>(
     "/api/dots/:id/events",
     async (request): Promise<EventsAnswer> => {
       const after = intParam(request.query.after, "after");
-      const limit = intParam(request.query.limit, "limit", 1000);
-      const { types, task_id: taskId } = request.query;
+      const before = intParam(request.query.before, "before");
+      const limit = intParam(request.query.limit, "limit", MAX_EVENT_PAGE);
+      const { types, tools, task_id: taskId, order } = request.query;
       if (types !== undefined && typeof types !== "string") throw bad("types must be one comma-separated list");
+      if (tools !== undefined && typeof tools !== "string") throw bad("tools must be one comma-separated list");
       if (taskId !== undefined && typeof taskId !== "string") throw bad("task_id must be a single value");
+      if (order !== undefined && !(LIST_ORDERS as readonly unknown[]).includes(order)) throw bad(`order must be one of ${LIST_ORDERS.join(", ")}`);
+      if (before !== undefined && order !== "desc") throw bad("before pages a list in order=desc");
+      const list = (value: string | undefined) => value?.split(",").map((one) => one.trim()).filter(Boolean);
       return {
         events: await scheduler.listEvents(request.params.id, {
           after,
+          before,
           limit,
-          types: types?.split(",").map((type) => type.trim()).filter(Boolean),
+          types: list(types),
+          tools: list(tools),
           taskId,
+          order: order as ListOrder | undefined,
         }),
       };
     },
