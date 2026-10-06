@@ -53,6 +53,9 @@ and the checks read that file. What they pin:
 - `browser.identity.delete: ask` parks the call and the approval survives `kill -9`, which also ends every
   server; after the restart every identity is `available`; SIGTERM asks an open browser to close before
   its server ends; a host `DELETE` of an open identity closes it first;
+- the host's two actions on an identity: `GET .../frame` answers a JPEG (the stand-in's `browser_watch`) for an open
+  identity and 409 `not_open` for a closed one, and `POST .../close` closes an open one through `browser_close`
+  (one `closed` event, the profile kept) and is a 204 that changes nothing for a closed one;
 - a proxy password is in no approval, event, engine log or `dot-agentd` log; `/health` counts the identities
   and the open ones.
 
@@ -80,6 +83,8 @@ engine, the GeoIP file) and at a launch (the egress address, for the timezone). 
 - the screenshot of a page of random pixels, a PNG of more than 500 kB, crosses the relay whole
   and the server still answers after it;
 - `GET /v1/screenshot` of `dot-agentd` shows the desktop with the page in it;
+- `GET .../frame` answers a JPEG of the identity's real window, not a blank one, and 409 `not_open` after the
+  model's close;
 - the profile's `.stealth-identity.json` is identical after the model closes the identity and
   launches it again, and after a `kill -9` of the engine in the middle of a session, which ends
   the server and Firefox and leaves the profile locked: the next launch works with that stale
