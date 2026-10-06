@@ -269,7 +269,9 @@ describe("the browsers", () => {
     await userEvent.click(await screen.findByRole("button", { name: "New browser" }));
     const dialog = await screen.findByRole("dialog", { name: "New browser" });
     await userEvent.type(within(dialog).getByRole("textbox", { name: "Name" }), "Shopping");
-    await userEvent.type(within(dialog).getByRole("textbox", { name: /^Proxy/ }), "socks5://user:pw@proxy.example:1080");
+    // A proxy URL may hold a password: the field does not show what is typed.
+    expect(within(dialog).getByLabelText(/^Proxy/).getAttribute("type")).toBe("password");
+    await userEvent.type(within(dialog).getByLabelText(/^Proxy/), "socks5://user:pw@proxy.example:1080");
     await userEvent.click(within(dialog).getByRole("button", { name: "Create browser" }));
     await waitFor(() => expect(plane.createdIdentities).toEqual([{ name: "Shopping", proxy: "socks5://user:pw@proxy.example:1080" }]));
     const card = await screen.findByRole("article", { name: "Shopping" });
@@ -284,7 +286,7 @@ describe("the browsers", () => {
     await userEvent.click(within(dialog).getByRole("button", { name: "Create browser" }));
     expect((await within(dialog).findByRole("alert")).textContent).toBe("an identity needs a non-empty name");
     await userEvent.type(within(dialog).getByRole("textbox", { name: "Name" }), "Shopping");
-    await userEvent.type(within(dialog).getByRole("textbox", { name: /^Proxy/ }), "ftp://host");
+    await userEvent.type(within(dialog).getByLabelText(/^Proxy/), "ftp://host");
     await userEvent.click(within(dialog).getByRole("button", { name: "Create browser" }));
     expect((await within(dialog).findByRole("alert")).textContent).toContain("http, https, socks4 or socks5");
     expect(plane.createdIdentities).toEqual([]);

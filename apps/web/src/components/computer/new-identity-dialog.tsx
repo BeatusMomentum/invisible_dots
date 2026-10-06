@@ -67,9 +67,9 @@ export function NewIdentityDialog({ dotId, existing, limits, onCreated }: { dotI
             id="identity-proxy"
             label="Proxy"
             optional
-            hint="Where the browser goes out through: http://host:port, https://, socks4:// or socks5://, with user:password@ if it needs a login. The password stays on the Dot's computer and is shown nowhere again; while the browser is open, the Dot's own commands could read it from the browser's process."
+            hint="Where the browser goes out through: http://host:port, https://, socks4:// or socks5://, with user:password@ if it needs a login. It is not shown while you type, as it may hold a password. The password stays on the Dot's computer and is shown nowhere again; while the browser is open, the Dot's own commands could read it from the browser's process."
           >
-            {(control) => <Input {...control} value={proxy} autoComplete="off" spellCheck={false} placeholder="socks5://host:1080" onChange={(e) => setProxy(e.target.value)} />}
+            {(control) => <Input {...control} type="password" value={proxy} autoComplete="off" spellCheck={false} placeholder="socks5://host:1080" onChange={(e) => setProxy(e.target.value)} />}
           </Field>
           {touched && !checked.ok ? (
             <p role="alert" className="text-sm text-danger">

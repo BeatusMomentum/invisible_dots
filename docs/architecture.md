@@ -2153,7 +2153,7 @@ other calls never cross the wire, then followed live and kept to the newest 500;
 a long run of calls to one browser can push another's last navigation out of that
 window, and that browser then shows no page). The page is the last successful navigation after the browser's
 last `launched` or `closed`; a page reached by a link is not known. The person
-creates (a name and an optional proxy, checked by `checkIdentityRequest`, the
+creates (a name and an optional proxy in a password field, checked by `checkIdentityRequest`, the
 engine's own rule), closes (`POST .../close`, the profile stays, asked first when
 the Dot is working in it) and deletes (asked first, saying that the profile goes)
 browsers; the engine enforces `max_identities` and `max_open` for them as it does

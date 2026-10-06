@@ -97,12 +97,14 @@ test("the browsers are made here, watched with the page the Dot is on, closed an
   await page.getByRole("button", { name: "New browser" }).click();
   const dialog = page.getByRole("dialog", { name: "New browser" });
   await dialog.getByRole("textbox", { name: "Name" }).fill("Shopping");
-  await dialog.getByRole("textbox", { name: /^Proxy/ }).fill("ftp://host");
+  // The field does not show what is typed: a proxy URL may hold a password.
+  await expect(dialog.getByLabel(/^Proxy/)).toHaveAttribute("type", "password");
+  await dialog.getByLabel(/^Proxy/).fill("ftp://host");
   await dialog.getByRole("button", { name: "Create browser" }).click();
   await expect(dialog.getByRole("alert")).toContainText("http, https, socks4 or socks5");
   expect(await harness.api.listIdentities(dot.id)).toEqual([]);
 
-  await dialog.getByRole("textbox", { name: /^Proxy/ }).fill("http://user:hunter2@proxy.example:8080");
+  await dialog.getByLabel(/^Proxy/).fill("http://user:hunter2@proxy.example:8080");
   await dialog.getByRole("button", { name: "Create browser" }).click();
   const card = page.getByRole("article", { name: "Shopping" });
   await expect(card).toBeVisible();
