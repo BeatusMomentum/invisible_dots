@@ -1,6 +1,6 @@
 import type { Database } from "@invisible-dots/database";
 import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-dots/database/testing";
-import type { StoredEvent } from "@invisible-dots/shared";
+import { IDENTITY_ERROR_STATUS, type IdentityErrorCode, type StoredEvent } from "@invisible-dots/shared";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Scheduler, type SchedulerOptions } from "../src/index.js";
 import { FakeDriver, FakeGuestError, ManualClock, waitFor, waitUntilSettledReady } from "../src/testing.js";
@@ -390,16 +390,18 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     await expect(scheduler.closeIdentity(dot.id, identity.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
   });
 
-  it("the engine's coded 502 browser answers pass through, so the UI can tell a crashed browser from a silent computer", async () => {
+  it("every coded answer of the engine's identity routes that is not a 4xx passes through, so the UI can tell a crashed browser from a silent computer", async () => {
     const { scheduler, driver } = make();
     const dot = await readyDot(scheduler, "failing");
     const guest = driver.guestOf(dot.id);
     const identity = await scheduler.createIdentity(dot.id, { name: "Shop" });
     guest.launchIdentity(identity.id);
 
-    for (const code of ["frame_failed", "crashed", "launch_failed"] as const) {
-      guest.identityFault = code;
-      await expect(scheduler.identityFrame(dot.id, identity.id)).rejects.toMatchObject({ status: 502, code });
+    const browserAnswers = Object.entries(IDENTITY_ERROR_STATUS).filter(([, status]) => status >= 500);
+    expect(browserAnswers.map(([code]) => code).sort()).toEqual(["busy", "crashed", "frame_failed", "launch_failed"]);
+    for (const [code, status] of browserAnswers) {
+      guest.identityFault = code as IdentityErrorCode;
+      await expect(scheduler.identityFrame(dot.id, identity.id)).rejects.toMatchObject({ status, code });
     }
     guest.identityFault = null;
     expect([...(await scheduler.identityFrame(dot.id, identity.id)).slice(0, 2)]).toEqual([0xff, 0xd8]);

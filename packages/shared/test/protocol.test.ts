@@ -4,7 +4,9 @@ import {
   checkOpenRouterKey,
   GUEST_PATHS,
   GUEST_PORT,
+  IDENTITY_ERROR_STATUS,
   identityPaths,
+  isIdentityAnswer,
   OPENROUTER_KEY_RULE,
   truncateText,
   vmName,
@@ -27,6 +29,30 @@ describe("protocol constants", () => {
       mcp: "/home/dot/browsers/shop-ab12cd/mcp",
     });
     expect(identityPaths("x", "/tmp/b/").profile).toBe("/tmp/b/x/profile");
+  });
+});
+
+describe("identity error answers", () => {
+  it("name the status of every code the engine answers on the identity routes", () => {
+    expect(IDENTITY_ERROR_STATUS).toEqual({
+      invalid: 400,
+      not_found: 404,
+      limit: 409,
+      not_open: 409,
+      busy: 503,
+      launch_failed: 502,
+      crashed: 502,
+      frame_failed: 502,
+    });
+  });
+
+  it("recognize an answer only by its code and its status together", () => {
+    expect(isIdentityAnswer("busy", 503)).toBe(true);
+    expect(isIdentityAnswer("crashed", 502)).toBe(true);
+    expect(isIdentityAnswer("busy", 502)).toBe(false);
+    expect(isIdentityAnswer("guest_error", 502)).toBe(false);
+    expect(isIdentityAnswer("toString", 0)).toBe(false);
+    expect(isIdentityAnswer(undefined, 503)).toBe(false);
   });
 });
 

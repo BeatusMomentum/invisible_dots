@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import copy
 from collections.abc import Callable
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 
+from nanobot.dots.browser import ErrorCode
 from nanobot.dots.protocol import (
     AGENT_ROUTES,
     AGENT_STATES,
     INBOUND_EVENT_TYPES,
     OUTBOUND_EVENT_TYPES,
     TASK_CANCELLED_EVENT,
+    IDENTITY_ERROR_STATUS,
     DotsConfigError,
     InvalidEvent,
     parse_inbound_event,
@@ -52,6 +54,11 @@ class TestSharedNames:
         assert all(route.startswith("/") for route in AGENT_ROUTES.values())
         assert len(set(AGENT_ROUTES.values())) == len(AGENT_ROUTES)
         assert AGENT_ROUTES["events_stream"] == "/events/stream"
+
+    def test_every_error_code_of_a_browser_identity_has_one_status(self) -> None:
+        assert set(IDENTITY_ERROR_STATUS) == set(get_args(ErrorCode))
+        assert IDENTITY_ERROR_STATUS["busy"] == 503
+        assert {IDENTITY_ERROR_STATUS[code] for code in ("launch_failed", "crashed", "frame_failed")} == {502}
 
     def test_the_cancel_event_name(self) -> None:
         assert TASK_CANCELLED_EVENT == "task.cancelled"

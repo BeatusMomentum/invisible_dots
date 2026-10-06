@@ -20,6 +20,7 @@ import {
   ENV,
   GUEST_DISPLAY,
   GUEST_PATHS,
+  IDENTITY_ERROR_STATUS,
   INBOUND_EVENT_TYPES,
   MODEL_ROLES,
   OPENROUTER_KEY_PATTERN,
@@ -142,6 +143,13 @@ describe("the vendored nanobot fork", () => {
       .filter(([name]) => name.startsWith("browserIdentity") && name !== "browserIdentity")
       .map(([, route]) => (route as (id: string) => string)("x").replace("/browser-identities/x/", ""));
     expect(actions).toEqual(identityActions);
+
+    // The status of each error code of an identity route: the engine answers from its table, and the control
+    // plane passes the answers with these pairs through.
+    const statusMatch = /^IDENTITY_ERROR_STATUS = \{([^}]*)\}/m.exec(protocol);
+    expect(statusMatch, "IDENTITY_ERROR_STATUS").not.toBeNull();
+    const engineStatus = Object.fromEntries([...statusMatch![1]!.matchAll(/"(\w+)":\s*(\d+)/g)].map((m) => [m[1]!, Number(m[2])]));
+    expect(engineStatus).toEqual({ ...IDENTITY_ERROR_STATUS });
 
     expect(/^TASK_CANCELLED_EVENT = "([^"]+)"/m.exec(protocol)?.[1]).toBe(TASK_CANCELLED_SYSTEM_EVENT);
     // The longest `target` of a `tool.called`: the engine cuts to it, the host's schema refuses more.

@@ -33,6 +33,20 @@ AGENT_ROUTES = {
 # `browserIdentityFrame(id)` and `browserIdentityClose(id)`.
 BROWSER_IDENTITY_ACTIONS = ("frame", "close")
 
+# The HTTP status of each error code the identity routes answer with. IDENTITY_ERROR_STATUS of
+# packages/shared has the same table; tests/repo/vendored-nanobot.test.ts reads it with a regex, so it is one
+# `"code": status` line each, and test_protocol.py checks that its keys are the codes of `browser.ErrorCode`.
+IDENTITY_ERROR_STATUS = {
+    "invalid": 400,
+    "not_found": 404,
+    "limit": 409,
+    "not_open": 409,
+    "busy": 503,
+    "launch_failed": 502,
+    "crashed": 502,
+    "frame_failed": 502,
+}
+
 INBOUND_EVENT_TYPES = (
     "user.message",
     "task.created",

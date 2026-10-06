@@ -22,6 +22,7 @@ import {
   checkOpenRouterKey,
   computerResources,
   DotConfigError,
+  isIdentityAnswer,
   newId,
   parseDotConfig,
   parseSize,
@@ -66,18 +67,6 @@ export interface SchedulerOptions {
 }
 
 const TOKEN_BYTES = 32;
-
-/**
- * The engine's browser answers that carry a code with a status that is not a 4xx (architecture section 5, the
- * identity routes): `busy` while a call holds the browser, and the three failures of a browser itself. They pass
- * through to the API as they are.
- */
-const ENGINE_BROWSER_ANSWERS: Readonly<Record<string, number>> = {
-  busy: 503,
-  frame_failed: 502,
-  crashed: 502,
-  launch_failed: 502,
-};
 
 export class Scheduler {
   readonly db: Database;
@@ -501,7 +490,7 @@ export class Scheduler {
 
   /**
    * Run a guest call and turn its failure into an API error: the guest's own 4xx passes through, and so do the
-   * engine's coded browser answers that are not 4xx (`ENGINE_BROWSER_ANSWERS`): a coded answer is the engine
+   * engine's coded identity answers that are not 4xx (`IDENTITY_ERROR_STATUS` of packages/shared: `busy` and the browser's own failures): a coded answer is the engine
    * speaking, not a silence, so the UI can tell a busy or crashed browser from an unreachable computer.
    */
   async #guestCall<T>(dotId: string, what: string, call: () => Promise<T>): Promise<T> {
@@ -510,7 +499,7 @@ export class Scheduler {
     } catch (error) {
       const status = guestErrorStatus(error);
       const code = guestErrorCode(error);
-      if ((status >= 400 && status < 500 && status !== 401) || (code !== undefined && ENGINE_BROWSER_ANSWERS[code] === status)) {
+      if ((status >= 400 && status < 500 && status !== 401) || isIdentityAnswer(code, status)) {
         throw new ControlPlaneError(status, code ?? "guest_error", errorMessage(error));
       }
       this.#log.warn("guest call failed", { dotId, what, error: errorMessage(error) });

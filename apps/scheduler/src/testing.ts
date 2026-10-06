@@ -9,6 +9,7 @@
  */
 import {
   checkIdentityRequest,
+  IDENTITY_ERROR_STATUS,
   IdentityRequestError,
   newId,
   newIdentityId,
@@ -21,6 +22,7 @@ import {
   type DotRuntimeConfig,
   type GuestChecks,
   type HealthAnswer,
+  type IdentityErrorCode,
   type InboundEvent,
   type OutboundEvent,
   type OutboundEventDataMap,
@@ -102,8 +104,8 @@ export class FakeGuest implements GuestApi {
   onInbound: InboundHandler = completeEverything;
   /** While set, a frame of an open identity answers 503 `busy`, as when a call of the Dot holds the browser. */
   identityBusy = false;
-  /** While set, a frame of an open identity answers 502 with this code, as when the engine's browser fails. */
-  identityFault: "frame_failed" | "crashed" | "launch_failed" | null = null;
+  /** While set, a frame of an open identity answers with this code and its status of the shared table, as when the engine's browser fails. */
+  identityFault: IdentityErrorCode | null = null;
   /** When set, `postEvent` fails with it once. */
   failNextPost: Error | null = null;
   boots = 0;
@@ -331,8 +333,12 @@ export class FakeGuest implements GuestApi {
     if (identity.status !== "open") {
       throw new FakeGuestError(409, `identity ${id} is not open; call browser_identity_launch first`, "not_open");
     }
-    if (this.identityBusy) throw new FakeGuestError(503, `browser identity "${id}" is busy with a call; ask again in a moment`, "busy");
-    if (this.identityFault) throw new FakeGuestError(502, `browser identity "${id}" failed: ${this.identityFault}`, this.identityFault);
+    if (this.identityBusy) {
+      throw new FakeGuestError(IDENTITY_ERROR_STATUS.busy, `browser identity "${id}" is busy with a call; ask again in a moment`, "busy");
+    }
+    if (this.identityFault) {
+      throw new FakeGuestError(IDENTITY_ERROR_STATUS[this.identityFault], `browser identity "${id}" failed: ${this.identityFault}`, this.identityFault);
+    }
     // The JPEG markers of an empty image: enough for a content check.
     return Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]);
   }

@@ -165,6 +165,31 @@ export const AGENT_ROUTES = {
   prepareSleep: "/prepare-sleep",
 } as const;
 
+/**
+ * The HTTP status of each error code the engine answers on the identity routes (architecture section 5.3):
+ * `invalid`, `not_found`, `limit` and `not_open` are the caller's, `busy` is a call holding the browser, and
+ * `launch_failed`, `crashed` and `frame_failed` are the browser's. nanobot/dots/protocol.py holds the same
+ * table and serves its answers from it; the control plane passes an answer with one of these pairs through
+ * as it is, so the UI can tell a busy or crashed browser from an unreachable computer.
+ */
+export const IDENTITY_ERROR_STATUS = {
+  invalid: 400,
+  not_found: 404,
+  limit: 409,
+  not_open: 409,
+  busy: 503,
+  launch_failed: 502,
+  crashed: 502,
+  frame_failed: 502,
+} as const;
+
+export type IdentityErrorCode = keyof typeof IDENTITY_ERROR_STATUS;
+
+/** Whether a guest answer with this `{ error }` code and status is one of the engine's identity answers. */
+export function isIdentityAnswer(code: string | undefined, status: number): code is IdentityErrorCode {
+  return code !== undefined && Object.hasOwn(IDENTITY_ERROR_STATUS, code) && IDENTITY_ERROR_STATUS[code as IdentityErrorCode] === status;
+}
+
 /** Guest self-checks the host needs before it calls a Dot READY (section 9.3). */
 export interface GuestChecks {
   filesystem_writable: boolean;

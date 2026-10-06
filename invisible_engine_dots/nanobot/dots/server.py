@@ -21,12 +21,13 @@ from urllib.parse import unquote
 from aiohttp import web
 from loguru import logger
 
-from nanobot.dots.browser import BrowserIdentity, BrowserIdentityError, ErrorCode
+from nanobot.dots.browser import BrowserIdentity, BrowserIdentityError
 from nanobot.dots.checks import GuestCheckRunner
 from nanobot.dots.engine import Engine, EngineStopped
 from nanobot.dots.protocol import (
     AGENT_ROUTES,
     BROWSER_IDENTITY_ACTIONS,
+    IDENTITY_ERROR_STATUS,
     DotsConfigError,
     InvalidEvent,
     parse_inbound_event,
@@ -58,22 +59,10 @@ def _allow(method: str, *allowed: str) -> None:
         raise HttpError(405, "method_not_allowed", f"{method} is not allowed here; use {' or '.join(allowed)}")
 
 
-# The HTTP status of each way a browser identity request can fail. `not_open` is an action on a closed
-# identity: the Dot's tools make it, and so does a frame of one.
-_IDENTITY_STATUS: dict[ErrorCode, int] = {
-    "invalid": 400,
-    "not_found": 404,
-    "limit": 409,
-    "not_open": 409,
-    "busy": 503,
-    "launch_failed": 502,
-    "crashed": 502,
-    "frame_failed": 502,
-}
-
-
 def _identity_error(error: BrowserIdentityError) -> HttpError:
-    return HttpError(_IDENTITY_STATUS[error.code], error.code, error.message)
+    """The answer for a failed browser identity request; its status is the shared table's (`not_open` is an
+    action on a closed identity: the Dot's tools make it, and so does a frame of one)."""
+    return HttpError(IDENTITY_ERROR_STATUS[error.code], error.code, error.message)
 
 
 def _identity_json(identity: BrowserIdentity) -> dict[str, object]:
