@@ -43,12 +43,15 @@ class ToolEntry:
     build: factory taking ToolDeps to instantiate the Tool.
     target: from the call's arguments, the one redacted line `tool.called` shows of it (None: nothing).
     needs_memory: the tool exists only while the Dot's memory is enabled.
+    starts_terminal: from the call's arguments, whether it starts a terminal session.
     """
 
     permission: str
     build: Callable[[ToolDeps], Tool]
     target: Callable[[Mapping[str, Any]], str | None]
     needs_memory: bool = False
+    # Whether the call starts a terminal session, which `tool.called` marks (`tty`); no other tool does.
+    starts_terminal: Callable[[Mapping[str, Any]], bool] = targets.never_starts_terminal
 
 
 def _build_exec(deps: ToolDeps) -> Tool:
@@ -131,7 +134,7 @@ def _build_cron(deps: ToolDeps) -> Tool:
 
 TOOL_PERMISSIONS: Mapping[str, ToolEntry] = MappingProxyType(
     {
-        "exec": ToolEntry("computer.exec", _build_exec, targets.exec_target),
+        "exec": ToolEntry("computer.exec", _build_exec, targets.exec_target, starts_terminal=targets.exec_starts_terminal),
         "exec_session": ToolEntry("computer.exec", _build_exec_session, targets.exec_session_target),
         "list_exec_sessions": ToolEntry("computer.exec", _build_list_exec_sessions, targets.no_target),
         "read_file": ToolEntry("files.read", _build_read_file, targets.path_target),
@@ -165,6 +168,14 @@ def tool_target(tool_name: str, params: Any) -> str | None:
         return None
     target = entry.target(params)
     return targets.clip(target, TOOL_TARGET_MAX) if target else None
+
+
+def tool_starts_terminal(tool_name: str, params: Any) -> bool:
+    """Whether the call starts a terminal session (false for a tool that is not the Dot's, or odd arguments)."""
+    entry = TOOL_PERMISSIONS.get(tool_name)
+    if entry is None or not isinstance(params, Mapping):
+        return False
+    return entry.starts_terminal(params)
 
 
 def offered_tools(permissions: Mapping[str, str], *, memory_enabled: bool = True) -> list[str]:

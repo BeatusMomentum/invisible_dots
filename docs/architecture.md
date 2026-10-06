@@ -683,10 +683,14 @@ text, spent_usd?}`, `task.completed {task_id, summary, spent_usd?}`,
 `task.failed {task_id, error, spent_usd?}`,
 `approval.requested {approval_id, task_id?, tool, permission, arguments,
 reason}`, `tool.called {task_id?, tool, permission, decision, ok,
-duration_ms, target?, interrupted?}`, `browser.identity.created|deleted|launched|closed
+duration_ms, target?, tty?, interrupted?}`, `browser.identity.created|deleted|launched|closed
 {identity_id, name}`, `memory.written {key}`. `interrupted: true` marks a call
 the engine stopped during: its outcome is unknown and it was not run again, so
-`ok` is false and `duration_ms` is 0.
+`ok` is false and `duration_ms` is 0. `tty: true` marks a call that started a
+terminal session (`exec` with `tty`, section 8.3), which is not what its target
+says (the command): a client shows "Started a terminal session: python3". It is
+absent for every other call, and the permission table
+(`TOOL_PERMISSIONS[...].starts_terminal`) is where a tool says it can.
 
 `task.progress {task_id, text}` is the model saying what it is about to do: the
 text an assistant message of a running task carries beside its tool calls (the

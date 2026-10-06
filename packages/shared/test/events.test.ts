@@ -127,6 +127,15 @@ describe("parseOutboundEvent", () => {
     expect(() => parseOutboundEvent({ seq: 6, id: "e", type: "tool.called", ts, data: { ...data, interrupted: false } })).toThrow(/interrupted/);
   });
 
+  it("keeps the mark of a call that started a terminal session and refuses any other value of it", () => {
+    const data = { tool: "exec", permission: "computer.exec", decision: "allow", ok: true, duration_ms: 12, target: "python3" };
+    const parse = (tty: unknown) => parseOutboundEvent({ seq: 9, id: "e", type: "tool.called", ts, data: { ...data, tty } });
+    expect(parse(true).data).toEqual({ ...data, tty: true });
+    expect(parseOutboundEvent({ seq: 10, id: "e", type: "tool.called", ts, data }).data).toEqual(data);
+    expect(() => parse(false)).toThrow(/tty/);
+    expect(() => parse("yes")).toThrow(/tty/);
+  });
+
   it("keeps the one-line target of a tool call and refuses one that is empty, long or on several lines", () => {
     const data = { task_id: "t1", tool: "exec", permission: "computer.exec", decision: "allow", ok: true, duration_ms: 12 };
     const parse = (target: unknown) => parseOutboundEvent({ seq: 7, id: "e", type: "tool.called", ts, data: { ...data, target } });

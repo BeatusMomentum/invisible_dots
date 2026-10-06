@@ -653,6 +653,26 @@ class TestToolTargets:
         assert called["target"] == "curl -H 'Authorization: ***' https://e.com/x"
         assert "abc123" not in str(h.events()) and "pw@" not in str(h.events())
 
+    async def test_a_command_run_in_a_terminal_says_so_and_one_that_was_not_does_not(
+        self, make_harness: MakeHarness
+    ) -> None:
+        h = make_harness(
+            [
+                calls(call("c1", "exec", command="python3 -q", tty=True)),
+                calls(call("c2", "exec", command="echo hi")),
+                says("done"),
+            ],
+            {"computer.exec": "allow"},
+        )
+        h.accept("in1")
+
+        await h.run(chat_unit())
+
+        assert [(c["target"], c.get("tty")) for c in h.events_of("tool.called")] == [
+            ("python3 -q", True),
+            ("echo hi", None),
+        ]
+
     async def test_a_task_call_that_fails_still_names_its_target(self, make_harness: MakeHarness) -> None:
         h = make_harness([calls(call("c1", "read_file", path="/home/dot/workspace/missing.txt")), says("done")], {"files.read": "allow"})
         session = h.start_task()

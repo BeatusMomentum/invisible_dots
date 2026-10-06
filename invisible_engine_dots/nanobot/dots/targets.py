@@ -205,6 +205,16 @@ def exec_target(params: Mapping[str, Any]) -> str | None:
     return clip(redact_command(command.splitlines()[0]), EXEC_TARGET_MAX)
 
 
+def exec_starts_terminal(params: Mapping[str, Any]) -> bool:
+    """Whether the call asks `exec` for a terminal session (`tty`): the one thing `tool.called` says of a call
+    besides what it acted on, because a client shows "started a terminal session" and not "ran a command"."""
+    return params.get("tty") is True
+
+
+def never_starts_terminal(params: Mapping[str, Any]) -> bool:
+    return False
+
+
 def path_target(params: Mapping[str, Any]) -> str | None:
     return _string(params, "path") or None
 

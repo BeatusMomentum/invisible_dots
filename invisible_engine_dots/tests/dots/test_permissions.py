@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from nanobot.dots.permissions import TOOL_PERMISSIONS, offered_tools, tool_permission, tool_target
+from nanobot.dots.permissions import (
+    TOOL_PERMISSIONS,
+    offered_tools,
+    tool_permission,
+    tool_starts_terminal,
+    tool_target,
+)
 
 
 def test_every_tool_maps_to_the_permission_of_the_design() -> None:
@@ -43,6 +49,18 @@ def test_every_tool_of_the_table_states_what_of_its_call_may_be_shown() -> None:
         assert entry.target({}) is None, name
     assert tool_target("exec", {"command": "ls"}) == "ls"
     assert tool_target("web_search", {"query": "ls"}) is None
+
+
+def test_only_a_call_of_exec_that_asks_for_a_tty_starts_a_terminal_session() -> None:
+    assert tool_starts_terminal("exec", {"command": "python3", "tty": True}) is True
+    for params in ({"command": "python3"}, {"command": "python3", "tty": False}, {"command": "x", "tty": "yes"}):
+        assert tool_starts_terminal("exec", params) is False, params
+    # No other tool starts one, whatever its arguments say; nor does a call with arguments of no shape.
+    for name in TOOL_PERMISSIONS:
+        if name != "exec":
+            assert tool_starts_terminal(name, {"command": "x", "tty": True}) is False, name
+    assert tool_starts_terminal("exec", "tty") is False
+    assert tool_starts_terminal("web_search", {"tty": True}) is False
 
 
 def test_the_table_cannot_be_changed_by_a_caller() -> None:

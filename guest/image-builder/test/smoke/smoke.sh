@@ -241,6 +241,7 @@ check "the terminal program runs as dot, waiting for its answer" "pgrep -u dot -
 ev msg-tty2 user.message '{"text":"TTY-ANSWER Ada"}' >/dev/null
 check "the answer reaches the program: the model reads its reply and the exit, with no escape sequence or carriage return" "wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-tty2\" and (.data.text|test(\"hello Ada\")) and (.data.text|test(\"Exit code: 0\")) and (.data.text|test(\"\\u001b\")|not) and (.data.text|test(\"\\r\")|not)'"
 check "the terminal program ended" "gone_within 10 'bash /tmp/tty-ask.sh'"
+check "that exec call is reported with tty true and names its command, and no other call of the run says tty" "grep '^data: ' $STREAM | sed 's/^data: //' | jq -s -e '[.[] | select(.type==\"tool.called\" and .data.tty==true) | .data.target] == [\"bash /tmp/tty-ask.sh\"]' >/dev/null"
 
 # --- SIGTERM while a tool runs: the engine is gone within systemd's TimeoutStopSec=30 ---
 ev task-ev-6 task.created '{"task_id":"t6","description":"RUN-EXEC sleep 70; echo late6 > /home/dot/workspace/late6.txt","priority":0}' >/dev/null

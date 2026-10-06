@@ -22,7 +22,8 @@ this process's memory.
   measured from the call's intent row, the decision the gate recorded for
   it (gate.py) and the target the intent holds (permissions.tool_target: what
   the call acted on, redacted; a call that never started, such as a denied
-  one, has no intent and so no target); a call that did not run (parked,
+  one, has no intent and so no target), and `tty: true` when the intent says the call started a
+  terminal session (permissions.tool_starts_terminal); a call that did not run (parked,
   skipped, closed as not run) gets none;
 - the notes a tool call wrote, when it ran ok: one `memory.written` per note
   (`key` is the path relative to the memory directory), right after its
@@ -179,6 +180,8 @@ def _record_tool_result(
     }
     if intent is not None and intent.target:
         event["target"] = intent.target
+    if intent is not None and intent.tty:
+        event["tty"] = True
     if interrupted:
         event["interrupted"] = True
     store.append_outbox(conn, "tool.called", event)

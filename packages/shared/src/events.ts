@@ -125,6 +125,11 @@ export interface OutboundEventDataMap {
      */
     target?: string;
     /**
+     * The call started a terminal session (`exec` with `tty`): a client shows "Started a terminal
+     * session: python3" and not "ran a command". Absent for every other call.
+     */
+    tty?: true;
+    /**
      * The agent stopped while the call ran, so its outcome is unknown and it
      * was not run again (architecture section 8.7). `ok` is false and
      * `duration_ms` is 0.
@@ -275,6 +280,7 @@ export const outboundEventSchema = z.discriminatedUnion("type", [
         .max(TOOL_TARGET_MAX)
         .regex(/^[^\r\n]*$/, "a target is one line")
         .optional(),
+      tty: z.literal(true).optional(),
       interrupted: z.literal(true).optional(),
     }),
   }),

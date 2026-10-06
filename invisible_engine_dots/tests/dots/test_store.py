@@ -777,6 +777,18 @@ class TestToolIntents:
         dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c1", "exec", "s", None, 2, (), "second")))
         assert dot_store.read(lambda c: s.peek_tool_intent(c, "s", "c1")).target == "first"  # type: ignore[union-attr]
 
+    def test_an_intent_says_whether_its_call_started_a_terminal_session_and_does_not_by_default(
+        self, dot_store: DotStore
+    ) -> None:
+        terminal = s.ToolIntent("c1", "exec", "s", None, 1, (), "python3", True)
+        dot_store.write(lambda c: s.record_tool_intent(c, terminal))
+        dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c2", "exec", "s", None, 2, (), "ls")))
+        assert s.ToolIntent("c2", "exec", "s", None, 2).tty is False
+        assert dot_store.read(lambda c: s.peek_tool_intent(c, "s", "c1")) == terminal
+        assert dot_store.read(lambda c: s.peek_tool_intent(c, "s", "c2")).tty is False  # type: ignore[union-attr]
+        assert dot_store.write(lambda c: s.take_tool_intent(c, "s", "c1")) == terminal
+        assert [i.tty for i in dot_store.read(s.list_tool_intents)] == [False]
+
     def test_the_first_start_of_a_call_keeps_its_notes_too(self, dot_store: DotStore) -> None:
         dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c1", "write_file", "s", None, 1, ("a.md",))))
         dot_store.write(lambda c: s.record_tool_intent(c, s.ToolIntent("c1", "write_file", "s", None, 2, ("z.md",))))
