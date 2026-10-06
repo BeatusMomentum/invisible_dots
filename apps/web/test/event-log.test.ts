@@ -1,20 +1,20 @@
 import { MAX_EVENT_PAGE, type StoredEvent } from "@invisible-dots/shared/browser";
 import { describe, expect, it } from "vitest";
-import { readEventLog, readRecentEvents } from "../src/lib/event-log";
+import { mergeEvents, readEventLog, readRecentEvents } from "../src/lib/event-log";
 
 function log(count: number): StoredEvent[] {
   return Array.from({ length: count }, (_, i) => ({ id: i + 1, dot_id: "d1", type: i % 3 === 0 ? "tool.called" : "agent.state", data: {}, source: "guest", guest_seq: i, created_at: "2026-03-10T12:00:00Z" }) as StoredEvent);
 }
 
 function clientOf(events: StoredEvent[]) {
-  const asked: Array<{ after?: number; limit?: number; types?: readonly string[]; tools?: readonly string[]; order?: string }> = [];
+  const asked: Array<{ after?: number; before?: number; limit?: number; types?: readonly string[]; tools?: readonly string[]; order?: string }> = [];
   return {
     asked,
     // The control plane's filter: the types a caller names are kept in the database, the limit counts what is kept.
-    async events(_dot: string, options: { after?: number; limit?: number; types?: readonly string[]; tools?: readonly string[]; order?: "asc" | "desc" } = {}) {
+    async events(_dot: string, options: { after?: number; before?: number; limit?: number; types?: readonly string[]; tools?: readonly string[]; order?: "asc" | "desc" } = {}) {
       asked.push(options);
       const kept = events.filter(
-        (e) => e.id > (options.after ?? 0) && (!options.types || options.types.includes(e.type)) && (!options.tools || e.type !== "tool.called" || options.tools.includes(String(e.data.tool))),
+        (e) => e.id > (options.after ?? 0) && e.id < (options.before ?? Infinity) && (!options.types || options.types.includes(e.type)) && (!options.tools || e.type !== "tool.called" || options.tools.includes(String(e.data.tool))),
       );
       return (options.order === "desc" ? [...kept].reverse() : kept).slice(0, options.limit);
     },
@@ -76,5 +76,30 @@ describe("readRecentEvents", () => {
     const read = await readRecentEvents(client, "d1", { types: ["tool.called", "agent.state"], keep: (event) => event.id % 2 === 0, count: 10 * MAX_EVENT_PAGE });
     expect(client.asked.map((a) => a.limit)).toEqual([MAX_EVENT_PAGE]);
     expect(read.map((event) => event.id)).toEqual(Array.from({ length: 15 }, (_, i) => 2 * (i + 1)));
+  });
+
+  it("goes on from `before`: the page of events that came before the oldest one read, oldest first", async () => {
+    const events = log(30);
+    const client = clientOf(events);
+    const newest = await readRecentEvents(client, "d1", { types: ["tool.called", "agent.state"], count: 10 });
+    expect(newest.map((e) => e.id)).toEqual(Array.from({ length: 10 }, (_, i) => 21 + i));
+    const older = await readRecentEvents(client, "d1", { types: ["tool.called", "agent.state"], count: 10, before: newest[0]!.id });
+    expect(older.map((e) => e.id)).toEqual(Array.from({ length: 10 }, (_, i) => 11 + i));
+    expect(client.asked[1]).toMatchObject({ before: 21, limit: 10, order: "desc" });
+    // The start of the log: fewer than asked for, then nothing.
+    const first = await readRecentEvents(client, "d1", { types: ["tool.called", "agent.state"], count: 10, before: 11 });
+    expect(first.map((e) => e.id)).toEqual(Array.from({ length: 10 }, (_, i) => 1 + i));
+    expect(await readRecentEvents(client, "d1", { types: ["tool.called", "agent.state"], count: 10, before: 1 })).toEqual([]);
+  });
+});
+
+describe("mergeEvents", () => {
+  const at = (id: number, type: string) => ({ id, dot_id: "d1", type, data: {}, source: "guest", guest_seq: id, created_at: "2026-03-10T12:00:00Z" }) as StoredEvent;
+
+  it("orders by id and drops duplicates from a replayed stream", () => {
+    const a = at(1, "agent.state");
+    const b = at(2, "agent.state");
+    const c = at(3, "agent.state");
+    expect(mergeEvents([a, c], [b, c]).map((e) => e.id)).toEqual([1, 2, 3]);
   });
 });

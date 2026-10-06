@@ -225,6 +225,11 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     const browserCalls = await api.events(dot.id, { types: ["tool.called"], tools: ["browser_navigate", "browser_click"], order: "desc", limit: 1 });
     expect(browserCalls.map((e) => e.data.target)).toEqual(["x-1: https://example.com/"]);
     expect((await api.events(dot.id, { types: ["tool.called", "memory.written"], tools: ["browser_click"] })).map((e) => e.type)).toEqual(["memory.written"]);
+    // `before` goes on, older, from the oldest event of a newest-first page, and only there.
+    const calls = await api.events(dot.id, { types: ["tool.called"], order: "desc", limit: 2 });
+    expect((await api.events(dot.id, { types: ["tool.called"], order: "desc", limit: 2, before: calls.at(-1)!.id })).map((e) => e.data.target)).toEqual(["x-1: https://example.com/", "date"]);
+    expect(await get(`before=${calls.at(-1)!.id}`)).toMatchObject({ status: 400, body: { message: "before pages a list in order=desc" } });
+    expect((await get("order=desc&before=-1")).status).toBe(400);
     expect((await get("order=sideways")).status).toBe(400);
     expect((await get("order=desc&order=asc")).status).toBe(400);
     expect((await get("tools=a&tools=b")).status).toBe(400);

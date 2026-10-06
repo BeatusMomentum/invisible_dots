@@ -3,8 +3,7 @@
  * drawer. The log is the one record of both (the task row keeps only its state, result and spend).
  */
 import type { InvisibleDotsClient } from "@invisible-dots/sdk";
-import { readEventLog } from "./event-log";
-import { mergeEvents } from "./timeline";
+import { mergeEvents, readEventLog } from "./event-log";
 import type { StoredEvent } from "./types";
 
 function text(value: unknown): string {

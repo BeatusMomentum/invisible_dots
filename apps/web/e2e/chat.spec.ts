@@ -229,8 +229,6 @@ test("the user's bubble and the Dot's words are readable in light and in dark", 
       return (high + 0.05) / (low + 0.05);
     });
     expect(ratio, scheme).toBeGreaterThanOrEqual(4.5);
-    // The old stylesheet is not what draws this page.
-    await expect(page.locator(".legacy")).toHaveCount(0);
   }
 });
 

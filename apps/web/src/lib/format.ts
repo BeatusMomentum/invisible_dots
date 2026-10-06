@@ -1,4 +1,4 @@
-import type { Tone } from "./timeline";
+import type { Tone } from "./tone";
 
 const UNITS = ["B", "KiB", "MiB", "GiB", "TiB"];
 

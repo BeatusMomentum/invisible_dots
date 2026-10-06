@@ -1,5 +1,5 @@
 import type { AgentState } from "@invisible-dots/shared/browser";
-import type { Tone } from "./timeline";
+import type { Tone } from "./tone";
 
 export type AgentStateValue = AgentState;
 

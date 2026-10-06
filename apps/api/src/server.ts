@@ -415,20 +415,23 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     async (request): Promise<UsageAnswer> => scheduler.usage(request.params.id, sinceParam(request.query.since)),
   );
 
-  app.get<{ Params: Params; Querystring: { after?: string; limit?: string; types?: unknown; tools?: unknown; task_id?: unknown; order?: unknown } }>(
+  app.get<{ Params: Params; Querystring: { after?: string; before?: string; limit?: string; types?: unknown; tools?: unknown; task_id?: unknown; order?: unknown } }>(
     "/api/dots/:id/events",
     async (request): Promise<EventsAnswer> => {
       const after = intParam(request.query.after, "after");
+      const before = intParam(request.query.before, "before");
       const limit = intParam(request.query.limit, "limit", MAX_EVENT_PAGE);
       const { types, tools, task_id: taskId, order } = request.query;
       if (types !== undefined && typeof types !== "string") throw bad("types must be one comma-separated list");
       if (tools !== undefined && typeof tools !== "string") throw bad("tools must be one comma-separated list");
       if (taskId !== undefined && typeof taskId !== "string") throw bad("task_id must be a single value");
       if (order !== undefined && !(LIST_ORDERS as readonly unknown[]).includes(order)) throw bad(`order must be one of ${LIST_ORDERS.join(", ")}`);
+      if (before !== undefined && order !== "desc") throw bad("before pages a list in order=desc");
       const list = (value: string | undefined) => value?.split(",").map((one) => one.trim()).filter(Boolean);
       return {
         events: await scheduler.listEvents(request.params.id, {
           after,
+          before,
           limit,
           types: list(types),
           tools: list(tools),

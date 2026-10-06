@@ -28,6 +28,8 @@ export interface EventQuery {
   dotId?: string;
   /** Only events with an id greater than this. */
   after?: number;
+  /** Only events with an id less than this: the page that goes on, older, from the oldest row of the last one. Needs `order: "desc"`. */
+  before?: number;
   /** Only these types. */
   types?: readonly string[];
   /** Only the events of this task (`data.task_id`). */
@@ -114,6 +116,12 @@ export class EventsRepository {
       params.push(query.taskId);
       taskFilter = `AND data->>'task_id' = $${params.length}`;
     }
+    let beforeFilter = "";
+    if (query.before !== undefined) {
+      if (query.order !== "desc") throw new Error("events: `before` pages a list in order desc");
+      params.push(query.before);
+      beforeFilter = `AND id < $${params.length}`;
+    }
     let toolFilter = "";
     if (query.tools !== undefined) {
       params.push([...query.tools]);
@@ -127,6 +135,7 @@ export class EventsRepository {
           AND ($3::text[] IS NULL OR type = ANY($3))
           ${taskFilter}
           ${toolFilter}
+          ${beforeFilter}
         ORDER BY id ${query.order === "desc" ? "DESC" : ""}
         LIMIT $${params.length}`,
       params,

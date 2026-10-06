@@ -37,7 +37,6 @@ test("the Memory tab lists the Dot's notes, reads one as Markdown, follows a not
   // The tab is in the bar, and leads to the notes.
   await page.getByRole("navigation", { name: "Dot sections" }).getByRole("link", { name: "Memory" }).click();
   await expect(page).toHaveURL(/\/memory$/);
-  await expect(page.locator(".legacy")).toHaveCount(0);
   const list = page.getByRole("list", { name: "Notes" });
   await expect(list.getByRole("listitem")).toHaveCount(2);
   // Newest written first, the folder of a note before its name.

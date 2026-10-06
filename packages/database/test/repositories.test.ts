@@ -225,6 +225,12 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect(await ids({ types: ["tool.called"], tools: ["browser_navigate", "browser_click"], order: "desc", limit: 1 })).toEqual([click!.id]);
     // With `after`, newest first still reads the events after it.
     expect(await ids({ after: nav!.id, order: "desc", limit: 1 })).toEqual([all[5]!]);
+    // `before` goes on, older, from the oldest row of the last page, and it combines with the filters; it pages newest first only.
+    expect(await ids({ order: "desc", limit: 2, before: all[4]! })).toEqual([all[3]!, all[2]!]);
+    expect(await ids({ order: "desc", before: all[1]! })).toEqual([all[0]!]);
+    expect(await ids({ order: "desc", before: all[0]! })).toEqual([]);
+    expect(await ids({ types: ["tool.called"], tools: ["browser_navigate", "browser_click"], order: "desc", before: click!.id })).toEqual([nav!.id]);
+    await expect(ids({ before: all[4]! })).rejects.toThrow(/order/);
   });
 
   it("events: the spend of a Dot sums the events that end a unit of spend, from a moment on", async () => {

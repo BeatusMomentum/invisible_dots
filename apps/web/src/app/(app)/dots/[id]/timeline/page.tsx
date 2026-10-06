@@ -1,12 +1,7 @@
-import type { Metadata } from "next";
-import { TimelineTab } from "../../../../../components/TimelineTab";
+import { redirect } from "next/navigation";
 
-export const metadata: Metadata = { title: "Timeline" };
-
-export default function Page() {
-  return (
-    <div className="legacy">
-      <TimelineTab />
-    </div>
-  );
+/** The Timeline became the Activity page. */
+export default async function Page({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  redirect(`/dots/${encodeURIComponent(id)}/activity`);
 }

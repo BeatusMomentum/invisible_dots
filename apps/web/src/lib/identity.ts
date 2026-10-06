@@ -1,7 +1,7 @@
 /** How a browser identity is said to the person: its state in words and a tone, and what its limits allow. */
 import { checkIdentityRequest, IdentityRequestError } from "@invisible-dots/shared/browser";
 import type { BrowserIdentity, DotConfig } from "./types";
-import type { Tone } from "./timeline";
+import type { Tone } from "./tone";
 
 export interface IdentityStatus {
   label: string;

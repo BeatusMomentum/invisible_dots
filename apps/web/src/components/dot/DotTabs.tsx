@@ -5,15 +5,15 @@ import { usePathname } from "next/navigation";
 import { cn } from "../../lib/utils";
 
 /**
- * The tabs that exist today. Each later step of the redesign swaps an entry for its replacement (activity, memory,
- * channels, ...) in the same commit that adds the page, so no tab ever leads nowhere.
+ * The tabs that exist today. A later step adds its entry (channels) in the same commit that adds the page, so no tab
+ * ever leads nowhere.
  */
 export const DOT_TABS = [
   { slug: "chat", label: "Chat" },
   { slug: "tasks", label: "Tasks" },
-  { slug: "timeline", label: "Timeline" },
   { slug: "computer", label: "Computer" },
   { slug: "memory", label: "Memory" },
+  { slug: "activity", label: "Activity" },
   { slug: "settings", label: "Settings" },
 ] as const;
 

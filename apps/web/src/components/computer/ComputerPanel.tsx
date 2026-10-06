@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { computerIsUp, IDENTITY_EVENT_TYPES } from "@invisible-dots/shared/browser";
 import { api } from "../../lib/api";
 import { useLiveRefresh } from "../events";
-import { ErrorBox, useResource } from "../ui";
+import { ErrorAlert } from "../ErrorAlert";
+import { useResource } from "../ui";
 import { Button } from "../ui/button";
 import { FrameView, type Source } from "./frame-view";
 
@@ -59,7 +60,7 @@ export function ComputerPanel({ dotId, computerState }: { dotId: string; compute
           );
         })}
       </div>
-      <ErrorBox error={identities.error} title="Could not list the browsers" />
+      <ErrorAlert error={identities.error} title="Could not list the browsers" />
       <FrameView key={sourceKey} dotId={dotId} source={source} identity={chosen} onClosed={identities.reload} />
     </section>
   );

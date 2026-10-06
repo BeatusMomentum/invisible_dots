@@ -8,7 +8,7 @@
  */
 import { toolLabel, type ToolFamily } from "./events/tool-labels";
 import type { ApprovalOutcome } from "./task-events";
-import { mergeEvents } from "./timeline";
+import { mergeEvents } from "./event-log";
 import type { ChatMessage, StoredEvent } from "./types";
 
 /**

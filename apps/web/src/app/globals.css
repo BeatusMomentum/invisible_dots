@@ -1,18 +1,10 @@
 /*
- * The stylesheet of the web client: Tailwind 4, the design tokens, and the old stylesheet for the screens that have
- * not moved to the new design yet (legacy.css, scoped to `.legacy`, shrinking with every step).
- *
- * The order of the layers matters: the old rules sit above Tailwind's base (so the old screens keep their look) and
- * below components and utilities. A utility beats an old rule only for the properties it sets, so what keeps a new
- * screen safe from the old rules is the scope: a screen that has moved never carries `.legacy` (e2e/tasks.spec.ts
- * checks it for the Tasks page).
+ * The stylesheet of the web client: Tailwind 4 and the design tokens (tokens.css). Every screen is styled by
+ * utilities over those tokens; there is no other stylesheet.
  */
-@layer theme, base, legacy, components, utilities;
-
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "./tokens.css";
-@import "./legacy.css" layer(legacy);
 
 @custom-variant dark (&:is([data-theme="dark"] *));
 

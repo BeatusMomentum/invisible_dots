@@ -185,9 +185,6 @@ for (const scheme of ["light", "dark"] as const) {
     await expect(page.getByRole("region", { name: /^Queue/ }).getByRole("article", { name: "Waits in the queue" })).toBeVisible();
     await expect(page.getByRole("region", { name: /^Scheduled/ }).getByRole("article", { name: "Waits for its time" })).toBeVisible();
 
-    // The old stylesheet is scoped to the pages that still use it: this is not one of them.
-    await expect(page.locator(".legacy")).toHaveCount(0);
-
     for (const list of ["section[aria-labelledby=tasks-running] ul", "section[aria-labelledby=tasks-scheduled] ul", "section[aria-labelledby=tasks-queue] ol"]) {
       const look = await lookOf(page, list);
       expect(look.listStyle, list).toBe("none");
@@ -204,12 +201,6 @@ for (const scheme of ["light", "dark"] as const) {
     }
   });
 }
-
-test("a Dot's tab that is still in the old design keeps the old stylesheet", async ({ signedIn: page, harness }) => {
-  const dot = await harness.createDot("tasks-legacy");
-  await page.goto(`${harness.webUrl}/dots/${dot.id}/timeline`);
-  await expect(page.locator(".legacy")).toHaveCount(1);
-});
 
 test("a Dot with more tasks than the host lists says so, and one with fewer does not", async ({ signedIn: page, harness }) => {
   const dot = await harness.createDot("tasks-many");

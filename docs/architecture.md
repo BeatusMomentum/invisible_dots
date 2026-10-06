@@ -1616,7 +1616,7 @@ GET    /api/approvals                ?status=<a,b>&limit=&order=asc|desc&before=
 POST   /api/approvals/:id/approve    body: { note?, always?: true }   `always` also sets the approval's permission to `allow` in the Dot's config in the same transaction (then pushed like a PATCH, `dot.updated` logged); `approval.resolved` carries `always: true`
 POST   /api/approvals/:id/reject     body: { note? }
 
-GET    /api/dots/:id/events          ?after=<id>&limit=&types=<a,b>&tools=<a,b>&task_id=&order=asc|desc   `types` are event type names (an unknown one is a 400), `tools` narrows `tool.called` to those tools (`data.tool`) and leaves other types alone, `task_id` keeps the events whose `data.task_id` it is, `order=desc` is the newest first so that a `limit` keeps the newest
+GET    /api/dots/:id/events          ?after=<id>&before=<id>&limit=&types=<a,b>&tools=<a,b>&task_id=&order=asc|desc   `types` are event type names (an unknown one is a 400), `tools` narrows `tool.called` to those tools (`data.tool`) and leaves other types alone, `task_id` keeps the events whose `data.task_id` it is, `order=desc` is the newest first so that a `limit` keeps the newest, and `before` (the id of the oldest event of the previous page, desc only) goes on, older, from there
 GET    /api/dots/:id/files/list      ?path=   { path, entries: [{ name, type, size, mtime }] }: a directory under /home/dot (home when omitted)
 GET    /api/dots/:id/files           ?path=   the bytes of a file under /home/dot, at most 16 MiB (413 `file_too_large`)
 GET    /api/dots/:id/automations     { automations: Automation[] }: the Dot's cron jobs (section 5.3); needs the computer running (409 `computer_stopped`)
@@ -1667,7 +1667,8 @@ contract puts the task, so the host's `task.created` and `task.cancelled` and
 the guest's `task.*`, `tool.called` and `approval.requested` of a task all
 match), and all combine with `after` and `limit`; `order=desc` reads from the newest
 event back (the limit then counts the newest that the filters keep, and the page is
-newest first). A chat turn's events carry
+newest first), and `before` (an event id, desc only) goes on from there: the events
+older than it, which is how the Activity page pages through a long log. A chat turn's events carry
 no task. Migration `0007_events_task.sql` adds the expression index the task
 filter reads. A type name no event has (`tool.calls`) is a 400, so a typo does not
 look like a quiet Dot.
@@ -1747,9 +1748,8 @@ and the primitives in `src/components/ui/` are shadcn/ui source, copied in
 with what needs the person, the state of the API and of the live stream, the theme,
 sign out) and, for a Dot, its header and tab bar. One live stream serves all of
 it; `lib/attention.ts` is the single owner of what needs the person, and the
-rail badges, the avatar ring, the tab title and the favicon all read it. The
-screens that have not been redesigned yet keep their rules in `legacy.css`,
-scoped to `.legacy`. The browser tests (`apps/web/e2e`, Playwright) start the
+rail badges, the avatar ring, the tab title and the favicon all read it. There
+is no other stylesheet: every screen is utilities over the tokens. The browser tests (`apps/web/e2e`, Playwright) start the
 real control plane in-process over the fake VM layer and the built web client
 against it (`e2e/harness.ts`), so a test drives what a Dot's computer does.
 
@@ -1967,6 +1967,28 @@ person does not create one here: an automation is the Dot's act and the
 `automations` permission asks by default, so the empty list says how one comes to
 be by what the config does with that permission. The list is read again when the
 cron tool is called, after a decision on an approval and when a run ends.
+
+The Activity page (`/dots/<id>/activity`; the old `/timeline` address redirects
+to it) is the whole event log of the Dot as readable lines, for the person who
+wants to know exactly what happened. `lib/events/view.ts` describes every type
+the log can hold, written against the data the contract gives that type (a type
+or field added to `packages/shared/src/events.ts` does not compile until it is
+described, and a test fails for a type with no family): a tone, a title, one
+line of detail (cut at 280 characters; under "Data" the event is shown as
+stored), and, for a message that came through a channel, "via Telegram". A
+`tool.called` line names the tool in words, what it acted on (`target`), how it
+ended (ok, failed, denied, interrupted) and the policy decision; `agent.started`
+says "The engine started (the key was sent again)". The families (chat, tasks,
+tools, approvals, browser, computer with the agent, memory, channels, the Dot's
+own config) are chips: the ones chosen become the `types` of the request, so a
+family not chosen is never read, and a live event is kept only if it is of a
+chosen type. The page reads the newest 200 events first (`order=desc`) and
+"Load older events" goes on with `before`, the id of the oldest one held, so the
+cost does not grow with the age of the Dot, and says where the log starts. The
+search is over the lines read so far (title, detail, type, channel), never a
+request of its own, and says so; the order switch only turns the list over. The
+export saves the events on screen, after the search, as JSON Lines (one stored
+event per line, oldest first) named for the Dot and the range of ids.
 
 ### 9.8 Messaging channels
 

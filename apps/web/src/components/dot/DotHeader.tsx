@@ -9,7 +9,8 @@ import { api } from "../../lib/api";
 import { allowedActions, taskRunning } from "../../lib/computer";
 import { cn } from "../../lib/utils";
 import type { Dot } from "../../lib/types";
-import { ErrorBox, useResource, type Resource } from "../ui";
+import { ErrorAlert } from "../ErrorAlert";
+import { useResource, type Resource } from "../ui";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
@@ -45,7 +46,7 @@ export function DotHeader({ dotId, dot }: { dotId: string; dot: Resource<Dot> })
   if (record === undefined) {
     return (
       <header className="space-y-3" aria-busy={dot.loading}>
-        <ErrorBox error={dot.error} title="Could not load this Dot" />
+        <ErrorAlert error={dot.error} title="Could not load this Dot" />
         <div className="flex items-center gap-3">
           <Skeleton className="size-12 rounded-full" />
           <Skeleton className="h-6 w-48" />
@@ -147,7 +148,7 @@ export function DotHeader({ dotId, dot }: { dotId: string; dot: Resource<Dot> })
           </AlertDescription>
         </Alert>
       ) : null}
-      <ErrorBox error={dot.error} title="Could not refresh this Dot" />
+      <ErrorAlert error={dot.error} title="Could not refresh this Dot" />
     </header>
   );
 }

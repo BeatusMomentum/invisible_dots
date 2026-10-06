@@ -26,8 +26,7 @@ export function useDot(): DotContextValue {
 const HEADER_EVENTS = ["dot.updated", "computer.state", "computer.started", "computer.stopped", "agent.state"];
 
 /**
- * The page of one Dot: its header (S4), the tab bar, and the tab's body. A tab that has not been redesigned yet puts
- * the `legacy` class on its own page; the shell does not, so a redesigned tab is never under the old stylesheet.
+ * The page of one Dot: its header (S4), the tab bar, and the tab's body.
  *
  * The control plane accepts a Dot's name where it takes an id, but the live stream, the rail and the attention state
  * all name a Dot by its id. So an address that holds a name is replaced by the one that holds the id as soon as the

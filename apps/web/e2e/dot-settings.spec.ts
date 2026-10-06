@@ -18,7 +18,6 @@ test("allow, ask and deny a permission: the host saves one entry, the Dot's engi
   const dot = await harness.createDot("config-perms");
   const guest = harness.driver.guestOf(dot.id);
   await page.goto(settings(harness.webUrl, dot.id));
-  await expect(page.locator(".legacy")).toHaveCount(0);
 
   // The tools of a permission, from the Dot's own table, offered while the permission is not denied.
   const exec = page.getByRole("list", { name: "Tools of Run commands" });

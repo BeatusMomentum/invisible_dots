@@ -168,7 +168,7 @@ describe("the tab bar", () => {
     await renderDot();
     const tabs = within(screen.getByRole("navigation", { name: "Dot sections" }));
     expect(tabs.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual(
-      ["chat", "tasks", "timeline", "computer", "memory", "settings"].map((slug) => "/dots/d1/" + slug),
+      ["chat", "tasks", "computer", "memory", "activity", "settings"].map((slug) => "/dots/d1/" + slug),
     );
     expect(tabs.getByRole("link", { name: "Tasks" }).getAttribute("aria-current")).toBe("page");
     expect(tabs.getByRole("link", { name: "Chat" }).getAttribute("aria-current")).toBeNull();

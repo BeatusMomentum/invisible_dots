@@ -1,30 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { errorIssues } from "../lib/api";
-
-export function ErrorBox({ error, title }: { error: unknown; title?: string }) {
-  if (!error) return null;
-  const message = error instanceof Error ? error.message : String(error);
-  const issues = errorIssues(error);
-  return (
-    <div className="error-box" role="alert">
-      {title ? <strong>{title}: </strong> : null}
-      {message}
-      {issues.length > 0 ? (
-        <ul>
-          {issues.map((issue, i) => (
-            <li key={i}>
-              {issue.path ? <code>{issue.path}</code> : null}
-              {issue.path ? ": " : null}
-              {issue.message}
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </div>
-  );
-}
 
 export interface Resource<T> {
   data: T | undefined;

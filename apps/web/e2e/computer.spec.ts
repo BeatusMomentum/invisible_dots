@@ -16,8 +16,6 @@ test("the Computer page shows the screen, the files and what the computer uses",
   guest.putFile("/home/dot/archive.zip", Uint8Array.from([0x50, 0x4b, 3, 4]));
   await page.goto(`${harness.webUrl}/dots/${dot.id}/computer`);
 
-  // The new design's own styles, not the old stylesheet's.
-  await expect(page.locator(".legacy")).toHaveCount(0);
   await expect(page.getByRole("link", { name: "Computer", exact: true })).toHaveAttribute("aria-current", "page");
   await expect(page.getByRole("link", { name: "Browser identities" })).toHaveCount(0);
 

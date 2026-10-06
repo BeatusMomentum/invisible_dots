@@ -14,7 +14,7 @@ import { PANEL_WIDE_PX, usePanel } from "../computer/panel-state";
 import { useDot } from "../DotShell";
 import { useDotRing } from "../dot/use-ring";
 import { useDotLive } from "../shell/attention";
-import { ErrorBox } from "../ui";
+import { ErrorAlert } from "../ErrorAlert";
 import { Button } from "../ui/button";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "../ui/sheet";
 import { Activity } from "./activity";
@@ -81,7 +81,7 @@ function ChatInner({ dotId }: { dotId: string }) {
     <>
       <Conversation className="min-h-0 flex-1" aria-label="Conversation">
         <ConversationContent>
-          <ErrorBox error={chat.messages.error} title="Could not load the conversation" />
+          <ErrorAlert error={chat.messages.error} title="Could not load the conversation" />
           {chat.messages.data !== undefined && chat.messages.data.length >= CONVERSATION_LIST_LIMIT ? (
             <p role="status" className="rounded-md border bg-muted px-3 py-2 text-xs text-muted-foreground">
               The first {CONVERSATION_LIST_LIMIT} messages of this conversation are listed. The control plane does not list later ones yet, so the newest are not shown here.
@@ -133,7 +133,7 @@ function ChatInner({ dotId }: { dotId: string }) {
         </ConversationContent>
         <ConversationScrollButton />
       </Conversation>
-      <ErrorBox error={sendError} title="The message was not sent" />
+      <ErrorAlert error={sendError} title="The message was not sent" />
       <Composer value={draft} onChange={setDraft} onSend={(text) => void send(text)} blocked={blocked} hint={hint} sending={chat.sending} inputRef={input} />
     </>
   );

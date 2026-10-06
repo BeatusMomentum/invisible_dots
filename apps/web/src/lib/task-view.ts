@@ -1,6 +1,6 @@
 /** What the Tasks page shows of the Dot's tasks: which section each one belongs to, in what order, and how a task reads. */
 import { TERMINAL_TASK_STATES, type TaskState } from "@invisible-dots/shared/browser";
-import type { Tone } from "./timeline";
+import type { Tone } from "./tone";
 import type { Task } from "./types";
 
 export type TaskSection = "running" | "scheduled" | "queue" | "history";

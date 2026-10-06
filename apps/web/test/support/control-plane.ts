@@ -65,7 +65,7 @@ export class FakeControlPlane {
   /** The stored event log, as `GET /api/dots/:id/events` pages through it; `push` and `store` add to it. */
   events: StoredEvent[] = [];
   /** What each `GET .../events` asked for, so a test can see that a page cut by type was asked for by type. */
-  eventQueries: Array<{ after: number; limit: number; types: string[] | null; tools: string[] | null; taskId: string | null; order: string | null }> = [];
+  eventQueries: Array<{ after: number; before?: number; limit: number; types: string[] | null; tools: string[] | null; taskId: string | null; order: string | null }> = [];
   /** What each `GET /api/approvals` asked for. */
   approvalQueries: Array<{ status: string[] | null; limit: number | null; order: string | null; before: string | null }> = [];
   /** The body of every `POST /api/dots/:id/tasks`, as the browser sent it. */
@@ -336,12 +336,15 @@ export class FakeControlPlane {
         const tools = searchParams.get("tools")?.split(",");
         const taskId = searchParams.get("task_id");
         const order = searchParams.get("order");
-        this.eventQueries.push({ after, limit, types: types ?? null, tools: tools ?? null, taskId, order });
+        const before = searchParams.has("before") ? Number(searchParams.get("before")) : undefined;
+        if (before !== undefined && order !== "desc") return json({ error: "invalid_request", message: "before pages a list in order=desc" }, 400);
+        this.eventQueries.push({ after, ...(before === undefined ? {} : { before }), limit, types: types ?? null, tools: tools ?? null, taskId, order });
         // `tools` narrows tool.called only, `order=desc` is the newest first and the limit keeps the newest.
         const kept = this.events.filter(
           (e) =>
             e.dot_id === record.id &&
             e.id > after &&
+            (before === undefined || e.id < before) &&
             (!types || types.includes(e.type)) &&
             (!tools || e.type !== "tool.called" || tools.includes(String(e.data.tool))) &&
             (taskId === null || e.data.task_id === taskId),

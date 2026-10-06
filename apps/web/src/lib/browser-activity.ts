@@ -9,7 +9,7 @@
  * not an id, and `browser_identity_list` names nothing, so neither says anything about an identity here.
  */
 import { TOOL_LABELS, toolLabel } from "./events/tool-labels";
-import { mergeEvents } from "./timeline";
+import { mergeEvents } from "./event-log";
 import type { StoredEvent } from "./types";
 
 /** A call is "now" for this long after it was logged: a call is logged when it ends, and the next of a turn follows within seconds. */

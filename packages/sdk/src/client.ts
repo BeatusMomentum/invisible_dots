@@ -363,16 +363,18 @@ export class InvisibleDotsClient {
    * The Dot's stored events, oldest first. `types` keeps only those type names and `taskId` only the events of that
    * task (`data.task_id`); an unknown type name is a 400. `tools` narrows the `tool.called` events to those of these
    * tools and leaves the other types alone. With `order: "desc"` the newest come first, so a `limit` keeps the newest
-   * of what the filters keep.
+   * of what the filters keep, and `before` (the id of the oldest event of the previous page) pages on, older, from
+   * there; `before` needs `order: "desc"`.
    */
   async events(
     idOrName: string,
-    options: { after?: number; limit?: number; types?: readonly string[]; tools?: readonly string[]; taskId?: string; order?: ListOrder } = {},
+    options: { after?: number; before?: number; limit?: number; types?: readonly string[]; tools?: readonly string[]; taskId?: string; order?: ListOrder } = {},
   ): Promise<StoredEvent[]> {
     return (
       await this.#json<EventsAnswer>("GET", `/api/dots/${enc(idOrName)}/events`, {
         query: {
           after: options.after,
+          before: options.before,
           limit: options.limit,
           types: options.types?.length ? options.types.join(",") : undefined,
           tools: options.tools?.length ? options.tools.join(",") : undefined,

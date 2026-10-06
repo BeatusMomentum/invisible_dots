@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 import { childPath, previewPlan } from "../../lib/files";
 import { formatBytes } from "../../lib/format";
+import { saveFile } from "../../lib/save-file";
 import { ErrorAlert } from "../ErrorAlert";
 import { Markdown } from "../markdown";
 import { Button } from "../ui/button";
@@ -20,14 +21,7 @@ function looksBinary(bytes: Uint8Array): boolean {
 
 /** Save a file of the Dot's computer to the person's disk: read through the API, then handed to the browser as a download. */
 async function download(dotId: string, folder: string, name: string): Promise<void> {
-  const bytes = await api.readFile(dotId, childPath(folder, name));
-  const url = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = name;
-  link.click();
-  // The browser has been handed the bytes by the time the click returns; the address is no longer needed.
-  setTimeout(() => URL.revokeObjectURL(url), 0);
+  saveFile(name, await api.readFile(dotId, childPath(folder, name)), "application/octet-stream");
 }
 
 /**
