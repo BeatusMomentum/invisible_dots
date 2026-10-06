@@ -49,6 +49,9 @@ for package in snapd unattended-upgrades apport apport-core-dump-handler lxd-ins
   fi
 done
 rm -rf /snap /var/snap /var/lib/snapd
+# apt's own timers refresh the package lists twice a day in the background of every Dot and hold its lock; the
+# packages of a Dot change with a new golden image, and `dot-install` refreshes the lists itself when it runs.
+systemctl mask apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service
 
 step "installing uv $UV_VERSION"
 uv_tmp="$(mktemp -d)"
