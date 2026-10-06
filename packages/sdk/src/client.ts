@@ -2,22 +2,41 @@
  * Typed client for every route of the control-plane API (architecture
  * section 9.6), built on `fetch` so it runs in Node and in browsers.
  */
-import { SseParser, type ApprovalStatus, type BrowserIdentity, type StoredEvent } from "@invisible-dots/shared/browser";
+import {
+  SseParser,
+  type ApprovalStatus,
+  type Automation,
+  type AutomationListAnswer,
+  type BrowserIdentity,
+  type ChannelKind,
+  type StoredEvent,
+  type ToolInfo,
+  type ToolListAnswer,
+} from "@invisible-dots/shared/browser";
 import type {
   AcceptedAnswer,
   ApprovalRecord,
   ApprovalsAnswer,
+  ApproveRequest,
+  ChannelLinkFrame,
+  ChannelPairingAnswer,
+  ChannelRecord,
+  ChannelsAnswer,
   ComputerAnswer,
   ConversationMessage,
   CreateTaskRequest,
+  DoctorAnswer,
   DotRecord,
   DotsAnswer,
   DotSummary,
   EventsAnswer,
+  FilesListAnswer,
   HealthResponse,
   IdentitiesAnswer,
   MessageAnswer,
   MessagesAnswer,
+  PatchChannelRequest,
+  RejectRequest,
   TaskRecord,
   TasksAnswer,
   UsageAnswer,
@@ -128,6 +147,11 @@ export class InvisibleDotsClient {
     return this.#json("GET", "/api/health");
   }
 
+  /** The host checks of `invisible-dots doctor`, run on the machine the server runs on; it takes a moment (the accelerator probe). */
+  doctor(): Promise<DoctorAnswer> {
+    return this.#json("GET", "/api/doctor");
+  }
+
   setOpenRouterKey(value: string, dotId?: string): Promise<{ pushed: number }> {
     return this.#json("PUT", "/api/secrets/openrouter", { body: dotId === undefined ? { value } : { value, dot_id: dotId } });
   }
@@ -147,8 +171,9 @@ export class InvisibleDotsClient {
     return this.#json("GET", `/api/dots/${enc(idOrName)}`);
   }
 
-  updateDot(idOrName: string, config: string | Record<string, unknown>): Promise<DotRecord> {
-    return this.#json("PATCH", `/api/dots/${enc(idOrName)}`, { body: { config } });
+  /** With `expectedConfigVersion` (the `config_version` of the Dot as read), a Dot whose config changed since is a 409 `dot_changed` and nothing is saved. */
+  updateDot(idOrName: string, config: string | Record<string, unknown>, expectedConfigVersion?: number): Promise<DotRecord> {
+    return this.#json("PATCH", `/api/dots/${enc(idOrName)}`, { body: { config, ...(expectedConfigVersion !== undefined && { expected_config_version: expectedConfigVersion }) } });
   }
 
   deleteDot(idOrName: string): Promise<AcceptedAnswer> {
@@ -236,28 +261,138 @@ export class InvisibleDotsClient {
     await this.#json("POST", `/api/dots/${enc(idOrName)}/browser-identities/${enc(identityId)}/close`);
   }
 
+  // Channels
+
+  /** The Dot's messaging channels with the people paired to each. Never a token. */
+  async channels(idOrName: string): Promise<ChannelRecord[]> {
+    return (await this.channelsOverview(idOrName)).channels;
+  }
+
+  /** The Dot's channels and the kinds this server can run (WhatsApp is there only when the server was started with it). */
+  channelsOverview(idOrName: string): Promise<ChannelsAnswer> {
+    return this.#json("GET", `/api/dots/${enc(idOrName)}/channels`);
+  }
+
+  /** Start linking WhatsApp (opt-in on the server): read the codes to scan from `whatsappLink`. */
+  linkWhatsApp(idOrName: string): Promise<ChannelRecord> {
+    return this.#json("POST", `/api/dots/${enc(idOrName)}/channels/whatsapp/link`);
+  }
+
+  /**
+   * `GET /api/dots/:id/channels/whatsapp/qr`: the state of the link now, then each new code and how it ends, as
+   * `ChannelLinkFrame`s. The iterator ends after the last frame (`linked` or `failed`) or when `signal` aborts; a
+   * connection that drops is thrown, because a code missed is a code that is gone.
+   */
+  async *whatsappLink(idOrName: string, options: { signal?: AbortSignal } = {}): AsyncGenerator<ChannelLinkFrame, void, undefined> {
+    const response = await this.#openEvents(`/api/dots/${enc(idOrName)}/channels/whatsapp/qr`, {}, options.signal);
+    const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
+    const parser = new SseParser();
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) return;
+        for (const message of parser.feed(value)) yield JSON.parse(message.data) as ChannelLinkFrame;
+      }
+    } catch (error) {
+      if (options.signal?.aborted) return;
+      throw error;
+    } finally {
+      await reader.cancel().catch(() => {});
+    }
+  }
+
+  /**
+   * Link the Dot to a Telegram bot, or give the linked bot a new token. The server checks the token with
+   * Telegram, stores it encrypted and never returns it.
+   */
+  putTelegramChannel(idOrName: string, token: string): Promise<ChannelRecord> {
+    return this.#json("PUT", `/api/dots/${enc(idOrName)}/channels/telegram`, { body: { token } });
+  }
+
+  /** Change settings, or pause (`enabled: false`) and resume the channel. */
+  patchChannel(idOrName: string, kind: ChannelKind, patch: PatchChannelRequest): Promise<ChannelRecord> {
+    return this.#json("PATCH", `/api/dots/${enc(idOrName)}/channels/${enc(kind)}`, { body: patch });
+  }
+
+  /** Unlink: the token, the paired people and the channel's record are deleted. */
+  async removeChannel(idOrName: string, kind: ChannelKind): Promise<void> {
+    await this.#json("DELETE", `/api/dots/${enc(idOrName)}/channels/${enc(kind)}`);
+  }
+
+  /** A one-time code (valid ten minutes) and, where the channel has one, the link that opens the chat with the code filled in. */
+  pairChannel(idOrName: string, kind: ChannelKind): Promise<ChannelPairingAnswer> {
+    return this.#json("POST", `/api/dots/${enc(idOrName)}/channels/${enc(kind)}/pairing`);
+  }
+
+  /** Revoke a paired person: they are strangers again. */
+  async removeChannelPeer(idOrName: string, kind: ChannelKind, peerId: string): Promise<void> {
+    await this.#json("DELETE", `/api/dots/${enc(idOrName)}/channels/${enc(kind)}/peers/${enc(peerId)}`);
+  }
+
   // Approvals
 
   async listApprovals(status?: ApprovalStatus): Promise<ApprovalRecord[]> {
     return (await this.#json<ApprovalsAnswer>("GET", "/api/approvals", { query: { status } })).approvals;
   }
 
-  approve(approvalId: string, note?: string): Promise<ApprovalRecord> {
-    return this.#json("POST", `/api/approvals/${enc(approvalId)}/approve`, { body: note === undefined ? {} : { note } });
+  /** Allow what the Dot asked for; with `always` its permission is also set to `allow` in the Dot's config. */
+  approve(approvalId: string, request: ApproveRequest = {}): Promise<ApprovalRecord> {
+    return this.#json("POST", `/api/approvals/${enc(approvalId)}/approve`, { body: request });
   }
 
-  reject(approvalId: string, note?: string): Promise<ApprovalRecord> {
-    return this.#json("POST", `/api/approvals/${enc(approvalId)}/reject`, { body: note === undefined ? {} : { note } });
+  reject(approvalId: string, request: RejectRequest = {}): Promise<ApprovalRecord> {
+    return this.#json("POST", `/api/approvals/${enc(approvalId)}/reject`, { body: request });
   }
 
   // Events
 
-  async events(idOrName: string, options: { after?: number; limit?: number } = {}): Promise<StoredEvent[]> {
+  /**
+   * The Dot's stored events, oldest first. `types` keeps only those type names and `taskId` only the events of that
+   * task (`data.task_id`); an unknown type name is a 400.
+   */
+  async events(
+    idOrName: string,
+    options: { after?: number; limit?: number; types?: readonly string[]; taskId?: string } = {},
+  ): Promise<StoredEvent[]> {
     return (
       await this.#json<EventsAnswer>("GET", `/api/dots/${enc(idOrName)}/events`, {
-        query: { after: options.after, limit: options.limit },
+        query: { after: options.after, limit: options.limit, types: options.types?.length ? options.types.join(",") : undefined, task_id: options.taskId },
       })
     ).events;
+  }
+
+  // Automations and tools of the Dot's engine: the computer must be running (409 computer_stopped)
+
+  /** The Dot's automations (the cron jobs it made), paused ones too. */
+  async listAutomations(idOrName: string): Promise<Automation[]> {
+    return (await this.#json<AutomationListAnswer>("GET", `/api/dots/${enc(idOrName)}/automations`)).automations;
+  }
+
+  /** Pause (`false`) or resume (`true`) an automation; the answer is the automation as it is now. */
+  setAutomationEnabled(idOrName: string, automationId: string, enabled: boolean): Promise<Automation> {
+    return this.#json("PATCH", `/api/dots/${enc(idOrName)}/automations/${enc(automationId)}`, { body: { enabled } });
+  }
+
+  async deleteAutomation(idOrName: string, automationId: string): Promise<void> {
+    await this.#json("DELETE", `/api/dots/${enc(idOrName)}/automations/${enc(automationId)}`);
+  }
+
+  /** The Dot's tools, each with the permission it exercises and whether the model is offered it now. */
+  async listTools(idOrName: string): Promise<ToolInfo[]> {
+    return (await this.#json<ToolListAnswer>("GET", `/api/dots/${enc(idOrName)}/tools`)).tools;
+  }
+
+  // Files of the Dot's computer: read-only, under /home/dot, and the computer must be running (409 computer_stopped)
+
+  /** The entries of a directory (`path` is absolute, relative to /home/dot, or `~`; omitted: home) and the path listed. */
+  listFiles(idOrName: string, path?: string): Promise<FilesListAnswer> {
+    return this.#json("GET", `/api/dots/${enc(idOrName)}/files/list`, { query: { path } });
+  }
+
+  /** The bytes of a file; one over 16 MiB is a 413 `file_too_large`. */
+  async readFile(idOrName: string, path: string): Promise<Uint8Array<ArrayBuffer>> {
+    const response = await this.#send("GET", `/api/dots/${enc(idOrName)}/files`, { query: { path } });
+    return new Uint8Array(await response.arrayBuffer());
   }
 
   /**
@@ -281,7 +416,7 @@ export class InvisibleDotsClient {
       if (options.signal?.aborted) return;
       let failure: Error;
       try {
-        const response = await this.#openStream(options.dotId, after, options.signal);
+        const response = await this.#openEvents("/api/stream", { dot_id: options.dotId, after }, options.signal);
         options.onOpen?.();
         const reader = response.body!.pipeThrough(new TextDecoderStream()).getReader();
         const parser = new SseParser();
@@ -319,8 +454,8 @@ export class InvisibleDotsClient {
     }
   }
 
-  async #openStream(dotId: string | undefined, after: number | undefined, signal?: AbortSignal): Promise<Response> {
-    const url = this.#url("/api/stream", { dot_id: dotId, after });
+  async #openEvents(path: string, query: Record<string, string | number | undefined>, signal?: AbortSignal): Promise<Response> {
+    const url = this.#url(path, query);
     let response: Response;
     try {
       response = await this.#fetch(url, {
@@ -331,7 +466,7 @@ export class InvisibleDotsClient {
       const reason = error instanceof Error ? (error.cause instanceof Error ? error.cause.message : error.message) : String(error);
       throw new ApiError(0, "unreachable", `cannot reach the invisible_dots API at ${this.baseUrl}: ${reason}`);
     }
-    if (!response.ok) throw await toApiError(response, "GET /api/stream");
+    if (!response.ok) throw await toApiError(response, `GET ${path}`);
     if (!response.body) throw new ApiError(502, "bad_stream", "the event stream answer has no body");
     return response;
   }

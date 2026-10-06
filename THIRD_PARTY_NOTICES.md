@@ -418,3 +418,17 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## The opt-in WhatsApp client and `libsignal` (GPL-3.0)
+
+The WhatsApp adapter (`packages/channels/src/whatsapp-baileys/`) loads Baileys
+(MIT) from `node_modules` when a person links WhatsApp. Baileys depends on the
+npm package `libsignal`, which is under the GNU General Public License,
+version 3, and so does not fit this repository's MIT license. None of it is
+part of this repository: it is installed by `npm ci` like any dependency, the
+command bundle that `apps/cli/scripts/build.mjs` makes leaves Baileys (and with
+it `libsignal`) out, and nothing loads it unless the server was started with
+`INVISIBLE_DOTS_WHATSAPP=1` and a person links a number. Whoever distributes a
+build of this repository together with its `node_modules`, or wants a GPL-free
+install, has to take that into account: the way out is to leave the adapter
+and its dependency out (`packages/channels/package.json`).

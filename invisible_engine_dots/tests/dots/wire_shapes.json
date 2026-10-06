@@ -1,0 +1,901 @@
+{
+  "automations": [
+    {
+      "created_at_ms": 1789990000000,
+      "delete_after_run": false,
+      "enabled": true,
+      "id": "job_every",
+      "last_error": null,
+      "last_run_at_ms": 1789996400000,
+      "last_status": "ok",
+      "message": "look at the orders",
+      "name": "check the shop",
+      "next_run_at_ms": 1790000000000,
+      "schedule": {
+        "every_ms": 3600000,
+        "kind": "every"
+      }
+    },
+    {
+      "created_at_ms": 1789000000000,
+      "delete_after_run": false,
+      "enabled": false,
+      "id": "job_cron",
+      "last_error": "the model was unreachable",
+      "last_run_at_ms": 1789900000000,
+      "last_status": "error",
+      "message": "write the report",
+      "name": "morning report",
+      "next_run_at_ms": null,
+      "schedule": {
+        "expr": "0 9 * * 1-5",
+        "kind": "cron",
+        "tz": "Europe/Rome"
+      }
+    },
+    {
+      "created_at_ms": 1789500000000,
+      "delete_after_run": true,
+      "enabled": true,
+      "id": "job_at",
+      "last_error": null,
+      "last_run_at_ms": null,
+      "last_status": "skipped",
+      "message": "call the dentist",
+      "name": "remind me",
+      "next_run_at_ms": 1791000000000,
+      "schedule": {
+        "at_ms": 1791000000000,
+        "kind": "at"
+      }
+    }
+  ],
+  "tool_offering": [
+    {
+      "memory_enabled": true,
+      "offered": [
+        "exec",
+        "exec_session",
+        "find_files",
+        "grep",
+        "list_dir",
+        "list_exec_sessions",
+        "memory_get",
+        "memory_search",
+        "read_file"
+      ],
+      "permissions": {
+        "automations": "deny",
+        "computer.exec": "allow",
+        "files.read": "ask",
+        "files.write": "deny",
+        "memory.read": "allow"
+      },
+      "tools": [
+        {
+          "description": "description of exec",
+          "name": "exec",
+          "offered": true,
+          "permission": "computer.exec"
+        },
+        {
+          "description": "description of exec_session",
+          "name": "exec_session",
+          "offered": true,
+          "permission": "computer.exec"
+        },
+        {
+          "description": "description of list_exec_sessions",
+          "name": "list_exec_sessions",
+          "offered": true,
+          "permission": "computer.exec"
+        },
+        {
+          "description": "description of read_file",
+          "name": "read_file",
+          "offered": true,
+          "permission": "files.read"
+        },
+        {
+          "description": "description of list_dir",
+          "name": "list_dir",
+          "offered": true,
+          "permission": "files.read"
+        },
+        {
+          "description": "description of find_files",
+          "name": "find_files",
+          "offered": true,
+          "permission": "files.read"
+        },
+        {
+          "description": "description of grep",
+          "name": "grep",
+          "offered": true,
+          "permission": "files.read"
+        },
+        {
+          "description": "description of write_file",
+          "name": "write_file",
+          "offered": false,
+          "permission": "files.write"
+        },
+        {
+          "description": "description of edit_file",
+          "name": "edit_file",
+          "offered": false,
+          "permission": "files.write"
+        },
+        {
+          "description": "description of apply_patch",
+          "name": "apply_patch",
+          "offered": false,
+          "permission": "files.write"
+        },
+        {
+          "description": "description of memory_search",
+          "name": "memory_search",
+          "offered": true,
+          "permission": "memory.read"
+        },
+        {
+          "description": "description of memory_get",
+          "name": "memory_get",
+          "offered": true,
+          "permission": "memory.read"
+        },
+        {
+          "description": "description of cron",
+          "name": "cron",
+          "offered": false,
+          "permission": "automations"
+        },
+        {
+          "description": "description of computer_screenshot",
+          "name": "computer_screenshot",
+          "offered": false,
+          "permission": "computer.screenshot"
+        },
+        {
+          "description": "description of browser_identity_list",
+          "name": "browser_identity_list",
+          "offered": false,
+          "permission": "browser.identity.list"
+        },
+        {
+          "description": "description of browser_identity_create",
+          "name": "browser_identity_create",
+          "offered": false,
+          "permission": "browser.identity.create"
+        },
+        {
+          "description": "description of browser_identity_delete",
+          "name": "browser_identity_delete",
+          "offered": false,
+          "permission": "browser.identity.delete"
+        },
+        {
+          "description": "description of browser_identity_launch",
+          "name": "browser_identity_launch",
+          "offered": false,
+          "permission": "browser.identity.launch"
+        },
+        {
+          "description": "description of browser_identity_close",
+          "name": "browser_identity_close",
+          "offered": false,
+          "permission": "browser.identity.close"
+        },
+        {
+          "description": "description of browser_navigate",
+          "name": "browser_navigate",
+          "offered": false,
+          "permission": "browser.navigate"
+        },
+        {
+          "description": "description of browser_snapshot",
+          "name": "browser_snapshot",
+          "offered": false,
+          "permission": "browser.read"
+        },
+        {
+          "description": "description of browser_read_text",
+          "name": "browser_read_text",
+          "offered": false,
+          "permission": "browser.read"
+        },
+        {
+          "description": "description of browser_screenshot",
+          "name": "browser_screenshot",
+          "offered": false,
+          "permission": "browser.read"
+        },
+        {
+          "description": "description of browser_click",
+          "name": "browser_click",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_click_at",
+          "name": "browser_click_at",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_type",
+          "name": "browser_type",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_press_key",
+          "name": "browser_press_key",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_select_option",
+          "name": "browser_select_option",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_scroll",
+          "name": "browser_scroll",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_back",
+          "name": "browser_back",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_forward",
+          "name": "browser_forward",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_reload",
+          "name": "browser_reload",
+          "offered": false,
+          "permission": "browser.act"
+        }
+      ]
+    },
+    {
+      "memory_enabled": false,
+      "offered": [
+        "exec",
+        "exec_session",
+        "find_files",
+        "grep",
+        "list_dir",
+        "list_exec_sessions",
+        "read_file"
+      ],
+      "permissions": {
+        "automations": "deny",
+        "computer.exec": "allow",
+        "files.read": "ask",
+        "files.write": "deny",
+        "memory.read": "allow"
+      },
+      "tools": [
+        {
+          "description": "description of exec",
+          "name": "exec",
+          "offered": true,
+          "permission": "computer.exec"
+        },
+        {
+          "description": "description of exec_session",
+          "name": "exec_session",
+          "offered": true,
+          "permission": "computer.exec"
+        },
+        {
+          "description": "description of list_exec_sessions",
+          "name": "list_exec_sessions",
+          "offered": true,
+          "permission": "computer.exec"
+        },
+        {
+          "description": "description of read_file",
+          "name": "read_file",
+          "offered": true,
+          "permission": "files.read"
+        },
+        {
+          "description": "description of list_dir",
+          "name": "list_dir",
+          "offered": true,
+          "permission": "files.read"
+        },
+        {
+          "description": "description of find_files",
+          "name": "find_files",
+          "offered": true,
+          "permission": "files.read"
+        },
+        {
+          "description": "description of grep",
+          "name": "grep",
+          "offered": true,
+          "permission": "files.read"
+        },
+        {
+          "description": "description of write_file",
+          "name": "write_file",
+          "offered": false,
+          "permission": "files.write"
+        },
+        {
+          "description": "description of edit_file",
+          "name": "edit_file",
+          "offered": false,
+          "permission": "files.write"
+        },
+        {
+          "description": "description of apply_patch",
+          "name": "apply_patch",
+          "offered": false,
+          "permission": "files.write"
+        },
+        {
+          "description": "description of memory_search",
+          "name": "memory_search",
+          "offered": false,
+          "permission": "memory.read"
+        },
+        {
+          "description": "description of memory_get",
+          "name": "memory_get",
+          "offered": false,
+          "permission": "memory.read"
+        },
+        {
+          "description": "description of cron",
+          "name": "cron",
+          "offered": false,
+          "permission": "automations"
+        },
+        {
+          "description": "description of computer_screenshot",
+          "name": "computer_screenshot",
+          "offered": false,
+          "permission": "computer.screenshot"
+        },
+        {
+          "description": "description of browser_identity_list",
+          "name": "browser_identity_list",
+          "offered": false,
+          "permission": "browser.identity.list"
+        },
+        {
+          "description": "description of browser_identity_create",
+          "name": "browser_identity_create",
+          "offered": false,
+          "permission": "browser.identity.create"
+        },
+        {
+          "description": "description of browser_identity_delete",
+          "name": "browser_identity_delete",
+          "offered": false,
+          "permission": "browser.identity.delete"
+        },
+        {
+          "description": "description of browser_identity_launch",
+          "name": "browser_identity_launch",
+          "offered": false,
+          "permission": "browser.identity.launch"
+        },
+        {
+          "description": "description of browser_identity_close",
+          "name": "browser_identity_close",
+          "offered": false,
+          "permission": "browser.identity.close"
+        },
+        {
+          "description": "description of browser_navigate",
+          "name": "browser_navigate",
+          "offered": false,
+          "permission": "browser.navigate"
+        },
+        {
+          "description": "description of browser_snapshot",
+          "name": "browser_snapshot",
+          "offered": false,
+          "permission": "browser.read"
+        },
+        {
+          "description": "description of browser_read_text",
+          "name": "browser_read_text",
+          "offered": false,
+          "permission": "browser.read"
+        },
+        {
+          "description": "description of browser_screenshot",
+          "name": "browser_screenshot",
+          "offered": false,
+          "permission": "browser.read"
+        },
+        {
+          "description": "description of browser_click",
+          "name": "browser_click",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_click_at",
+          "name": "browser_click_at",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_type",
+          "name": "browser_type",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_press_key",
+          "name": "browser_press_key",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_select_option",
+          "name": "browser_select_option",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_scroll",
+          "name": "browser_scroll",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_back",
+          "name": "browser_back",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_forward",
+          "name": "browser_forward",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_reload",
+          "name": "browser_reload",
+          "offered": false,
+          "permission": "browser.act"
+        }
+      ]
+    },
+    {
+      "memory_enabled": true,
+      "offered": [],
+      "permissions": {},
+      "tools": [
+        {
+          "description": "description of exec",
+          "name": "exec",
+          "offered": false,
+          "permission": "computer.exec"
+        },
+        {
+          "description": "description of exec_session",
+          "name": "exec_session",
+          "offered": false,
+          "permission": "computer.exec"
+        },
+        {
+          "description": "description of list_exec_sessions",
+          "name": "list_exec_sessions",
+          "offered": false,
+          "permission": "computer.exec"
+        },
+        {
+          "description": "description of read_file",
+          "name": "read_file",
+          "offered": false,
+          "permission": "files.read"
+        },
+        {
+          "description": "description of list_dir",
+          "name": "list_dir",
+          "offered": false,
+          "permission": "files.read"
+        },
+        {
+          "description": "description of find_files",
+          "name": "find_files",
+          "offered": false,
+          "permission": "files.read"
+        },
+        {
+          "description": "description of grep",
+          "name": "grep",
+          "offered": false,
+          "permission": "files.read"
+        },
+        {
+          "description": "description of write_file",
+          "name": "write_file",
+          "offered": false,
+          "permission": "files.write"
+        },
+        {
+          "description": "description of edit_file",
+          "name": "edit_file",
+          "offered": false,
+          "permission": "files.write"
+        },
+        {
+          "description": "description of apply_patch",
+          "name": "apply_patch",
+          "offered": false,
+          "permission": "files.write"
+        },
+        {
+          "description": "description of memory_search",
+          "name": "memory_search",
+          "offered": false,
+          "permission": "memory.read"
+        },
+        {
+          "description": "description of memory_get",
+          "name": "memory_get",
+          "offered": false,
+          "permission": "memory.read"
+        },
+        {
+          "description": "description of cron",
+          "name": "cron",
+          "offered": false,
+          "permission": "automations"
+        },
+        {
+          "description": "description of computer_screenshot",
+          "name": "computer_screenshot",
+          "offered": false,
+          "permission": "computer.screenshot"
+        },
+        {
+          "description": "description of browser_identity_list",
+          "name": "browser_identity_list",
+          "offered": false,
+          "permission": "browser.identity.list"
+        },
+        {
+          "description": "description of browser_identity_create",
+          "name": "browser_identity_create",
+          "offered": false,
+          "permission": "browser.identity.create"
+        },
+        {
+          "description": "description of browser_identity_delete",
+          "name": "browser_identity_delete",
+          "offered": false,
+          "permission": "browser.identity.delete"
+        },
+        {
+          "description": "description of browser_identity_launch",
+          "name": "browser_identity_launch",
+          "offered": false,
+          "permission": "browser.identity.launch"
+        },
+        {
+          "description": "description of browser_identity_close",
+          "name": "browser_identity_close",
+          "offered": false,
+          "permission": "browser.identity.close"
+        },
+        {
+          "description": "description of browser_navigate",
+          "name": "browser_navigate",
+          "offered": false,
+          "permission": "browser.navigate"
+        },
+        {
+          "description": "description of browser_snapshot",
+          "name": "browser_snapshot",
+          "offered": false,
+          "permission": "browser.read"
+        },
+        {
+          "description": "description of browser_read_text",
+          "name": "browser_read_text",
+          "offered": false,
+          "permission": "browser.read"
+        },
+        {
+          "description": "description of browser_screenshot",
+          "name": "browser_screenshot",
+          "offered": false,
+          "permission": "browser.read"
+        },
+        {
+          "description": "description of browser_click",
+          "name": "browser_click",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_click_at",
+          "name": "browser_click_at",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_type",
+          "name": "browser_type",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_press_key",
+          "name": "browser_press_key",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_select_option",
+          "name": "browser_select_option",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_scroll",
+          "name": "browser_scroll",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_back",
+          "name": "browser_back",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_forward",
+          "name": "browser_forward",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_reload",
+          "name": "browser_reload",
+          "offered": false,
+          "permission": "browser.act"
+        }
+      ]
+    },
+    {
+      "memory_enabled": true,
+      "offered": [
+        "apply_patch",
+        "cron",
+        "edit_file",
+        "exec",
+        "exec_session",
+        "find_files",
+        "grep",
+        "list_dir",
+        "list_exec_sessions",
+        "memory_get",
+        "memory_search",
+        "read_file",
+        "write_file"
+      ],
+      "permissions": {
+        "automations": "ask",
+        "computer.exec": "ask",
+        "files.read": "ask",
+        "files.write": "ask",
+        "memory.read": "ask"
+      },
+      "tools": [
+        {
+          "description": "description of exec",
+          "name": "exec",
+          "offered": true,
+          "permission": "computer.exec"
+        },
+        {
+          "description": "description of exec_session",
+          "name": "exec_session",
+          "offered": true,
+          "permission": "computer.exec"
+        },
+        {
+          "description": "description of list_exec_sessions",
+          "name": "list_exec_sessions",
+          "offered": true,
+          "permission": "computer.exec"
+        },
+        {
+          "description": "description of read_file",
+          "name": "read_file",
+          "offered": true,
+          "permission": "files.read"
+        },
+        {
+          "description": "description of list_dir",
+          "name": "list_dir",
+          "offered": true,
+          "permission": "files.read"
+        },
+        {
+          "description": "description of find_files",
+          "name": "find_files",
+          "offered": true,
+          "permission": "files.read"
+        },
+        {
+          "description": "description of grep",
+          "name": "grep",
+          "offered": true,
+          "permission": "files.read"
+        },
+        {
+          "description": "description of write_file",
+          "name": "write_file",
+          "offered": true,
+          "permission": "files.write"
+        },
+        {
+          "description": "description of edit_file",
+          "name": "edit_file",
+          "offered": true,
+          "permission": "files.write"
+        },
+        {
+          "description": "description of apply_patch",
+          "name": "apply_patch",
+          "offered": true,
+          "permission": "files.write"
+        },
+        {
+          "description": "description of memory_search",
+          "name": "memory_search",
+          "offered": true,
+          "permission": "memory.read"
+        },
+        {
+          "description": "description of memory_get",
+          "name": "memory_get",
+          "offered": true,
+          "permission": "memory.read"
+        },
+        {
+          "description": "description of cron",
+          "name": "cron",
+          "offered": true,
+          "permission": "automations"
+        },
+        {
+          "description": "description of computer_screenshot",
+          "name": "computer_screenshot",
+          "offered": false,
+          "permission": "computer.screenshot"
+        },
+        {
+          "description": "description of browser_identity_list",
+          "name": "browser_identity_list",
+          "offered": false,
+          "permission": "browser.identity.list"
+        },
+        {
+          "description": "description of browser_identity_create",
+          "name": "browser_identity_create",
+          "offered": false,
+          "permission": "browser.identity.create"
+        },
+        {
+          "description": "description of browser_identity_delete",
+          "name": "browser_identity_delete",
+          "offered": false,
+          "permission": "browser.identity.delete"
+        },
+        {
+          "description": "description of browser_identity_launch",
+          "name": "browser_identity_launch",
+          "offered": false,
+          "permission": "browser.identity.launch"
+        },
+        {
+          "description": "description of browser_identity_close",
+          "name": "browser_identity_close",
+          "offered": false,
+          "permission": "browser.identity.close"
+        },
+        {
+          "description": "description of browser_navigate",
+          "name": "browser_navigate",
+          "offered": false,
+          "permission": "browser.navigate"
+        },
+        {
+          "description": "description of browser_snapshot",
+          "name": "browser_snapshot",
+          "offered": false,
+          "permission": "browser.read"
+        },
+        {
+          "description": "description of browser_read_text",
+          "name": "browser_read_text",
+          "offered": false,
+          "permission": "browser.read"
+        },
+        {
+          "description": "description of browser_screenshot",
+          "name": "browser_screenshot",
+          "offered": false,
+          "permission": "browser.read"
+        },
+        {
+          "description": "description of browser_click",
+          "name": "browser_click",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_click_at",
+          "name": "browser_click_at",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_type",
+          "name": "browser_type",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_press_key",
+          "name": "browser_press_key",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_select_option",
+          "name": "browser_select_option",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_scroll",
+          "name": "browser_scroll",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_back",
+          "name": "browser_back",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_forward",
+          "name": "browser_forward",
+          "offered": false,
+          "permission": "browser.act"
+        },
+        {
+          "description": "description of browser_reload",
+          "name": "browser_reload",
+          "offered": false,
+          "permission": "browser.act"
+        }
+      ]
+    }
+  ]
+}

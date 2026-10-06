@@ -74,6 +74,7 @@ class EngineHarness:
         self.browser_options = browser or {}
         self.engines: list[Engine] = []
         self.browser = make_browser_manager(tmp_path, store, self.computer, **self.browser_options)
+        self.cron = CronService(tmp_path / "cron" / "jobs.json")
         self.engine = self.new_engine()
 
     def new_engine(self) -> Engine:
@@ -84,7 +85,7 @@ class EngineHarness:
             ToolDeps(
                 computer=self.computer,
                 exec_session_manager=ExecSessionManager(),
-                cron_service=CronService(self.tmp_path / "cron" / "jobs.json"),
+                cron_service=self.cron,
                 browser=self.browser,
             )
         )

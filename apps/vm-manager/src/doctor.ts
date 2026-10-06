@@ -1,49 +1,20 @@
 /**
- * `invisible-dots doctor` (architecture section 11.1): every check, in the
+ * The host report (architecture section 11.1): every check, in the
  * contract's order, each answering ok / missing / failed and naming the
- * command that fixes it. Doctor only reads: it never creates a directory,
- * never opens the database and never changes a setting.
+ * command that fixes it. It runs in the API process (`GET /api/doctor`) and
+ * in `invisible-dots doctor` alike. Doctor only reads: it never creates a
+ * directory, never opens the database and never changes a setting.
  *
- * Status meanings, so every check uses them the same way:
+ * Status meanings, so every check uses them the same way (`DoctorStatus`):
  * - ok: present and working.
  * - missing: absent; the fix line installs or creates it.
  * - failed: present but not working, or the check itself could not tell.
  */
-import {
-  firstLine,
-  isSupportedQemuVersion,
-  MIN_QEMU_VERSION_TEXT,
-  parseQemuVersion,
-  qemuPathProblem,
-  SETUP_COMMAND,
-  type Accelerator,
-  type QemuVersion,
-  type RunOptions,
-  type RunResult,
-} from "@invisible-dots/vm-manager";
-import { ENV } from "@invisible-dots/shared";
-
-export type CheckStatus = "ok" | "missing" | "failed";
-
-export type CheckId =
-  | "node"
-  | "qemu"
-  | "qemu-img"
-  | "accelerator"
-  | "accelerator-probe"
-  | "disk"
-  | "golden-image"
-  | "runtime-image"
-  | "openrouter";
-
-export interface CheckResult {
-  id: CheckId;
-  label: string;
-  status: CheckStatus;
-  detail: string;
-  /** The command or action that fixes a check that is not ok. */
-  fix?: string;
-}
+import { ENV, type DoctorAnswer, type DoctorCheck, type DoctorCheckId, type DoctorStatus } from "@invisible-dots/shared";
+import { SETUP_COMMAND, STORE_OPENROUTER_KEY } from "./errors.js";
+import { isSupportedQemuVersion, MIN_QEMU_VERSION_TEXT, parseQemuVersion, type Accelerator, type QemuVersion } from "./host.js";
+import { qemuPathProblem } from "./qemu-args.js";
+import { firstLine, type RunOptions, type RunResult } from "./runner.js";
 
 /** Where the QEMU programs were found, each searched separately (section 3.1). */
 export interface FoundQemu {
@@ -64,16 +35,16 @@ export interface DoctorDeps {
   accelerator(): Accelerator;
   findQemu(): Promise<FoundQemu>;
   run: Runner;
-  /** The host side of the accelerator: /dev/kvm or the HypervisorPlatform feature (setup/install.ts). */
-  acceleratorAccess(): Promise<CheckResult>;
+  /** The host side of the accelerator: /dev/kvm or the HypervisorPlatform feature (accelerator-access.ts). */
+  acceleratorAccess(): Promise<DoctorCheck>;
   /** INVISIBLE_DOTS_HOME, as the server and the image builder will use it. */
   home: string;
   /** Free space for INVISIBLE_DOTS_HOME, measured on the nearest directory that exists. */
   freeSpace(): Promise<{ path: string; bytes: number }>;
   /** The golden image and the runtime ISO against their manifests, one result each. */
-  images(): Promise<CheckResult[]>;
+  images(): Promise<DoctorCheck[]>;
   /** Whether an OpenRouter key is stored. */
-  openRouterKey(): Promise<CheckResult>;
+  openRouterKey(): Promise<DoctorCheck>;
 }
 
 export const MIN_NODE_MAJOR = 24;
@@ -90,8 +61,6 @@ export const MIN_FREE_BYTES = 20 * 1024 ** 3;
  */
 export const PROBE_TIMEOUT_MS = 30_000;
 const VERSION_TIMEOUT_MS = 15_000;
-
-export const SETUP_FIX = SETUP_COMMAND;
 
 /**
  * Starts QEMU with the accelerator and the CPU model of the Dots (section
@@ -148,27 +117,27 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(1)} GiB`;
 }
 
-function result(id: CheckId, label: string, status: CheckStatus, detail: string, fix?: string): CheckResult {
+function result(id: DoctorCheckId, label: string, status: DoctorStatus, detail: string, fix?: string): DoctorCheck {
   return fix === undefined || status === "ok" ? { id, label, status, detail } : { id, label, status, detail, fix };
 }
 
-export function checkNode(version: string): CheckResult {
+export function checkNode(version: string): DoctorCheck {
   const major = Number(version.split(".")[0]);
   if (Number.isInteger(major) && major >= MIN_NODE_MAJOR) return result("node", "Node", "ok", version);
   return result("node", "Node", "failed", `${version} is older than ${MIN_NODE_MAJOR}`, `install Node ${MIN_NODE_MAJOR} or newer from https://nodejs.org`);
 }
 
-async function checkQemuSystem(found: FoundQemu, run: Runner): Promise<CheckResult> {
+async function checkQemuSystem(found: FoundQemu, run: Runner): Promise<DoctorCheck> {
   const label = "QEMU";
   const minimum = MIN_QEMU_VERSION_TEXT;
   if (!found.system) {
-    return result("qemu", label, "missing", `qemu-system-x86_64 ${notFound(found)}`, SETUP_FIX);
+    return result("qemu", label, "missing", `qemu-system-x86_64 ${notFound(found)}`, SETUP_COMMAND);
   }
   const answer = await run(found.system, ["--version"], { timeoutMs: VERSION_TIMEOUT_MS });
   const version = answer.code === 0 ? parseQemuVersion(answer.stdout) : undefined;
   if (!version) {
     const why = answer.startError?.message ?? (firstLine(answer.stderr) || `exit code ${answer.code}`);
-    return result("qemu", label, "failed", `${found.system} --version did not report a version (${why})`, SETUP_FIX);
+    return result("qemu", label, "failed", `${found.system} --version did not report a version (${why})`, SETUP_COMMAND);
   }
   const text = versionText(version);
   if (!isSupportedQemuVersion(version)) {
@@ -177,19 +146,19 @@ async function checkQemuSystem(found: FoundQemu, run: Runner): Promise<CheckResu
       label,
       "failed",
       `${found.system} is version ${text}, older than ${minimum}`,
-      `${SETUP_FIX}, or set INVISIBLE_DOTS_QEMU_DIR to a QEMU ${minimum} or newer`,
+      `${SETUP_COMMAND}, or set INVISIBLE_DOTS_QEMU_DIR to a QEMU ${minimum} or newer`,
     );
   }
   return result("qemu", label, "ok", `${text} at ${found.system}`);
 }
 
-async function checkQemuImg(found: FoundQemu, run: Runner): Promise<CheckResult> {
-  if (!found.img) return result("qemu-img", "qemu-img", "missing", `qemu-img ${notFound(found)}`, SETUP_FIX);
+async function checkQemuImg(found: FoundQemu, run: Runner): Promise<DoctorCheck> {
+  if (!found.img) return result("qemu-img", "qemu-img", "missing", `qemu-img ${notFound(found)}`, SETUP_COMMAND);
   const answer = await run(found.img, ["--version"], { timeoutMs: VERSION_TIMEOUT_MS });
   const version = answer.code === 0 ? parseQemuVersion(answer.stdout) : undefined;
   if (!version) {
     const why = answer.startError?.message ?? (firstLine(answer.stderr) || `exit code ${answer.code}`);
-    return result("qemu-img", "qemu-img", "failed", `${found.img} --version did not report a version (${why})`, SETUP_FIX);
+    return result("qemu-img", "qemu-img", "failed", `${found.img} --version did not report a version (${why})`, SETUP_COMMAND);
   }
   return result("qemu-img", "qemu-img", "ok", `${versionText(version)} at ${found.img}`);
 }
@@ -200,7 +169,7 @@ async function checkQemuImg(found: FoundQemu, run: Runner): Promise<CheckResult>
  * the result. Measured on Windows 11 with VirtualMachinePlatform enabled
  * (WSL 2): HypervisorPlatform reports disabled and WHPX still works.
  */
-async function probeAccelerator(deps: DoctorDeps, qemu: CheckResult, access: CheckResult, system: string | undefined): Promise<CheckResult> {
+async function probeAccelerator(deps: DoctorDeps, qemu: DoctorCheck, access: DoctorCheck, system: string | undefined): Promise<DoctorCheck> {
   const label = "accelerator probe";
   if (qemu.status !== "ok" || !system) {
     return result("accelerator-probe", label, qemu.status, `not run: QEMU is not ready`, qemu.fix);
@@ -220,7 +189,7 @@ async function probeAccelerator(deps: DoctorDeps, qemu: CheckResult, access: Che
 }
 
 /** A host-side "missing" that the probe contradicts is reported as what it is: QEMU uses the accelerator. */
-function confirmedByProbe(access: CheckResult, probe: CheckResult): CheckResult {
+function confirmedByProbe(access: DoctorCheck, probe: DoctorCheck): DoctorCheck {
   if (access.status !== "missing" || probe.status !== "ok") return access;
   return result("accelerator", access.label, "ok", `${access.detail}, but the probe below shows QEMU uses the accelerator`);
 }
@@ -232,7 +201,7 @@ const DATA_DIRECTORY = "data directory";
  * applies, qemuPathProblem), with enough free space. A home under an account
  * name with an accent fails here, before an image build or a Dot does.
  */
-export function checkDataDirectory(home: string, space: { path: string; bytes: number }): CheckResult {
+export function checkDataDirectory(home: string, space: { path: string; bytes: number }): DoctorCheck {
   const problem = qemuPathProblem(home);
   if (problem) {
     return result("disk", DATA_DIRECTORY, "failed", `${home} ${problem}`, `set ${ENV.HOME} to a directory whose path is plain ASCII without commas`);
@@ -249,7 +218,7 @@ export function checkDataDirectory(home: string, space: { path: string; bytes: n
 }
 
 /** Runs one check; a check that throws is reported as failed instead of ending the report. */
-async function guarded(id: CheckId, label: string, check: () => Promise<CheckResult>): Promise<CheckResult> {
+async function guarded(id: DoctorCheckId, label: string, check: () => Promise<DoctorCheck>): Promise<DoctorCheck> {
   try {
     return await check();
   } catch (error) {
@@ -258,8 +227,8 @@ async function guarded(id: CheckId, label: string, check: () => Promise<CheckRes
 }
 
 /** Every check of section 11.1, in its order. */
-export async function runDoctor(deps: DoctorDeps): Promise<CheckResult[]> {
-  const results: CheckResult[] = [checkNode(deps.nodeVersion)];
+export async function runDoctor(deps: DoctorDeps): Promise<DoctorCheck[]> {
+  const results: DoctorCheck[] = [checkNode(deps.nodeVersion)];
   let found: FoundQemu = { searched: [] };
   try {
     found = await deps.findQemu();
@@ -283,6 +252,20 @@ export async function runDoctor(deps: DoctorDeps): Promise<CheckResult[]> {
   return results;
 }
 
-export function allOk(results: readonly CheckResult[]): boolean {
+export function allOk(results: readonly DoctorCheck[]): boolean {
   return results.every((r) => r.status === "ok");
+}
+
+/** The report as the API and `doctor --json` send it. */
+export function doctorAnswer(results: readonly DoctorCheck[]): DoctorAnswer {
+  return { ok: allOk(results), checks: [...results] };
+}
+
+/**
+ * The OpenRouter key row from what the control plane knows (`openrouter_configured` of its health), asked of
+ * the scheduler in the API and of the running server by the CLI.
+ */
+export function openRouterCheck(configured: boolean): DoctorCheck {
+  const base = { id: "openrouter", label: "OpenRouter key" } as const;
+  return configured ? { ...base, status: "ok", detail: "stored" } : { ...base, status: "missing", detail: "no key stored", fix: STORE_OPENROUTER_KEY };
 }

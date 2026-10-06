@@ -1,14 +1,22 @@
 import type { AddressInfo } from "node:net";
+import { ChannelHub } from "@invisible-dots/channels";
+import { FakeChannelType } from "@invisible-dots/channels/testing";
 import type { Database } from "@invisible-dots/database";
 import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-dots/database/testing";
 import { Scheduler } from "@invisible-dots/scheduler";
 import { FakeDriver, ManualClock, waitFor, waitUntilSettledReady } from "@invisible-dots/scheduler/testing";
 import { ApiError, InvisibleDotsClient } from "@invisible-dots/sdk";
-import { MAX_EVENT_PAGE, OPENROUTER_KEY_RULE, type StoredEvent } from "@invisible-dots/shared";
+import { MAX_EVENT_PAGE, OPENROUTER_KEY_RULE, type Automation, type DoctorCheck, type StoredEvent } from "@invisible-dots/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildServer, type FastifyInstance } from "../src/index.js";
 
 const TOKEN = "test-token-0123456789abcdef";
+
+/** What the host report answers on this fake host: one row that is not ok, with the command that fixes it. */
+const REPORT: DoctorCheck[] = [
+  { id: "node", label: "Node", status: "ok", detail: "24.19.0" },
+  { id: "qemu", label: "QEMU", status: "missing", detail: "qemu-system-x86_64 not found", fix: "invisible-dots setup" },
+];
 
 const yaml = (name: string, idle = "15m") =>
   `name: ${name}\ngoal: watch fares\nmodel:\n  provider: openrouter\n  id: test/model\ncomputer:\n  idle_timeout: ${idle}\n`;
@@ -18,6 +26,7 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
   let db: Database;
   let app: FastifyInstance;
   let scheduler: Scheduler;
+  let channels: ChannelHub;
   let driver: FakeDriver;
   let clock: ManualClock;
   let base: string;
@@ -35,7 +44,8 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
       lifecycle: { healthPollMs: 5, readyTimeoutMs: 3_000, pumpRetryMs: 10 },
       dispatcher: { retryDelayMs: 0 },
     });
-    app = buildServer({ scheduler, token: TOKEN, heartbeatMs: 50 });
+    channels = new ChannelHub({ db, host: scheduler, types: [new FakeChannelType()] });
+    app = buildServer({ scheduler, channels, doctor: async () => REPORT, token: TOKEN, heartbeatMs: 50 });
     await app.listen({ host: "127.0.0.1", port: 0 });
     base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
     api = new InvisibleDotsClient({ baseUrl: base, token: TOKEN });
@@ -43,6 +53,7 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
 
   afterAll(async () => {
     await app?.close();
+    await channels?.close();
     await scheduler?.close();
     await t?.drop();
   });
@@ -65,6 +76,11 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
       status: 401,
       code: "unauthorized",
     });
+  });
+
+  it("doctor: the host report with its verdict, only with the token", async () => {
+    expect((await fetch(`${base}/api/doctor`)).status).toBe(401);
+    expect(await api.doctor()).toEqual({ ok: false, checks: REPORT });
   });
 
   it("health, unknown routes and malformed bodies answer {error, message}", async () => {
@@ -159,6 +175,222 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     await expect(api.cancelTask(task.id)).rejects.toMatchObject({ status: 409, code: "task_finished" });
   });
 
+  it("events: filtered by type names and by task, together and with after and limit", async () => {
+    const dot = await readyDot("event-filters");
+    const guest = driver.guestOf(dot.id);
+    const one = await api.createTask(dot.id, { description: "one" });
+    const two = await api.createTask(dot.id, { description: "two" });
+    await waitFor(async () => (await api.getTask(two.id)).status === "COMPLETED", "second task done");
+    const call = { tool: "exec", permission: "exec.run", decision: "allow", ok: true, duration_ms: 5 } as const;
+    guest.emit("tool.called", { task_id: one.id, ...call, target: "ls" });
+    guest.emit("tool.called", { ...call, target: "date" });
+    guest.emit("memory.written", { key: "fares.md" });
+    await waitFor(async () => (await api.events(dot.id, { types: ["memory.written"] })).length === 1, "events stored");
+
+    const types = (events: StoredEvent[]) => events.map((e) => e.type);
+    expect(types(await api.events(dot.id, { types: ["tool.called"] }))).toEqual(["tool.called", "tool.called"]);
+    expect(types(await api.events(dot.id, { types: ["tool.called", "memory.written"] }))).toEqual(["tool.called", "tool.called", "memory.written"]);
+    // A task's events: the host's own and the guest's, in id order; the chat's tool call belongs to no task.
+    const ofOne = await api.events(dot.id, { taskId: one.id });
+    expect(types(ofOne)).toEqual(expect.arrayContaining(["task.created", "task.started", "task.completed", "tool.called"]));
+    expect(ofOne.every((e) => e.data.task_id === one.id)).toBe(true);
+    expect(ofOne.map((e) => e.id)).toEqual([...ofOne.map((e) => e.id)].sort((a, b) => a - b));
+    expect(ofOne.filter((e) => e.type === "tool.called").map((e) => e.data.target)).toEqual(["ls"]);
+    expect((await api.events(dot.id, { taskId: two.id, types: ["tool.called"] })).length).toBe(0);
+    expect(types(await api.events(dot.id, { taskId: one.id, types: ["tool.called"] }))).toEqual(["tool.called"]);
+    expect((await api.events(dot.id, { taskId: one.id, limit: 1 })).length).toBe(1);
+    expect((await api.events(dot.id, { taskId: one.id, after: ofOne.at(-1)!.id })).length).toBe(0);
+    expect(await api.events(dot.id, { taskId: "task_nobody" })).toEqual([]);
+
+    // The raw query: an empty types is no filter, a type nobody emits is refused, so is a repeated or empty parameter.
+    const get = async (query: string) => {
+      const response = await fetch(`${base}/api/dots/${dot.id}/events?${query}`, { headers: { authorization: `Bearer ${TOKEN}` } });
+      return { status: response.status, body: (await response.json()) as { events?: StoredEvent[]; error?: string; message?: string } };
+    };
+    expect((await get("types=")).body.events!.length).toBeGreaterThan(5);
+    expect(await get("types=tool.called,tool.calls")).toMatchObject({ status: 400, body: { error: "invalid_request", message: "unknown event type: tool.calls" } });
+    expect((await get("types=tool.called&types=memory.written")).status).toBe(400);
+    expect((await get("task_id=a&task_id=b")).status).toBe(400);
+    expect((await get("task_id=")).status).toBe(400);
+    await expect(api.events("no-such-dot", { types: ["tool.called"] })).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("files: list and read what is under /home/dot, as the guest answers, and nothing else", async () => {
+    const dot = await readyDot("file-reader");
+    const guest = driver.guestOf(dot.id);
+    const note = "# Fares\n\nCheapest day is Tuesday.\n";
+    guest.putFile("/home/dot/memory/fares.md", note, new Date("2026-10-01T10:00:00Z"));
+    guest.putFile("/home/dot/memory/trips/rome.md", "Rome", new Date("2026-10-02T10:00:00Z"));
+    guest.putFile("/home/dot/workspace/shot.png", Uint8Array.from([0x89, 0x50, 0x4e, 0x47]));
+    guest.putFile("/home/dot/notes.txt", "hi");
+    guest.putFile("/etc/passwd", "root:x:0:0");
+
+    expect(await api.listFiles(dot.id, "/home/dot/memory")).toEqual({
+      path: "/home/dot/memory",
+      entries: [
+        { name: "fares.md", type: "file", size: note.length, mtime: "2026-10-01T10:00:00.000Z" },
+        { name: "trips", type: "dir", size: 0, mtime: "2026-10-02T10:00:00.000Z" },
+      ],
+    });
+    // Home by default, and relative or ~ paths mean the same as the absolute one.
+    const home = await api.listFiles(dot.id);
+    expect(home.path).toBe("/home/dot");
+    expect(home.entries.map((e) => e.name)).toEqual(["memory", "notes.txt", "workspace"]);
+    expect(await api.listFiles(dot.id, "~/memory")).toEqual(await api.listFiles(dot.id, "memory/"));
+
+    expect(new TextDecoder().decode(await api.readFile(dot.id, "/home/dot/memory/fares.md"))).toBe(note);
+    expect(new TextDecoder().decode(await api.readFile(dot.id, "memory/trips/rome.md"))).toBe("Rome");
+    expect([...(await api.readFile(dot.id, "workspace/shot.png"))]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+
+    // Outside home, or with a .. segment: 400 before the guest is asked, whatever the guest holds.
+    const callsBefore = guest.calls.length;
+    for (const path of ["/etc/passwd", "/home", "/home/dotter/x", "../../etc/passwd", "memory/../../../etc/passwd", "/home/dot/memory/.."]) {
+      await expect(api.readFile(dot.id, path), path).rejects.toMatchObject({ status: 400, code: "invalid_path" });
+      await expect(api.listFiles(dot.id, path), path).rejects.toMatchObject({ status: 400, code: "invalid_path" });
+    }
+    expect(guest.calls.length).toBe(callsBefore);
+    const raw = (route: string, query: string) => fetch(`${base}/api/dots/${dot.id}/${route}${query}`, { headers: { authorization: `Bearer ${TOKEN}` } });
+    expect((await raw("files", "")).status).toBe(400);
+    expect((await raw("files", "?path=")).status).toBe(400);
+    expect((await raw("files", "?path=a&path=b")).status).toBe(400);
+    expect((await raw("files/list", "?path=")).status).toBe(400);
+    expect((await fetch(`${base}/api/dots/${dot.id}/files?path=notes.txt`)).status).toBe(401);
+
+    // The guest's own refusals pass through with their code.
+    await expect(api.readFile(dot.id, "memory/missing.md")).rejects.toMatchObject({ status: 404, code: "not_found" });
+    await expect(api.listFiles(dot.id, "memory/missing")).rejects.toMatchObject({ status: 404, code: "not_found" });
+    await expect(api.readFile(dot.id, "memory")).rejects.toMatchObject({ status: 400, code: "is_a_directory" });
+    await expect(api.listFiles(dot.id, "notes.txt")).rejects.toMatchObject({ status: 400, code: "not_a_directory" });
+
+    // A link under home that leads out of it passes the path rule and is the guest's 403, with nothing of the target in the answer.
+    guest.putFile("/proc/4242/environ", "PROXY_PASSWORD=hunter2");
+    guest.link("/home/dot/environ", "/proc/4242/environ");
+    const leak = await raw("files", `?path=${encodeURIComponent("environ")}`);
+    expect(leak.status).toBe(403);
+    expect(await leak.json()).toMatchObject({ error: "outside_home" });
+    await expect(api.readFile(dot.id, "environ")).rejects.toMatchObject({ status: 403, code: "outside_home" });
+  });
+
+  it("files: a read says what it is, so the page never runs a Dot's file; a large one is refused", async () => {
+    const dot = await readyDot("file-types");
+    const guest = driver.guestOf(dot.id);
+    guest.putFile("/home/dot/page.html", "<script>alert(1)</script>");
+    guest.putFile("/home/dot/pic.png", Uint8Array.from([1, 2, 3]));
+    guest.putFile("/home/dot/data.bin", Uint8Array.from([4, 5]));
+    guest.putFile("/home/dot/é \"q\".txt", "x");
+    guest.putFile("/home/dot/big.bin", new Uint8Array(16 * 1024 * 1024 + 1));
+    guest.putFile("/home/dot/limit.bin", new Uint8Array(16 * 1024 * 1024));
+    const read = (path: string) => fetch(`${base}/api/dots/${dot.id}/files?path=${encodeURIComponent(path)}`, { headers: { authorization: `Bearer ${TOKEN}` } });
+
+    const html = await read("page.html");
+    expect(html.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(html.headers.get("content-disposition")).toMatch(/^inline; filename="page\.html"/);
+    expect(html.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(html.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+    expect(html.headers.get("cache-control")).toBe("no-store");
+    expect(await html.text()).toBe("<script>alert(1)</script>");
+    expect((await read("pic.png")).headers.get("content-type")).toBe("image/png");
+    const bin = await read("data.bin");
+    expect(bin.headers.get("content-type")).toBe("application/octet-stream");
+    expect(bin.headers.get("content-disposition")).toMatch(/^attachment; filename="data\.bin"/);
+    expect((await read("é \"q\".txt")).headers.get("content-disposition")).toBe(
+      "inline; filename=\"_ _q_.txt\"; filename*=UTF-8''%C3%A9%20%22q%22.txt",
+    );
+
+    expect((await read("limit.bin")).status).toBe(200);
+    const big = await read("big.bin");
+    expect(big.status).toBe(413);
+    expect(await big.json()).toMatchObject({ error: "file_too_large" });
+    await expect(api.readFile(dot.id, "big.bin")).rejects.toMatchObject({ status: 413, code: "file_too_large" });
+  });
+
+  it("files need a running computer (409 computer_stopped) and a Dot that exists", async () => {
+    const dot = await readyDot("file-sleeper");
+    await api.stopComputer(dot.id);
+    await scheduler.settle();
+    await expect(api.listFiles(dot.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(api.readFile(dot.id, "notes.txt")).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await api.startComputer(dot.id);
+    await waitFor(async () => (await api.computer(dot.id)).ready, "started again");
+    await expect(api.listFiles("no-such-dot")).rejects.toMatchObject({ status: 404 });
+    await expect(api.readFile("no-such-dot", "a")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("automations: list, pause, resume and remove over HTTP, and a tool table that follows the permissions", async () => {
+    const dot = await readyDot("automations");
+    const guest = driver.guestOf(dot.id);
+    const job = (over: Partial<Automation>): Automation => ({
+      id: "job_1",
+      name: "daily fares",
+      enabled: true,
+      schedule: { kind: "every", every_ms: 3_600_000 },
+      message: "look",
+      next_run_at_ms: 1_800_000_000_000,
+      last_run_at_ms: null,
+      last_status: null,
+      last_error: null,
+      delete_after_run: false,
+      created_at_ms: 1_700_000_000_000,
+      ...over,
+    });
+    guest.putAutomation(job({}));
+    guest.putAutomation(job({ id: "job_2", name: "paused", enabled: false, next_run_at_ms: null }));
+
+    expect((await api.listAutomations(dot.id)).map((a) => [a.id, a.enabled])).toEqual([["job_1", true], ["job_2", false]]);
+    expect(await api.setAutomationEnabled(dot.id, "job_1", false)).toMatchObject({ id: "job_1", enabled: false, next_run_at_ms: null });
+    expect((await api.listAutomations(dot.id))[0]).toMatchObject({ enabled: false });
+    await api.deleteAutomation(dot.id, "job_2");
+    expect((await api.listAutomations(dot.id)).map((a) => a.id)).toEqual(["job_1"]);
+
+    // The raw routes: no body, a flag that is not a boolean, an unknown job, a missing token.
+    const send = (method: string, path: string, body?: string) =>
+      fetch(`${base}/api/dots/${dot.id}/${path}`, { method, body, headers: { authorization: `Bearer ${TOKEN}`, ...(body ? { "content-type": "application/json" } : {}) } });
+    expect((await send("PATCH", "automations/job_1")).status).toBe(400);
+    const notBoolean = await send("PATCH", "automations/job_1", JSON.stringify({ enabled: "no" }));
+    expect(notBoolean.status).toBe(400);
+    expect(await notBoolean.json()).toMatchObject({ error: "invalid_request" });
+    expect((await send("PATCH", "automations/nope", JSON.stringify({ enabled: true }))).status).toBe(404);
+    expect((await send("DELETE", "automations/nope")).status).toBe(404);
+    expect((await send("DELETE", "automations/job_1")).status).toBe(204);
+    expect((await fetch(`${base}/api/dots/${dot.id}/automations`)).status).toBe(401);
+    expect((await fetch(`${base}/api/dots/${dot.id}/tools`)).status).toBe(401);
+
+    // Tools: the table, and what the model is offered follows the permissions the config pushed.
+    const none = await api.listTools(dot.id);
+    expect(none.map((t) => t.name)).toEqual(["exec", "read_file", "write_file", "memory_search", "memory_get", "cron"]);
+    // The pushed config has the defaults filled in, none of them deny: every tool is offered.
+    expect(none.every((t) => t.offered)).toBe(true);
+    await api.updateDot(dot.id, `${yaml("automations")}permissions:
+  computer.exec: allow
+  files.read: ask
+  files.write: deny
+  automations: deny
+`);
+    await waitFor(async () => (await api.listTools(dot.id)).some((t) => !t.offered), "permissions pushed");
+    expect(Object.fromEntries((await api.listTools(dot.id)).map((t) => [t.name, t.offered]))).toEqual({
+      exec: true,
+      read_file: true,
+      write_file: false,
+      memory_search: true,
+      memory_get: true,
+      cron: false,
+    });
+  });
+
+  it("automations and tools need a running computer (409 computer_stopped) and a Dot that exists", async () => {
+    const dot = await readyDot("automation-sleeper");
+    await api.stopComputer(dot.id);
+    await scheduler.settle();
+    await expect(api.listAutomations(dot.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(api.setAutomationEnabled(dot.id, "job_1", true)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(api.deleteAutomation(dot.id, "job_1")).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(api.listTools(dot.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await api.startComputer(dot.id);
+    await waitFor(async () => (await api.computer(dot.id)).ready, "started again");
+    await expect(api.listAutomations("no-such-dot")).rejects.toMatchObject({ status: 404 });
+    await expect(api.listTools("no-such-dot")).rejects.toMatchObject({ status: 404 });
+  });
+
   it("the stream filters by Dot and replays after an id without duplicates", async () => {
     const a = await readyDot("stream-a");
     const b = await readyDot("stream-b");
@@ -196,13 +428,38 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     );
     expect(pending.task_id).toBe(task.id);
     await waitFor(async () => (await api.getTask(task.id)).status === "WAITING_APPROVAL", "task waiting");
-    const rejected = await api.reject(pending.id, "keep it");
+    const rejected = await api.reject(pending.id, { note: "keep it" });
     expect(rejected).toMatchObject({ status: "rejected", note: "keep it" });
     await waitFor(async () => (await api.getTask(task.id)).status === "COMPLETED", "task resumed and completed");
     await expect(api.approve(pending.id)).rejects.toMatchObject({ status: 409, code: "already_resolved" });
     await expect(api.approve("apr_missing")).rejects.toMatchObject({ status: 404 });
     const raw = await fetch(`${base}/api/approvals?status=maybe`, { headers: { authorization: `Bearer ${TOKEN}` } });
     expect(raw.status).toBe(400);
+  });
+
+  it("approve with always over HTTP sets the permission in the Dot's config and pushes it", async () => {
+    const dot = await readyDot("always-http");
+    const guest = driver.guestOf(dot.id);
+    const approvalId = guest.requestApproval(undefined);
+    await waitFor(async () => (await api.listApprovals("pending")).some((a) => a.id === approvalId), "approval pending");
+    const post = (id: string, decision: string, body: unknown) =>
+      fetch(`${base}/api/approvals/${id}/${decision}`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    expect((await post(approvalId, "approve", { always: "yes" })).status).toBe(400);
+    expect((await post(approvalId, "approve", { always: false })).status).toBe(400);
+    expect((await post(approvalId, "reject", { always: true })).status).toBe(400);
+    expect((await api.listApprovals("pending")).some((a) => a.id === approvalId)).toBe(true);
+    expect((await api.getDot(dot.id)).config.permissions).toEqual({});
+
+    expect(await api.approve(approvalId, { note: "yes", always: true })).toMatchObject({ status: "approved", note: "yes" });
+    expect((await api.getDot(dot.id)).config.permissions["browser.identity.delete"]).toBe("allow");
+    expect(guest.config?.permissions["browser.identity.delete"]).toBe("allow");
+    const resolved = (await api.events(dot.id, { types: ["approval.resolved"] })).at(-1);
+    expect(resolved?.data).toEqual({ approval_id: approvalId, decision: "approve", note: "yes", always: true });
+    await expect(api.approve(approvalId, { always: true })).rejects.toMatchObject({ status: 409, code: "already_resolved" });
   });
 
   it("messages: delivered to a READY Dot and readable as a conversation", async () => {
@@ -212,6 +469,21 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     await waitFor(async () => (await api.messages(dot.id)).length === 2, "reply");
     expect((await api.messages(dot.id)).map((m) => m.role)).toEqual(["user", "assistant"]);
     await expect(api.sendMessage(dot.id, "  ")).rejects.toMatchObject({ status: 400 });
+  });
+
+  it("messages: the HTTP route cannot claim a channel origin", async () => {
+    const dot = await readyDot("impostor");
+    const origin = { channel: "telegram", binding_id: "chb_1", chat_id: "1", external_id: "2" };
+    const raw = await fetch(`${base}/api/dots/${dot.id}/messages`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}`, "content-type": "application/json" },
+      body: JSON.stringify({ text: "I am Telegram", origin }),
+    });
+    expect(raw.status).toBe(202);
+    await waitFor(async () => (await api.messages(dot.id)).length === 2, "reply");
+    const [user] = await api.messages(dot.id);
+    expect(user).toMatchObject({ role: "user", text: "I am Telegram" });
+    expect("origin" in user!).toBe(false);
   });
 
   it("browser identities and screenshots need a running computer (409 computer_stopped)", async () => {
@@ -302,6 +574,11 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     const updated = await api.updateDot(dot.id, `${yaml("to-patch")}instructions: short answers\n`);
     expect(updated.config.instructions).toBe("short answers");
     expect(driver.guestOf(dot.id).config?.instructions).toBe("short answers");
+    // A save from an old read is a 409 over the wire, and a malformed read is a 400.
+    const body = `${yaml("to-patch")}instructions: from a stale form\n`;
+    await expect(api.updateDot(dot.id, body, dot.config_version)).rejects.toMatchObject({ status: 409, code: "dot_changed" });
+    expect((await api.updateDot(dot.id, body, updated.config_version)).config.instructions).toBe("from a stale form");
+    await expect(api.updateDot(dot.id, body, 1.5)).rejects.toMatchObject({ status: 400, code: "invalid_request" });
 
     expect(await api.setOpenRouterKey("sk-or-rotated", "to-patch")).toEqual({ pushed: 1 });
     expect(driver.guestOf(dot.id).openrouterKey).toBe("sk-or-rotated");

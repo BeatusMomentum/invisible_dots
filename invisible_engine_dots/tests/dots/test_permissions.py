@@ -405,3 +405,29 @@ def test_the_proxy_password_of_an_identity_is_redacted_in_the_arguments_an_appro
     assert tool_arguments("browser_identity_create", {"name": "shop"}) == {"name": "shop"}
     assert tool_arguments("exec", {"command": "ls", "timeout": 5}) == {"command": "ls", "timeout": 5}
     assert tool_arguments("not_a_tool", {"proxy": "http://u:p@h"}) == {"proxy": "http://u:p@h"}
+
+
+# --- the table as GET /tools shows it ----------------------------------------------------------------
+
+
+def test_the_tool_table_has_a_row_per_tool_in_the_order_of_the_permission_table(tmp_path, dot_store) -> None:
+    from nanobot.dots.permissions import build_registry, tool_table
+
+    registry = build_registry(_deps(tmp_path, dot_store))
+    rows = tool_table(registry, {"exec", "grep"})
+
+    assert [row["name"] for row in rows] == list(TOOL_PERMISSIONS)
+    for row in rows:
+        assert row["permission"] == TOOL_PERMISSIONS[row["name"]].permission
+        assert row["description"] == registry.get(row["name"]).description
+        assert row["offered"] is (row["name"] in {"exec", "grep"})
+
+
+def test_the_tool_table_refuses_a_registry_that_lacks_a_tool_of_the_table(tmp_path, dot_store) -> None:
+    from nanobot.dots.permissions import build_registry, tool_table
+
+    registry = build_registry(_deps(tmp_path, dot_store))
+    registry.unregister("cron")
+
+    with pytest.raises(LookupError, match="cron"):
+        tool_table(registry, ())

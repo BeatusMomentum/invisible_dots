@@ -62,6 +62,8 @@ export class InboundDelivery {
   readonly #flushing = new Map<string, Promise<void>>();
   readonly #again = new Set<string>();
   readonly #timers = new Set<NodeJS.Timeout>();
+  /** Dots whose deliveries wait for something that has to reach the guest first (`hold`). */
+  readonly #holds = new Map<string, { holders: number; open: Promise<void>; release: () => void }>();
   #closed = false;
 
   constructor(deps: InboundDeliveryDeps) {
@@ -76,6 +78,42 @@ export class InboundDelivery {
 
   get maxDeliveryAttempts(): number {
     return this.#opts.maxDeliveryAttempts;
+  }
+
+  /**
+   * Send nothing to the Dot's guest until the returned function is called. For a caller that stores a row and
+   * then has to do something to the guest that the row's meaning depends on: the config an approval's "always
+   * allow" changed has to be there before the guest hears the approval, or the approved call's next use of the
+   * permission is asked again. Take the hold before the row is stored: a flush that is already running
+   * waits for it before every row it sends, so no later flush or timer can overtake the work. Several holds
+   * on one Dot add up. The hold is in memory: after a restart, the guest's next READY does what the caller
+   * would have done.
+   */
+  hold(dotId: string): () => void {
+    let entry = this.#holds.get(dotId);
+    if (!entry) {
+      let release!: () => void;
+      const open = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      entry = { holders: 0, open, release };
+      this.#holds.set(dotId, entry);
+    }
+    entry.holders++;
+    const held = entry;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      if (--held.holders === 0) {
+        this.#holds.delete(dotId);
+        held.release();
+      }
+    };
+  }
+
+  async #unheld(dotId: string): Promise<void> {
+    for (let entry = this.#holds.get(dotId); entry; entry = this.#holds.get(dotId)) await entry.open;
   }
 
   /**
@@ -133,6 +171,7 @@ export class InboundDelivery {
   }
 
   async #flush(dotId: string): Promise<void> {
+    await this.#unheld(dotId);
     let rows = await this.#db.inbound.pending(dotId);
     if (rows.length === 0) return;
     await this.#provisioned(dotId);
@@ -145,6 +184,7 @@ export class InboundDelivery {
     // Rows stored while the Dot woke up are sent in the same pass.
     rows = await this.#db.inbound.pending(dotId);
     for (const row of rows) {
+      await this.#unheld(dotId);
       if (this.#closed) return;
       if ((await this.#db.inbound.beginSend(row.event.id)) === "skip") {
         this.#log.info("inbound event not sent: its task ended first", { dotId, id: row.event.id, type: row.event.type });

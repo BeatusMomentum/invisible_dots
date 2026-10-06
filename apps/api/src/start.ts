@@ -4,11 +4,14 @@
  * first start needs. `invisible-dots server` calls `runServer`; tests call
  * `startServer` and close the handle themselves.
  */
+import { ChannelHub, TelegramChannelType, WhatsAppChannelType, type ChannelType } from "@invisible-dots/channels";
 import type { Database } from "@invisible-dots/database";
 import { errorMessage, prefixedStderrLogger, Scheduler, type ComputerDriver, type Logger, type SchedulerOptions } from "@invisible-dots/scheduler";
 import { ensureDir, ENV, hostPaths, type HostPaths } from "@invisible-dots/shared";
+import { hostDoctorDeps, openRouterCheck, runDoctor, type DoctorDeps } from "@invisible-dots/vm-manager";
 import { loadOrCreateApiToken, loadOrGenerateMasterKey, parseListen, saveMasterKey, type ListenAddress } from "./config.js";
 import { assertNothingEncrypted, openControlPlaneDatabase } from "./database.js";
+import { createImageChecks } from "./doctor.js";
 import { acquireServerLock } from "./lock.js";
 import { API_VERSION, buildServer, type FastifyInstance } from "./server.js";
 import { createVmDriver } from "./vm-driver.js";
@@ -21,8 +24,12 @@ export interface StartServerOptions {
   logger?: Logger;
   /** The VM layer; default the real one over QEMU. Tests pass a fake. */
   driver?: ComputerDriver;
+  /** Replaces single dependencies of the host report (QEMU discovery, the runner, the disk, the images); the OpenRouter row always asks the Scheduler. Tests pass fakes. */
+  doctor?: Partial<DoctorDeps>;
   /** Passed through to the Scheduler (timers, lifecycle and dispatcher tuning). */
   scheduler?: Omit<SchedulerOptions, "db" | "driver" | "logger">;
+  /** The kinds of messaging channel this server can run; default Telegram, and WhatsApp when INVISIBLE_DOTS_WHATSAPP=1. Tests pass fakes. */
+  channelTypes?: readonly ChannelType[];
 }
 
 export interface RunningServer {
@@ -37,9 +44,20 @@ export interface RunningServer {
   created: { apiToken: boolean; masterKey: boolean };
   app: FastifyInstance;
   scheduler: Scheduler;
+  /** The messaging channels of the Dots: pairing, and the messages between a chat and its Dot. */
+  channels: ChannelHub;
   db: Database;
-  /** Stop the API, the scheduler and the database. VMs keep running. Idempotent. */
+  /** Stop the API, the channels, the scheduler and the database. VMs keep running. Idempotent. */
   close(): Promise<void>;
+}
+
+/**
+ * The channels a server runs when it is not told otherwise. WhatsApp is opt-in: its adapter is an unofficial
+ * client that WhatsApp can answer with a ban of the linked account, so a server that was not asked for it neither
+ * loads nor offers it.
+ */
+export function defaultChannelTypes(env: Record<string, string | undefined>): ChannelType[] {
+  return [new TelegramChannelType(), ...(env[ENV.WHATSAPP] === "1" ? [new WhatsAppChannelType()] : [])];
 }
 
 /**
@@ -86,10 +104,28 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
       logger: options.logger ?? prefixedStderrLogger("scheduler", debug),
     });
     cleanup.push(() => scheduler.close());
-    const app = buildServer({ scheduler, token: token.value, logger });
+    // Next to the Scheduler, using only what it offers; registered after it, so it stops first.
+    const channels = new ChannelHub({
+      db,
+      host: scheduler,
+      types: options.channelTypes ?? defaultChannelTypes(env),
+      logger: options.logger ?? prefixedStderrLogger("channels", debug),
+    });
+    cleanup.push(() => channels.close());
+    const doctorDeps: DoctorDeps = {
+      ...hostDoctorDeps({
+        env,
+        home: paths.home,
+        images: createImageChecks(paths),
+        openRouterKey: async () => openRouterCheck((await scheduler.health()).openrouter_configured),
+      }),
+      ...options.doctor,
+    };
+    const app = buildServer({ scheduler, channels, doctor: () => runDoctor(doctorDeps), token: token.value, logger });
     cleanup.push(() => app.close());
 
     await scheduler.start();
+    await channels.start();
     await app.listen({ host: listen.host, port: listen.port });
     const bound = app.server.address();
     const address: ListenAddress = typeof bound === "object" && bound ? { host: listen.host, port: bound.port } : listen;
@@ -107,6 +143,7 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
       created: { apiToken: token.created, masterKey: masterKey.created },
       app,
       scheduler,
+      channels,
       db,
       close: () => (closing ??= unwind()),
     };

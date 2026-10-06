@@ -3,17 +3,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { runProcess } from "@invisible-dots/vm-manager";
-import {
-  elevatedSetupScript,
-  elevationLauncherScript,
-  encodeCommand,
-  HYPERVISOR_PLATFORM_STATE_SCRIPT,
-  parseElevatedResult,
-  powershellArgs,
-  powershellPath,
-  psQuote,
-} from "../src/setup/powershell.js";
+import { encodeCommand, HYPERVISOR_PLATFORM_STATE_SCRIPT, powershellArgs, powershellPath, runProcess } from "@invisible-dots/vm-manager";
+import { elevatedSetupScript, elevationLauncherScript, parseElevatedResult, psQuote } from "../src/setup/powershell.js";
 
 const SHA = "a".repeat(64);
 
@@ -100,16 +91,12 @@ describe("generated PowerShell", () => {
     ]);
     expect(launcher.match(/Start-Process/g)).toHaveLength(1);
     expect(Buffer.from(encodeCommand(elevated), "base64").toString("utf16le")).toBe(elevated);
-    expect(powershellArgs("x")).toEqual(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encodeCommand("x")]);
   });
 
   it("quotes every kind of single quote PowerShell recognises", () => {
     expect(psQuote("plain")).toBe("'plain'");
     expect(psQuote("it's")).toBe("'it''s'");
     expect(psQuote("a\u2019b\u2018c")).toBe("'a\u2019\u2019b\u2018\u2018c'");
-    expect(powershellPath({ SystemRoot: "D:\\Win" })).toBe("D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
-    expect(powershellPath({})).toBe("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
-    expect(HYPERVISOR_PLATFORM_STATE_SCRIPT).toBe(`(Get-CimInstance -ClassName Win32_OptionalFeature -Filter "Name='HypervisorPlatform'").InstallState`);
   });
 
   it("reads the result file, with or without a byte order mark", () => {

@@ -4,20 +4,37 @@
  * thin: the work happens in the Scheduler.
  */
 import { createHash, timingSafeEqual } from "node:crypto";
+import { TELEGRAM_TOKEN_SECRET, type ChannelHub } from "@invisible-dots/channels";
 import { StreamOverflowError } from "@invisible-dots/events";
 import { ControlPlaneError, errorMessage, silentLogger, type Logger, type Scheduler } from "@invisible-dots/scheduler";
 import { STREAM_ERROR_EVENT } from "@invisible-dots/sdk";
 import type {
   ApprovalsAnswer,
+  ChannelPairingAnswer,
+  ChannelRecord,
+  ChannelsAnswer,
+  DoctorAnswer,
   DotsAnswer,
   EventsAnswer,
+  FilesListAnswer,
   HealthResponse,
   IdentitiesAnswer,
   MessagesAnswer,
   TasksAnswer,
   UsageAnswer,
 } from "@invisible-dots/sdk/types";
-import { APPROVAL_STATUSES, MAX_EVENT_PAGE, type ApprovalStatus } from "@invisible-dots/shared";
+import {
+  APPROVAL_STATUSES,
+  CHANNEL_KINDS,
+  MAX_EVENT_PAGE,
+  type ApprovalStatus,
+  type AutomationListAnswer,
+  type ChannelKind,
+  type DoctorCheck,
+  type ToolListAnswer,
+} from "@invisible-dots/shared";
+import { doctorAnswer } from "@invisible-dots/vm-manager";
+import { serveFile } from "./file-types.js";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 
 export const API_VERSION = "0.1.0";
@@ -27,12 +44,15 @@ export const SSE_HEARTBEAT_MS = 15_000;
 
 export interface ServerOptions {
   scheduler: Scheduler;
+  channels: ChannelHub;
+  /** Runs the host checks of architecture section 11.1 on the machine this server runs on; `startServer` binds the real ones. */
+  doctor(): Promise<DoctorCheck[]>;
   token: string;
   logger?: Logger;
   heartbeatMs?: number;
 }
 
-type Params = { id: string; identityId: string };
+type Params = { id: string; identityId: string; automationId: string; kind: string; peer: string };
 type Body = Record<string, unknown> | undefined;
 
 function digest(value: string): Buffer {
@@ -62,6 +82,11 @@ function sinceParam(value: unknown): Date | undefined {
   return parsed;
 }
 
+function channelKind(value: string): ChannelKind {
+  if (!(CHANNEL_KINDS as readonly string[]).includes(value)) throw bad(`no "${value}" channel: the channels are ${CHANNEL_KINDS.join(", ")}`);
+  return value as ChannelKind;
+}
+
 function bodyOf(request: FastifyRequest): Record<string, unknown> {
   const body = request.body as Body;
   if (body === undefined || body === null) return {};
@@ -70,7 +95,7 @@ function bodyOf(request: FastifyRequest): Record<string, unknown> {
 }
 
 export function buildServer(options: ServerOptions): FastifyInstance {
-  const { scheduler } = options;
+  const { scheduler, channels } = options;
   const log = options.logger ?? silentLogger;
   const expected = digest(options.token);
   const heartbeatMs = options.heartbeatMs ?? SSE_HEARTBEAT_MS;
@@ -111,6 +136,34 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     return reply.code(500).send({ error: "internal", message: errorMessage(error) });
   });
 
+  /**
+   * Answer with a server-sent event stream, the one way every stream of this API starts: headers, a heartbeat comment
+   * so proxies and clients see the connection is alive, and an abort when the client goes or the server closes. `body`
+   * writes the frames and returns when there are no more.
+   */
+  const eventStream = async (reply: FastifyReply, controller: AbortController, body: (raw: FastifyReply["raw"]) => Promise<void>): Promise<void> => {
+    reply.hijack();
+    const raw = reply.raw;
+    raw.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-store",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    });
+    raw.write(": connected\n\n");
+    streams.add(controller);
+    const heartbeat = setInterval(() => raw.write(": ping\n\n"), heartbeatMs);
+    heartbeat.unref();
+    raw.on("close", () => controller.abort());
+    try {
+      await body(raw);
+    } finally {
+      clearInterval(heartbeat);
+      streams.delete(controller);
+      raw.end();
+    }
+  };
+
   app.addHook("onClose", async () => {
     for (const controller of streams) controller.abort();
   });
@@ -118,6 +171,16 @@ export function buildServer(options: ServerOptions): FastifyInstance {
   app.get("/api/health", async (): Promise<HealthResponse> => {
     const { database, openrouter_configured } = await scheduler.health();
     return { status: "ok", database, version: API_VERSION, openrouter_configured };
+  });
+
+  // The host report `invisible-dots doctor` prints: what is missing for a Dot to run, and the command that fixes it. It runs QEMU's accelerator probe, so it takes a moment:
+  // one run at a time, and a request that arrives while it runs shares its answer (the onboarding checklist re-checks and polls).
+  let doctorRun: Promise<DoctorAnswer> | undefined;
+  app.get("/api/doctor", (): Promise<DoctorAnswer> => {
+    doctorRun ??= options.doctor().then(doctorAnswer).finally(() => {
+      doctorRun = undefined;
+    });
+    return doctorRun;
   });
 
   // Dots
@@ -131,9 +194,10 @@ export function buildServer(options: ServerOptions): FastifyInstance {
 
   app.get<{ Params: Params }>("/api/dots/:id", async (request) => scheduler.requireDot(request.params.id));
 
-  app.patch<{ Params: Params }>("/api/dots/:id", async (request) =>
-    scheduler.updateDot(request.params.id, bodyOf(request).config),
-  );
+  app.patch<{ Params: Params }>("/api/dots/:id", async (request) => {
+    const { config, expected_config_version } = bodyOf(request);
+    return scheduler.updateDot(request.params.id, config, expected_config_version);
+  });
 
   app.delete<{ Params: Params }>("/api/dots/:id", async (request, reply) => {
     return reply.code(202).send(await scheduler.deleteDot(request.params.id));
@@ -230,6 +294,83 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     return reply.code(204).send();
   });
 
+  // Automations (the Dot's cron jobs) and tools (its table): both are the engine's, so they need the computer running
+
+  app.get<{ Params: Params }>(
+    "/api/dots/:id/automations",
+    async (request): Promise<AutomationListAnswer> => ({ automations: await scheduler.listAutomations(request.params.id) }),
+  );
+
+  app.patch<{ Params: Params }>("/api/dots/:id/automations/:automationId", async (request) =>
+    scheduler.setAutomationEnabled(request.params.id, request.params.automationId, bodyOf(request).enabled),
+  );
+
+  app.delete<{ Params: Params }>("/api/dots/:id/automations/:automationId", async (request, reply) => {
+    await scheduler.deleteAutomation(request.params.id, request.params.automationId);
+    return reply.code(204).send();
+  });
+
+  app.get<{ Params: Params }>(
+    "/api/dots/:id/tools",
+    async (request): Promise<ToolListAnswer> => ({ tools: await scheduler.listTools(request.params.id) }),
+  );
+
+  // Channels (the hub never returns a credential, and no route here echoes one)
+
+  app.get<{ Params: Params }>(
+    "/api/dots/:id/channels",
+    async (request): Promise<ChannelsAnswer> => ({ channels: await channels.list(request.params.id), available: channels.kinds }),
+  );
+
+  // Link the Dot to a Telegram bot, or give the linked one a new token (a revoked token is the only way back from needs_relink).
+  app.put<{ Params: Params }>("/api/dots/:id/channels/telegram", async (request, reply): Promise<ChannelRecord> => {
+    const token = bodyOf(request).token;
+    if (typeof token !== "string" || token.trim() === "") throw bad("token must be the bot token from @BotFather");
+    const credentials = { [TELEGRAM_TOKEN_SECRET]: token.trim() };
+    const linked = (await channels.list(request.params.id)).some((channel) => channel.kind === "telegram");
+    if (linked) return channels.setCredentials(request.params.id, "telegram", credentials);
+    return reply.code(201).send(await channels.add(request.params.id, "telegram", { credentials }));
+  });
+
+  // Link WhatsApp: the channel starts and shows a code; the person scans it (the stream below) with the phone that holds the number.
+  app.post<{ Params: Params }>("/api/dots/:id/channels/whatsapp/link", async (request, reply): Promise<ChannelRecord> => {
+    return reply.code(202).send(await channels.link(request.params.id, "whatsapp"));
+  });
+
+  // The codes to scan and how the link ends, as server-sent events of `ChannelLinkFrame`. The code is a way into the account for as long as it is shown: it is not stored and the reply is never cached.
+  app.get<{ Params: Params }>("/api/dots/:id/channels/whatsapp/qr", async (request, reply) => {
+    const controller = new AbortController();
+    const frames = await channels.watchLink(request.params.id, "whatsapp", controller.signal);
+    await eventStream(reply, controller, async (raw) => {
+      for await (const frame of frames) raw.write(`data: ${JSON.stringify(frame)}\n\n`);
+    });
+  });
+
+  app.patch<{ Params: Params }>("/api/dots/:id/channels/:kind", async (request): Promise<ChannelRecord> => {
+    const kind = channelKind(request.params.kind);
+    const { settings, enabled } = bodyOf(request);
+    if (settings === undefined && enabled === undefined) throw bad("give settings, enabled, or both");
+    if (enabled !== undefined && typeof enabled !== "boolean") throw bad("enabled must be true or false");
+    let record: ChannelRecord | undefined;
+    if (settings !== undefined) record = await channels.setSettings(request.params.id, kind, settings);
+    if (enabled !== undefined) record = await channels.setEnabled(request.params.id, kind, enabled);
+    return record!;
+  });
+
+  app.delete<{ Params: Params }>("/api/dots/:id/channels/:kind", async (request, reply) => {
+    await channels.remove(request.params.id, channelKind(request.params.kind));
+    return reply.code(204).send();
+  });
+
+  app.post<{ Params: Params }>("/api/dots/:id/channels/:kind/pairing", async (request, reply): Promise<ChannelPairingAnswer> => {
+    return reply.code(201).send(await channels.pair(request.params.id, channelKind(request.params.kind)));
+  });
+
+  app.delete<{ Params: Params }>("/api/dots/:id/channels/:kind/peers/:peer", async (request, reply) => {
+    await channels.removePeer(request.params.id, channelKind(request.params.kind), request.params.peer);
+    return reply.code(204).send();
+  });
+
   // Approvals
 
   app.get<{ Querystring: { status?: string } }>("/api/approvals", async (request): Promise<ApprovalsAnswer> => {
@@ -242,9 +383,13 @@ export function buildServer(options: ServerOptions): FastifyInstance {
 
   for (const decision of ["approve", "reject"] as const) {
     app.post<{ Params: Params }>(`/api/approvals/:id/${decision}`, async (request) => {
-      const note = bodyOf(request).note;
+      const { note, always } = bodyOf(request);
       if (note !== undefined && typeof note !== "string") throw bad("note must be a string");
-      return scheduler.resolveApproval(request.params.id, decision, note);
+      if (always !== undefined && always !== true) throw bad("always must be true");
+      return scheduler.resolveApproval(request.params.id, decision, {
+        ...(note !== undefined ? { note } : {}),
+        ...(always !== undefined ? { always } : {}),
+      });
     });
   }
 
@@ -255,14 +400,44 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     async (request): Promise<UsageAnswer> => scheduler.usage(request.params.id, sinceParam(request.query.since)),
   );
 
-  app.get<{ Params: Params; Querystring: { after?: string; limit?: string } }>(
+  app.get<{ Params: Params; Querystring: { after?: string; limit?: string; types?: unknown; task_id?: unknown } }>(
     "/api/dots/:id/events",
     async (request): Promise<EventsAnswer> => {
       const after = intParam(request.query.after, "after");
       const limit = intParam(request.query.limit, "limit", MAX_EVENT_PAGE);
-      return { events: await scheduler.listEvents(request.params.id, after, limit) };
+      const { types, task_id: taskId } = request.query;
+      if (types !== undefined && typeof types !== "string") throw bad("types must be one comma-separated list");
+      if (taskId !== undefined && typeof taskId !== "string") throw bad("task_id must be a single value");
+      return {
+        events: await scheduler.listEvents(request.params.id, {
+          after,
+          limit,
+          types: types?.split(",").map((type) => type.trim()).filter(Boolean),
+          taskId,
+        }),
+      };
     },
   );
+
+  // Files of the Dot's computer, under /home/dot, read-only; they need the computer running (409 computer_stopped).
+
+  app.get<{ Params: Params; Querystring: { path?: unknown } }>(
+    "/api/dots/:id/files/list",
+    async (request): Promise<FilesListAnswer> => scheduler.listFiles(request.params.id, request.query.path as string | undefined),
+  );
+
+  app.get<{ Params: Params; Querystring: { path?: unknown } }>("/api/dots/:id/files", async (request, reply) => {
+    const { path, content } = await scheduler.readFile(request.params.id, request.query.path);
+    const { contentType, disposition } = serveFile(path);
+    return reply
+      .code(200)
+      .header("content-type", contentType)
+      .header("content-disposition", disposition)
+      .header("x-content-type-options", "nosniff")
+      .header("content-security-policy", "default-src 'none'; sandbox")
+      .header("cache-control", "no-store")
+      .send(Buffer.from(content));
+  });
 
   app.get<{ Querystring: { dot_id?: string; after?: string } }>("/api/stream", async (request, reply) => {
     let dotId: string | undefined;
@@ -275,35 +450,19 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     const lastEventId = request.headers["last-event-id"];
     const after = intParam(typeof lastEventId === "string" ? lastEventId : request.query.after, "after");
 
-    reply.hijack();
-    const raw = reply.raw;
-    raw.writeHead(200, {
-      "content-type": "text/event-stream; charset=utf-8",
-      "cache-control": "no-store",
-      connection: "keep-alive",
-      "x-accel-buffering": "no",
-    });
-    raw.write(": connected\n\n");
-
     const controller = new AbortController();
-    streams.add(controller);
-    const heartbeat = setInterval(() => raw.write(": ping\n\n"), heartbeatMs);
-    heartbeat.unref();
-    raw.on("close", () => controller.abort());
-    try {
-      for await (const event of scheduler.events.stream(dotId === undefined ? {} : { dotId }, { after, signal: controller.signal })) {
-        raw.write(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`);
+    await eventStream(reply, controller, async (raw) => {
+      try {
+        for await (const event of scheduler.events.stream(dotId === undefined ? {} : { dotId }, { after, signal: controller.signal })) {
+          raw.write(`id: ${event.id}\ndata: ${JSON.stringify(event)}\n\n`);
+        }
+      } catch (error) {
+        // The client reconnects with its last id; tell it why the server hung up.
+        const code = error instanceof StreamOverflowError ? "stream_overflow" : "stream_error";
+        raw.write(`event: ${STREAM_ERROR_EVENT}\ndata: ${JSON.stringify({ error: code, message: errorMessage(error) })}\n\n`);
+        log.warn("event stream closed with an error", { error: errorMessage(error) });
       }
-    } catch (error) {
-      // The client reconnects with its last id; tell it why the server hung up.
-      const code = error instanceof StreamOverflowError ? "stream_overflow" : "stream_error";
-      raw.write(`event: ${STREAM_ERROR_EVENT}\ndata: ${JSON.stringify({ error: code, message: errorMessage(error) })}\n\n`);
-      log.warn("event stream closed with an error", { error: errorMessage(error) });
-    } finally {
-      clearInterval(heartbeat);
-      streams.delete(controller);
-      raw.end();
-    }
+    });
   });
 
   // Secrets

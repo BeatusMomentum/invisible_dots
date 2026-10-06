@@ -157,7 +157,7 @@ async def serve(environment: Environment, stop: asyncio.Event) -> None:
             network_target=environment.network_check,
             path=environment.path,
         )
-        server = AgentServer(engine=engine, key_holder=key_holder, checks=checks)
+        server = AgentServer(engine=engine, key_holder=key_holder, checks=checks, automations=cron)
         await server.listen(environment.agent_socket)
         retry: asyncio.Task[None] | None = None
         try:

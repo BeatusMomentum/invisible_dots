@@ -18,9 +18,13 @@
     "@invisible-dots/image-builder": "0.0.0",
     "@invisible-dots/sdk": "0.0.0",
     "@invisible-dots/shared": "0.0.0",
-    "@invisible-dots/vm-manager": "0.0.0"
+    "@invisible-dots/vm-manager": "0.0.0",
+    "qrcode": "1.5.4"
   },
   "bin": {
     "invisible-dots": "dist/invisible-dots.mjs"
+  },
+  "devDependencies": {
+    "@types/qrcode": "1.5.6"
   }
 }

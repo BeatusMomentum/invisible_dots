@@ -64,14 +64,21 @@
  * Host helpers for doctor and setup: findQemu, qemuSearchDirs,
  * parseQemuVersion, isSupportedQemuVersion, MIN_QEMU_VERSION, accelerator
  * (the one platform function of section 1.1) and officialQemuDir.
+ * The doctor report (section 11.1) is `runDoctor(deps)`, with the real
+ * machine's deps from `hostDoctorDeps` and the accelerator's host side read
+ * by `checkAcceleratorAccess` (the other platform function).
  * The process runner every host command goes through: runProcess,
  * startProcess, NodeCommandRunner and NodeProcessControl (runner.ts).
  */
+export * from "./accelerator-access.js";
+export * from "./doctor.js";
 export * from "./errors.js";
 export * from "./guest-client.js";
+export * from "./host-doctor.js";
 export * from "./host.js";
 export * from "./logger.js";
 export * from "./ports.js";
+export * from "./powershell.js";
 export * from "./qemu-args.js";
 export * from "./runner.js";
 export * from "./seed.js";

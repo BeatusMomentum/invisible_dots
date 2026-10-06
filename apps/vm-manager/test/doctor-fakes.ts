@@ -1,6 +1,6 @@
-/** Fakes at the process boundary: a runner that records every command line and answers from a script. */
-import type { CheckResult, DoctorDeps, FoundQemu } from "../src/doctor/checks.js";
-import type { RunOptions, RunResult } from "@invisible-dots/vm-manager";
+/** Fakes at the process boundary, shared by the vm-manager's doctor tests and the CLI's: a runner that records every command line and answers from a script, and a host where every check passes. */
+import type { DoctorCheck } from "@invisible-dots/shared";
+import type { DoctorDeps, FoundQemu, RunOptions, RunResult } from "../src/index.js";
 
 export interface RecordedRun {
   command: string;
@@ -28,7 +28,7 @@ export const QEMU = "/opt/qemu/bin/qemu-system-x86_64";
 export const QEMU_IMG = "/opt/qemu/bin/qemu-img";
 export const FOUND: FoundQemu = { system: QEMU, img: QEMU_IMG, searched: ["INVISIBLE_DOTS_QEMU_DIR", "PATH"] };
 
-export function ok(id: CheckResult["id"], label: string, detail = "fine"): CheckResult {
+export function ok(id: DoctorCheck["id"], label: string, detail = "fine"): DoctorCheck {
   return { id, label, status: "ok", detail };
 }
 

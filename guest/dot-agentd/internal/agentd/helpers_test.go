@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -95,6 +96,15 @@ func (f *fixture) do(method, path string, body io.Reader, headers ...string) *ht
 	}
 	f.t.Cleanup(func() { _ = resp.Body.Close() })
 	return resp
+}
+
+// doLocal sends the request to the engine's socket handler (LocalHandler): no
+// token, and the file routes are not confined to home.
+func (f *fixture) doLocal(method, path string, body io.Reader) *http.Response {
+	f.t.Helper()
+	rec := httptest.NewRecorder()
+	f.srv.LocalHandler().ServeHTTP(rec, httptest.NewRequest(method, path, body))
+	return rec.Result()
 }
 
 func (f *fixture) postJSON(path string, v any) *http.Response {
