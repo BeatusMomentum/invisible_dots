@@ -9,7 +9,7 @@ import { TaskDrawer } from "../src/components/tasks/task-drawer";
 import { TasksView } from "../src/components/tasks/TasksView";
 import { Toaster } from "../src/components/ui/sonner";
 import { stubMatchMedia } from "./support/browser";
-import { dotRecord, FakeControlPlane, taskRecord } from "./support/control-plane";
+import { approvalRecord, dotRecord, FakeControlPlane, taskRecord } from "./support/control-plane";
 
 const router = { push: vi.fn(), replace: vi.fn() };
 let segment: string | null = null;
@@ -174,12 +174,36 @@ describe("the live progress line", () => {
     expect(screen.getByText("Nothing is running.")).toBeTruthy();
   });
 
-  it("sends a task that waits for an answer to the approvals, and says so", async () => {
-    plane.tasks = [runningTask("r1", { status: "WAITING_APPROVAL" })];
+  it("shows the approval a task waits for as a card on the task, answers it there and keeps the receipt in place", async () => {
+    plane.tasks = [runningTask("r1", { status: "WAITING_APPROVAL" }), runningTask("r2")];
+    plane.approvals = [
+      approvalRecord("a1", "d1", { task_id: "r1", tool: "write_file", permission: "files.write", arguments: { path: "report.md", content: "hello" }, reason: "to save the report" }),
+      approvalRecord("a2", "d1", { task_id: "r2", tool: "exec", permission: "computer.exec", arguments: { command: "ls" } }),
+    ];
     await renderTasks();
     const card = await screen.findByRole("article", { name: "Running r1" });
     expect(within(card).getAllByText("Waiting for you").length).toBeGreaterThan(0);
-    expect(within(card).getByRole("link", { name: /answer it in Approvals/ }).getAttribute("href")).toBe("/dots/d1/approvals");
+    const approval = await within(card).findByRole("article", { name: "Wants to write a file" });
+    expect(within(approval).getByText("to save the report")).toBeTruthy();
+    // The other task's approval is on the other task's card.
+    expect(within(card).queryByRole("article", { name: "Wants to run a command" })).toBeNull();
+    expect(within(await screen.findByRole("article", { name: "Running r2" })).getByRole("article", { name: "Wants to run a command" })).toBeTruthy();
+
+    await userEvent.click(within(approval).getByRole("button", { name: "Allow once" }));
+    expect(plane.answers).toEqual([{ id: "a1", decision: "approve", body: {} }]);
+    // The host no longer lists it as waiting, and the card still says what became of it.
+    await waitFor(() => expect(within(card).getByRole("status").textContent).toBe("Allowed"));
+    await waitFor(() => expect(plane.requests.filter((r) => r === "GET /api/approvals").length).toBeGreaterThan(1));
+    expect(within(card).getByRole("status").textContent).toBe("Allowed");
+  });
+
+  it("shows the approval in the task's drawer too, above what happened", async () => {
+    plane.tasks = [runningTask("r1", { status: "WAITING_APPROVAL" })];
+    plane.approvals = [approvalRecord("a1", "d1", { task_id: "r1", tool: "exec", permission: "computer.exec", arguments: { command: "make test" } })];
+    await renderTasks("r1");
+    const drawer = await screen.findByRole("dialog", { name: "Running r1" });
+    const approval = await within(drawer).findByRole("article", { name: "Wants to run a command" });
+    expect(within(approval).getByText("make test")).toBeTruthy();
   });
 });
 

@@ -10,7 +10,7 @@ import { DotShell } from "../src/components/DotShell";
 import { DotEventScope, EventStreamProvider } from "../src/components/events";
 import { AttentionProvider } from "../src/components/shell/attention";
 import { stubMatchMedia, stubObjectUrls, stubResizeObserver } from "./support/browser";
-import { dotRecord, FakeControlPlane } from "./support/control-plane";
+import { approvalRecord, dotRecord, FakeControlPlane } from "./support/control-plane";
 
 let pathname = "/dots/d1/chat";
 /** Where `router.replace` was asked to go, in order; the page that renders the chat at an address follows it. */
@@ -259,21 +259,45 @@ describe("what the Dot did between its messages", () => {
     expect(screen.queryByText("from-a-task.md")).toBeNull();
   });
 
-  it("shows an approval where it was asked, with the way to answer it, and its receipt after", async () => {
-    plane.store("d1", "user.message", { text: "clean the disk" });
-    plane.store("d1", "approval.requested", { approval_id: "a1", tool: "exec", permission: "computer.exec", arguments: {}, reason: "to delete the cache" });
-    await renderChat();
-    const line = await screen.findByText(/Waiting for your answer:/);
-    expect(line.closest("[data-testid=activity-step]")?.textContent).toContain("ran a command (to delete the cache)");
-    expect(screen.getByRole("link", { name: "Answer it in Approvals" }).getAttribute("href")).toBe("/dots/d1/approvals");
+  /** An approval the chat asked for: in the log, and in the host's list of what waits. */
+  function ask(id: string, change: { tool?: string; permission?: string; arguments?: Record<string, unknown>; reason?: string } = {}) {
+    const data = { tool: "exec", permission: "computer.exec", arguments: {}, reason: "", ...change };
+    plane.approvals.push(approvalRecord(id, "d1", data as never));
+    return { approval_id: id, ...data };
+  }
 
-    act(() => plane.push("d1", "approval.resolved", { approval_id: "a1", decision: "approve" }));
+  it("shows an approval where it was asked as a card the person answers there, and its receipt after", async () => {
+    plane.store("d1", "user.message", { text: "clean the disk" });
+    plane.store("d1", "approval.requested", ask("a1", { arguments: { command: "du -sh ~/cache" }, reason: "to measure the cache" }));
+    await renderChat();
+    const card = await screen.findByRole("article", { name: "Wants to run a command" });
+    expect(within(card).getByText("du -sh ~/cache")).toBeTruthy();
+    expect(within(card).getByText("to measure the cache")).toBeTruthy();
+    // It sits in the thread, after the message that led to it.
+    expect(screen.getByRole("log").contains(card)).toBe(true);
+    expect(screen.queryByRole("link", { name: /Answer it in/ })).toBeNull();
+
+    await userEvent.click(within(card).getByRole("button", { name: "Allow once" }));
+    expect(plane.answers).toEqual([{ id: "a1", decision: "approve", body: {} }]);
+    // The host's answer reaches the thread through the log, and the card becomes the receipt line.
     await waitFor(() => expect(screen.getByText(/^Allowed:/)).toBeTruthy());
-    expect(screen.queryByRole("link", { name: "Answer it in Approvals" })).toBeNull();
-    act(() => plane.push("d1", "approval.requested", { approval_id: "a2", tool: "write_file", permission: "files.write", arguments: {}, reason: "" }));
-    await screen.findByText(/Waiting for your answer:/);
-    act(() => plane.push("d1", "approval.resolved", { approval_id: "a2", decision: "reject" }));
+    expect(screen.queryByRole("article", { name: "Wants to run a command" })).toBeNull();
+
+    act(() => plane.push("d1", "approval.requested", ask("a2", { tool: "write_file", permission: "files.write", arguments: { path: "notes.md", content: "x" } })));
+    const second = await screen.findByRole("article", { name: "Wants to write a file" });
+    await userEvent.click(within(second).getByRole("button", { name: "Deny" }));
     await waitFor(() => expect(screen.getByText(/^Denied:/)).toBeTruthy());
+    expect(plane.answers[1]).toEqual({ id: "a2", decision: "reject", body: {} });
+  });
+
+  it("turns the card into a receipt when the approval is answered somewhere else, and says an always-allow was for good", async () => {
+    plane.store("d1", "user.message", { text: "go" });
+    plane.store("d1", "approval.requested", ask("a1"));
+    await renderChat();
+    await screen.findByRole("article", { name: "Wants to run a command" });
+    act(() => plane.push("d1", "approval.resolved", { approval_id: "a1", decision: "approve", always: true }));
+    await waitFor(() => expect(screen.getByText(/^Allowed for good:/)).toBeTruthy());
+    expect(screen.queryByRole("article", { name: "Wants to run a command" })).toBeNull();
   });
 
   it("follows the Dot live: a call that arrives shows at once, and an answer arrives from the log", async () => {

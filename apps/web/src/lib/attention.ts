@@ -2,8 +2,7 @@
  * What needs the person, per Dot, and how that is drawn. One function owns it, and the rail badges, the
  * avatar ring, the document title and the favicon all read it, so they can never disagree.
  *
- * Two parts of the design's attention model have no data to read yet and are left out on purpose, not
- * stubbed: failed tasks of the last 24 hours (step W6, with the Inbox, which is their only place) and a
+ * One part of the design's attention model has no data to read yet and is left out on purpose, not stubbed: a
  * channel that needs relinking (step W12, with the channels API).
  */
 import type { AgentState, DotState, VmState } from "@invisible-dots/shared/browser";
@@ -13,9 +12,11 @@ export interface DotAttention {
   pendingApprovals: number;
   /** Why the Dot is in ERROR; null when it is not. */
   error: string | null;
+  /** Tasks of this Dot that failed in the last 24 hours and that the person has not dismissed. */
+  failedTasks: number;
 }
 
-export const NO_ATTENTION: DotAttention = { pendingApprovals: 0, error: null };
+export const NO_ATTENTION: DotAttention = { pendingApprovals: 0, error: null, failedTasks: 0 };
 
 /** The parts of a Dot record the model reads. */
 export interface AttentionDot {
@@ -30,30 +31,35 @@ export interface AttentionApproval {
   status: string;
 }
 
+/** The part of a failed task the model reads. */
+export interface AttentionTask {
+  dot_id: string;
+}
+
 /** Per Dot id; a Dot with nothing waiting is in the map with NO_ATTENTION. */
-export function attentionByDot(dots: readonly AttentionDot[], approvals: readonly AttentionApproval[]): Map<string, DotAttention> {
+export function attentionByDot(dots: readonly AttentionDot[], approvals: readonly AttentionApproval[], failedTasks: readonly AttentionTask[] = []): Map<string, DotAttention> {
   const byDot = new Map<string, DotAttention>();
   for (const dot of dots) {
-    byDot.set(dot.id, { pendingApprovals: 0, error: dot.status === "ERROR" ? (dot.error ?? "The Dot is in an error state") : null });
+    byDot.set(dot.id, { pendingApprovals: 0, error: dot.status === "ERROR" ? (dot.error ?? "The Dot is in an error state") : null, failedTasks: 0 });
   }
   for (const approval of approvals) {
     const entry = byDot.get(approval.dot_id);
     if (entry && approval.status === "pending") entry.pendingApprovals++;
   }
+  for (const task of failedTasks) {
+    const entry = byDot.get(task.dot_id);
+    if (entry) entry.failedTasks++;
+  }
   return byDot;
 }
 
-/** Approvals waiting across every Dot: the number on the rail's Approvals entry. */
-export function pendingApprovalCount(attention: ReadonlyMap<string, DotAttention>): number {
-  let total = 0;
-  for (const entry of attention.values()) total += entry.pendingApprovals;
-  return total;
-}
-
-/** Things that need the person: waiting approvals plus Dots in ERROR. Drives the title prefix and the favicon. */
+/**
+ * Things that need the person: waiting approvals, Dots in ERROR and tasks that failed lately. It is the number on the
+ * rail's Inbox entry, in the title prefix and on the favicon, and the Inbox lists exactly that many things.
+ */
 export function needsYouCount(attention: ReadonlyMap<string, DotAttention>): number {
   let total = 0;
-  for (const entry of attention.values()) total += entry.pendingApprovals + (entry.error === null ? 0 : 1);
+  for (const entry of attention.values()) total += entry.pendingApprovals + entry.failedTasks + (entry.error === null ? 0 : 1);
   return total;
 }
 

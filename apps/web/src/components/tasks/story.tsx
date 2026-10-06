@@ -61,7 +61,11 @@ function Body({ step }: { step: StoryStep }) {
     case "approval":
       return (
         <>
-          <span className="font-medium">{APPROVAL_WORD[step.outcome]}:</span> <span title={step.tool}>{toolLabel(step.tool).label.toLowerCase()}</span>
+          <span className="font-medium">
+            {APPROVAL_WORD[step.outcome]}
+            {step.outcome === "approved" && step.always ? " for good" : ""}:
+          </span>{" "}
+          <span title={step.tool}>{toolLabel(step.tool).label.toLowerCase()}</span>
           {step.reason ? <span className="text-muted-foreground"> {step.reason}</span> : null}
           {step.note ? <span className="block text-xs text-muted-foreground">Note: {step.note}</span> : null}
         </>

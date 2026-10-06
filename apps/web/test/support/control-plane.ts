@@ -3,7 +3,7 @@
  * sends, answered from memory, and `/api/stream` as a live SSE body the test pushes events into. `install()` puts
  * it behind the global `fetch`, which is where the web client's SDK looks.
  */
-import { MAX_EVENT_PAGE, type ApprovalRecord, type BrowserIdentity, type ComputerAnswer, type DoctorCheck, type DotConfig, type DotSummary, type StoredEvent } from "@invisible-dots/shared/browser";
+import { MAX_EVENT_PAGE, type ApprovalRecord, type BrowserIdentity, type ComputerAnswer, type DoctorCheck, type DotConfig, type DotSummary, type StoredEvent, type ToolInfo } from "@invisible-dots/shared/browser";
 import type { TaskRecord } from "@invisible-dots/sdk";
 import { vi } from "vitest";
 
@@ -71,6 +71,16 @@ export class FakeControlPlane {
   failCreateTask: { status: number; error: string; message: string } | null = null;
   /** Answer `POST /api/tasks/:id/cancel` with this error instead of cancelling. */
   failCancel: { status: number; error: string; message: string } | null = null;
+  /** Every `POST /api/approvals/:id/approve|reject` the browser sent, in order, with the body it carried. */
+  answers: Array<{ id: string; decision: "approve" | "reject"; body: { note?: string; always?: true } }> = [];
+  /** Answer approval answers with this error instead of recording them. */
+  failAnswer: { status: number; error: string; message: string } | null = null;
+  /** The tool table `GET /api/dots/:id/tools` answers with; null answers 409 computer_stopped, as a stopped computer does. */
+  tools: ToolInfo[] | null = [
+    { name: "exec", permission: "computer.exec", offered: true, description: "Run a shell command." },
+    { name: "exec_session", permission: "computer.exec", offered: true, description: "Use a command session." },
+    { name: "read_file", permission: "files.read", offered: true, description: "Read a file." },
+  ];
   /** The most events one `GET .../events` page holds (the real route's is 1000). */
   eventPage = MAX_EVENT_PAGE;
   /** Answer `GET .../events` with this status instead of the log. */
@@ -203,6 +213,21 @@ export class FakeControlPlane {
       const status = searchParams.get("status");
       return json({ approvals: this.approvals.filter((a) => !status || a.status === status) });
     }
+    const answer = /^\/api\/approvals\/([^/]+)\/(approve|reject)$/.exec(pathname);
+    if (answer && method === "POST") {
+      const id = decodeURIComponent(answer[1]!);
+      const decision = answer[2] as "approve" | "reject";
+      const body = JSON.parse(String(init?.body ?? "{}")) as { note?: string; always?: true };
+      this.answers.push({ id, decision, body });
+      if (this.failAnswer) return json({ error: this.failAnswer.error, message: this.failAnswer.message }, this.failAnswer.status);
+      const record = this.approvals.find((a) => a.id === id);
+      if (!record) return json({ error: "not_found", message: `no approval ${id}` }, 404);
+      if (record.status !== "pending") return json({ error: "already_resolved", message: `approval ${id} is already ${record.status}` }, 409);
+      Object.assign(record, { status: decision === "approve" ? "approved" : "rejected", note: body.note ?? null, resolved_at: new Date().toISOString() });
+      // The host logs the answer and publishes it: the page hears it as it would from the real one.
+      this.push(record.dot_id, "approval.resolved", { approval_id: id, decision, ...(body.note ? { note: body.note } : {}), ...(body.always ? { always: true } : {}) });
+      return json(record);
+    }
     const task = /^\/api\/tasks\/([^/]+)(\/cancel)?$/.exec(pathname);
     if (task) {
       const record = this.tasks.find((t) => t.id === decodeURIComponent(task[1]!));
@@ -276,6 +301,7 @@ export class FakeControlPlane {
         if (this.failPicture) return json({ error: this.failPicture.error, message: this.failPicture.message }, this.failPicture.status);
         return new Response(Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]), { headers: { "content-type": "image/jpeg" } });
       }
+      if (rest === "tools") return this.tools === null ? json({ error: "computer_stopped", message: "the computer is STOPPED" }, 409) : json({ tools: this.tools });
       if (rest === "usage") return json({ dot_id: record.id, since: searchParams.get("since"), spent_usd: this.spentUsd });
       if (rest === "computer") {
         const answer: Partial<ComputerAnswer> = { dot_id: record.id, state: record.computer_state ?? "STOPPED", last_error: this.computerLastError, ready: true, system: null };

@@ -6,7 +6,7 @@ import AppLayout from "../src/app/(app)/layout";
 import LoginLayout from "../src/app/login/layout";
 import LoginPage from "../src/app/login/page";
 import { stubMatchMedia } from "./support/browser";
-import { approvalRecord, dotRecord, FakeControlPlane } from "./support/control-plane";
+import { approvalRecord, dotRecord, FakeControlPlane, taskRecord } from "./support/control-plane";
 
 let pathname = "/";
 vi.mock("next/navigation", () => ({ usePathname: () => pathname, useRouter: () => ({ push() {}, replace() {} }) }));
@@ -15,6 +15,7 @@ let plane: FakeControlPlane;
 
 beforeEach(() => {
   pathname = "/";
+  window.localStorage.clear();
   document.title = "Dots - invisible_dots";
   plane = new FakeControlPlane();
   plane.install();
@@ -74,8 +75,10 @@ describe("the rail", () => {
     expect(within(dots.getByRole("link", { name: /asking/ })).getByLabelText("2 waiting")).toBeTruthy();
     expect(within(dots.getByRole("link", { name: /quiet/ })).queryByLabelText(/waiting$/)).toBeNull();
     expect(dots.getByRole("link", { name: /asking/ }).getAttribute("href")).toBe("/dots/asking/chat");
-    // The Approvals entry carries the total.
-    expect(within(screen.getByRole("link", { name: /^Approvals/ })).getByLabelText("2 waiting")).toBeTruthy();
+    // The Inbox entry carries everything that needs the person: the two approvals and the Dot in ERROR.
+    expect(within(screen.getByRole("link", { name: /^Inbox/ })).getByLabelText("3 need you")).toBeTruthy();
+    expect(screen.getByRole("link", { name: /^Inbox/ }).getAttribute("href")).toBe("/inbox");
+    expect(screen.queryByRole("link", { name: /^Approvals/ })).toBeNull();
   });
 
   it("marks the page that is open, the Dot's page included", async () => {
@@ -242,6 +245,33 @@ describe("what the live stream changes in the rail", () => {
     });
     await waitFor(() => expect(document.title).toBe("Dots - invisible_dots"));
     expect(document.head.querySelector('link[rel="icon"]')?.getAttribute("href")).not.toContain(encodeURIComponent("#c96a00"));
+  });
+
+  it("counts a task that failed in the last day, and not one that failed earlier or one that was dismissed", async () => {
+    plane.dots = [dotRecord("d1")];
+    const hoursAgo = (hours: number) => new Date(Date.now() - hours * 3_600_000).toISOString();
+    plane.tasks = [
+      taskRecord("recent", { dot_id: "d1", status: "FAILED", error: "boom", finished_at: hoursAgo(2) }),
+      taskRecord("old", { dot_id: "d1", status: "FAILED", error: "boom", finished_at: hoursAgo(30) }),
+      taskRecord("fine", { dot_id: "d1", status: "COMPLETED", finished_at: hoursAgo(1) }),
+      taskRecord("dismissed", { dot_id: "d1", status: "FAILED", error: "boom", finished_at: hoursAgo(3) }),
+    ];
+    window.localStorage.setItem("idots.dismissed-tasks", JSON.stringify(["dismissed"]));
+    renderShell();
+    expect(await within(await screen.findByRole("link", { name: /^Inbox/ })).findByLabelText("1 need you")).toBeTruthy();
+    await waitFor(() => expect(document.title).toBe("(1) Dots - invisible_dots"));
+  });
+
+  it("reads the tasks again when one fails", async () => {
+    plane.dots = [dotRecord("d1"), dotRecord("d2")];
+    renderShell();
+    await waitFor(() => expect(plane.streamOpen).toBe(true));
+    await screen.findByRole("link", { name: /d2/ });
+    expect(screen.queryByLabelText(/need you/)).toBeNull();
+
+    plane.tasks = [taskRecord("t1", { dot_id: "d2", status: "FAILED", error: "no luck", finished_at: new Date().toISOString() })];
+    act(() => plane.push("d2", "task.failed", { task_id: "t1", error: "no luck" }));
+    await waitFor(() => expect(within(screen.getByRole("link", { name: /^Inbox/ })).getByLabelText("1 need you")).toBeTruthy());
   });
 
   it("puts the prefix back when the page writes a new title", async () => {

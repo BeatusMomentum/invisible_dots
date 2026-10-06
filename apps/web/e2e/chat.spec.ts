@@ -83,7 +83,7 @@ test("the person talks to the Dot: the working row follows the turn, the steps s
   await expect(page.getByRole("log").getByText("trips/lisbon.md", { exact: true })).toBeVisible();
 });
 
-test("an approval the Dot asks for in the chat is shown where it was asked, and its answer is a receipt", async ({ signedIn: page, harness }) => {
+test("an approval the Dot asks for in the chat is a card where it was asked, the person answers it there, and its answer is a receipt", async ({ signedIn: page, harness }) => {
   const dot = await harness.createDot("chat-approval");
   const guest = harness.driver.guestOf(dot.id);
   await harness.api.sendMessage(dot.id, "please delete the old profile");
@@ -92,15 +92,16 @@ test("an approval the Dot asks for in the chat is shown where it was asked, and 
 
   guest.requestApproval(undefined);
   const log = page.getByRole("log");
-  await expect(log.getByText(/Waiting for your answer:/)).toBeVisible();
-  await expect(log.getByText(/deleted a browser identity/)).toBeVisible();
-  // The Dot's header says it waits for the person too.
-  await expect(page.getByText("Waiting for you").first()).toBeVisible();
+  const card = log.getByRole("article", { name: "Wants to delete a browser identity" });
+  await expect(card).toBeVisible();
+  await expect(card.getByText("shop-abc123", { exact: true })).toBeVisible();
+  // The Dot's header says it waits for the person too, and links to the Inbox filtered to it.
+  await expect(page.getByRole("link", { name: "Dot state: Waiting for you" })).toHaveAttribute("href", `/inbox?dot=${dot.id}`);
 
-  const [approval] = await harness.api.listApprovals("pending");
-  await harness.api.approve(approval!.id);
+  await card.getByRole("button", { name: "Allow once" }).click();
   await expect(log.getByText(/^Allowed:/)).toBeVisible();
-  await expect(log.getByRole("link", { name: "Answer it in Approvals" })).toHaveCount(0);
+  await expect(card).toHaveCount(0);
+  expect((await harness.api.listApprovals("approved")).map((a) => a.dot_id)).toEqual([dot.id]);
 });
 
 test("the computer panel shows the desktop and each open browser, and follows a browser being opened and closed", async ({ signedIn: page, harness }) => {

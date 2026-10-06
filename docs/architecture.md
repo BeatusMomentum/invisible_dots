@@ -1738,8 +1738,8 @@ that holds a color, a radius or a typeface (a light and a dark set, each pair
 checked for WCAG AA contrast by a test), `globals.css` maps it into Tailwind,
 and the primitives in `src/components/ui/` are shadcn/ui source, copied in
 (`THIRD_PARTY_NOTICES.md`). Every signed-in page sits in one frame: the rail
-(the Dots with a ring around each avatar that says what it is doing, the
-approvals that wait, the state of the API and of the live stream, the theme,
+(the Dots with a ring around each avatar that says what it is doing, the Inbox
+with what needs the person, the state of the API and of the live stream, the theme,
 sign out) and, for a Dot, its header and tab bar. One live stream serves all of
 it; `lib/attention.ts` is the single owner of what needs the person, and the
 rail badges, the avatar ring, the tab title and the favicon all read it. The
@@ -1805,7 +1805,8 @@ the page reads from its start, asking only for the event types of a task's
 story (`lib/event-log.ts` is the one function that pages through the route's
 `types` filter) only once a task is running
 or open, and then keeps current from the live stream. The newest progress line of a running task is also under the goal in
-the Dot header. A task that waits for an answer links to the Dot's approvals.
+the Dot header. A task that waits for an answer shows its approval as a card on its own card and in its
+drawer, answerable there (see the Inbox below).
 
 The chat (`/dots/<id>/chat`) is the conversation: the person's messages as
 bubbles (one that came through Telegram or WhatsApp says "via Telegram", from
@@ -1817,8 +1818,8 @@ log: each `tool.called` that names no task as one quiet line (the words of
 table, then the call's `target`, and how it ended when that was not well; more
 than three in a row fold into one line that opens), each `memory.written` of
 such a call as a chip, and each `approval.requested` that names no task, where it
-was asked, with its answer as a receipt (the answer itself is given in the
-approvals until the inline card exists). The messages route and the log are two
+was asked, as the approval card while it waits (answerable there) and as a receipt
+line once answered ("Allowed for good" when the answer was "always"). The messages route and the log are two
 views of one log, so a step is placed between two messages by event id
 (`lib/chat-thread.ts`). A message shows as soon as it is sent and is replaced by
 the logged one, which `POST .../messages` names by its `event_id`; one that was
@@ -1831,6 +1832,38 @@ the pictures the host reads from the guest every few seconds while the page is
 visible, with a LIVE badge, a warning when a frame is more than 15 s old, and the
 words "The Dot has control", because nothing the person does there reaches the
 computer.
+
+The Inbox (`/inbox`, in the rail) is where everything that needs the person is,
+from every Dot. Its address holds its whole state: `?tab=history`, `?dot=<id or
+name>` and `?permission=<name>` (the old `/approvals` and `/dots/<id>/approvals`
+redirect to it). "Needs you" lists the waiting approvals, the one that has waited
+longest first, then the Dots in ERROR and the tasks that failed in the last 24
+hours (each dismissable; the dismissals are kept in this browser only, so a
+cleared browser shows them again). No route lists failed tasks of every Dot, so
+the shell reads each Dot's task list (the newest 200, where a recent failure is)
+and keeps the failed ones, and says when some Dot's list could not be read.
+`lib/attention.ts` counts the three, and the rail's Inbox badge, the tab title and
+the favicon all read that one count. The approval card (S7) says what the Dot
+wants to do from the engine's tool table (`lib/events/tool-labels.ts`), the
+permission and its risk (`PERMISSION_INFO`), the Dot's reason, and the call's
+arguments in the form that reads best: a command, a diff for `write_file`,
+`edit_file` and `apply_patch`, an address, a schedule, with the raw arguments
+under Details (a proxy's password is never shown). It is destructive for a
+command, the deletion of a browser identity and a change to a file outside the
+workspace. The answers are Allow once, Always allow and Deny with an optional
+note. Always allow asks first, naming the permission, what it can do and the tools
+it covers (`GET /api/dots/<id>/tools`, when the computer answers), and then
+`POST /api/approvals/<id>/approve` with `always: true`, which changes the Dot's
+config (section 9.6). The host answers 409 `already_resolved` to the second
+answer; the card says the approval was answered somewhere else. An answered card
+stays in place as a receipt until the person leaves the page. Keys: `j` and `k`
+move between the cards, `a` allows the selected one once and `d` denies it; a
+destructive card is not allowed by a key, `a` moves the focus to its Allow once
+button, whose press is the confirmation. History lists every approval that is no
+longer waiting, the last answered first. `GET /api/approvals` answers with the
+oldest `APPROVAL_LIST_LIMIT` approvals (500), so when a list is that long the page
+says that the newest are not listed: a named gap, until the route can page or
+order. Channels needing a relink join "Needs you" with the channels page.
 
 ### 9.8 Messaging channels
 

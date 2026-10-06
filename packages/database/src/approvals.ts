@@ -1,4 +1,4 @@
-import type { ApprovalRequestedData, ApprovalStatus } from "@invisible-dots/shared";
+import { APPROVAL_LIST_LIMIT, type ApprovalRequestedData, type ApprovalStatus } from "@invisible-dots/shared";
 import type { ApprovalRecord } from "@invisible-dots/shared";
 import { iso, isoRequired, type Queryable } from "./rows.js";
 
@@ -82,7 +82,7 @@ export class ApprovalsRepository {
       `SELECT * FROM approvals
         WHERE ($1::text IS NULL OR status = $1) AND ($2::text IS NULL OR dot_id = $2)
         ORDER BY created_at, id LIMIT $3`,
-      [options.status ?? null, options.dotId ?? null, options.limit ?? 500],
+      [options.status ?? null, options.dotId ?? null, options.limit ?? APPROVAL_LIST_LIMIT],
     );
     return rows.map(toRecord);
   }

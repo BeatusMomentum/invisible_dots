@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckSquareIcon, HomeIcon, PlusIcon, SettingsIcon } from "lucide-react";
+import { HomeIcon, InboxIcon, PlusIcon, SettingsIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type { ReactNode } from "react";
@@ -52,7 +52,7 @@ function CountBadge({ count, label }: { count: number; label: string }) {
  */
 export function Rail({ onNavigate }: { onNavigate?: () => void }) {
   const path = usePathname() ?? "/";
-  const { dots, attention, pendingApprovals, live } = useShell();
+  const { dots, attention, needsYou, live } = useShell();
   const openDotId = dotIdFromPath(path);
 
   return (
@@ -78,10 +78,10 @@ export function Rail({ onNavigate }: { onNavigate?: () => void }) {
           <HomeIcon className="size-4" />
           Home
         </NavLink>
-        <NavLink href="/approvals" current={path.startsWith("/approvals")} onNavigate={onNavigate}>
-          <CheckSquareIcon className="size-4" />
-          Approvals
-          <CountBadge count={pendingApprovals} label="waiting" />
+        <NavLink href="/inbox" current={path.startsWith("/inbox")} onNavigate={onNavigate}>
+          <InboxIcon className="size-4" />
+          Inbox
+          <CountBadge count={needsYou} label="need you" />
         </NavLink>
         <NavLink href="/settings" current={path.startsWith("/settings")} onNavigate={onNavigate}>
           <SettingsIcon className="size-4" />

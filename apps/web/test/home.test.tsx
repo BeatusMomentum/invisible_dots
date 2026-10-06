@@ -168,12 +168,12 @@ describe("Home", () => {
     expect(within(broken).getByRole("img", { name: "Needs attention: error" })).toBeTruthy();
   });
 
-  it("shows the approvals that wait, linked to the Dot's approvals", async () => {
+  it("shows the approvals that wait, linked to the Dot's approvals in the Inbox", async () => {
     plane.dots = [dotRecord("d1", { name: "asks" }), dotRecord("d2", { name: "quiet" })];
     plane.approvals = [approvalRecord("a1", "d1"), approvalRecord("a2", "d1")];
     await renderHome();
     const asks = await screen.findByRole("article", { name: "asks" });
-    await waitFor(() => expect(within(asks).getByRole("link", { name: "2 approvals waiting" }).getAttribute("href")).toBe("/dots/d1/approvals"));
+    await waitFor(() => expect(within(asks).getByRole("link", { name: "2 approvals waiting" }).getAttribute("href")).toBe("/inbox?dot=d1"));
     expect(within(asks).getByRole("img", { name: "Waiting for you" })).toBeTruthy();
     expect(within(card("quiet")).queryByText(/waiting/)).toBeNull();
   });

@@ -84,12 +84,12 @@ describe("the Dot header", () => {
     expect(screen.getByRole("img", { name: "Working" })).toBeTruthy();
   });
 
-  it("shows a Dot that waits for the person, with a link to the approvals", async () => {
+  it("shows a Dot that waits for the person, with a link to its approvals in the Inbox", async () => {
     plane.dots = [dotRecord("d1", { status: "WAITING_APPROVAL" })];
     plane.approvals = [approvalRecord("a1", "d1")];
     await renderDot();
     const pill = await screen.findByRole("link", { name: /Waiting for you/ });
-    expect(pill.getAttribute("href")).toBe("/dots/d1/approvals");
+    expect(pill.getAttribute("href")).toBe("/inbox?dot=d1");
     expect(screen.getByRole("img", { name: "Waiting for you" })).toBeTruthy();
   });
 
@@ -161,18 +161,19 @@ describe("the Dot header", () => {
 });
 
 describe("the tab bar", () => {
-  it("links every tab that exists, marks the open one and counts this Dot's waiting approvals on Approvals", async () => {
+  it("links every tab that exists and marks the open one", async () => {
     plane.dots = [dotRecord("d1"), dotRecord("d2")];
     plane.approvals = [approvalRecord("a1", "d1"), approvalRecord("a2", "d2"), approvalRecord("a3", "d2")];
     pathname = "/dots/d1/tasks";
     await renderDot();
     const tabs = within(screen.getByRole("navigation", { name: "Dot sections" }));
     expect(tabs.getAllByRole("link").map((link) => link.getAttribute("href"))).toEqual(
-      ["chat", "tasks", "timeline", "approvals", "identities", "computer", "settings"].map((slug) => "/dots/d1/" + slug),
+      ["chat", "tasks", "timeline", "identities", "computer", "settings"].map((slug) => "/dots/d1/" + slug),
     );
     expect(tabs.getByRole("link", { name: "Tasks" }).getAttribute("aria-current")).toBe("page");
     expect(tabs.getByRole("link", { name: "Chat" }).getAttribute("aria-current")).toBeNull();
-    await waitFor(() => expect(within(tabs.getByRole("link", { name: /Approvals/ })).getByLabelText("1 waiting")).toBeTruthy());
+    // Approvals are the Inbox's, filtered to the Dot: the tab bar has no Approvals tab.
+    expect(tabs.queryByRole("link", { name: /Approvals/ })).toBeNull();
   });
 });
 

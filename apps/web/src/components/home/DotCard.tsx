@@ -44,7 +44,7 @@ export function DotCard({ dot }: { dot: Dot }) {
           </p>
         </div>
         {pendingApprovals > 0 ? (
-          <Link href={`${href}/approvals`} aria-label={`${pendingApprovals} ${pendingApprovals === 1 ? "approval" : "approvals"} waiting`}>
+          <Link href={`/inbox?dot=${encodeURIComponent(dot.id)}`} aria-label={`${pendingApprovals} ${pendingApprovals === 1 ? "approval" : "approvals"} waiting`}>
             <Badge className="bg-warn-soft text-warn">{pendingApprovals} waiting</Badge>
           </Link>
         ) : null}

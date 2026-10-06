@@ -20,7 +20,7 @@ describe("the words for the engine's tools", () => {
   });
 
   it("say what the call did, in a short phrase of its own", () => {
-    expect(toolLabel("exec")).toEqual({ label: "Ran a command", family: "command" });
+    expect(toolLabel("exec")).toEqual({ label: "Ran a command", ask: "run a command", family: "command" });
     expect(toolLabel("browser_navigate").family).toBe("browser");
     expect(toolLabel("write_file").family).toBe("write");
     for (const [tool, { label }] of Object.entries(TOOL_LABELS)) {
@@ -29,10 +29,19 @@ describe("the words for the engine's tools", () => {
     }
   });
 
+  it("say what a call would do, in the infinitive, for the question put to the person", () => {
+    for (const [tool, { ask }] of Object.entries(TOOL_LABELS)) {
+      expect(ask, tool).toMatch(/^[a-z][a-z ]+[a-z]$/);
+      expect(ask, tool).not.toMatch(/[._]/);
+    }
+    expect(toolLabel("browser_identity_delete").ask).toBe("delete a browser identity");
+    expect(toolLabel("write_file").ask).toBe("write a file");
+  });
+
   it("keep the name of a tool the table does not know, as the model called it", () => {
-    expect(toolLabel("rm_rf")).toEqual({ label: "Called rm_rf", family: "other" });
+    expect(toolLabel("rm_rf")).toEqual({ label: "Called rm_rf", ask: "call rm_rf", family: "other" });
     // Not a lookup on the object's own prototype.
-    expect(toolLabel("constructor")).toEqual({ label: "Called constructor", family: "other" });
+    expect(toolLabel("constructor")).toEqual({ label: "Called constructor", ask: "call constructor", family: "other" });
     expect(toolLabel("toString").family).toBe("other");
   });
 });

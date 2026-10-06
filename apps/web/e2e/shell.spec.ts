@@ -23,7 +23,7 @@ test("signing out returns to the login page, and the pages behind it ask for the
   await page.goto(`${harness.webUrl}/`);
   await page.getByRole("button", { name: "Sign out" }).click();
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
-  await page.goto(`${harness.webUrl}/approvals`);
+  await page.goto(`${harness.webUrl}/inbox`);
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
 });
 
@@ -59,7 +59,7 @@ test("a Dot that waits for an approval shows it everywhere at once, live, and cl
 
   await expect(link.getByRole("img", { name: "Waiting for you" })).toBeVisible();
   await expect(link.getByLabel("1 waiting")).toBeVisible();
-  await expect(page.getByRole("link", { name: /^Approvals/ }).getByLabel("1 waiting")).toBeVisible();
+  await expect(page.getByRole("link", { name: /^Inbox/ }).getByLabel("1 need you")).toBeVisible();
   await expect(page).toHaveTitle(`(1) ${titleBefore}`);
 
   const [approval] = await harness.api.listApprovals("pending");
@@ -132,8 +132,8 @@ test("the whole shell works from the keyboard", async ({ signedIn: page, harness
   await page.keyboard.press("Escape");
   await expect(page.getByRole("menu")).toBeHidden();
   // The skip link is the first stop of a page that does not take the focus itself (the chat does, for its box).
-  await page.goto(`${harness.webUrl}/approvals`);
-  await expect(page.getByRole("heading", { name: "Pending approvals" })).toBeVisible();
+  await page.goto(`${harness.webUrl}/inbox`);
+  await expect(page.getByRole("heading", { name: "Inbox" })).toBeVisible();
   await page.keyboard.press("Tab");
   await expect(page.getByRole("link", { name: "Skip to content" })).toBeFocused();
   await page.keyboard.press("Enter");

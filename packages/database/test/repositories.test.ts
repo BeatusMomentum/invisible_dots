@@ -1,4 +1,4 @@
-import { newId, parseDotConfig, TASK_LIST_LIMIT, vmName, type OutboundEvent } from "@invisible-dots/shared";
+import { APPROVAL_LIST_LIMIT, newId, parseDotConfig, TASK_LIST_LIMIT, vmName, type OutboundEvent } from "@invisible-dots/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DotChangedError, DotNameTakenError, TransactionMisuseError, type Database, type Repositories } from "../src/index.js";
 import { EventsRepository } from "../src/events.js";
@@ -441,6 +441,20 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect((await db.approvals.list({ status: "pending", dotId: dot.id })).map((a) => a.id)).toEqual([data.approval_id]);
     expect((await db.approvals.resolve(data.approval_id, "approved", "fine"))?.note).toBe("fine");
     expect(await db.approvals.resolve(data.approval_id, "rejected", null)).toBeNull();
+  });
+
+  it("approvals: a list is the oldest APPROVAL_LIST_LIMIT in the order they were asked, and a limit given says otherwise", async () => {
+    const dot = await seedDot(db, "approval-list-limit");
+    const ids: string[] = [];
+    for (let i = 0; i < APPROVAL_LIST_LIMIT + 1; i++) {
+      const approval_id = newId("apr");
+      ids.push(approval_id);
+      await db.approvals.insertRequested(dot.id, { approval_id, tool: "exec", permission: "computer.exec" as const, arguments: {}, reason: `ask ${i}` });
+    }
+    const listed = await db.approvals.list({ dotId: dot.id });
+    expect(listed).toHaveLength(APPROVAL_LIST_LIMIT);
+    expect(listed.map((a) => a.id)).not.toContain(ids[APPROVAL_LIST_LIMIT]);
+    expect(await db.approvals.list({ dotId: dot.id, limit: APPROVAL_LIST_LIMIT + 1 })).toHaveLength(APPROVAL_LIST_LIMIT + 1);
   });
 
   it("approvals: found by the end of their id, in lowercase, within one Dot, resolved ones included", async () => {

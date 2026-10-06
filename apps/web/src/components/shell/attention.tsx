@@ -1,18 +1,22 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { HealthResponse } from "@invisible-dots/sdk";
 import { api } from "../../lib/api";
-import { attentionByDot, needsYouCount, NO_ATTENTION, pendingApprovalCount, withTitlePrefix, type DotAttention } from "../../lib/attention";
+import { attentionByDot, needsYouCount, NO_ATTENTION, withTitlePrefix, type DotAttention } from "../../lib/attention";
+import { readDismissed, writeDismissed } from "../../lib/dismissed";
+import { loadFailedTasks, recentFailures, type FailedTasks } from "../../lib/failed-tasks";
 import { applyLiveEvent, dismissRestart, dotIdFromPath, liveOf, markRead, type LiveDot, type LiveDots } from "../../lib/dot-live";
 import { faviconHref } from "../../lib/favicon";
-import type { Approval, Dot } from "../../lib/types";
+import type { Approval, Dot, Task } from "../../lib/types";
+import { useNow } from "../../lib/use-now";
 import { useLiveEvents, useLiveRefresh } from "../events";
 import { useResource, type Resource } from "../ui";
 
 const DOT_EVENTS = ["dot.created", "dot.updated", "dot.deleted", "computer.state", "computer.started", "computer.stopped"];
 const APPROVAL_EVENTS = ["approval.requested", "approval.resolved", "task.cancelled", "task.completed", "task.failed"];
+const FAILED_TASK_EVENTS = ["task.failed"];
 const HEALTH_INTERVAL_MS = 30_000;
 
 interface ShellData {
@@ -21,8 +25,12 @@ interface ShellData {
   /** The control plane's answer, asked every 30 seconds and again on `health.reload()` (after a key is saved). */
   health: Resource<HealthResponse>;
   attention: ReadonlyMap<string, DotAttention>;
-  /** Waiting approvals of every Dot. */
-  pendingApprovals: number;
+  /** What needs the person, across every Dot: waiting approvals, Dots in ERROR and failed tasks. The number on the rail's Inbox entry. */
+  needsYou: number;
+  /** Tasks that failed in the last 24 hours and are not dismissed, newest first; and how many Dots' tasks could not be read. */
+  failedTasks: { tasks: readonly Task[]; unread: number; loading: boolean };
+  /** Take a failed task out of the Inbox (remembered in this browser). */
+  dismissFailedTask: (taskId: string) => void;
   live: LiveDots;
   dismissRestart: (dotId: string) => void;
 }
@@ -30,7 +38,7 @@ interface ShellData {
 const Context = createContext<ShellData | null>(null);
 
 /**
- * What every signed-in page shares: the Dots, the approvals that wait, what the live stream says about each Dot, and
+ * What every signed-in page shares: the Dots, the approvals that wait, the tasks that failed lately, what the live stream says about each Dot, and
  * whether the control plane answers. The rail, the Dot header, the document title, the favicon and the setup pages
  * all read it, so they agree and the control plane is asked once, not once per component.
  */
@@ -38,6 +46,8 @@ export function AttentionProvider({ children }: { children: ReactNode }) {
   const dots = useResource(() => api.listDots(), "shell:dots");
   const approvals = useResource(() => api.listApprovals("pending"), "shell:approvals");
   const health = useResource(() => api.health(), "shell:health");
+  const dotIds = (dots.data ?? []).map((dot) => dot.id).join(",");
+  const failed = useResource<FailedTasks>(() => loadFailedTasks(api, dots.data ?? []), `shell:failed:${dotIds}`);
   const reloadHealth = health.reload;
   useEffect(() => {
     const timer = setInterval(reloadHealth, HEALTH_INTERVAL_MS);
@@ -45,6 +55,7 @@ export function AttentionProvider({ children }: { children: ReactNode }) {
   }, [reloadHealth]);
   useLiveRefresh(dots.reload, DOT_EVENTS);
   useLiveRefresh(approvals.reload, APPROVAL_EVENTS);
+  useLiveRefresh(failed.reload, FAILED_TASK_EVENTS);
 
   const openDotId = dotIdFromPath(usePathname() ?? "");
   const [live, setLive] = useState<LiveDots>({});
@@ -53,14 +64,31 @@ export function AttentionProvider({ children }: { children: ReactNode }) {
     if (openDotId) setLive((current) => markRead(current, openDotId));
   }, [openDotId]);
 
-  const attention = useMemo(() => attentionByDot(dots.data ?? [], approvals.data ?? []), [dots.data, approvals.data]);
+  // Dismissals are read after mount: the server render has no storage, and the first render must match it.
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(new Set());
+  const dismissedNow = useRef(dismissed);
+  useEffect(() => {
+    dismissedNow.current = readDismissed();
+    setDismissed(dismissedNow.current);
+  }, []);
+  const dismissFailedTask = useCallback((taskId: string) => {
+    dismissedNow.current = new Set(dismissedNow.current).add(taskId);
+    writeDismissed(dismissedNow.current);
+    setDismissed(dismissedNow.current);
+  }, []);
+  // A failure leaves the Inbox a day after it happened, without anyone reloading anything.
+  const now = Math.floor(useNow(60_000) / 60_000);
+  const recent = useMemo(() => recentFailures(failed.data?.tasks ?? [], dismissed, now * 60_000), [failed.data, dismissed, now]);
+  const failedTasks = useMemo(() => ({ tasks: recent, unread: failed.data?.unread ?? 0, loading: failed.data === undefined && failed.error === null }), [recent, failed.data, failed.error]);
+
+  const attention = useMemo(() => attentionByDot(dots.data ?? [], approvals.data ?? [], recent), [dots.data, approvals.data, recent]);
   const needsYou = needsYouCount(attention);
   useTitleAndFavicon(needsYou);
 
   const dismiss = useCallback((dotId: string) => setLive((current) => dismissRestart(current, dotId)), []);
   const value = useMemo<ShellData>(
-    () => ({ dots, approvals, health, attention, pendingApprovals: pendingApprovalCount(attention), live, dismissRestart: dismiss }),
-    [dots, approvals, health, attention, live, dismiss],
+    () => ({ dots, approvals, health, attention, needsYou, failedTasks, dismissFailedTask, live, dismissRestart: dismiss }),
+    [dots, approvals, health, attention, needsYou, failedTasks, dismissFailedTask, live, dismiss],
   );
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

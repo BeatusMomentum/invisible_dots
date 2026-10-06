@@ -1,26 +1,14 @@
 "use client";
 
-import { BrainIcon, ChevronRightIcon, ClockIcon, FileTextIcon, FilePenIcon, FingerprintIcon, GlobeIcon, HandIcon, MonitorIcon, TerminalIcon, WrenchIcon, type LucideIcon } from "lucide-react";
-import Link from "next/link";
+import { BrainIcon, ChevronRightIcon, HandIcon } from "lucide-react";
 import { useState } from "react";
-import type { ToolFamily } from "../../lib/events/tool-labels";
 import { clusterSummary, groupActivity, type ActivityItem, type ApprovalStep, type MemoryChip, type ToolStep } from "../../lib/chat-thread";
 import { formatDate, formatMillis } from "../../lib/format";
 import { cn } from "../../lib/utils";
+import { InlineApproval } from "../approvals/InlineApproval";
+import { FAMILY_ICON } from "../tool-family-icon";
 import { ActivityStep, type ActivityStepTone } from "./activity-step";
 import { TOOL_STATUS, ToolStatusWord } from "./tool-status";
-
-export const FAMILY_ICON: Record<ToolFamily, LucideIcon> = {
-  command: TerminalIcon,
-  read: FileTextIcon,
-  write: FilePenIcon,
-  memory: BrainIcon,
-  automation: ClockIcon,
-  screen: MonitorIcon,
-  "browser-identity": FingerprintIcon,
-  browser: GlobeIcon,
-  other: WrenchIcon,
-};
 
 const STATE_TONE: Record<ToolStep["state"], ActivityStepTone> = { ok: "neutral", error: "error", denied: "warn", interrupted: "warn" };
 
@@ -45,31 +33,31 @@ export function ToolLine({ step }: { step: ToolStep }) {
   );
 }
 
-const APPROVAL_WORD: Record<ApprovalStep["outcome"], string> = { waiting: "Waiting for your answer", approved: "Allowed", rejected: "Denied" };
+const APPROVAL_WORD: Record<Exclude<ApprovalStep["outcome"], "waiting">, string> = { approved: "Allowed", rejected: "Denied" };
 
 /**
- * An approval the Dot asked for in the conversation, in place. Until the inline approval card exists (step W6) the
- * waiting line links to the Dot's approvals, where the person answers; once answered it is a receipt.
+ * An approval the Dot asked for in the conversation, in the place it was asked. While it waits it is the approval card,
+ * answerable here; once answered it is a receipt, which is what the log keeps.
  */
 export function ApprovalLine({ dotId, step }: { dotId: string; step: ApprovalStep }) {
-  const waiting = step.outcome === "waiting";
+  if (step.outcome === "waiting") {
+    return (
+      <InlineApproval
+        ask={{ id: step.approvalId, dotId, taskId: null, tool: step.tool, permission: step.permission, arguments: step.arguments, reason: step.reason, createdAt: step.at }}
+      />
+    );
+  }
+  const approved = step.outcome === "approved";
   return (
     <ActivityStep
       icon={HandIcon}
-      tone={waiting ? "warn" : step.outcome === "approved" ? "success" : "error"}
+      tone={approved ? "success" : "error"}
       title={step.reason || undefined}
       label={
         <span className="min-w-0 whitespace-normal">
-          <span className={cn(waiting && "text-warn")}>{APPROVAL_WORD[step.outcome]}:</span> {step.label.toLowerCase()}
+          {APPROVAL_WORD[step.outcome]}
+          {approved && step.always ? " for good" : ""}: {step.label.toLowerCase()}
           {step.reason ? <span className="font-normal"> ({step.reason})</span> : null}
-          {waiting ? (
-            <>
-              {" "}
-              <Link href={`/dots/${encodeURIComponent(dotId)}/approvals`} className="text-primary underline underline-offset-2">
-                Answer it in Approvals
-              </Link>
-            </>
-          ) : null}
         </span>
       }
     />

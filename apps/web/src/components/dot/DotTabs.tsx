@@ -3,8 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "../../lib/utils";
-import { Badge } from "../ui/badge";
-import { useDotAttention } from "../shell/attention";
 
 /**
  * The tabs that exist today. Each later step of the redesign swaps an entry for its replacement (activity, memory,
@@ -14,7 +12,6 @@ export const DOT_TABS = [
   { slug: "chat", label: "Chat" },
   { slug: "tasks", label: "Tasks" },
   { slug: "timeline", label: "Timeline" },
-  { slug: "approvals", label: "Approvals" },
   { slug: "identities", label: "Browser identities" },
   { slug: "computer", label: "Computer" },
   { slug: "settings", label: "Settings" },
@@ -23,7 +20,6 @@ export const DOT_TABS = [
 /** The tab bar: a row of links, scrolling sideways when the screen is too narrow for all of them. */
 export function DotTabs({ dotId }: { dotId: string }) {
   const path = usePathname() ?? "";
-  const { pendingApprovals } = useDotAttention(dotId);
   const base = `/dots/${encodeURIComponent(dotId)}`;
 
   return (
@@ -43,11 +39,6 @@ export function DotTabs({ dotId }: { dotId: string }) {
                 )}
               >
                 {tab.label}
-                {tab.slug === "approvals" && pendingApprovals > 0 ? (
-                  <Badge role="img" className="bg-warn-soft px-1.5 text-warn" aria-label={`${pendingApprovals} waiting`}>
-                    {pendingApprovals}
-                  </Badge>
-                ) : null}
               </Link>
             </li>
           );

@@ -40,7 +40,12 @@ export interface ApprovalStep {
   label: string;
   family: ToolFamily;
   reason: string;
+  /** What the call needs the person's permission for, and with which arguments: what the approval card shows. */
+  permission: string;
+  arguments: Record<string, unknown>;
   outcome: ApprovalOutcome;
+  /** The answer also allowed the permission for good. */
+  always: boolean;
 }
 
 export interface MemoryChip {
@@ -114,7 +119,19 @@ export function activityOf(events: readonly StoredEvent[]): ActivityItem[] {
         if (hasTask(event)) break;
         const tool = text(d.tool);
         const { label, family } = toolLabel(tool);
-        const step: ApprovalStep = { ...base, kind: "approval", approvalId: text(d.approval_id), tool, label, family, reason: text(d.reason), outcome: "waiting" };
+        const step: ApprovalStep = {
+          ...base,
+          kind: "approval",
+          approvalId: text(d.approval_id),
+          tool,
+          label,
+          family,
+          reason: text(d.reason),
+          permission: text(d.permission),
+          arguments: typeof d.arguments === "object" && d.arguments !== null && !Array.isArray(d.arguments) ? (d.arguments as Record<string, unknown>) : {},
+          outcome: "waiting",
+          always: false,
+        };
         approvals.set(step.approvalId, step);
         items.push(step);
         break;
@@ -122,7 +139,10 @@ export function activityOf(events: readonly StoredEvent[]): ActivityItem[] {
       case "approval.resolved": {
         // It names only the approval: one that was not the chat's is not in the map.
         const step = approvals.get(text(d.approval_id));
-        if (step) step.outcome = d.decision === "approve" ? "approved" : "rejected";
+        if (step) {
+          step.outcome = d.decision === "approve" ? "approved" : "rejected";
+          step.always = d.always === true;
+        }
         break;
       }
       case "memory.written":

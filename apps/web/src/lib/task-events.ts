@@ -66,7 +66,7 @@ export type StoryStep =
   | { kind: "started"; id: number; at: string }
   | { kind: "progress"; id: number; at: string; text: string }
   | { kind: "tool"; id: number; at: string; tool: string; target: string; decision: string; ok: boolean; interrupted: boolean; durationMs: number }
-  | { kind: "approval"; id: number; at: string; approvalId: string; tool: string; reason: string; outcome: ApprovalOutcome; note: string }
+  | { kind: "approval"; id: number; at: string; approvalId: string; tool: string; reason: string; outcome: ApprovalOutcome; note: string; always: boolean }
   | { kind: "completed"; id: number; at: string; summary: string }
   | { kind: "failed"; id: number; at: string; error: string }
   | { kind: "cancelled"; id: number; at: string };
@@ -83,6 +83,7 @@ export function storyOf(events: readonly StoredEvent[], taskId: string): StorySt
       if (step) {
         step.outcome = d.decision === "approve" ? "approved" : "rejected";
         step.note = text(d.note);
+        step.always = d.always === true;
       }
       continue;
     }
@@ -118,6 +119,7 @@ export function storyOf(events: readonly StoredEvent[], taskId: string): StorySt
           reason: text(d.reason),
           outcome: "waiting",
           note: "",
+          always: false,
         };
         approvals.set(step.approvalId, step);
         steps.push(step);

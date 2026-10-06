@@ -55,6 +55,12 @@ export const TASK_LIST_LIMIT = 200;
 export const CONVERSATION_LIST_LIMIT = 500;
 
 /**
+ * How many approvals (the OLDEST, in the order they were asked) `GET /api/approvals` answers with, for one status or
+ * all of them; a list this long may be cut, and newer approvals are not reachable through the route.
+ */
+export const APPROVAL_LIST_LIMIT = 500;
+
+/**
  * `approvals.status` (section 9.1). An approval is `expired` when its task
  * ended before anybody decided: nothing waits for the decision any more.
  */

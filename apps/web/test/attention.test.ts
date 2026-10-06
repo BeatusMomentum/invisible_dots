@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   attentionByDot,
   needsYouCount,
-  pendingApprovalCount,
   ringState,
   titlePrefix,
   withTitlePrefix,
@@ -24,10 +23,17 @@ describe("the attention model", () => {
         { dot_id: "gone", status: "pending" },
       ],
     );
-    expect(map.get("a")).toEqual({ pendingApprovals: 2, error: null });
-    expect(map.get("b")).toEqual({ pendingApprovals: 0, error: null });
+    expect(map.get("a")).toEqual({ pendingApprovals: 2, error: null, failedTasks: 0 });
+    expect(map.get("b")).toEqual({ pendingApprovals: 0, error: null, failedTasks: 0 });
     expect(map.has("gone")).toBe(false);
-    expect(pendingApprovalCount(map)).toBe(2);
+    expect(needsYouCount(map)).toBe(2);
+  });
+
+  it("counts the tasks that failed lately, per Dot, and ignores those of a Dot it does not know", () => {
+    const map = attentionByDot([dot("a"), dot("b")], [], [{ dot_id: "a" }, { dot_id: "a" }, { dot_id: "gone" }]);
+    expect(map.get("a")?.failedTasks).toBe(2);
+    expect(map.get("b")?.failedTasks).toBe(0);
+    expect(needsYouCount(map)).toBe(2);
   });
 
   it("carries the reason of a Dot in ERROR, and a stand-in reason when the record has none", () => {
@@ -36,10 +42,9 @@ describe("the attention model", () => {
     expect(map.get("b")?.error).toBe("The Dot is in an error state");
   });
 
-  it("counts what needs the person: waiting approvals plus Dots in ERROR", () => {
-    const map = attentionByDot([dot("a"), dot("b", "ERROR", "x")], [{ dot_id: "a", status: "pending" }]);
-    expect(needsYouCount(map)).toBe(2);
-    expect(pendingApprovalCount(map)).toBe(1);
+  it("counts what needs the person: waiting approvals, Dots in ERROR and failed tasks, each once", () => {
+    const map = attentionByDot([dot("a"), dot("b", "ERROR", "x")], [{ dot_id: "a", status: "pending" }], [{ dot_id: "b" }]);
+    expect(needsYouCount(map)).toBe(3);
     expect(needsYouCount(attentionByDot([dot("a")], []))).toBe(0);
   });
 

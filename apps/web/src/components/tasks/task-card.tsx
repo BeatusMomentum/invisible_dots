@@ -7,6 +7,7 @@ import { workedSeconds } from "../../lib/task-view";
 import { relativeTime } from "../../lib/time";
 import type { Task } from "../../lib/types";
 import { useNow } from "../../lib/use-now";
+import { TaskApprovals } from "../approvals/TaskApprovals";
 import { CancelTaskButton } from "./cancel-task";
 import { PriorityChip, TaskStatus } from "./task-status";
 import { useTasks } from "./tasks-data";
@@ -69,6 +70,8 @@ export function RunningCard({ task, onChanged }: { task: Task; onChanged: () => 
         )}
       </p>
 
+      <TaskApprovals taskId={task.id} />
+
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
         <span>
           Spent <span className="font-medium text-foreground">{formatUsd(task.spent_usd)}</span>
@@ -79,11 +82,7 @@ export function RunningCard({ task, onChanged }: { task: Task; onChanged: () => 
             <Elapsed task={task} />
           </span>
         </span>
-        {waiting ? (
-          <Link href={`/dots/${encodeURIComponent(dotId)}/approvals`} className="rounded-full bg-warn-soft px-2 py-0.5 font-medium text-warn hover:underline">
-            Waiting for you: answer it in Approvals
-          </Link>
-        ) : null}
+        {waiting ? <span className="rounded-full bg-warn-soft px-2 py-0.5 font-medium text-warn">Waiting for you</span> : null}
         <span className="ml-auto">
           <CancelTaskButton task={task} onDone={onChanged} />
         </span>

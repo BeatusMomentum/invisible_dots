@@ -1,15 +1,7 @@
-import type { Metadata } from "next";
-import { ApprovalsList } from "../../../components/ApprovalsList";
+import { redirect } from "next/navigation";
+import { inboxHref } from "../../../lib/inbox";
 
-export const metadata: Metadata = { title: "Approvals" };
-
+/** The approvals of every Dot are the Inbox's first tab. */
 export default function ApprovalsPage() {
-  return (
-    <div className="legacy">
-      <div className="page-head">
-        <h1>Pending approvals</h1>
-      </div>
-      <ApprovalsList />
-    </div>
-  );
+  redirect(inboxHref());
 }

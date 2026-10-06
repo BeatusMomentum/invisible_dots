@@ -93,7 +93,7 @@ export function DotHeader({ dotId, dot }: { dotId: string; dot: Resource<Dot> })
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {pill.label === "Waiting for you" ? (
-            <Link href={`/dots/${encodeURIComponent(dotId)}/approvals`} className={cn(pillClass, "underline-offset-2 hover:underline")}>
+            <Link href={`/inbox?dot=${encodeURIComponent(dotId)}`} className={cn(pillClass, "underline-offset-2 hover:underline")}>
               <span className="sr-only">Dot state: </span>
               {pill.label}
             </Link>

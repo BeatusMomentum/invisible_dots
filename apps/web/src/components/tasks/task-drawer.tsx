@@ -7,6 +7,7 @@ import { storyOf } from "../../lib/task-events";
 import { isFinished, priorityLabel, workedSeconds } from "../../lib/task-view";
 import { api, ApiError } from "../../lib/api";
 import { useNow } from "../../lib/use-now";
+import { TaskApprovals } from "../approvals/TaskApprovals";
 import { ErrorAlert } from "../ErrorAlert";
 import { useDot } from "../DotShell";
 import { useLiveRefresh } from "../events";
@@ -88,6 +89,8 @@ export function TaskDrawer({ taskId }: { taskId: string }) {
                   />
                 ) : null}
               </div>
+
+              <TaskApprovals taskId={record.id} />
 
               <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3">
                 <Fact label="Priority">{priorityLabel(record.priority)}</Fact>
