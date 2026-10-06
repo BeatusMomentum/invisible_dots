@@ -5,6 +5,7 @@
  */
 import { z } from "zod";
 import { AGENT_STATES, type AgentState, type EventSource, type VmState } from "./states.js";
+import { MAX_RUN_AT_MS } from "./protocol.js";
 import { PERMISSIONS, type Permission } from "./tools.js";
 
 export const INBOUND_EVENT_TYPES = ["user.message", "task.created", "approval.received", "system.event"] as const;
@@ -354,7 +355,7 @@ export const outboundEventSchema = z.discriminatedUnion("type", [
   z.object({
     ...outboundBase,
     type: z.literal("automation.next_run"),
-    data: z.object({ next_run_at_ms: z.number().int().nonnegative().nullable() }),
+    data: z.object({ next_run_at_ms: z.number().int().nonnegative().max(MAX_RUN_AT_MS).nullable() }),
   }),
 ]);
 

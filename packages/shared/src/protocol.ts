@@ -388,6 +388,14 @@ export type AutomationRunStatus = (typeof AUTOMATION_RUN_STATUSES)[number];
 // import them: its test writes what it answers into `invisible_engine_dots/tests/dots/wire_shapes.json`, and a
 // test of the host parses that file with these schemas, so a key renamed on either side fails a suite.
 
+/**
+ * The last moment an automation may run, in milliseconds since the epoch: 9999-12-31T23:59:59.999Z, the last one a
+ * Postgres timestamp and a JavaScript Date both hold. The engine refuses a schedule past it
+ * (`MAX_RUN_AT_MS` of nanobot/cron/types.py; the engine's wire-shapes test pins the two equal), so a time the host cannot
+ * store or show never reaches it.
+ */
+export const MAX_RUN_AT_MS = 253_402_300_799_999;
+
 /** When an automation runs: only the fields its kind uses are present. */
 export const automationScheduleSchema = z
   .object({
@@ -413,7 +421,7 @@ export const automationSchema = z
     /** What the Dot is told when the automation runs. */
     message: z.string(),
     /** Null while the automation is paused or has no run left. */
-    next_run_at_ms: z.number().int().nullable(),
+    next_run_at_ms: z.number().int().nonnegative().max(MAX_RUN_AT_MS).nullable(),
     last_run_at_ms: z.number().int().nullable(),
     last_status: z.enum(AUTOMATION_RUN_STATUSES).nullable(),
     last_error: z.string().nullable(),

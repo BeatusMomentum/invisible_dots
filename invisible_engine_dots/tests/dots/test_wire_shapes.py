@@ -17,7 +17,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from nanobot.cron.types import CronJob, CronJobState, CronPayload, CronSchedule
+from nanobot.cron.types import MAX_RUN_AT_MS, CronJob, CronJobState, CronPayload, CronSchedule
 from nanobot.dots.automations import automation_json
 from nanobot.dots import store as dots_store
 from nanobot.dots.permissions import TOOL_PERMISSIONS, offered_tools, tool_table
@@ -92,7 +92,12 @@ def _shapes(directory: Path) -> dict[str, Any]:
         case = {"managed_identities": True, **case}
         offered = offered_tools(case["permissions"], memory_enabled=case["memory_enabled"], managed_identities=case["managed_identities"])
         cases.append({**case, "offered": offered, "tools": tool_table(_Registry(), offered)})
-    return {"automations": _automations(), "outbound_event_data": _outbound_event_data(directory), "tool_offering": cases}
+    return {
+        "automations": _automations(),
+        "limits": {"max_run_at_ms": MAX_RUN_AT_MS},
+        "outbound_event_data": _outbound_event_data(directory),
+        "tool_offering": cases,
+    }
 
 
 def test_the_answers_of_the_engine_are_the_ones_the_host_checks(tmp_path: Path) -> None:

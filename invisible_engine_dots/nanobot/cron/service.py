@@ -16,6 +16,7 @@ from filelock import FileLock
 from loguru import logger
 
 from nanobot.cron.types import (
+    MAX_RUN_AT_MS,
     CronJob,
     CronJobState,
     CronPayload,
@@ -35,7 +36,12 @@ def _now_ms() -> int:
 
 
 def _compute_next_run(schedule: CronSchedule, now_ms: int) -> int | None:
-    """Compute next run time in ms."""
+    """Compute next run time in ms; None when there is none or it is past `MAX_RUN_AT_MS`."""
+    next_run = _next_run_unbounded(schedule, now_ms)
+    return next_run if next_run is not None and next_run <= MAX_RUN_AT_MS else None
+
+
+def _next_run_unbounded(schedule: CronSchedule, now_ms: int) -> int | None:
     if schedule.kind == "at":
         return schedule.at_ms if schedule.at_ms and schedule.at_ms > now_ms else None
 
@@ -69,6 +75,10 @@ def _validate_schedule_for_add(schedule: CronSchedule) -> None:
         raise ValueError("tz can only be used with cron schedules")
     if schedule.kind == "every" and (schedule.every_ms is None or schedule.every_ms <= 0):
         raise ValueError("every schedule requires a positive 'every_ms'")
+    if schedule.kind == "every" and _now_ms() + schedule.every_ms > MAX_RUN_AT_MS:
+        raise ValueError("every schedule's 'every_ms' is so long that its next run is past the year 9999")
+    if schedule.kind == "at" and schedule.at_ms is not None and schedule.at_ms > MAX_RUN_AT_MS:
+        raise ValueError("at schedule's 'at_ms' is past the year 9999")
 
     if schedule.kind == "cron":
         if not schedule.expr or not schedule.expr.strip():

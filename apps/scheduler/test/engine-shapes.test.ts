@@ -9,6 +9,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   automationSchema,
+  MAX_RUN_AT_MS,
   parseDotConfig,
   parseOutboundEvent,
   PERMISSIONS,
@@ -29,7 +30,7 @@ interface OfferingCase {
 
 const shapes = JSON.parse(
   readFileSync(fileURLToPath(new URL("../../../invisible_engine_dots/tests/dots/wire_shapes.json", import.meta.url)), "utf8"),
-) as { automations: unknown[]; outbound_event_data: { type: string; data: unknown }[]; tool_offering: OfferingCase[] };
+) as { automations: unknown[]; limits: { max_run_at_ms: number }; outbound_event_data: { type: string; data: unknown }[]; tool_offering: OfferingCase[] };
 
 const baseConfig = toRuntimeConfig(parseDotConfig("name: shapes\ngoal: check\nmodel:\n  provider: openrouter\n  id: test/model\n"));
 
@@ -52,6 +53,14 @@ describe("what the engine answers, as the host describes it", () => {
     expect(automationSchema.safeParse(missing).success).toBe(false);
     expect(automationSchema.safeParse({ ...first, renamed_key: 1 }).success).toBe(false);
     expect(automationSchema.safeParse({ ...first, schedule: { kind: "every", every_ms: 1, extra: true } }).success).toBe(false);
+  });
+
+  it("the last time the engine lets an automation run is the last time the host's schemas accept", () => {
+    expect(shapes.limits.max_run_at_ms).toBe(MAX_RUN_AT_MS);
+    const first = shapes.automations[0] as Record<string, unknown>;
+    expect(automationSchema.safeParse({ ...first, next_run_at_ms: MAX_RUN_AT_MS }).success).toBe(true);
+    expect(automationSchema.safeParse({ ...first, next_run_at_ms: MAX_RUN_AT_MS + 1 }).success).toBe(false);
+    expect(new Date(MAX_RUN_AT_MS).toISOString()).toBe("9999-12-31T23:59:59.999Z");
   });
 
   it("every automation event the engine writes parses as the outbound event it is, with the time or null, and the host's fake guest says the same", async () => {

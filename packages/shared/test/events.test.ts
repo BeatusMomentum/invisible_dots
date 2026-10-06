@@ -8,6 +8,7 @@ import {
   isInboundEventType,
   isOutboundEventType,
   isStoredEventType,
+  MAX_RUN_AT_MS,
   OUTBOUND_EVENT_TYPES,
   parseInboundEvent,
   parseMessageOrigin,
@@ -157,6 +158,15 @@ describe("parseOutboundEvent", () => {
     expect(() => parseOutboundEvent(at({}))).toThrow(/next_run_at_ms/);
     for (const next_run_at_ms of [-1, 1.5, "1790000000000", Number.NaN, Number.POSITIVE_INFINITY]) {
       expect(() => parseOutboundEvent(at({ next_run_at_ms })), String(next_run_at_ms)).toThrow(/next_run_at_ms/);
+    }
+  });
+
+  it("refuses a next run past the last time a Date and the database hold, which would stop the Dot's event stream", () => {
+    const at = (next_run_at_ms: number) => ({ seq: 7, id: "e", type: "automation.next_run", ts, data: { next_run_at_ms } });
+    expect(parseOutboundEvent(at(MAX_RUN_AT_MS)).data).toEqual({ next_run_at_ms: MAX_RUN_AT_MS });
+    expect(new Date(MAX_RUN_AT_MS).toISOString()).toBe("9999-12-31T23:59:59.999Z");
+    for (const next_run_at_ms of [MAX_RUN_AT_MS + 1, 8.7e15, Number.MAX_SAFE_INTEGER]) {
+      expect(() => parseOutboundEvent(at(next_run_at_ms)), String(next_run_at_ms)).toThrow(/next_run_at_ms/);
     }
   });
 

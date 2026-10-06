@@ -1,12 +1,14 @@
 import asyncio
+import calendar
 import json
 import time
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 from nanobot.cron.service import CronJobSkippedError, CronService
-from nanobot.cron.types import CronJob, CronPayload, CronSchedule
+from nanobot.cron.types import MAX_RUN_AT_MS, CronJob, CronPayload, CronSchedule
 
 
 async def _wait_until(predicate, *, timeout: float = 1.0, interval: float = 0.01) -> None:
@@ -1065,3 +1067,65 @@ async def test_list_jobs_during_on_job_does_not_cause_stale_reload(tmp_path) -> 
         next_run = j["state"]["nextRunAtMs"]
         assert next_run is not None
         assert next_run > now_ms, f"Job '{j['name']}' next_run should be in the future"
+
+
+def test_the_last_moment_a_job_may_run_is_the_last_one_a_datetime_holds() -> None:
+    last = calendar.timegm(datetime.max.utctimetuple()) * 1000 + datetime.max.microsecond // 1000
+    assert MAX_RUN_AT_MS == last
+
+
+@pytest.mark.parametrize("every_ms", [8_700_000_000_000_000, MAX_RUN_AT_MS, MAX_RUN_AT_MS - 60_000])
+def test_add_job_refuses_an_interval_whose_next_run_is_past_the_last_moment(tmp_path, every_ms: int) -> None:
+    """A next run past year 9999 is a time the host cannot store and its web page cannot show: it would stop the Dot's
+    whole event stream, so the schedule is refused where the time is made."""
+    service = CronService(tmp_path / "cron" / "jobs.json")
+
+    with pytest.raises(ValueError, match="past the year 9999"):
+        service.add_job(name="too far", schedule=CronSchedule(kind="every", every_ms=every_ms), message="hello")
+
+    assert service.list_jobs(include_disabled=True) == []
+
+
+def test_add_job_refuses_a_one_time_job_past_the_last_moment(tmp_path) -> None:
+    service = CronService(tmp_path / "cron" / "jobs.json")
+
+    with pytest.raises(ValueError, match="past the year 9999"):
+        service.add_job(name="too far", schedule=CronSchedule(kind="at", at_ms=MAX_RUN_AT_MS + 1), message="hello")
+
+    assert service.list_jobs(include_disabled=True) == []
+
+
+def test_update_job_refuses_an_interval_past_the_last_moment_and_keeps_the_job(tmp_path) -> None:
+    service = CronService(tmp_path / "cron" / "jobs.json")
+    job = service.add_job(name="hourly", schedule=CronSchedule(kind="every", every_ms=3_600_000), message="hello")
+    before = service.list_jobs()[0].state.next_run_at_ms
+
+    with pytest.raises(ValueError, match="past the year 9999"):
+        service.update_job(job.id, schedule=CronSchedule(kind="every", every_ms=8_700_000_000_000_000))
+
+    assert service.list_jobs()[0].schedule.every_ms == 3_600_000
+    assert service.list_jobs()[0].state.next_run_at_ms == before
+
+
+def test_a_next_run_past_the_last_moment_is_no_next_run(tmp_path) -> None:
+    """A job already in a store (written before the bound, or by hand) has no next run rather than one the host cannot hold."""
+    service = CronService(tmp_path / "cron" / "jobs.json")
+    job = CronJob(
+        id="far",
+        name="too far",
+        schedule=CronSchedule(kind="every", every_ms=8_700_000_000_000_000),
+        payload=CronPayload(message="hello"),
+    )
+
+    service.register_system_job(job)
+
+    assert job.state.next_run_at_ms is None
+    assert service.status()["next_wake_at_ms"] is None
+
+
+def test_the_last_moment_itself_is_still_a_next_run(tmp_path) -> None:
+    service = CronService(tmp_path / "cron" / "jobs.json")
+
+    job = service.add_job(name="last", schedule=CronSchedule(kind="at", at_ms=MAX_RUN_AT_MS), message="hello")
+
+    assert job.state.next_run_at_ms == MAX_RUN_AT_MS
