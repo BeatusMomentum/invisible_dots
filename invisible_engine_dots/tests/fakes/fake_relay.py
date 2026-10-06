@@ -2,7 +2,7 @@
 
 It parses the flags the way guest/dot-agentd/cmd/dot-agentd/relay.go does:
 
-    relay [--socket P] [--cwd DIR] [--tty] [--env NAME=VALUE]... -- PROGRAM [ARGS...]
+    relay [--socket P] [--cwd DIR] [--tty] [--env NAME=VALUE]... [--env-from NAME]... -- PROGRAM [ARGS...]
 
 appends the invocation as one JSON line to the file named by FAKE_RELAY_LOG
 (when set), and replaces itself with PROGRAM, so the relay's process group and
@@ -29,6 +29,7 @@ def parse_relay_args(args: list[str]) -> dict[str, object]:
     cwd = ""
     tty = False
     env: list[str] = []
+    env_from: list[str] = []
     index = 0
     while index < len(args):
         arg = args[index]
@@ -40,7 +41,7 @@ def parse_relay_args(args: list[str]) -> dict[str, object]:
         name, has_value, value = arg.lstrip("-").partition("=")
         if name == "tty":
             tty = value != "false" if has_value else True
-        elif name in ("socket", "cwd", "env"):
+        elif name in ("socket", "cwd", "env", "env-from"):
             if not has_value:
                 index += 1
                 if index >= len(args):
@@ -50,6 +51,10 @@ def parse_relay_args(args: list[str]) -> dict[str, object]:
                 socket = value
             elif name == "cwd":
                 cwd = value
+            elif name == "env-from":
+                if not value or "=" in value:
+                    raise ValueError("--env-from takes a variable name, not NAME=VALUE")
+                env_from.append(value)
             else:
                 if not value.partition("=")[0] or "=" not in value:
                     raise ValueError(f"--env takes NAME=VALUE, got {value!r}")
@@ -60,7 +65,7 @@ def parse_relay_args(args: list[str]) -> dict[str, object]:
     program = args[index:]
     if not program:
         raise ValueError("name the program to run after --")
-    return {"socket": socket, "cwd": cwd, "tty": tty, "env": env, "program": program}
+    return {"socket": socket, "cwd": cwd, "tty": tty, "env": env, "env_from": env_from, "program": program}
 
 
 def main(argv: list[str]) -> int:
@@ -81,6 +86,10 @@ def main(argv: list[str]) -> int:
     for pair in parsed["env"]:  # type: ignore[union-attr]
         name, _, value = pair.partition("=")
         os.environ[name] = value
+    for name in parsed["env_from"]:  # type: ignore[union-attr]
+        if name not in os.environ:
+            sys.stderr.write(f"fake relay: --env-from {name}: not set in the relay's environment\n")
+            return 2
     if parsed["cwd"]:
         try:
             os.chdir(str(parsed["cwd"]))

@@ -111,7 +111,6 @@ export function identityPaths(identityId: string, browsersDir: string = GUEST_PA
     root,
     profile: join(root, "profile"),
     mcp: join(root, "mcp"),
-    metadata: join(root, "metadata.json"),
   };
 }
 
@@ -167,6 +166,10 @@ export const AGENT_ROUTES = {
   state: "/state",
   browserIdentities: "/browser-identities",
   browserIdentity: (id: string) => `/browser-identities/${encodeURIComponent(id)}`,
+  /** `GET`: the JPEG of the identity's window, only while it is open (409 `not_open`; 503 `busy` when a call holds it; 502 `frame_failed` or `crashed`). */
+  browserIdentityFrame: (id: string) => `/browser-identities/${encodeURIComponent(id)}/frame`,
+  /** `POST` (204): end the identity's browser, keep its profile. Closing a closed identity is not an error. */
+  browserIdentityClose: (id: string) => `/browser-identities/${encodeURIComponent(id)}/close`,
   prepareSleep: "/prepare-sleep",
 } as const;
 
@@ -291,7 +294,7 @@ export interface AgentStateAnswer {
 export const BROWSER_IDENTITY_STATUSES = ["available", "open", "archived"] as const;
 export type BrowserIdentityStatus = (typeof BROWSER_IDENTITY_STATUSES)[number];
 
-/** One browser identity, as stored in `metadata.json` and returned by the identity routes. */
+/** One browser identity, as the engine's identity routes return it (the row of `dots_browser_identities`). */
 export interface BrowserIdentity {
   id: string;
   name: string;

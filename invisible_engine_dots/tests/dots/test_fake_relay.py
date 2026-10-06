@@ -9,7 +9,10 @@ from fakes.fake_relay import parse_relay_args
 
 def test_flags_then_the_program_after_the_separator() -> None:
     parsed = parse_relay_args(
-        ["--socket", "/s.sock", "--tty", "--cwd", "/w", "--env", "A=1", "--env", "B=2=3", "--", "ls", "-la"]
+        [
+            "--socket", "/s.sock", "--tty", "--cwd", "/w", "--env", "A=1", "--env", "B=2=3",
+            "--env-from", "SECRET", "--", "ls", "-la",
+        ]
     )
 
     assert parsed == {
@@ -17,6 +20,7 @@ def test_flags_then_the_program_after_the_separator() -> None:
         "cwd": "/w",
         "tty": True,
         "env": ["A=1", "B=2=3"],
+        "env_from": ["SECRET"],
         "program": ["ls", "-la"],
     }
 
@@ -47,6 +51,7 @@ def test_go_flag_spellings_are_accepted() -> None:
         ["--socket", "/s"],
         ["--unknown", "--", "true"],
         ["--env", "NOEQUALS", "--", "true"],
+        ["--env-from", "A=b", "--", "true"],
         ["--cwd"],
     ],
 )

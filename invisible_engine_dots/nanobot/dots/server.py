@@ -21,10 +21,18 @@ from urllib.parse import unquote
 from aiohttp import web
 from loguru import logger
 
+from nanobot.dots.browser import BrowserIdentity, BrowserIdentityError, ErrorCode
 from nanobot.dots.checks import GuestCheckRunner
 from nanobot.dots.engine import Engine, EngineStopped
-from nanobot.dots.protocol import AGENT_ROUTES, DotsConfigError, InvalidEvent, parse_inbound_event
+from nanobot.dots.protocol import (
+    AGENT_ROUTES,
+    BROWSER_IDENTITY_ACTIONS,
+    DotsConfigError,
+    InvalidEvent,
+    parse_inbound_event,
+)
 from nanobot.dots.secrets import KeyHolder
+from nanobot.dots.store import iso_from_ms
 
 MAX_BODY_BYTES = 1024 * 1024
 HEARTBEAT_S = 15.0
@@ -50,12 +58,37 @@ def _allow(method: str, *allowed: str) -> None:
         raise HttpError(405, "method_not_allowed", f"{method} is not allowed here; use {' or '.join(allowed)}")
 
 
-def _not_implemented_browser() -> HttpError:
-    return HttpError(
-        501,
-        "not_implemented",
-        "browser identities are not available in this version of the Dot's runtime",
-    )
+# The HTTP status of each way a browser identity request can fail. `not_open` is an action on a closed
+# identity: the Dot's tools make it, and so does a frame of one.
+_IDENTITY_STATUS: dict[ErrorCode, int] = {
+    "invalid": 400,
+    "not_found": 404,
+    "limit": 409,
+    "not_open": 409,
+    "busy": 503,
+    "launch_failed": 502,
+    "crashed": 502,
+    "frame_failed": 502,
+}
+
+
+def _identity_error(error: BrowserIdentityError) -> HttpError:
+    return HttpError(_IDENTITY_STATUS[error.code], error.code, error.message)
+
+
+def _identity_json(identity: BrowserIdentity) -> dict[str, object]:
+    """An identity as `BrowserIdentity` of packages/shared protocol.ts has it; the proxy is the redacted one."""
+    body: dict[str, object] = {
+        "id": identity.id,
+        "name": identity.name,
+        "createdAt": iso_from_ms(identity.created_at),
+        "lastUsedAt": iso_from_ms(identity.last_used_at) if identity.last_used_at is not None else None,
+        "status": identity.status,
+        "profilePath": identity.profile_path,
+    }
+    if identity.proxy:
+        body["proxy"] = identity.proxy
+    return body
 
 
 async def _read_json(request: web.Request, max_bytes: int) -> object:
@@ -181,6 +214,7 @@ class AgentServer:
         path = re.sub(r"/+$", "", request.rel_url.raw_path) or "/"
         method = request.method
         engine = self._engine
+        browser = engine.browser
 
         if path == AGENT_ROUTES["health"]:
             _allow(method, "GET")
@@ -191,7 +225,7 @@ class AgentServer:
                     "status": "ok" if engine.started else "starting",
                     "state": engine.state,
                     "openrouter_configured": self._key_holder.configured,
-                    "browser": {"identities": 0, "open": 0},
+                    "browser": {"identities": len(browser.list_identities()), "open": browser.open_count},
                     "checks": checks.to_json(),
                 },
             )
@@ -219,6 +253,7 @@ class AgentServer:
                 engine.set_config(body)
             except DotsConfigError as error:
                 raise HttpError(400, "invalid_config", str(error)) from None
+            engine.apply_browser_limits()
             return web.Response(status=204)
 
         if path == AGENT_ROUTES["events"]:
@@ -250,26 +285,61 @@ class AgentServer:
                 },
             )
 
-        browser = AGENT_ROUTES["browser_identities"]
-        if path == browser:
-            # The engine has no browser yet: none exists, and none can be made.
+        identities_route = AGENT_ROUTES["browser_identities"]
+        if path == identities_route:
             if method == "GET":
-                return _json_response(200, {"identities": []})
+                return _json_response(200, {"identities": [_identity_json(i) for i in browser.list_identities()]})
             _allow(method, "GET", "POST")
-            raise _not_implemented_browser()
+            body = await _read_json(request, self._max_body)
+            if not isinstance(body, dict) or not isinstance(body.get("name"), str):
+                raise HttpError(400, "invalid", "name must be a string")
+            proxy = body.get("proxy")
+            if proxy is not None and not isinstance(proxy, str):
+                raise HttpError(400, "invalid", "proxy must be a string")
+            try:
+                created = await browser.create(body["name"], proxy or None)
+            except BrowserIdentityError as error:
+                raise _identity_error(error) from None
+            return _json_response(201, _identity_json(created))
 
-        if path.startswith(f"{browser}/"):
+        if path.startswith(f"{identities_route}/"):
+            # The id is the segment before the action, decoded once: the percent sign of "a%2541" is the id's own.
+            raw_id, _, action = path[len(identities_route) + 1 :].partition("/")
+            identity_id = unquote(raw_id)
+            if identity_id == "" or "/" in identity_id or (action and action not in BROWSER_IDENTITY_ACTIONS):
+                raise HttpError(404, "not_found", f"no route {method} {path}")
+            if action == "frame":
+                _allow(method, "GET")
+                try:
+                    media_type, jpeg = await browser.frame(identity_id)
+                except BrowserIdentityError as error:
+                    raise _identity_error(error) from None
+                # A frame is live: nothing may keep it.
+                return web.Response(body=jpeg, content_type=media_type, headers={"Cache-Control": "no-store"})
+            if action == "close":
+                _allow(method, "POST")
+                try:
+                    await browser.close(identity_id)
+                except BrowserIdentityError as error:
+                    raise _identity_error(error) from None
+                return web.Response(status=204)
             if method == "GET":
-                identity = unquote(path[len(browser) + 1 :])
-                raise HttpError(404, "not_found", f'no browser identity "{identity}"')
+                found = browser.get(identity_id)
+                if found is None:
+                    raise HttpError(404, "not_found", f'no browser identity "{identity_id}"')
+                return _json_response(200, _identity_json(found))
             _allow(method, "GET", "DELETE")
-            raise _not_implemented_browser()
+            try:
+                await browser.delete(identity_id)
+            except BrowserIdentityError as error:
+                raise _identity_error(error) from None
+            return web.Response(status=204)
 
         if path == AGENT_ROUTES["prepare_sleep"]:
             _allow(method, "POST")
             logger.info("preparing to sleep")
             await engine.suspend()
-            logger.info("ready to sleep: work paused, state flushed")
+            logger.info("ready to sleep: work paused, browsers closed, state flushed")
             return web.Response(status=204)
 
         raise HttpError(404, "not_found", f"no route {method} {path}")

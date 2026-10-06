@@ -26,8 +26,75 @@ disk lay them out. This smoke does, in one Linux container, with no QEMU:
   its credential masked, a token flag and a `curl -U` proxy login alike, the path a file tool wrote and none of the content), the tools offered
   for each permission map, the summary of an outgrown thread going to the
   `models.summary` model with no tool in the request, the text sent to the model, the key reaching no file,
-  log or process environment, and the engine refusing to start on a lock that is not
+  log or process environment, the browser seams (below), and the engine refusing to start on a lock that is not
   the golden image's or on a key in a dotenv file.
+
+## The browser seams
+
+The Dot's browser is `invisible-playwright-mcp`, one process per open identity, started by the
+engine through `dot-agentd`'s relay so that it runs as `dot`. The smoke installs a stand-in for it as
+`INVISIBLE_DOTS_MCP_COMMAND`: the engine's own test fake (`invisible_engine_dots/tests/fakes/fake_mcp_server.py`,
+the one owner of what a stand-in answers) on the engine's python, serving the tool list captured from
+the pinned server (`invisible_engine_dots/tests/fixtures/mcp-tools-<version>.json`). It records its
+environment, its working directory and every call it receives in `$INVISIBLE_MCP_HOME/record.jsonl`,
+and the checks read that file. What they pin:
+
+- an identity is created over HTTP (201, `browser.identity.created`, its directories are `dot`'s) and
+  launched by the model's `browser_identity_launch`; the server runs as `dot`, never as `dotengine`, with
+  the profile, the display, the session id and its home in its environment and none of the engine's
+  variables nor the key;
+- a page tool reaches the server as the real tool with `browser: "main"` and shows in `tool.called` with
+  its permission and its target; a screenshot reaches the model's next request as an image part;
+- the fourth launch with `max_open` 3 closes the least recently used identity through `browser_close`;
+  an action on a closed identity fails with the launch message and starts nothing; a server whose
+  browser closed under it is reopened once and the call repeated;
+- `managed_by_dot` false drops the tools that create and delete identities from the offered list, whatever
+  the permissions say;
+- `browser.identity.delete: ask` parks the call and the approval survives `kill -9`, which also ends every
+  server; after the restart every identity is `available`; SIGTERM asks an open browser to close before
+  its server ends; a host `DELETE` of an open identity closes it first;
+- the host's two actions on an identity: `GET .../frame` answers a JPEG (the stand-in's `browser_watch`) for an open
+  identity and 409 `not_open` for a closed one, and `POST .../close` closes an open one through `browser_close`
+  (one `closed` event, the profile kept) and is a 204 that changes nothing for a closed one;
+- a server killed while nothing calls it closes its identity at once: one `closed` event, `/health` counts
+  none open, with no call made to find out;
+- a proxy password is in no approval, event, engine log or `dot-agentd` log, and on no process's command line (the
+  relay is told the variable's name, `--env-from`, and reads the value from its own environment); `/health` counts the identities
+  and the open ones.
+
+The real server and a real Firefox are not run by this smoke: they are the browser smoke's (below).
+
+## The browser smoke
+
+`browser/smoke.sh` runs the Dot's real browser. The golden image's apt packages (`pins.json`:
+the desktop, Firefox's libraries, ImageMagick) are installed, the browser is built by
+`builder/build-browser-env.sh` on the hashed `builder/mcp-requirements.lock` (the MCP server's
+environment, the browser engine, the GeoIP database: the script `provision.sh` runs), the
+runtime disk's `dot-desktop` script starts Xvfb and an XFCE session on `:0` as dot, and the Dot
+runs as in the engine smoke with no stand-in for the browser: the engine finds
+`invisible-playwright-mcp` on its PATH. Only the model is a stand-in, and the pages the browser
+opens are served from the container. The browser needs the network twice, at the build (the
+engine, the GeoIP file) and at a launch (the egress address, for the timezone). What it pins:
+
+- the model launches an identity and the real server answers that its browser is open; Firefox
+  and the server run as `dot`, the server with the profile, its home, a real window on `:0` and
+  none of the engine's variables nor the key, and nothing of the browser runs as `dotengine`;
+- the model navigates to a page, reads its text and takes a snapshot, and what the page says
+  reaches the model's request; a screenshot reaches the next request as an image part that is a
+  real PNG of the page, with the page's own color in it, and the engine's database holds no
+  picture, only the placeholder;
+- the screenshot of a page of random pixels, a PNG of more than 500 kB, crosses the relay whole
+  and the server still answers after it;
+- `GET /v1/screenshot` of `dot-agentd` shows the desktop with the page in it;
+- `GET .../frame` answers a JPEG of the identity's real window, not a blank one, and 409 `not_open` after the
+  model's close;
+- the profile's `.stealth-identity.json` is identical after the model closes the identity and
+  launches it again, and after a `kill -9` of the engine in the middle of a session, which ends
+  the server and Firefox and leaves the profile locked: the next launch works with that stale
+  lock; what a page stored in the profile (localStorage) before the model's close, and before
+  SIGTERM, which asks the browser to close, is still there after the next launch;
+- the key is in no file, process environment or log, the browser's included, and the identity's
+  events are all in the stream.
 
 ## Run it
 
@@ -39,6 +106,7 @@ guest/image-builder/test/smoke/run.sh                  # the repository this scr
 guest/image-builder/test/smoke/run.sh /path/to/tree    # another checkout
 git archive --format=tar -o head.tar HEAD
 guest/image-builder/test/smoke/run.sh --archive head.tar   # the commit as committed
+guest/image-builder/test/smoke/run.sh --suite browser      # the browser smoke (same arguments after it)
 ```
 
 The same command runs from a Linux shell and from WSL on a Windows host (use the
@@ -58,10 +126,12 @@ removes the volume and the container on exit.
 
 | file | what it is |
 |---|---|
-| `run.sh` | the entry: builds `dot-agentd` in `golang:1.26`, starts `ubuntu:24.04` with the tree, checks the exit status and the summary line |
-| `prepare-engine.sh` | in the container: `uv`, the engine's environment, the staged engine source; then it runs `smoke.sh` |
-| `smoke.sh` | the checks; prints `PASS:` or `FAIL:` per check and the summary line |
-| `fake_openrouter.py` | the stand-in for OpenRouter's chat completions: answers by the last message (`RUN-EXEC <cmd>` makes it call the engine's `exec` tool, `SAY-RUN-EXEC <text> :: <cmd>` the same with `<text>` written beside the call, `WRITE-NOTE <path> :: <text>` a `write_file` into `/home/dot/memory/<path>`, `FIND-NOTE <word>` a `memory_search`, `REPEAT-EXEC <cmd>` an `exec` after every result too, a `COST <usd>` line the cost every response reports in its usage) and logs every request whole |
+| `run.sh` | the entry: builds `dot-agentd` in `golang:1.26`, starts `ubuntu:24.04` with the tree, checks the exit status and the summary line; `--suite browser` runs the browser smoke |
+| `prepare-engine.sh` | in the container: the golden image's users, `uv`, the engine's environment, the staged engine source (and for the browser suite the apt packages and the browser); then it runs the suite's checks |
+| `lib.sh` | what both suites share: the guest laid out as `install.sh` lays it out, `dot-agentd` and the engine started and restarted, the key and config push, the event stream and the helpers that read it |
+| `smoke.sh` | the engine smoke's checks; prints `PASS:` or `FAIL:` per check and the summary line |
+| `browser/smoke.sh` | the browser smoke's checks, same output |
+| `fake_openrouter.py` | the stand-in for OpenRouter's chat completions: answers by the last message (`RUN-EXEC <cmd>` makes it call the engine's `exec` tool, `SAY-RUN-EXEC <text> :: <cmd>` the same with `<text>` written beside the call, `WRITE-NOTE <path> :: <text>` a `write_file` into `/home/dot/memory/<path>`, `FIND-NOTE <word>` a `memory_search`, `REPEAT-EXEC <cmd>` an `exec` after every result too, a `COST <usd>` line the cost every response reports in its usage, `RUN-TOOL <name> <json>` a call of any tool with those arguments) and logs every request whole |
 | `host-stream.sh` | the fake host's event reader: reads `/v1/agent/events/stream` from its last `seq`, reconnects after a drop, pushes the key and the config on every `agent.started` |
 
 `smoke.sh` is written against the engine as it is: a check that pins something the
@@ -73,6 +143,7 @@ run.
 ## In CI
 
 The `smoke` job of `.github/workflows/tests.yml` runs `run.sh` on the checkout, on
-`ubuntu-latest`, and the `gate` job needs it like every other job.
+`ubuntu-latest`, and the `gate` job needs it like every other job. The `browser-smoke` job
+runs `run.sh --suite browser` the same way, and the `gate` job needs it too.
 `tests/repo/engine-smoke.test.ts` keeps the files, the job and the exit rule from
 drifting apart.

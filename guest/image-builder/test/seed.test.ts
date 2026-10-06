@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeIso } from "@invisible-dots/iso";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { BUILDER_ENGINE_BUILD, BUILDER_ENGINE_LOCK, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_USER_DATA, defaultAssetRoot, readGuestAsset } from "../src/assets.js";
+import { BUILDER_BROWSER_BUILD, BUILDER_ENGINE_BUILD, BUILDER_ENGINE_LOCK, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_USER_DATA, defaultAssetRoot, readGuestAsset } from "../src/assets.js";
 import { GUEST_PINS } from "../src/pins.js";
 import { parsePythonLock } from "../src/python-lock.js";
 import { SEED_VOLUME_ID } from "@invisible-dots/vm-manager";
@@ -33,6 +33,7 @@ describe("pins.env", () => {
     expect(text).toContain("PYTHON_LOCK='mcp-requirements.lock'\n");
     expect(text).toContain("ENGINE_LOCK='engine-requirements.lock'\n");
     expect(text).toContain("ENGINE_BUILD='build-engine-env.sh'\n");
+    expect(text).toContain("BROWSER_BUILD='build-browser-env.sh'\n");
     expect(text).toContain(`APT_PACKAGES='${GUEST_PINS.apt_packages.join(" ")}'\n`);
 
     const provision = (await readGuestAsset(defaultAssetRoot(), BUILDER_PROVISION)).toString("utf8");
@@ -47,13 +48,14 @@ describe("pins.env", () => {
 });
 
 describe("the builder seed", () => {
-  it("holds the NoCloud files, the provisioner, its pins, the Python lock, both tarballs, and the engine's lock with the script that builds its environment", async () => {
+  it("holds the NoCloud files, the provisioner, its pins, the Python lock, both tarballs, the engine's lock with the script that builds its environment, and the script that builds the browser", async () => {
     const nodeTarball = join(dir, "node.tar.xz");
     const uvTarball = join(dir, "uv.tar.gz");
     await writeFile(nodeTarball, "node bytes");
     await writeFile(uvTarball, "uv bytes");
     const engineLock = await readGuestAsset(defaultAssetRoot(), BUILDER_ENGINE_LOCK);
     const engineBuild = await readGuestAsset(defaultAssetRoot(), BUILDER_ENGINE_BUILD);
+    const browserBuild = await readGuestAsset(defaultAssetRoot(), BUILDER_BROWSER_BUILD);
     const userData = await readGuestAsset(defaultAssetRoot(), BUILDER_USER_DATA);
     const provision = await readGuestAsset(defaultAssetRoot(), BUILDER_PROVISION);
     const entries = builderSeedEntries({
@@ -67,6 +69,7 @@ describe("the builder seed", () => {
       uvTarball,
       engineLock,
       engineBuild,
+      browserBuild,
     });
 
     expect(entries.map((entry) => entry.path)).toEqual([
@@ -79,16 +82,18 @@ describe("the builder seed", () => {
       "uv-x86_64-unknown-linux-gnu.tar.gz",
       "engine-requirements.lock",
       "build-engine-env.sh",
+      "build-browser-env.sh",
     ]);
     expect(entries[0]).toEqual({ path: "user-data", data: userData });
     expect(entries[4]).toEqual({ path: "mcp-requirements.lock", data: pythonLock });
     expect(entries[5]).toEqual({ path: entries[5]!.path, file: nodeTarball });
     expect(entries[7]).toEqual({ path: "engine-requirements.lock", data: engineLock });
     expect(entries[8]).toEqual({ path: "build-engine-env.sh", data: engineBuild });
+    expect(entries[9]).toEqual({ path: "build-browser-env.sh", data: browserBuild });
 
     // The real writer accepts it under the label NoCloud looks for.
     const summary = await writeIso(join(dir, "seed.iso"), entries, { volumeId: SEED_VOLUME_ID });
-    expect(summary.files).toBe(9);
+    expect(summary.files).toBe(10);
     const image = await readFile(join(dir, "seed.iso"));
     // Primary volume descriptor at sector 16: the label at offset 40.
     expect(image.toString("latin1", 16 * 2048 + 40, 16 * 2048 + 46)).toBe("cidata");

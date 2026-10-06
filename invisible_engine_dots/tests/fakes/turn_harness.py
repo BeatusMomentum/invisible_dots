@@ -7,6 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from fakes.browser_manager import make_browser_manager
 from fakes.local_computer import LocalComputer
 from fakes.scripted_provider import ScriptedProvider, ScriptEntry
 from nanobot.agent.memory import Consolidator
@@ -87,11 +88,13 @@ class Harness:
         workspace.mkdir(parents=True)
         self.computer = LocalComputer(tmp_path, workspace)
         self.injections: list[list[OpeningMessage]] = []
+        self.browser = make_browser_manager(tmp_path, store, self.computer)
         registry = build_registry(
             ToolDeps(
                 computer=self.computer,
                 exec_session_manager=ExecSessionManager(),
                 cron_service=CronService(tmp_path / "cron" / "jobs.json"),
+                browser=self.browser,
             )
         )
         self.runner = TurnRunner(

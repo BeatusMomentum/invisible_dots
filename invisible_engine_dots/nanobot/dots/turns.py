@@ -39,6 +39,7 @@ from nanobot.agent.transcript_metadata import METADATA_KEY
 from nanobot.dots import store as dots_store
 from nanobot.dots.computer import Computer, ComputerError, Entry
 from nanobot.dots.gate import close_open_calls
+from nanobot.dots.images import TurnImages, bind_turn_images, reset_turn_images
 from nanobot.dots.memory_tools import MEMORY_DIR, memory_keys_written
 from nanobot.dots.permissions import tool_starts_terminal, tool_target
 from nanobot.dots.projection import EngineSettings
@@ -295,6 +296,8 @@ class TurnRunner:
             provider, summary_model, context_window_tokens=settings.context_window_tokens
         )
         tools = self._base_registry.view(settings.offered_tools)
+        # What the tools of this turn returned for the model to look at, and the transcript does not keep.
+        images = TurnImages()
         builder = ContextBuilder(
             settings.dot_prompt,
             workspace=settings.workspace,
@@ -345,13 +348,16 @@ class TurnRunner:
             ),
             injection_callback=self._injected if session_key == CHAT_SESSION_KEY else None,
             gate=self._gate,
+            request_attachments=images.attach,
         )
 
         request_token = bind_request_context(RequestContext(session_key=session_key))
         file_states_token = bind_file_states(self._file_states.for_session(session_key))
+        images_token = bind_turn_images(images)
         try:
             result = await self._runner.run(spec)
         finally:
+            reset_turn_images(images_token)
             reset_file_states(file_states_token)
             reset_request_context(request_token)
 

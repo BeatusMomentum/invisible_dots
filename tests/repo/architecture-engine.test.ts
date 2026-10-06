@@ -38,7 +38,7 @@ describe("the architecture document and the engine", () => {
       [...code.matchAll(/^\s+"(\w+)": ToolEntry\("([\w.]+)"/gm)].map((m) => [m[1]!, m[2]!] as const),
     );
     expect(table.size).toBeGreaterThan(0);
-    const offered = section(architecture, "### 8.3 Tools").split("Planned for the browser phase")[0]!;
+    const offered = section(architecture, "### 8.3 Tools");
     const documented = new Map(
       [...offered.matchAll(/^\| `(\w+)` \| `([\w.]+)` \|/gm)].map((m) => [m[1]!, m[2]!] as const),
     );
@@ -55,7 +55,7 @@ describe("the architecture document and the engine", () => {
 
     const tools = section(architecture, "### 8.3 Tools");
     const documented = [...tools.matchAll(/^\| .+? \| `([a-z.]+)` \|/gm)].map((m) => m[1]!);
-    expect(documented.length).toBeGreaterThan(used.length);
+    expect(documented.length).toBe(used.length);
     for (const permission of documented) expect(known.has(permission), `section 8.3: ${permission}`).toBe(true);
 
     // The names that no tool can exercise are in no list of section 7 or 8.3 either.

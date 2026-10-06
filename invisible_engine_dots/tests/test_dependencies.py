@@ -101,3 +101,20 @@ def test_runtime_only_entries_are_declared() -> None:
 )
 def test_deleted_features_leave_no_dependency(gone: str) -> None:
     assert _normalize(gone) not in _declared()
+
+
+# The only browser of a Dot is invisible-playwright-mcp, which the BrowserManager runs as a separate process
+# in the Dot's own computer. Nothing in the engine, or in what it installs, browses or fetches the web another
+# way: no browser, no browser-automation or scraping library, no web search or page-reading package.
+OTHER_BROWSERS = {
+    "playwright", "patchright", "selenium", "seleniumbase", "undetected-chromedriver", "chromedriver-py",
+    "pyppeteer", "puppeteer", "splinter", "mechanize", "mechanicalsoup", "requests-html", "helium",
+    "camoufox", "zendriver", "nodriver", "drissionpage", "browser-use", "scrapy", "trafilatura", "newspaper3k",
+    "ddgs", "duckduckgo-search", "googlesearch-python", "readability-lxml", "html2text", "beautifulsoup4", "lxml",
+}
+
+
+def test_no_other_browser_or_web_library_is_declared_or_imported() -> None:
+    refused = {_normalize(name) for name in OTHER_BROWSERS}
+    assert not refused & _declared(), sorted(refused & _declared())
+    assert not refused & set(_imported()), {name: modules for name, modules in _imported().items() if name in refused}

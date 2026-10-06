@@ -237,6 +237,35 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     await waitFor(async () => (await api.computer(dot.id)).ready, "started again");
   });
 
+  it("an identity's frame is a JPEG of an open one, and close ends it, through the API and the SDK", async () => {
+    const dot = await readyDot("viewing");
+    const identity = await api.createIdentity(dot.id, { name: "Main account" });
+    await expect(api.getIdentityFrame(dot.id, identity.id)).rejects.toMatchObject({ status: 409, code: "not_open" });
+    await expect(api.getIdentityFrame(dot.id, "nobody-abc123")).rejects.toMatchObject({ status: 404, code: "not_found" });
+
+    driver.guestOf(dot.id).launchIdentity(identity.id);
+    const jpeg = await api.getIdentityFrame(dot.id, identity.id);
+    expect([...jpeg]).toEqual([0xff, 0xd8, 0xff, 0xd9]);
+    const raw = await fetch(`${base}/api/dots/${dot.id}/browser-identities/${identity.id}/frame`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(raw.headers.get("content-type")).toBe("image/jpeg");
+    expect(raw.headers.get("cache-control")).toBe("no-store");
+    driver.guestOf(dot.id).identityBusy = true;
+    await expect(api.getIdentityFrame(dot.id, identity.id)).rejects.toMatchObject({ status: 503, code: "busy" });
+    driver.guestOf(dot.id).identityBusy = false;
+
+    await api.closeIdentity(dot.id, identity.id);
+    expect((await api.getIdentity(dot.id, identity.id)).status).toBe("available");
+    await expect(api.getIdentityFrame(dot.id, identity.id)).rejects.toMatchObject({ status: 409, code: "not_open" });
+    await expect(api.closeIdentity(dot.id, "nobody-abc123")).rejects.toMatchObject({ status: 404, code: "not_found" });
+
+    await api.stopComputer(dot.id);
+    await scheduler.settle();
+    await expect(api.getIdentityFrame(dot.id, identity.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(api.closeIdentity(dot.id, identity.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+  });
+
   it("sleeps after idle_timeout (fake clock) and a new task wakes it", async () => {
     const dot = await readyDot("napper", "5m");
     clock.advance(6 * 60_000);

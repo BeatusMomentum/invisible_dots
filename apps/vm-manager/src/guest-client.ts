@@ -318,6 +318,15 @@ export class GuestClient {
     return this.noContent({ method: "DELETE", path: this.agentPath(AGENT_ROUTES.browserIdentity(id)) });
   }
 
+  /** JPEG bytes of the open identity's window. */
+  async getBrowserIdentityFrame(id: string): Promise<Buffer> {
+    return (await this.send({ path: this.agentPath(AGENT_ROUTES.browserIdentityFrame(id)) })).body;
+  }
+
+  closeBrowserIdentity(id: string): Promise<void> {
+    return this.noContent({ method: "POST", path: this.agentPath(AGENT_ROUTES.browserIdentityClose(id)) });
+  }
+
   /** Flushes state and closes browser sessions; can take a while with several browsers open. */
   prepareSleep(timeoutMs = 60_000): Promise<void> {
     return this.noContent({ method: "POST", path: this.agentPath(AGENT_ROUTES.prepareSleep), timeoutMs });

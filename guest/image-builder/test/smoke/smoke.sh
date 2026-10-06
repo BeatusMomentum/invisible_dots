@@ -12,10 +12,8 @@
 #   SMOKE: <passed> passed, <failed> failed, <skipped> skipped
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 set -uo pipefail
-PASS=0; FAIL=0
-ok() { echo "PASS: $*"; PASS=$((PASS+1)); }
-bad() { echo "FAIL: $*"; FAIL=$((FAIL+1)); }
-check() { if eval "$2"; then ok "$1"; else bad "$1"; fi; }
+# The guest, the daemons and the helpers every smoke shares (see lib.sh).
+source "$HERE/lib.sh"
 
 # The checks that pin a removal from the model's text: each runs only when its
 # name is in PIN_REMOVALS, otherwise it is reported as skipped. The engine has
@@ -25,15 +23,13 @@ check() { if eval "$2"; then ok "$1"; else bad "$1"; fi; }
 #                 Guardian, elevated)
 #   exec-schema   the exec tool's parameter schema has no "elevated" property
 PIN_REMOVALS="${PIN_REMOVALS-prompt-text exec-schema}"
-SKIP=0
 pinned() { case " $PIN_REMOVALS " in *" $1 "*) return 0;; esac; return 1; }
 check_pinned() { # name, label, command
   if pinned "$1"; then check "$2" "$3"; else echo "SKIP: $2 (pin '$1' is not in PIN_REMOVALS yet)"; SKIP=$((SKIP+1)); fi
 }
 
 # >>> request checks
-# The stand-in for OpenRouter appends every request it receives, whole, to FULL.
-FULL="${FULL:-/tmp/fake-full.jsonl}"
+# The stand-in for OpenRouter appends every request it receives, whole, to FULL (lib.sh's).
 # sys: a request's system prompt, the text of its system and developer
 # messages, whether the content is a string or a list of parts.
 # exec_tool: the exec tool as offered ({name, description, parameters}), or null.
@@ -57,66 +53,32 @@ req_banned_seen() {
 }
 # <<< request checks
 
-ENGINE_PY=/opt/invisible-dots-engine/bin/python
-
-# --- the golden image's users (builder/user-data.yaml) and the runtime disk ---
-useradd -m -s /bin/bash dot
-useradd -m -s /usr/sbin/nologin -G dot dotengine
-chmod 0750 /home/dot
-mkdir -p /opt/invisible-dots/bin /etc/invisible-dots /run
-cp "$AGENTD_BIN" /opt/invisible-dots/bin/dot-agentd; chmod 0755 /opt/invisible-dots/bin/dot-agentd
-# install.sh's directory and socket steps (the systemd parts do not run here).
-install -d -o dot -g dotengine -m 2750 /run/invisible-dots
-install -d -o dotengine -g dot -m 2750 /run/invisible-dots-agent
-install -d -o dot -g dot -m 2775 /home/dot/workspace
-install -d -o dotengine -g dotengine -m 0700 /home/dotengine /home/dotengine/state
+# --- the runtime disk (the golden image's users, dot and dotengine, are prepare-engine.sh's) ---
+lay_out_guest
 # The engine needs no privilege: no sudoers rule, no config directory.
 check "the engine has no sudo rule (no /etc/sudoers.d/invisible-dots-engine, no sudo for dotengine)" "[ ! -e /etc/sudoers.d/invisible-dots-engine ] && ! su -s /bin/bash dotengine -c 'sudo -n true' >/dev/null 2>&1"
 check "no sudoers file names dotengine (the old engine's rule is gone with the config installer)" "! grep -rqs dotengine /etc/sudoers /etc/sudoers.d"
 check "dotengine is in no group but its own and dot" "[ \"\$(id -nG dotengine | tr ' ' '\n' | sort | tr '\n' ' ')\" = 'dot dotengine ' ]"
-TOKEN="smoke-token-$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-printf '{"dotId":"dot_smoke","token":"%s"}' "$TOKEN" > /etc/invisible-dots/config.json
-chown dot:dot /etc/invisible-dots/config.json; chmod 0600 /etc/invisible-dots/config.json
+write_host_token
 check "the engine cannot read the host's token (/etc/invisible-dots/config.json is dot's, 0600)" "[ \"\$(stat -c '%U:%G %a' /etc/invisible-dots/config.json)\" = 'dot:dot 600' ] && ! su -s /bin/bash dotengine -c 'cat /etc/invisible-dots/config.json' >/dev/null 2>&1"
 
-# --- the stand-in for OpenRouter ---
-# The key has this one owner; the stand-in gets it on its command line (not its environment: a check
-# below asserts that no process environment holds it) and refuses to start without it.
-KEY=sk-or-v1-smoke-0123456789abcdef
-# (Copied out of the tree under test, where the unprivileged user may not reach it, and out of
-# the directories the key sweeps below read: the stand-in holds the key in its memory.)
-install -D -m 0644 "$HERE/fake_openrouter.py" /usr/local/lib/smoke-fake/fake_openrouter.py
-su -s /bin/bash nobody -c "python3 /usr/local/lib/smoke-fake/fake_openrouter.py 9999 $KEY" > /tmp/fake.log 2>&1 &
-# --- dot-agentd as dot ---
-su -s /bin/bash dot -c "HOME=/home/dot /opt/invisible-dots/bin/dot-agentd --listen 127.0.0.1:1024" > /tmp/agentd.log 2>&1 &
-# --- the engine as dotengine, restarted when it dies, as systemd would (KillMode=control-group:
-#     every process of the engine goes with it). The unit's environment, plus the stand-in. ---
-cat > /tmp/engine.sh <<'EOF'
-export HOME=/home/dotengine
-export PATH=/home/dot/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-export TIKTOKEN_CACHE_DIR=/opt/invisible-dots-engine/share/tiktoken
-export INVISIBLE_DOTS_ENGINE_STATE=/home/dotengine/state
-export INVISIBLE_DOTS_AGENT_SOCKET=/run/invisible-dots-agent/agent.sock INVISIBLE_DOTS_AGENTD_SOCKET=/run/invisible-dots/agentd.sock
-export INVISIBLE_DOTS_AGENTD_BIN=/opt/invisible-dots/bin/dot-agentd INVISIBLE_DOTS_WORKSPACE=/home/dot/workspace
-export INVISIBLE_DOTS_OPENROUTER_URL=http://127.0.0.1:9999/api/v1 INVISIBLE_DOTS_NETWORK_CHECK=127.0.0.1:9999
-umask 0002
-cd /home/dotengine
-exec /opt/invisible-dots-engine/bin/python -I -B -m nanobot
-EOF
-chmod 0755 /tmp/engine.sh
-start_engine() { su -s /bin/bash dotengine -c "bash /tmp/engine.sh" >> /tmp/engine.log 2>&1 & }
-start_engine
-
-H=(-sS -H "Authorization: Bearer $TOKEN")
-api() { curl "${H[@]}" "$@"; }
-A=http://127.0.0.1:1024/v1/agent
-wait_health() {
-  for _ in $(seq 1 180); do
-    if api "$A/health" 2>/dev/null | grep -q '"status":"ok"'; then return 0; fi
-    sleep 1
-  done
-  return 1
-}
+# --- the stand-in for OpenRouter (the key is lib.sh's) ---
+start_fake_openrouter
+# --- the stand-in for invisible-playwright-mcp ---
+# The engine's own test fake (the one owner of what a stand-in answers) and the tool list it serves, as
+# captured from the pinned server, copied out of the tree under test where dot may reach them. It runs on
+# the engine's python, which has the `mcp` package, as dot: the engine starts it through dot-agentd's relay.
+ENGINE_TESTS=$(cd "$HERE/../../../../invisible_engine_dots/tests" && pwd)
+FAKE_MCP_DIR=/usr/local/lib/smoke-fake/mcp
+install -D -m 0644 "$ENGINE_TESTS/fakes/fake_mcp_server.py" "$FAKE_MCP_DIR/fakes/fake_mcp_server.py"
+for tools in "$ENGINE_TESTS"/fixtures/mcp-tools-*.json; do install -D -m 0644 "$tools" "$FAKE_MCP_DIR/fixtures/$(basename "$tools")"; done
+FAKE_MCP=/usr/local/lib/smoke-fake/invisible-playwright-mcp
+printf '#!/bin/sh\nexec /opt/invisible-dots-engine/bin/python -I -B %s/fakes/fake_mcp_server.py "$@"\n' "$FAKE_MCP_DIR" > "$FAKE_MCP"
+chmod 0755 "$FAKE_MCP"
+# --- dot-agentd as dot, the engine as dotengine with the stand-in as its browser program ---
+MCP_COMMAND=$FAKE_MCP
+start_guest_daemons
+init_host_side
 check "the engine answers /health through dot-agentd" "wait_health"
 echo "health: $(api http://127.0.0.1:1024/v1/health)"
 check "the engine runs as dotengine" "pgrep -u dotengine -f 'python.*-m nanobot' >/dev/null && ! pgrep -u root -f 'python.*-m nanobot' >/dev/null"
@@ -127,36 +89,17 @@ check "agent.sock is in the engine's directory, group dot, 0660" "[ \"\$(stat -c
 check "agentd.sock is dot's, group dotengine, 0660" "[ \"\$(stat -c '%U:%G %a' /run/invisible-dots/agentd.sock)\" = 'dot:dotengine 660' ]"
 check "dot cannot write the engine's socket directory" "! su -s /bin/bash dot -c 'touch /run/invisible-dots-agent/x' 2>/dev/null"
 
-# The decision for every permission, as the host's toRuntimeConfig sends it; changed below.
-echo '{"computer.exec":"allow"}' > /tmp/perms.json; chmod 0644 /tmp/perms.json
-echo true > /tmp/memory.json; chmod 0644 /tmp/memory.json   # the config's memory.enabled
-echo '{}' > /tmp/models.json; chmod 0644 /tmp/models.json     # the config's models (the summary role)
-echo 32000 > /tmp/context.json; chmod 0644 /tmp/context.json # the config's limits.context_tokens
-push() {
-  api -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d "{\"openrouter_api_key\":\"$KEY\"}" "$A/secrets"
-  echo -n " "
-  api -o /dev/null -w '%{http_code}' -X PUT -H 'content-type: application/json' -d '{"name":"smoke","goal":"Answer the smoke test.","model":{"provider":"openrouter","id":"openai/gpt-4o-mini"},"browser":{"identities":{"managed_by_dot":true,"max_identities":20,"max_open":3}},"permissions":'"$(cat /tmp/perms.json)"',"models":'"$(cat /tmp/models.json)"',"memory":{"enabled":'"$(cat /tmp/memory.json)"'},"limits":{"max_steps_per_task":60,"context_tokens":'"$(cat /tmp/context.json)"',"max_cost_per_task_usd":1}}' "$A/config"
-}
-{ declare -f api push; echo "H=(-sS -H 'Authorization: Bearer $TOKEN'); A=$A; KEY=$KEY; push"; } > /tmp/push.sh
+# The decision for every permission, as the host's toRuntimeConfig sends it (lib.sh's reset_config and
+# push); the files are changed below.
+reset_config
+write_push_script
 check "the host pushes the key and the config (204 204)" "[ \"\$(push)\" = '204 204' ]"
 sleep 3
 check "the state directory is dotengine's, 0700" "[ \"\$(stat -c '%U:%G %a' /home/dotengine/state)\" = 'dotengine:dotengine 700' ]"
 check "dot cannot read the engine's state" "! su -s /bin/bash dot -c 'ls /home/dotengine/state' >/dev/null 2>&1"
 
-# The event stream, read the way the host reads it: from its last seq,
-# reconnecting after a drop, pushing the key and the config on agent.started.
-STREAM=/tmp/host-stream.txt
-bash "$HERE/host-stream.sh" "$TOKEN" "$STREAM" "bash /tmp/push.sh" &
-SPID=$!
-ev() { local id=$1 type=$2 data=$3; api -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d "{\"id\":\"$id\",\"type\":\"$type\",\"ts\":\"2026-10-04T10:00:00Z\",\"data\":$data}" "$A/events"; }
-wait_event() { # file, jq filter
-  for _ in $(seq 1 120); do
-    # -s and any(): jq -e alone judges only the LAST event read, not whether one matched.
-    if grep '^data: ' "$1" | sed 's/^data: //' | jq -s -e "any(.[]; $2)" >/dev/null 2>&1; then return 0; fi
-    sleep 1
-  done
-  return 1
-}
+# The event stream, read the way the host reads it (lib.sh's start_host_stream).
+start_host_stream
 check "user.message accepted (202)" "[ \"\$(ev msg-1 user.message '{\"text\":\"hello\"}')\" = 202 ]"
 check "the same user.message again is accepted and ignored (202)" "[ \"\$(ev msg-1 user.message '{\"text\":\"hello\"}')\" = 202 ]"
 check "message.assistant answers it, in_reply_to msg-1" "wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-1\" and .data.text==\"hello from the stand-in\"'"
@@ -195,7 +138,6 @@ start_engine
 check "the restarted engine answers /health" "wait_health"
 STREAM2=$STREAM
 check "agent.started after the restart, read by the reconnected host" "wait_event $STREAM2 '.type==\"agent.started\" and .seq > $LAST'"
-wait_key() { for _ in $(seq 1 60); do api "$A/health" | grep -q '"openrouter_configured":true' && return 0; sleep 1; done; return 1; }
 check "the host pushed the key again on agent.started" "wait_key"
 check "the cut call is reported once as interrupted" "wait_event $STREAM2 '.type==\"tool.called\" and .data.task_id==\"t2\" and .data.interrupted==true'"
 check "the task resumes and completes" "wait_event $STREAM2 '.type==\"task.completed\" and .data.task_id==\"t2\"'"
@@ -204,10 +146,6 @@ check "a message after the restart is answered" "[ \"\$(ev msg-2 user.message '{
 # The engine ends a command by killing the relay it started, in the relay's own process group; nothing
 # else tells dot-agentd. On the closed socket dot-agentd must end the remote process group: the shell,
 # the foreground command and the background child alike. (The stand-in names every call "call_0".)
-gone_within() { # seconds, pattern: no process of dot matches it
-  for _ in $(seq 1 $(($1*5))); do pgrep -u dot -f "$2" >/dev/null || return 0; sleep 0.2; done
-  return 1
-}
 ev task-ev-5 task.created '{"task_id":"t5","description":"RUN-EXEC sleep 61 & sleep 62; echo late5 > /home/dot/workspace/late5.txt","priority":0}' >/dev/null
 for _ in $(seq 1 60); do pgrep -u dot -f 'sleep 62' >/dev/null && pgrep -u dot -f 'sleep 61' >/dev/null && break; sleep 1; done
 check "t5's command and its background child run as dot" "pgrep -u dot -f 'sleep 62' >/dev/null && pgrep -u dot -f 'sleep 61' >/dev/null"
@@ -263,7 +201,6 @@ check "the task t6 the stop cut resumes and completes" "wait_event $STREAM '.typ
 # --- approvals (architecture 8.4): ask parks the call, the decision survives kill -9 ---
 echo '{"computer.exec":"ask"}' > /tmp/perms.json
 check "the host pushes a config where exec asks (204 204)" "[ \"\$(push)\" = '204 204' ]"
-st() { api "$A/state"; }
 ev task-ev-3 task.created '{"task_id":"t3","description":"RUN-EXEC echo approved-ran > /home/dot/workspace/approved.txt; echo approved-out","priority":0}' >/dev/null
 check "approval.requested for t3's exec, with its exact arguments" "wait_event $STREAM '.type==\"approval.requested\" and .data.task_id==\"t3\" and .data.tool==\"exec\" and .data.permission==\"computer.exec\" and (.data.arguments.command|test(\"approved-ran\"))'"
 AP3=$(grep '^data: ' $STREAM | sed 's/^data: //' | jq -r 'select(.type=="approval.requested" and .data.task_id=="t3") | .data.approval_id' | head -1)
@@ -316,28 +253,39 @@ check "/state is IDLE with nothing pending" "st | jq -e '.state==\"IDLE\" and .p
 # lists the tools it was offered. The expected list is the permission table of
 # nanobot/dots/permissions.py, written out here: a tool the engine offers that the
 # table does not name (an MCP tool, a core tool left in) makes a list differ.
-offered_with() { # n, permissions json, memory.enabled: the tools the model is offered in a chat turn
+offered_with() { # n, permissions json, memory.enabled, managed_by_dot: the tools the model is offered in a chat turn
   echo "$2" > /tmp/perms.json; echo "$3" > /tmp/memory.json
+  echo "{\"managed_by_dot\":$4,\"max_identities\":20,\"max_open\":3}" > /tmp/browser.json
   [ "$(push)" = '204 204' ] || return 1
   [ "$(ev "msg-tools-$1" user.message '{"text":"which tools?"}')" = 202 ] || return 1
   wait_event $STREAM ".type==\"message.assistant\" and .data.in_reply_to==\"msg-tools-$1\"" || return 1
   tail -1 /tmp/fake-tools.jsonl | jq -c '.tools|sort'
 }
-check_offered() { # n, label, permissions json, memory.enabled, expected tools (sorted JSON)
-  local got; got=$(offered_with "$1" "$3" "$4")
+check_offered() { # n, label, permissions json, memory.enabled, managed_by_dot, expected tools (sorted JSON)
+  local got; got=$(offered_with "$1" "$3" "$4" "$5")
   echo "offered ($2): $got"
-  check "offered tools: $2" "[ '$got' = '$5' ]"
+  check "offered tools: $2" "[ '$got' = '$6' ]"
 }
-check_offered 1 "every permission granted (files.write asks), memory on" \
-  '{"computer.exec":"allow","files.read":"allow","files.write":"ask","memory.read":"allow","automations":"allow"}' true \
-  '["apply_patch","cron","edit_file","exec","exec_session","find_files","grep","list_dir","list_exec_sessions","memory_get","memory_search","read_file","write_file"]'
+BROWSER_GRANTED='"computer.screenshot":"allow","browser.identity.list":"allow","browser.identity.create":"allow","browser.identity.delete":"ask","browser.identity.launch":"allow","browser.identity.close":"allow","browser.navigate":"allow","browser.read":"allow","browser.act":"allow"'
+check_offered 1 "every permission granted (files.write and browser.identity.delete ask), memory on, the Dot manages its identities" \
+  '{"computer.exec":"allow","files.read":"allow","files.write":"ask","memory.read":"allow","automations":"allow",'"$BROWSER_GRANTED"'}' true true \
+  '["apply_patch","browser_back","browser_click","browser_click_at","browser_forward","browser_identity_close","browser_identity_create","browser_identity_delete","browser_identity_launch","browser_identity_list","browser_navigate","browser_press_key","browser_read_text","browser_reload","browser_screenshot","browser_scroll","browser_select_option","browser_snapshot","browser_type","computer_screenshot","cron","edit_file","exec","exec_session","find_files","grep","list_dir","list_exec_sessions","memory_get","memory_search","read_file","write_file"]'
 check_offered 2 "exec denied, files.read allowed, the rest missing from the map (deny)" \
-  '{"computer.exec":"deny","files.read":"allow","memory.read":"deny"}' true \
+  '{"computer.exec":"deny","files.read":"allow","memory.read":"deny"}' true true \
   '["find_files","grep","list_dir","read_file"]'
 check_offered 3 "memory off: no memory tool even with memory.read allowed" \
-  '{"computer.exec":"allow","memory.read":"allow"}' false \
+  '{"computer.exec":"allow","memory.read":"allow"}' false true \
   '["exec","exec_session","list_exec_sessions"]'
-check_offered 4 "an empty permission map offers nothing" '{}' true '[]'
+check_offered 4 "an empty permission map offers nothing" '{}' true true '[]'
+check_offered 5 "managed_by_dot false: every browser permission granted, yet no tool that creates or deletes an identity" \
+  '{'"$BROWSER_GRANTED"'}' true false \
+  '["browser_back","browser_click","browser_click_at","browser_forward","browser_identity_close","browser_identity_launch","browser_identity_list","browser_navigate","browser_press_key","browser_read_text","browser_reload","browser_screenshot","browser_scroll","browser_select_option","browser_snapshot","browser_type","computer_screenshot"]'
+check_offered 6 "managed_by_dot false: browser.identity.delete asks and browser.read is allowed; only the reading tools are offered" \
+  '{"browser.identity.delete":"ask","browser.read":"allow"}' true false \
+  '["browser_read_text","browser_screenshot","browser_snapshot"]'
+check_offered 7 "managed_by_dot true: delete asks, create is denied, nothing else" \
+  '{"browser.identity.delete":"ask","browser.identity.create":"deny"}' true true \
+  '["browser_identity_delete"]'
 # A call of a tool the model was not offered (the stand-in makes it anyway) never runs: the turn's
 # registry holds only the offered tools, so the call fails as an unknown tool before the gate is asked
 # (design: an unknown tool never reaches the gate; tool.called reports it with decision allow, ok false).
@@ -361,6 +309,143 @@ check "the tool.called of an exec call names its command with the credential mas
 check "the tool.called of a proxy login on the command line shows neither the user nor the password" "[ \"\$(ev msg-proxy user.message '{\"text\":\"RUN-EXEC curl -U smoke-user:hunter2-proxy --max-time 1 http://127.0.0.1:9/\"}')\" = 202 ] && wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-proxy\"' && grep '^data: ' $STREAM | sed 's/^data: //' | jq -s -e '[.[] | select(.type==\"tool.called\" and (.data.target // \"\" | startswith(\"curl \"))) | .data.target] == [\"curl -U *** --max-time 1 http://127.0.0.1:9/\"]' >/dev/null && ! grep -q 'hunter2-proxy' $STREAM"
 check "memory_search finds the note the Dot wrote" "[ \"\$(ev msg-note-2 user.message '{\"text\":\"FIND-NOTE smoke-needle\"}')\" = 202 ] && wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-note-2\" and (.data.text|test(\"trips/smoke-note.md\"))'"
 check "a file written outside the memory directory (through ../) is no note" "[ \"\$(ev msg-note-3 user.message '{\"text\":\"WRITE-NOTE ../workspace/not-a-note.md :: x\"}')\" = 202 ] && wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-note-3\"' && [ -e /home/dot/workspace/not-a-note.md ] && [ \"\$(grep '^data: ' $STREAM | sed 's/^data: //' | jq -c 'select(.type==\"memory.written\")' | wc -l)\" = 1 ]"
+echo '{"computer.exec":"allow"}' > /tmp/perms.json
+check "the host pushes the allow-everything config once more (204 204)" "[ \"\$(push)\" = '204 204' ]"
+
+# --- the browser (architecture 6): the engine, dot-agentd and the relay are the real ones; the MCP server is the stand-in
+#     installed above (invisible-playwright-mcp's tools, answered by the engine's test fake) ---
+# One stand-in process per open identity, started by dot-agentd as dot through the relay. Its record
+# ($INVISIBLE_MCP_HOME/record.jsonl) holds its environment, its working directory and every call it received.
+BROWSERS=/home/dot/browsers
+rec() { echo "$BROWSERS/$1/mcp/record.jsonl"; }
+fakes_running() { pgrep -u dot -f fake_mcp_server.py | wc -l; }
+wait_fakes() { # n: the stand-in's processes of dot number n within 10 s
+  for _ in $(seq 1 50); do [ "$(fakes_running)" = "$1" ] && return 0; sleep 0.2; done
+  return 1
+}
+call_seen() { jq -s -e --arg tool "$2" "any(.[]; .kind==\"call\" and .name==\$tool and $3)" "$(rec "$1")" >/dev/null; } # id, tool, jq condition on the call
+# The first start of the id's process: its working directory and environment, as dot's process had them.
+mcp_env_ok() { # id, expected STEALTHFOX_PROXY ("" for none)
+  jq -s -e --arg id "$1" --arg proxy "$2" --arg key "$KEY" '
+    [.[] | select(.kind == "start")][0] as $s | ($s.env) as $e
+    | $s.cwd == ("/home/dot/browsers/" + $id)
+    and $e.INVISIBLE_MCP_HOME == ("/home/dot/browsers/" + $id + "/mcp")
+    and $e.INVISIBLE_MCP_SESSION_ID == $id
+    and $e.STEALTHFOX_PROFILE_DIR == ("/home/dot/browsers/" + $id + "/profile")
+    and $e.STEALTHFOX_HEADLESS == "0" and $e.DISPLAY == ":0" and $e.HOME == "/home/dot"
+    and (if $proxy == "" then ($e | has("STEALTHFOX_PROXY") | not) else $e.STEALTHFOX_PROXY == $proxy end)
+    and ([$e | keys[] | select(startswith("INVISIBLE_DOTS_") or . == "TIKTOKEN_CACHE_DIR" or . == "OPENROUTER_API_KEY")] | length == 0)
+    and ([$e[] | select(contains($key))] | length == 0)' "$(rec "$1")" >/dev/null
+}
+PROXY_PASSWORD=pw-smoke-proxy
+no_proxy_password_in() { ! grep -qs "$PROXY_PASSWORD" "$@"; }
+
+echo '{"computer.exec":"allow","computer.screenshot":"allow","browser.identity.list":"allow","browser.identity.create":"ask","browser.identity.delete":"ask","browser.identity.launch":"allow","browser.identity.close":"allow","browser.navigate":"allow","browser.read":"allow","browser.act":"allow"}' > /tmp/perms.json
+check "the host pushes a config where the Dot browses (creating and deleting identities ask) (204 204)" "[ \"\$(push)\" = '204 204' ]"
+check "no identity yet: /health counts none, the list is empty" "health_is 0 0 && api $A/browser-identities | jq -e '.identities == []' >/dev/null"
+
+CODE1=$(api -o /tmp/bid-1.json -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{"name":"research"}' "$A/browser-identities")
+ID1=$(jq -r .id /tmp/bid-1.json)
+identity_one_ok() { jq -e --arg id "$1" '.id == $id and .name == "research" and .status == "available" and .profilePath == ("/home/dot/browsers/" + $id + "/profile") and (has("proxy") | not)' /tmp/bid-1.json >/dev/null; }
+check "POST /browser-identities answers 201 with a closed identity whose profile is under /home/dot/browsers" "[ '$CODE1' = 201 ] && identity_one_ok '$ID1'"
+check "browser.identity.created names it" "wait_event $STREAM '.type==\"browser.identity.created\" and .data.identity_id==\"$ID1\" and .data.name==\"research\"'"
+check "its profile and MCP directories exist, dot's" "[ \"\$(stat -c %U $BROWSERS/$ID1/profile $BROWSERS/$ID1/mcp | tr '\n' ' ')\" = 'dot dot ' ]"
+check "no browser runs for a closed identity, and /health counts one identity, none open" "[ \"\$(fakes_running)\" = 0 ] && health_is 1 0"
+
+check "the model launches the identity" "tool_turn 1 browser_identity_launch '{\"identity_id\":\"$ID1\"}'"
+check "browser.identity.launched names it" "launched $ID1"
+check "the MCP server runs as dot, one process, and none of it runs as dotengine" "[ \"\$(fakes_running)\" = 1 ] && ! pgrep -u dotengine -f fake_mcp_server.py >/dev/null"
+check "its environment has the profile, the display, the session id and its home, no proxy, none of the engine's variables and no key; its working directory is the identity's" "mcp_env_ok $ID1 ''"
+check "browser_open was called with the browser role main, once" "call_seen $ID1 browser_open '.args.browser==\"main\"' && [ \"\$(jq -s '[.[] | select(.kind==\"call\" and .name==\"browser_open\")] | length' $(rec $ID1))\" = 1 ]"
+check "/health counts one identity, one open" "health_is 1 1"
+check "the browser tool call for the open identity is made" "tool_turn 2 browser_navigate '{\"identity_id\":\"$ID1\",\"url\":\"http://example.test/one\"}'"
+check "tool.called browser_navigate: ok, permission browser.navigate, allow, naming the identity and the page" "wait_event $STREAM '.type==\"tool.called\" and .data.tool==\"browser_navigate\" and .data.ok==true and .data.permission==\"browser.navigate\" and .data.decision==\"allow\" and (.data.target|startswith(\"$ID1: http://example.test/one\"))'"
+check "the MCP server got browser_navigate with browser main and the url" "call_seen $ID1 browser_navigate '.args.browser==\"main\" and .args.url==\"http://example.test/one\"'"
+check "the model takes a screenshot of the page" "tool_turn 3 browser_screenshot '{\"identity_id\":\"$ID1\"}'"
+check "tool.called browser_screenshot: ok, permission browser.read" "wait_event $STREAM '.type==\"tool.called\" and .data.tool==\"browser_screenshot\" and .data.ok==true and .data.permission==\"browser.read\"'"
+check "the screenshot reached the model's next request as an image part" "jq -s -e 'any(.[]; [.messages[]? | .content? | arrays | .[] | select(.type==\"image_url\") | .image_url.url] | any(startswith(\"data:image/png;base64,\")))' $FULL >/dev/null"
+
+ID2=$(new_identity second); ID3=$(new_identity third); ID4=$(new_identity lossy)
+check "three more identities exist; /health counts four, one open" "[ -n '$ID2' ] && [ -n '$ID3' ] && [ -n '$ID4' ] && health_is 4 1"
+# The fourth identity's server reports its browser gone after the first page action, as after a Firefox crash.
+printf '{"lose_browser_once":true}' > "$BROWSERS/$ID4/mcp/control.json"
+check "the model launches the second and the third identity: three are open (max_open 3), three servers run as dot" "tool_turn 4 browser_identity_launch '{\"identity_id\":\"$ID2\"}' && tool_turn 5 browser_identity_launch '{\"identity_id\":\"$ID3\"}' && wait_fakes 3 && health_is 4 3"
+check "the model launches a fourth identity" "tool_turn 6 browser_identity_launch '{\"identity_id\":\"$ID4\"}'"
+check "the least recently used identity (the first) was closed: browser.identity.closed" "closed $ID1"
+check "it was closed through browser_close, then its server ended; three servers run, three identities are open" "call_seen $ID1 browser_close true && wait_fakes 3 && health_is 4 3"
+check "/browser-identities/:id says closed for the first and open for the fourth" "[ \"\$(api $A/browser-identities/$ID1 | jq -r .status)\" = available ] && [ \"\$(api $A/browser-identities/$ID4 | jq -r .status)\" = open ]"
+check "a browser action on the closed identity fails and says to launch it" "tool_turn 7 browser_navigate '{\"identity_id\":\"$ID1\",\"url\":\"http://example.test/closed\"}' && wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-bt-7\" and (.data.text|test(\"is not open; call browser_identity_launch first\"))'"
+check "that call is reported as tool.called, not ok, and it started no browser" "wait_event $STREAM '.type==\"tool.called\" and .data.tool==\"browser_navigate\" and .data.ok==false and .data.permission==\"browser.navigate\" and (.data.target|startswith(\"$ID1: http://example.test/closed\"))' && [ \"\$(fakes_running)\" = 3 ] && [ \"\$(jq -s '[.[] | select(.kind==\"start\")] | length' $(rec $ID1))\" = 1 ]"
+check "a page action after the browser closed under a live server reopens it once and is repeated: it succeeds" "tool_turn 8 browser_navigate '{\"identity_id\":\"$ID4\",\"url\":\"http://example.test/lossy\"}' && wait_event $STREAM '.type==\"tool.called\" and .data.tool==\"browser_navigate\" and .data.ok==true and (.data.target|startswith(\"$ID4: http://example.test/lossy\"))' && [ \"\$(jq -s '[.[] | select(.kind==\"call\" and .name==\"browser_open\")] | length' $(rec $ID4))\" = 2 ]"
+
+# An identity the model creates with a proxy: the approval shows the proxy without its password, and so does everything else.
+PROXY="http://smoke-user:$PROXY_PASSWORD@127.0.0.1:9"
+say msg-bt-proxy "RUN-TOOL browser_identity_create $(jq -nc --arg p "$PROXY" '{name:"shopping",proxy:$p}')" >/dev/null
+check "approval.requested for the identity the model creates: the proxy in its arguments has no password" "wait_event $STREAM '.type==\"approval.requested\" and .data.tool==\"browser_identity_create\" and .data.permission==\"browser.identity.create\" and .data.arguments.name==\"shopping\" and .data.arguments.proxy==\"http://smoke-user:***@127.0.0.1:9\"'"
+APP=$(grep '^data: ' $STREAM | sed 's/^data: //' | jq -r 'select(.type=="approval.requested" and .data.tool=="browser_identity_create") | .data.approval_id' | head -1)
+check "the proxy password is in no event, no engine log and no dot-agentd log so far" "no_proxy_password_in $STREAM /tmp/engine.log /tmp/agentd.log"
+check "approval.received approve accepted (202)" "[ \"\$(ev ap-proxy approval.received '{\"approval_id\":\"'$APP'\",\"decision\":\"approve\"}')\" = 202 ]"
+check "tool.called browser_identity_create: ok, decision ask, permission browser.identity.create, naming the identity and not its proxy" "wait_event $STREAM '.type==\"tool.called\" and .data.tool==\"browser_identity_create\" and .data.ok==true and .data.decision==\"ask\" and .data.permission==\"browser.identity.create\" and .data.target==\"shopping\"'"
+ID5=$(identity_named shopping)
+check "the identity is listed with its proxy redacted, and browser.identity.created names it" "[ \"\$(api $A/browser-identities/$ID5 | jq -r .proxy)\" = 'http://smoke-user:***@127.0.0.1:9' ] && wait_event $STREAM '.type==\"browser.identity.created\" and .data.identity_id==\"$ID5\" and .data.name==\"shopping\"'"
+check "the model launches it: the least recently used of the three open (the second) is closed" "tool_turn 9 browser_identity_launch '{\"identity_id\":\"$ID5\"}' && launched $ID5 && closed $ID2 && wait_fakes 3"
+check "its server got the proxy in STEALTHFOX_PROXY (dot's process, not the engine's), with the rest of the environment as before" "mcp_env_ok $ID5 '$PROXY'"
+check "the proxy password is in no event, no engine log and no dot-agentd log after the launch either" "no_proxy_password_in $STREAM /tmp/engine.log /tmp/agentd.log"
+check "the proxy password is on no process's command line, which every user can read (the relay of the open browser names the variable and nothing else)" "cmdline_holds '--env-from STEALTHFOX_PROXY' && ! cmdline_holds \$PROXY_PASSWORD"
+
+# browser.identity.delete asks: the parked call survives kill -9, and the servers die with the engine that started them.
+say msg-bt-del "RUN-TOOL browser_identity_delete {\"identity_id\":\"$ID3\"}" >/dev/null
+check "approval.requested for the delete of an open identity, permission browser.identity.delete" "wait_event $STREAM '.type==\"approval.requested\" and .data.tool==\"browser_identity_delete\" and .data.permission==\"browser.identity.delete\" and .data.arguments.identity_id==\"$ID3\"'"
+APD=$(grep '^data: ' $STREAM | sed 's/^data: //' | jq -r 'select(.type=="approval.requested" and .data.tool=="browser_identity_delete") | .data.approval_id' | head -1)
+sleep 2
+check "the parked delete did not run: the identity and its directory are there, still open" "[ -d $BROWSERS/$ID3 ] && [ \"\$(api $A/browser-identities/$ID3 | jq -r .status)\" = open ] && st | jq -e --arg id \"$APD\" '.pending_approval==\$id' >/dev/null"
+LASTD=$(grep '^id: ' "$STREAM" | tail -1 | sed 's/^id: //')
+check "three servers run as dot before the kill" "[ \"\$(fakes_running)\" = 3 ]"
+pkill -9 -u dotengine
+check "kill -9 of the engine ended every MCP server within 10 s (dot-agentd ended their groups)" "gone_within 10 fake_mcp_server.py"
+start_engine
+check "the restarted engine answers /health (delete pending)" "wait_health && wait_key"
+check "the delete is still pending after kill -9" "st | jq -e --arg id \"$APD\" '.pending_approval==\$id' >/dev/null"
+check "after the restart every identity is available, none open, and /health counts five and none" "api $A/browser-identities | jq -e '(.identities|length)==5 and all(.identities[]; .status==\"available\")' >/dev/null && health_is 5 0"
+check "approval.received approve accepted (202)" "[ \"\$(ev ap-del approval.received '{\"approval_id\":\"'$APD'\",\"decision\":\"approve\"}')\" = 202 ]"
+check "tool.called browser_identity_delete: ok, decision ask" "wait_event $STREAM '.type==\"tool.called\" and .data.tool==\"browser_identity_delete\" and .data.ok==true and .data.decision==\"ask\" and .data.target==\"$ID3\" and .seq > $LASTD'"
+check "browser.identity.deleted names it; its directory is gone and it is no longer listed" "wait_event $STREAM '.type==\"browser.identity.deleted\" and .data.identity_id==\"$ID3\" and .data.name==\"third\"' && [ ! -e $BROWSERS/$ID3 ] && [ \"\$(api -o /dev/null -w '%{http_code}' $A/browser-identities/$ID3)\" = 404 ] && health_is 4 0"
+
+# SIGTERM closes an open browser through browser_close before its server ends.
+check "the model launches an identity again after the restart" "tool_turn 10 browser_identity_launch '{\"identity_id\":\"$ID4\"}' && wait_fakes 1"
+EPIDB=$(pgrep -o -u dotengine -f 'python.*-m nanobot')
+kill -TERM "$EPIDB"
+for _ in $(seq 1 300); do kill -0 "$EPIDB" 2>/dev/null || break; sleep 0.1; done
+check "SIGTERM stopped the engine and the browser's server ended" "! kill -0 $EPIDB 2>/dev/null && wait_fakes 0"
+last_start_closed_ok() { # id: after its last start the server was asked browser_open, then browser_close, and answered both
+  jq -s -e '. as $all | ([range(0; length) | select($all[.].kind == "start")] | last) as $i | $all[$i:]
+    | ([.[] | select(.kind == "call") | .name] == ["browser_open", "browser_close"])
+      and ([.[] | select(.kind == "done") | .name] == ["browser_open", "browser_close"])' "$(rec "$1")" >/dev/null
+}
+check "the server of the open identity was asked browser_close, so Firefox could flush its profile, and answered it" "last_start_closed_ok $ID4"
+start_engine
+check "the restarted engine answers /health (browser closed by SIGTERM)" "wait_health && wait_key"
+
+# A delete from the host while the identity is open closes it first.
+check "the model launches the proxy identity" "tool_turn 11 browser_identity_launch '{\"identity_id\":\"$ID5\"}' && wait_fakes 1 && health_is 4 1"
+# The host's two actions on one identity: a frame of its window (only while it is open) and closing its browser.
+status_of() { api -o "${2:-/dev/null}" -w '%{http_code}' "${@:3}" "$1"; } # url, output file, curl arguments
+closed_total() { grep '^data: ' $STREAM | sed 's/^data: //' | jq -s "[.[] | select(.type==\"browser.identity.closed\" and .data.identity_id==\"$1\")] | length"; } # id
+wait_closed_total() { for _ in $(seq 1 30); do [ "$(closed_total "$1")" = "$2" ] && return 0; sleep 1; done; return 1; } # id, n
+check "GET /browser-identities/:id/frame answers a JPEG of the open identity, 409 not_open for a closed one, 404 for an unknown one" "[ \"\$(status_of $A/browser-identities/$ID5/frame /tmp/frame-5.jpg)\" = 200 ] && [ \"\$(head -c 3 /tmp/frame-5.jpg | od -An -tx1 | tr -d ' \n')\" = ffd8ff ] && [ \"\$(status_of $A/browser-identities/$ID1/frame)\" = 409 ] && [ \"\$(status_of $A/browser-identities/nobody-abc123/frame)\" = 404 ]"
+check "the frame was the server's browser_watch with the browser role main, and it launched nothing" "call_seen $ID5 browser_watch '.args.browser==\"main\"' && wait_fakes 1 && health_is 4 1"
+CLOSED_BEFORE=$(closed_total $ID5)
+check "POST /browser-identities/:id/close answers 204: the browser is closed, the server ends, closed is emitted once, the profile stays" "[ \"\$(status_of $A/browser-identities/$ID5/close /dev/null -X POST)\" = 204 ] && wait_fakes 0 && wait_closed_total $ID5 $((CLOSED_BEFORE + 1)) && [ -d $BROWSERS/$ID5/profile ] && [ \"\$(api $A/browser-identities/$ID5 | jq -r .status)\" = available ] && health_is 4 0"
+check "closing a closed identity answers 204 and emits nothing; an unknown one is 404" "[ \"\$(status_of $A/browser-identities/$ID5/close /dev/null -X POST)\" = 204 ] && [ \"\$(status_of $A/browser-identities/nobody-abc123/close /dev/null -X POST)\" = 404 ] && [ \"\$(closed_total $ID5)\" = $((CLOSED_BEFORE + 1)) ]"
+check "the model launches it again, so the delete below meets an open identity" "tool_turn 12 browser_identity_launch '{\"identity_id\":\"$ID5\"}' && wait_fakes 1 && health_is 4 1"
+# A server that dies while nothing calls it (its relay ends with it): the engine hears of it when it happens.
+CLOSED_BEFORE=$(closed_total $ID5)
+check "a server killed while idle closes its identity at once, with no call: closed is emitted once and /health counts none open" "pkill -9 -u dot -f fake_mcp_server.py; wait_fakes 0 && wait_closed_total $ID5 $((CLOSED_BEFORE + 1)) && health_is 4 0 && [ \"\$(api $A/browser-identities/$ID5 | jq -r .status)\" = available ]"
+check "the model launches it once more, so the delete below meets an open identity" "tool_turn 13 browser_identity_launch '{\"identity_id\":\"$ID5\"}' && wait_fakes 1 && health_is 4 1"
+check "DELETE /browser-identities/:id of the open identity answers 204" "[ \"\$(api -o /dev/null -w '%{http_code}' -X DELETE $A/browser-identities/$ID5)\" = 204 ]"
+check "its browser was closed, then it was deleted: closed, then deleted" "wait_event $STREAM '.type==\"browser.identity.deleted\" and .data.identity_id==\"$ID5\"' && grep '^data: ' $STREAM | sed 's/^data: //' | jq -s -e '[.[] | select(.data.identity_id==\"$ID5\" and (.type==\"browser.identity.closed\" or .type==\"browser.identity.deleted\")) | .type] | .[-2:] == [\"browser.identity.closed\",\"browser.identity.deleted\"]' >/dev/null"
+check "its server ended, its directory is gone, /health counts three identities, none open" "wait_fakes 0 && [ ! -e $BROWSERS/$ID5 ] && health_is 3 0"
+check "the proxy password is in no event, no engine log and no dot-agentd log at the end of the browser checks" "no_proxy_password_in $STREAM /tmp/engine.log /tmp/agentd.log"
 echo '{"computer.exec":"allow"}' > /tmp/perms.json
 check "the host pushes the allow-everything config once more (204 204)" "[ \"\$(push)\" = '204 204' ]"
 
@@ -420,23 +505,24 @@ check_pinned prompt-text "no request's system prompt or exec description names /
 check_pinned exec-schema "no request's exec tool schema has an elevated property" "req_exec_schema_clean"
 
 sleep 3
-pkill -f host-stream.sh; kill $SPID 2>/dev/null; wait $SPID 2>/dev/null
+stop_host_stream
 # Everything committed, read again from 0: what the host received across the crash must be exactly that.
 ALL=/tmp/stream-all.txt
 timeout 5 curl "${H[@]}" -N "$A/events/stream?after=0" > "$ALL" 2>/dev/null
-seqs() { grep '^id: ' "$1" | sed 's/^id: //'; }
 check "seqs of the full stream are 1..N without a gap" "[ \"\$(seqs $ALL | tr '\n' ' ')\" = \"\$(seq 1 \$(seqs $ALL | wc -l) | tr '\n' ' ')\" ]"
 check "the host received every event exactly once across the crash (no loss, no repeat)" "[ \"\$(seqs $STREAM | tr '\n' ' ')\" = \"\$(seqs $ALL | tr '\n' ' ')\" ]"
 check "event ids are unique" "[ \"\$(grep '^data: ' $ALL | sed 's/^data: //' | jq -r .id | sort | uniq -d | wc -l)\" = 0 ]"
 check "tool.called for t2 appears once as interrupted" "[ \"\$(grep '^data: ' $ALL | sed 's/^data: //' | jq -c 'select(.type==\"tool.called\" and .data.task_id==\"t2\" and .data.interrupted==true)' | wc -l)\" = 1 ]"
-check "agent.started six times in all (six starts)" "[ \"\$(grep '^data: ' $ALL | sed 's/^data: //' | jq -c 'select(.type==\"agent.started\")' | wc -l)\" = 6 ]"
+check "agent.started eight times in all (eight starts)" "[ \"\$(grep '^data: ' $ALL | sed 's/^data: //' | jq -c 'select(.type==\"agent.started\")' | wc -l)\" = 8 ]"
+check "the browser identity events are all in the stream, each once: five created, launched nine times, closed six times and deleted twice" "grep '^data: ' $ALL | sed 's/^data: //' | jq -s -e '([.[] | select(.type==\"browser.identity.created\")] | length) == 5 and ([.[] | select(.type==\"browser.identity.deleted\")] | length) == 2 and ([.[] | select(.type==\"browser.identity.launched\")] | length) == 9 and ([.[] | select(.type==\"browser.identity.closed\")] | length) == 6' >/dev/null"
+check "the proxy password is in no event of the whole stream" "no_proxy_password_in $ALL"
 echo "event types: $(grep '^data: ' $ALL | sed 's/^data: //' | jq -r .type | sort | uniq -c | tr '\n' ' ')"
 
 # --- the key on disk ---
 check "the key is in no file of the engine, the config or the Dot" "! grep -rIl \"$KEY\" /home/dotengine /etc/invisible-dots /home/dot /run/invisible-dots /run/invisible-dots-agent 2>/dev/null | grep -q ."
 check "the key is in no SQLite file either" "! find /home/dotengine -type f -exec grep -l -a \"$KEY\" {} + 2>/dev/null | grep -q ."
 check "the key is in no engine log" "! grep -rIl \"$KEY\" /tmp/engine.log 2>/dev/null | grep -q ."
-check "the key is not in the environment of any process" "! grep -a -l \"$KEY\" /proc/[0-9]*/environ 2>/dev/null | grep -q ."
+check "the key is not in the environment of any process" "! environ_holds \"$KEY\""
 # --- a graceful stop: SIGTERM, as systemd stops the unit (TimeoutStopSec=30) ---
 echo "engine processes before the stop:"; ps -o pid,ppid,etimes,args -u dotengine | cut -c1-160
 EPID=$(pgrep -o -u dotengine -f 'python.*-m nanobot')

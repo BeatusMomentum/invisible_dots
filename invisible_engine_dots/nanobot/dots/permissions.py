@@ -5,7 +5,12 @@ This is the one list of the Dot's tools. The policy gate decides a call by it
 permission is not denied (projection.py), and `tool.called` reports the
 permission and its target (what of the call may be shown, targets.py) from it.
 A tool that is not in the table is neither offered nor allowed, and reports an
-empty permission and no target.
+empty permission and no target. The table also says which arguments of a call
+an approval request may carry (`tool_arguments`).
+
+The browser tools are rows like the others. Every one of them is served by the
+BrowserManager (browser.py) and so by `invisible-playwright-mcp`, the only
+browser of a Dot: a tool that browses another way has no row to be in.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ if TYPE_CHECKING:
     from nanobot.agent.tools.exec_session import ExecSessionManager
     from nanobot.agent.tools.registry import ToolRegistry
     from nanobot.cron.service import CronService
+    from nanobot.dots.browser import BrowserManager
     from nanobot.dots.computer import Computer
 
 
@@ -33,6 +39,7 @@ class ToolDeps:
     computer: Computer
     exec_session_manager: ExecSessionManager
     cron_service: CronService
+    browser: BrowserManager
 
 
 @dataclass(frozen=True)
@@ -44,6 +51,9 @@ class ToolEntry:
     target: from the call's arguments, the one redacted line `tool.called` shows of it (None: nothing).
     needs_memory: the tool exists only while the Dot's memory is enabled.
     starts_terminal: from the call's arguments, whether it starts a terminal session.
+    needs_managed_identities: the tool exists only while the Dot may manage its browser identities itself
+        (`browser.identities.managed_by_dot`).
+    arguments: from the call's arguments, the ones an `approval.requested` shows the person.
     """
 
     permission: str
@@ -52,6 +62,8 @@ class ToolEntry:
     needs_memory: bool = False
     # Whether the call starts a terminal session, which `tool.called` marks (`tty`); no other tool does.
     starts_terminal: Callable[[Mapping[str, Any]], bool] = targets.never_starts_terminal
+    needs_managed_identities: bool = False
+    arguments: Callable[[Mapping[str, Any]], dict[str, Any]] = targets.all_arguments
 
 
 def _build_exec(deps: ToolDeps) -> Tool:
@@ -132,6 +144,53 @@ def _build_cron(deps: ToolDeps) -> Tool:
     return CronTool(cron_service=deps.cron_service)
 
 
+def _build_browser_identity_list(deps: ToolDeps) -> Tool:
+    from nanobot.dots.browser_tools import BrowserIdentityListTool
+
+    return BrowserIdentityListTool(deps.browser)
+
+
+def _build_browser_identity_create(deps: ToolDeps) -> Tool:
+    from nanobot.dots.browser_tools import BrowserIdentityCreateTool
+
+    return BrowserIdentityCreateTool(deps.browser)
+
+
+def _build_browser_identity_delete(deps: ToolDeps) -> Tool:
+    from nanobot.dots.browser_tools import BrowserIdentityDeleteTool
+
+    return BrowserIdentityDeleteTool(deps.browser)
+
+
+def _build_browser_identity_launch(deps: ToolDeps) -> Tool:
+    from nanobot.dots.browser_tools import BrowserIdentityLaunchTool
+
+    return BrowserIdentityLaunchTool(deps.browser)
+
+
+def _build_browser_identity_close(deps: ToolDeps) -> Tool:
+    from nanobot.dots.browser_tools import BrowserIdentityCloseTool
+
+    return BrowserIdentityCloseTool(deps.browser)
+
+
+def _build_page_tool(name: str) -> Callable[[ToolDeps], Tool]:
+    """The builder of a page tool: browser_tools.PAGE_TOOLS says what it calls."""
+
+    def build(deps: ToolDeps) -> Tool:
+        from nanobot.dots.browser_tools import PAGE_TOOLS, BrowserPageTool
+
+        return BrowserPageTool(deps.browser, PAGE_TOOLS[name])
+
+    return build
+
+
+def _build_computer_screenshot(deps: ToolDeps) -> Tool:
+    from nanobot.dots.browser_tools import ComputerScreenshotTool
+
+    return ComputerScreenshotTool(deps.computer)
+
+
 TOOL_PERMISSIONS: Mapping[str, ToolEntry] = MappingProxyType(
     {
         "exec": ToolEntry("computer.exec", _build_exec, targets.exec_target, starts_terminal=targets.exec_starts_terminal),
@@ -147,6 +206,25 @@ TOOL_PERMISSIONS: Mapping[str, ToolEntry] = MappingProxyType(
         "memory_search": ToolEntry("memory.read", _build_memory_search, targets.memory_search_target, needs_memory=True),
         "memory_get": ToolEntry("memory.read", _build_memory_get, targets.memory_get_target, needs_memory=True),
         "cron": ToolEntry("automations", _build_cron, targets.cron_target),
+        "computer_screenshot": ToolEntry("computer.screenshot", _build_computer_screenshot, targets.no_target),
+        "browser_identity_list": ToolEntry("browser.identity.list", _build_browser_identity_list, targets.no_target),
+        "browser_identity_create": ToolEntry("browser.identity.create", _build_browser_identity_create, targets.identity_name_target, needs_managed_identities=True, arguments=targets.identity_create_arguments),
+        "browser_identity_delete": ToolEntry("browser.identity.delete", _build_browser_identity_delete, targets.identity_target, needs_managed_identities=True),
+        "browser_identity_launch": ToolEntry("browser.identity.launch", _build_browser_identity_launch, targets.identity_target),
+        "browser_identity_close": ToolEntry("browser.identity.close", _build_browser_identity_close, targets.identity_target),
+        "browser_navigate": ToolEntry("browser.navigate", _build_page_tool("browser_navigate"), targets.browser_navigate_target),
+        "browser_snapshot": ToolEntry("browser.read", _build_page_tool("browser_snapshot"), targets.browser_identity_only_target),
+        "browser_read_text": ToolEntry("browser.read", _build_page_tool("browser_read_text"), targets.browser_selector_target),
+        "browser_screenshot": ToolEntry("browser.read", _build_page_tool("browser_screenshot"), targets.browser_identity_only_target),
+        "browser_click": ToolEntry("browser.act", _build_page_tool("browser_click"), targets.browser_selector_target),
+        "browser_click_at": ToolEntry("browser.act", _build_page_tool("browser_click_at"), targets.browser_click_at_target),
+        "browser_type": ToolEntry("browser.act", _build_page_tool("browser_type"), targets.browser_selector_target),
+        "browser_press_key": ToolEntry("browser.act", _build_page_tool("browser_press_key"), targets.browser_press_key_target),
+        "browser_select_option": ToolEntry("browser.act", _build_page_tool("browser_select_option"), targets.browser_selector_target),
+        "browser_scroll": ToolEntry("browser.act", _build_page_tool("browser_scroll"), targets.browser_scroll_target),
+        "browser_back": ToolEntry("browser.act", _build_page_tool("browser_back"), targets.browser_identity_only_target),
+        "browser_forward": ToolEntry("browser.act", _build_page_tool("browser_forward"), targets.browser_identity_only_target),
+        "browser_reload": ToolEntry("browser.act", _build_page_tool("browser_reload"), targets.browser_identity_only_target),
     }
 )
 
@@ -178,17 +256,27 @@ def tool_starts_terminal(tool_name: str, params: Any) -> bool:
     return entry.starts_terminal(params)
 
 
-def offered_tools(permissions: Mapping[str, str], *, memory_enabled: bool = True) -> list[str]:
+def tool_arguments(tool_name: str, params: Mapping[str, Any]) -> dict[str, Any]:
+    """The arguments of a call as an `approval.requested` may carry them: all of them, bar a secret the table redacts."""
+    entry = TOOL_PERMISSIONS.get(tool_name)
+    return entry.arguments(params) if entry else dict(params)
+
+
+def offered_tools(
+    permissions: Mapping[str, str], *, memory_enabled: bool = True, managed_identities: bool = True
+) -> list[str]:
     """The tools the model is offered, sorted.
 
     A tool is offered when its permission is allow or ask (a permission missing
-    from the map is deny), and, for a memory tool, when memory is enabled.
+    from the map is deny), for a memory tool when memory is enabled, and for a tool
+    that creates or deletes browser identities when the Dot manages them itself.
     """
     return sorted(
         name
         for name, entry in TOOL_PERMISSIONS.items()
         if permissions.get(entry.permission) in ("allow", "ask")
         and (memory_enabled or not entry.needs_memory)
+        and (managed_identities or not entry.needs_managed_identities)
     )
 
 

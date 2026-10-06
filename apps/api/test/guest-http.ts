@@ -65,9 +65,18 @@ export async function serveFakeGuest(
     try {
       const route = `${request.method} ${url.pathname}`;
       if (url.pathname.startsWith(`${IDENTITIES}/`)) {
-        const id = decodeURIComponent(url.pathname.slice(IDENTITIES.length + 1));
-        if (request.method === "GET") return send(response, 200, await current.getBrowserIdentity(id));
-        if (request.method === "DELETE") {
+        const [rawId, action] = url.pathname.slice(IDENTITIES.length + 1).split("/");
+        const id = decodeURIComponent(rawId!);
+        if (action === "frame" && request.method === "GET") {
+          response.writeHead(200, { "content-type": "image/jpeg" }).end(Buffer.from(await current.getBrowserIdentityFrame(id)));
+          return;
+        }
+        if (action === "close" && request.method === "POST") {
+          await current.closeBrowserIdentity(id);
+          return send(response, 204);
+        }
+        if (action === undefined && request.method === "GET") return send(response, 200, await current.getBrowserIdentity(id));
+        if (action === undefined && request.method === "DELETE") {
           await current.deleteBrowserIdentity(id);
           return send(response, 204);
         }

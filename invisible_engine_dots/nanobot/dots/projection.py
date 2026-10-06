@@ -45,7 +45,11 @@ class EngineSettings:
 
 
 def project(config: DotRuntimeConfig, *, workspace: str, openrouter_base_url: str | None) -> EngineSettings:
-    offered = offered_tools(config.permissions, memory_enabled=config.memory.enabled)
+    offered = offered_tools(
+        config.permissions,
+        memory_enabled=config.memory.enabled,
+        managed_identities=config.browser.identities.managed_by_dot,
+    )
     named = config.models or {}
     return EngineSettings(
         model_id=config.model.id,

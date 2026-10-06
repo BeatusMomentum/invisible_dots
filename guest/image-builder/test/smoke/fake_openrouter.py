@@ -13,6 +13,8 @@ last user text, substring matches):
 - a user message with SAY-RUN-EXEC <text> :: <cmd>: the same call with <text> written beside it;
 - a user message with WRITE-NOTE <path> :: <text>: a call of write_file on /home/dot/memory/<path>;
 - a user message with FIND-NOTE <word>: a call of memory_search for <word>;
+- a user message with RUN-TOOL <name> <json>: a call of the tool <name> with the arguments <json> (an object;
+  the browser tools take their arguments this way);
 - a user message with "interrupted by a restart": a final answer;
 - an approval's continuation: the approved call again, or "rejection noted";
 - anything else: "hello from the stand-in".
@@ -126,6 +128,9 @@ def decide(messages: list[dict]) -> dict:
     if note:
         # A note is a file of /home/dot/memory: the name is a path relative to it (and may leave it with ../).
         return {"tool": {"name": "write_file", "args": {"path": f"/home/dot/memory/{note.group(1)}", "content": note.group(2).strip() + "\n"}}}
+    tool_call = re.search(r"RUN-TOOL (\w+) (\{.*\})$", said, re.M)
+    if tool_call:
+        return {"tool": {"name": tool_call.group(1), "args": json.loads(tool_call.group(2))}}
     found_note = re.search(r"FIND-NOTE (\S+)", said)
     if found_note:
         return {"tool": {"name": "memory_search", "args": {"query": found_note.group(1)}}}

@@ -5,15 +5,27 @@
 #   TREE         the repository as committed (a checkout, or a git archive of the
 #                commit under test), mounted read-only or extracted by run.sh
 #   AGENTD_BIN   dot-agentd for linux/amd64, built from that tree
+#   SMOKE_SUITE  engine (smoke.sh, the default) or browser (browser/smoke.sh)
 # What this builds:
+#   users:       dot and dotengine, as builder/user-data.yaml makes them
 #   golden image: guest/image-builder/builder/build-engine-env.sh on the hashed
 #                 engine lock (the script provision.sh runs), after the same
 #                 packages and the same uv the builder VM has
 #   runtime disk: the engine's source at /opt/invisible-dots/engine, the files
 #                 runtime.ts stages (every .py, the .md templates, the lock,
 #                 LICENSE, UPSTREAM.md), world-readable as on the ISO
+# The browser suite builds one more thing, as the golden image does it: the apt packages of
+# pins.json (the desktop, Firefox's libraries, ImageMagick) and the Dot's browser
+# (builder/build-browser-env.sh on the hashed mcp-requirements.lock: the MCP server's
+# environment, the engine of the browser, the GeoIP database).
 set -euo pipefail
 : "${TREE:?run.sh sets TREE}" "${AGENTD_BIN:?run.sh sets AGENTD_BIN}"
+suite=${SMOKE_SUITE:-engine}
+case "$suite" in
+  engine) checks=$TREE/guest/image-builder/test/smoke/smoke.sh ;;
+  browser) checks=$TREE/guest/image-builder/test/smoke/browser/smoke.sh ;;
+  *) echo "prepare-engine: unknown suite $suite" >&2; exit 2 ;;
+esac
 export AGENTD_BIN
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq >/dev/null
@@ -21,6 +33,12 @@ apt-get install -y -qq sudo procps jq curl ca-certificates python3 >/dev/null
 
 builder=$TREE/guest/image-builder/builder
 engine_src=$TREE/invisible_engine_dots
+
+# The golden image's users (builder/user-data.yaml): dot runs the model's commands and the browser, dotengine
+# the engine. Both exist before anything is installed, as in the builder VM.
+useradd -m -s /bin/bash dot
+useradd -m -s /usr/sbin/nologin -G dot dotengine
+chmod 0750 /home/dot
 
 # uv, as pins.json pins it (sha256 checked), installed as provision.sh does.
 uv_dir=$(mktemp -d)
@@ -51,4 +69,11 @@ for name in names:
 print('imported', len(names), 'modules from', nanobot.__file__)
 "
 
-exec bash "$TREE/guest/image-builder/test/smoke/smoke.sh"
+if [ "$suite" = browser ]; then
+  # The packages of the golden image (pins.json), as provision.sh installs them.
+  apt-get install -y -qq --no-install-recommends $(jq -r '.apt_packages[]' "$TREE/guest/image-builder/pins.json") >/dev/null
+  # The Dot's browser, with the script provision.sh runs on the same lock. dot reaches its home, not the tree.
+  bash "$builder/build-browser-env.sh" "$builder/mcp-requirements.lock" /home/dot/.local/share/invisible-dots/mcp
+fi
+
+exec bash "$checks"

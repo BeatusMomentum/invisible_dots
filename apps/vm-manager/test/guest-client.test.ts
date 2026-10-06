@@ -131,6 +131,34 @@ describe("GuestClient", () => {
     expect(seen.map((s) => s.url)).toContain("/v1/agent/browser-identities/shop-abc123");
   });
 
+  it("asks an identity's frame as bytes and closes it with a POST, both under /v1/agent", async () => {
+    const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
+    const { port, seen } = await serve((req, res) => {
+      switch (`${req.method} ${req.url}`) {
+        case "GET /v1/agent/browser-identities/shop-abc123/frame":
+          return res.writeHead(200, { "content-type": "image/jpeg" }).end(jpeg);
+        case "POST /v1/agent/browser-identities/shop-abc123/close":
+          return res.writeHead(204).end();
+        case "GET /v1/agent/browser-identities/shut-abc123/frame":
+          return json(res, 409, { error: "not_open", message: "identity shut-abc123 is not open" });
+        default:
+          return json(res, 404, { error: "not_found", message: req.url });
+      }
+    });
+    const client = new GuestClient(port, TOKEN);
+
+    expect(await client.getBrowserIdentityFrame("shop-abc123")).toEqual(jpeg);
+    await client.closeBrowserIdentity("shop-abc123");
+    await expect(client.getBrowserIdentityFrame("shut-abc123")).rejects.toMatchObject({ status: 409, code: "not_open" });
+
+    expect(seen.map((s) => `${s.method} ${s.url}`)).toEqual([
+      "GET /v1/agent/browser-identities/shop-abc123/frame",
+      "POST /v1/agent/browser-identities/shop-abc123/close",
+      "GET /v1/agent/browser-identities/shut-abc123/frame",
+    ]);
+    expect(seen.every((s) => s.auth === `Bearer ${TOKEN}`)).toBe(true);
+  });
+
   it("turns error bodies into GuestRequestError", async () => {
     const { port } = await serve((_req, res) => json(res, 409, { error: "computer_busy", message: "try later" }));
     const error = await new GuestClient(port, TOKEN).state().catch((e: unknown) => e);

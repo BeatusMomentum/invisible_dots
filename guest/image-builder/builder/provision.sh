@@ -56,31 +56,25 @@ rm -rf "$uv_tmp"
 
 id dot >/dev/null 2>&1 || useradd --create-home --shell /bin/bash dot
 
-step "installing invisible-playwright-mcp $MCP_VERSION and fetching the browser engine as dot"
-# The whole environment comes from the hashed lock on the seed: every package
-# at the version it names and with a file whose SHA-256 it lists, and
-# nothing resolved from the index. --require-hashes also refuses a dependency
-# the lock does not list. The engine is fetched with the invisible-playwright
-# of that environment, so the cached engine is the one the server's seal
-# expects. The cache lands in ~dot/.cache/invisible-playwright.
+step "installing invisible-playwright-mcp $MCP_VERSION, fetching the browser engine and the GeoIP database as dot"
+# The whole environment comes from the hashed lock on the seed and is built as dot by the script the
+# seed carries, the one the browser smoke runs too (section 3.3): every package at the version the
+# lock names and with a file whose SHA-256 it lists, nothing resolved from the index. The engine is
+# fetched with the invisible-playwright of that environment, so the cached engine is the one the
+# server's seal expects, and the GeoIP database that a launch with the timezone left to "auto" needs
+# is fetched beside it, so a Dot's first launch downloads nothing. Both land in
+# ~dot/.cache/invisible-playwright.
 as_dot() { sudo -u dot -H env PATH="/home/dot/.local/bin:/usr/local/bin:/usr/bin:/bin" "$@"; }
 mcp_env=/home/dot/.local/share/invisible-dots/mcp
-mcp_lock="$(mktemp)"
-install -m 0644 "$payload/$PYTHON_LOCK" "$mcp_lock"
-as_dot mkdir -p /home/dot/.local/bin "$(dirname "$mcp_env")"
-as_dot uv venv --quiet --python /usr/bin/python3 "$mcp_env"
-as_dot uv pip install --python "$mcp_env/bin/python" --require-hashes -r "$mcp_lock"
-rm -f "$mcp_lock"
-[ -x "$mcp_env/bin/invisible-playwright" ] || { console "no invisible-playwright in $mcp_env/bin"; false; }
-[ -x "$mcp_env/bin/invisible-playwright-mcp" ] || { console "no invisible-playwright-mcp in $mcp_env/bin"; false; }
-as_dot ln -sfn "$mcp_env/bin/invisible-playwright-mcp" /home/dot/.local/bin/invisible-playwright-mcp
-as_dot "$mcp_env/bin/invisible-playwright" fetch
+bash "$payload/$BROWSER_BUILD" "$payload/$PYTHON_LOCK" "$mcp_env"
 # `version` prints the wrapper on its first line and the engine on the line
 # that starts with "engine" (tag, Firefox version, BuildID); the engine line
 # is the one that says which browser the image carries.
 engine_version="$(as_dot "$mcp_env/bin/invisible-playwright" version | sed -n 's/^engine[[:space:]]*//p')"
 [ -n "$engine_version" ] || { console "invisible-playwright version printed no engine line"; false; }
-as_dot sh -c 'command -v invisible-playwright-mcp' >/dev/null || { console "invisible-playwright-mcp is not on the PATH of dot"; false; }
+# The GeoIP database is named by its release tag (a date), the directory it was cached in.
+geoip_database="$(as_dot "$mcp_env/bin/python" -c 'from invisible_core.download import geoip_mmdb_path; print(geoip_mmdb_path().parent.name)')"
+[ -n "$geoip_database" ] || { console "no GeoIP database in the cache of invisible-playwright"; false; }
 
 step "installing the engine's Python environment"
 # The engine's third-party dependencies come from the hashed lock on the seed,
@@ -108,6 +102,7 @@ component uv "$(/usr/local/bin/uv --version)"
 component invisible-playwright-mcp "$MCP_VERSION"
 component invisible-playwright "$PLAYWRIGHT_VERSION"
 component browser-engine "$engine_version"
+component geoip-database "$geoip_database"
 component engine-python "$engine_python"
 
 step "cleaning up"
