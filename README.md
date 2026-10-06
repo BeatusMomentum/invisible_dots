@@ -48,17 +48,8 @@ What sets it apart:
   on [invisible_playwright](https://github.com/feder-cr/invisible_playwright): a
   Firefox patched in C++, with the fingerprint set inside the engine instead of
   injected into the page. Each identity keeps its own profile and fingerprint.
-  A Dot can have a VM proxy: the whole computer of the Dot, browser, commands and
-the engine's requests to OpenRouter included, then goes out through it. Set it
-in the Dot's settings (VM proxy) or with
-`invisible-dots secret proxy --dot <dot>` (asked for like the key; `--clear`
-removes it). It is a SOCKS5 URL, `socks5://user:password@host:port`, stored
-encrypted and never shown again, and the Dot uses it from its next start. If the
-proxy cannot be reached, nothing leaves the VM. What the provider does behind its
-address is not the Dot's business: nothing compares or tracks the exit.
-
-A browser has no proxy of its own by default: it uses the egress of the Dot's
-  VM, and a proxy for one identity is an explicit option.
+  A browser has no proxy of its own by default: it uses the egress of the Dot's
+  VM (through the Dot's VM proxy when it has one), and a proxy for one identity is an explicit option.
 - **You set what it may do.** Every tool belongs to a permission, and each
   permission is allow, ask or deny. An ask waits for your answer, survives a
   restart, and lets that one call run once.
@@ -464,6 +455,15 @@ What it does not protect against, by design or not yet:
 Each browser identity is a separate Firefox profile under
 `/home/dot/browsers/<id>/`, with its own cookies, storage, logins and
 fingerprint, the same fingerprint at every launch. It runs on the Dot's desktop, so it appears in screenshots of the desktop.
+
+A Dot can have a VM proxy: the whole computer of the Dot, browser, commands and
+the engine's requests to OpenRouter included, then goes out through it. Set it
+in the Dot's settings (VM proxy) or with
+`invisible-dots secret proxy --dot <dot>` (asked for like the key; `--clear`
+removes it). It is a SOCKS5 URL, `socks5://user:password@host:port`, stored
+encrypted and never shown again, and the Dot uses it from its next start. If the
+proxy cannot be reached, nothing leaves the VM. What the provider does behind its
+address is not the Dot's business: nothing compares or tracks the exit.
 
 A browser has no proxy of its own by default, and nothing asks for one: it
 inherits the egress of the Dot's VM (through the VM proxy when the Dot has one,
