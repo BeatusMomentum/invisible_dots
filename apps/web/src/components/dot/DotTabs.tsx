@@ -12,7 +12,6 @@ export const DOT_TABS = [
   { slug: "chat", label: "Chat" },
   { slug: "tasks", label: "Tasks" },
   { slug: "timeline", label: "Timeline" },
-  { slug: "identities", label: "Browser identities" },
   { slug: "computer", label: "Computer" },
   { slug: "settings", label: "Settings" },
 ] as const;

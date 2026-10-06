@@ -2,17 +2,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { errorIssues } from "../lib/api";
-import { statusTone } from "../lib/format";
-
-export function StatusBadge({ status, label }: { status: string | null | undefined; label?: string }) {
-  const text = status ?? "UNKNOWN";
-  return (
-    <span className={`badge tone-${statusTone(status)}`}>
-      {label ? <span className="visually-hidden">{label}: </span> : null}
-      {text}
-    </span>
-  );
-}
 
 export function ErrorBox({ error, title }: { error: unknown; title?: string }) {
   if (!error) return null;

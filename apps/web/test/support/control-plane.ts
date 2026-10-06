@@ -3,7 +3,7 @@
  * sends, answered from memory, and `/api/stream` as a live SSE body the test pushes events into. `install()` puts
  * it behind the global `fetch`, which is where the web client's SDK looks.
  */
-import { MAX_EVENT_PAGE, type ApprovalRecord, type BrowserIdentity, type ComputerAnswer, type DoctorCheck, type DotConfig, type DotSummary, type StoredEvent, type ToolInfo } from "@invisible-dots/shared/browser";
+import { MAX_EVENT_PAGE, type ApprovalRecord, type BrowserIdentity, type ComputerAnswer, type DoctorCheck, type DotConfig, type DotSummary, type StoredEvent, type SystemAnswer, type ToolInfo } from "@invisible-dots/shared/browser";
 import type { TaskRecord } from "@invisible-dots/sdk";
 import { vi } from "vitest";
 
@@ -99,8 +99,27 @@ export class FakeControlPlane {
   identities: BrowserIdentity[] = [];
   /** Answer `GET .../computer/screenshot` and `.../frame` with this error instead of a picture. */
   failPicture: { status: number; error: string; message: string } | null = null;
-  /** Spend today, as `GET /api/dots/:id/usage` answers it. */
+  /** Spend today, as `GET /api/dots/:id/usage?since=` answers it, and in total, as it answers without `since`. */
   spentUsd = 0;
+  spentTotalUsd = 0;
+  /** The body of every `POST .../browser-identities`, as the browser sent it. */
+  createdIdentities: Array<{ name: string; proxy?: string }> = [];
+  /** The ids of the identities the browser closed (`POST .../close`) and deleted, in order. */
+  closedIdentities: string[] = [];
+  deletedIdentities: string[] = [];
+  /** Answer an identity's create, close or delete with this error instead of doing it. */
+  failIdentityAction: { status: number; error: string; message: string } | null = null;
+  /** Answer `GET .../browser-identities` with this error instead of the list. */
+  failIdentities: { status: number; error: string; message: string } | null = null;
+  /** The files of the Dot's computer by absolute path; a folder exists where a file is under it (and home always). */
+  files = new Map<string, { content: Uint8Array; mtime: string }>();
+  /** Answer the files routes with this error instead of the folder or the file. */
+  failFiles: { status: number; error: string; message: string } | null = null;
+  /** What `GET .../computer` says of the guest while it runs. */
+  system: SystemAnswer | null = null;
+  computerImages: { golden_image: string | null; runtime_image: string | null } = { golden_image: "golden-1.qcow2", runtime_image: "runtime-1.iso" };
+  /** `ready` of `GET .../computer`. */
+  ready = true;
   keyConfigured = true;
   healthy = true;
   /** The value of every `PUT /api/secrets/openrouter`, as the browser sent it. */
@@ -135,6 +154,11 @@ export class FakeControlPlane {
 
   install(): void {
     vi.stubGlobal("fetch", vi.fn(this.fetch));
+  }
+
+  /** Put a file on the Dot's computer. */
+  putFile(path: string, content: string | Uint8Array, mtime = "2026-03-10T12:00:00Z"): void {
+    this.files.set(path, { content: typeof content === "string" ? new TextEncoder().encode(content) : content, mtime });
   }
 
   /** Put an event in the stored log without telling the stream: it happened before the page opened. */
@@ -296,16 +320,77 @@ export class FakeControlPlane {
         if (this.failPicture) return json({ error: this.failPicture.error, message: this.failPicture.message }, this.failPicture.status);
         return new Response(Uint8Array.from([0x89, 0x50, 0x4e, 0x47]), { headers: { "content-type": "image/png" } });
       }
-      if (rest === "browser-identities") return json({ identities: this.identities });
+      if (rest === "browser-identities" && method === "GET") {
+        if (this.failIdentities) return json({ error: this.failIdentities.error, message: this.failIdentities.message }, this.failIdentities.status);
+        return json({ identities: this.identities });
+      }
+      if (rest === "browser-identities" && method === "POST") {
+        const body = JSON.parse(String(init?.body)) as { name: string; proxy?: string };
+        this.createdIdentities.push(body);
+        if (this.failIdentityAction) return json({ error: this.failIdentityAction.error, message: this.failIdentityAction.message }, this.failIdentityAction.status);
+        const created: BrowserIdentity = { id: `${body.name}-x${this.createdIdentities.length}`, name: body.name, status: "available", createdAt: new Date().toISOString(), lastUsedAt: null, profilePath: "/home/dot/browsers/x", ...(body.proxy ? { proxy: body.proxy } : {}) };
+        this.identities.push(created);
+        this.push(record.id, "browser.identity.created", { identity_id: created.id, name: created.name });
+        return json(created, 201);
+      }
+      const identity = /^browser-identities\/([^/]+)(?:\/(close))?$/.exec(rest);
+      if (identity && (identity[2] ? method === "POST" : method === "DELETE")) {
+        const id = decodeURIComponent(identity[1]!);
+        if (this.failIdentityAction) return json({ error: this.failIdentityAction.error, message: this.failIdentityAction.message }, this.failIdentityAction.status);
+        const found = this.identities.find((i) => i.id === id);
+        if (!found) return json({ error: "not_found", message: `no browser identity "${id}"` }, 404);
+        if (identity[2]) {
+          this.closedIdentities.push(id);
+          found.status = "available";
+          this.push(record.id, "browser.identity.closed", { identity_id: id, name: found.name });
+        } else {
+          this.deletedIdentities.push(id);
+          this.identities = this.identities.filter((i) => i.id !== id);
+          this.push(record.id, "browser.identity.deleted", { identity_id: id, name: found.name });
+        }
+        return new Response(null, { status: 204 });
+      }
       if (/^browser-identities\/[^/]+\/frame$/.test(rest)) {
         if (this.failPicture) return json({ error: this.failPicture.error, message: this.failPicture.message }, this.failPicture.status);
         return new Response(Uint8Array.from([0xff, 0xd8, 0xff, 0xd9]), { headers: { "content-type": "image/jpeg" } });
       }
       if (rest === "tools") return this.tools === null ? json({ error: "computer_stopped", message: "the computer is STOPPED" }, 409) : json({ tools: this.tools });
-      if (rest === "usage") return json({ dot_id: record.id, since: searchParams.get("since"), spent_usd: this.spentUsd });
+      if (rest === "usage") return json({ dot_id: record.id, since: searchParams.get("since"), spent_usd: searchParams.get("since") ? this.spentUsd : this.spentTotalUsd });
       if (rest === "computer") {
-        const answer: Partial<ComputerAnswer> = { dot_id: record.id, state: record.computer_state ?? "STOPPED", last_error: this.computerLastError, ready: true, system: null };
+        const state = record.computer_state ?? "STOPPED";
+        const answer: Partial<ComputerAnswer> = {
+          dot_id: record.id,
+          state,
+          last_error: this.computerLastError,
+          ready: this.ready,
+          system: state === "RUNNING" || state === "IDLE" ? this.system : null,
+          last_active_at: "2026-03-10T12:00:00Z",
+          ...this.computerImages,
+        };
         return json(answer);
+      }
+      if (rest === "files/list" || rest === "files") {
+        if (record.computer_state !== "RUNNING" && record.computer_state !== "IDLE") return json({ error: "computer_stopped", message: `the computer is ${record.computer_state}` }, 409);
+        if (this.failFiles) return json({ error: this.failFiles.error, message: this.failFiles.message }, this.failFiles.status);
+        const asked = searchParams.get("path") ?? "";
+        const path = asked === "" || asked === "~" ? "/home/dot" : asked.startsWith("/") ? asked.replace(/\/+$/, "") : `/home/dot/${asked.replace(/\/+$/, "")}`;
+        if (!path.startsWith("/home/dot")) return json({ error: "invalid_path", message: "path must be inside /home/dot" }, 400);
+        const isDir = path === "/home/dot" || [...this.files.keys()].some((file) => file.startsWith(`${path}/`));
+        if (rest === "files") {
+          const file = this.files.get(path);
+          if (isDir) return json({ error: "is_a_directory", message: `${path} is a directory` }, 400);
+          if (!file) return json({ error: "not_found", message: `no such file ${path}` }, 404);
+          return new Response(file.content as Uint8Array<ArrayBuffer>, { headers: { "content-type": "application/octet-stream" } });
+        }
+        if (this.files.has(path)) return json({ error: "not_a_directory", message: `${path} is not a directory` }, 400);
+        if (!isDir) return json({ error: "not_found", message: `no such folder ${path}` }, 404);
+        const entries = new Map<string, { name: string; type: "file" | "dir"; size: number; mtime: string }>();
+        for (const [file, { content, mtime }] of this.files) {
+          if (!file.startsWith(`${path}/`)) continue;
+          const [name, ...more] = file.slice(path.length + 1).split("/");
+          entries.set(name!, more.length > 0 ? { name: name!, type: "dir", size: 0, mtime } : { name: name!, type: "file", size: content.length, mtime });
+        }
+        return json({ path, entries: [...entries.values()] });
       }
       if (/^computer\/(start|stop|reboot)$/.test(rest) && method === "POST") {
         return this.failComputerAction ? json({ error: "refused", message: `the computer refused (${this.failComputerAction})` }, this.failComputerAction) : json({ accepted: true }, 202);

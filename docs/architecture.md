@@ -1865,6 +1865,40 @@ oldest `APPROVAL_LIST_LIMIT` approvals (500), so when a list is that long the pa
 says that the newest are not listed: a named gap, until the route can page or
 order. Channels needing a relink join "Needs you" with the channels page.
 
+The Computer page (`/dots/<id>/computer`) has four views, named in the address
+(`?view=screen|browser|files|usage`, Screen when it says nothing; the old
+`/dots/<id>/identities` redirects to `?view=browser`). The first three read the
+guest and need the computer running: when it is not, they say why and offer
+Start, and a route's own 409 `computer_stopped` gets the same answer. Screen is
+the desktop as the chat's panel shows it (one `FrameView` draws both), with
+"The Dot has control". Browser lists the Dot's identities, open ones first
+(`GET /browser-identities`, read again on each `browser.identity.*` event, so a
+card is never refreshed by a second route): the state in words (Closed is the
+engine's `available`), the last use, the proxy with its user and password hidden,
+the window of an open one (`.../frame`, every 2 s while the page is in view)
+under a bar with the page the Dot last sent it to, and a mark "The Dot is using
+this now". Both come from the log, not from the identity routes, which know
+neither: the `target` of a `tool.called` of a browser tool starts with the
+identity's id (`<id>` or `<id>: <detail>`, the detail of `browser_navigate` being
+its URL as a command's URLs are shown), and a mark lasts 20 s after the call
+(`lib/browser-activity.ts`; the log is read once while a browser is open, then
+followed live). The page is the last successful navigation after the browser's
+last `launched` or `closed`; a page reached by a link is not known. The person
+creates (a name and an optional proxy, checked by `checkIdentityRequest`, the
+engine's own rule), closes (`POST .../close`, the profile stays, asked first when
+the Dot is working in it) and deletes (asked first, saying that the profile goes)
+browsers; the engine enforces `max_identities` and `max_open` for them as it does
+for the Dot's tools, and the page states them. Files is a read-only walk through
+`/home/dot` (`GET /files/list`, `GET /files`): the folder and the open file are in
+the address, a text file is shown as text and an image as a picture, and
+everything else, and any file over 1 MiB (text) or 8 MiB (image), is a download
+only. What counts as text or an image is `fileType` of `packages/shared`, the one
+table the API serves a file by too (markup and svg are text, so a file the Dot
+wrote is never run); a file named text that holds a NUL byte is not shown. Usage
+reads while the computer is off: what it was given, what it uses (`GET /computer`
+embeds the guest's `system` while it runs), the images, why the last start failed,
+the model spend today and in total, and Start, Reboot and Stop.
+
 ### 9.8 Messaging channels
 
 A person can talk to a Dot from a chat (Telegram, WhatsApp). This is the control

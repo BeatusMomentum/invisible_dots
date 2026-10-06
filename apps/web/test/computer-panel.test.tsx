@@ -3,10 +3,11 @@ import type { BrowserIdentity } from "@invisible-dots/shared/browser";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ComputerPanel, computerIsUp, frameProblem } from "../src/components/computer/ComputerPanel";
+import { ComputerPanel } from "../src/components/computer/ComputerPanel";
 import { frameAgeSeconds, ScreenView } from "../src/components/computer/screen-view";
 import { DotEventScope, EventStreamProvider } from "../src/components/events";
 import { ApiError } from "../src/lib/api";
+import { computerIsUp, frameProblem } from "../src/lib/computer";
 import { stubObjectUrls } from "./support/browser";
 import { dotRecord, FakeControlPlane } from "./support/control-plane";
 
