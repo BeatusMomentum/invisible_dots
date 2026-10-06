@@ -53,14 +53,15 @@ req_banned_seen() {
 }
 # <<< request checks
 
-# --- the runtime disk (the golden image's users, dot and dotengine, are prepare-engine.sh's) ---
+# --- the runtime disk (the golden image's users, dot, dotagentd and dotengine, are prepare-engine.sh's) ---
 lay_out_guest
 # The engine needs no privilege: no sudoers rule, no config directory.
 check "the engine has no sudo rule (no /etc/sudoers.d/invisible-dots-engine, no sudo for dotengine)" "[ ! -e /etc/sudoers.d/invisible-dots-engine ] && ! su -s /bin/bash dotengine -c 'sudo -n true' >/dev/null 2>&1"
 check "no sudoers file names dotengine (the old engine's rule is gone with the config installer)" "! grep -rqs dotengine /etc/sudoers /etc/sudoers.d"
 check "dotengine is in no group but its own and dot" "[ \"\$(id -nG dotengine | tr ' ' '\n' | sort | tr '\n' ' ')\" = 'dot dotengine ' ]"
 write_host_token
-check "the engine cannot read the host's token (/etc/invisible-dots/config.json is dot's, 0600)" "[ \"\$(stat -c '%U:%G %a' /etc/invisible-dots/config.json)\" = 'dot:dot 600' ] && ! su -s /bin/bash dotengine -c 'cat /etc/invisible-dots/config.json' >/dev/null 2>&1"
+check "the token file is dot-agentd's own (dotagentd, 0600): neither the engine nor dot, the user of the model's commands, can read it" "[ \"\$(stat -c '%U:%G %a' /etc/invisible-dots/config.json)\" = 'dotagentd:dotagentd 600' ] && ! su -s /bin/bash dotengine -c 'cat /etc/invisible-dots/config.json' >/dev/null 2>&1 && ! su -s /bin/bash dot -c 'cat /etc/invisible-dots/config.json' >/dev/null 2>&1"
+check "dotagentd is in no group but its own, and dot is in neither of the two groups that reach a socket" "[ \"\$(id -nG dotagentd)\" = dotagentd ] && ! id -nG dot | tr ' ' '\n' | grep -qx -e dotagentd -e dotengine"
 
 # --- the stand-in for OpenRouter (the key is lib.sh's) ---
 start_fake_openrouter
@@ -75,7 +76,7 @@ for tools in "$ENGINE_TESTS"/fixtures/mcp-tools-*.json; do install -D -m 0644 "$
 FAKE_MCP=/usr/local/lib/smoke-fake/invisible-playwright-mcp
 printf '#!/bin/sh\nexec /opt/invisible-dots-engine/bin/python -I -B %s/fakes/fake_mcp_server.py "$@"\n' "$FAKE_MCP_DIR" > "$FAKE_MCP"
 chmod 0755 "$FAKE_MCP"
-# --- dot-agentd as dot, the engine as dotengine with the stand-in as its browser program ---
+# --- dot-agentd as dotagentd, the engine as dotengine with the stand-in as its browser program ---
 MCP_COMMAND=$FAKE_MCP
 start_guest_daemons
 init_host_side
@@ -85,8 +86,8 @@ check "the engine runs as dotengine" "pgrep -u dotengine -f 'python.*-m nanobot'
 ENGINE_UID=$(id -u dotengine)
 tcp_listeners_of_engine() { awk -v u="$ENGINE_UID" 'FNR>1 && $4=="0A" && $8==u' /proc/net/tcp /proc/net/tcp6; }
 check "the engine listens on no TCP port" "[ -z \"\$(tcp_listeners_of_engine)\" ]"
-check "agent.sock is in the engine's directory, group dot, 0660" "[ \"\$(stat -c '%U:%G %a' /run/invisible-dots-agent/agent.sock)\" = 'dotengine:dot 660' ]"
-check "agentd.sock is dot's, group dotengine, 0660" "[ \"\$(stat -c '%U:%G %a' /run/invisible-dots/agentd.sock)\" = 'dot:dotengine 660' ]"
+check "agent.sock is in the engine's directory, group dotagentd, 0660" "[ \"\$(stat -c '%U:%G %a' /run/invisible-dots-agent/agent.sock)\" = 'dotengine:dotagentd 660' ]"
+check "agentd.sock is dotagentd's, group dotengine, 0660" "[ \"\$(stat -c '%U:%G %a' /run/invisible-dots/agentd.sock)\" = 'dotagentd:dotengine 660' ]"
 check "dot cannot write the engine's socket directory" "! su -s /bin/bash dot -c 'touch /run/invisible-dots-agent/x' 2>/dev/null"
 
 # The decision for every permission, as the host's toRuntimeConfig sends it (lib.sh's reset_config and
@@ -97,6 +98,102 @@ check "the host pushes the key and the config (204 204)" "[ \"\$(push)\" = '204 
 sleep 3
 check "the state directory is dotengine's, 0700" "[ \"\$(stat -c '%U:%G %a' /home/dotengine/state)\" = 'dotengine:dotengine 700' ]"
 check "dot cannot read the engine's state" "! su -s /bin/bash dot -c 'ls /home/dotengine/state' >/dev/null 2>&1"
+
+# --- the model cannot reach what is not its (architecture 4.1) ---
+# Every command of the model runs as dot, and dot-agentd, the engine's socket and the Dot's token are other
+# users'. Each attempt is made the way the model makes it: a command through POST /v1/exec, which runs as dot.
+# The answer is judged by the exact exit code of the command, so a command that never ran proves nothing.
+as_model() { api -X POST -H 'content-type: application/json' -d "$(jq -nc --arg c "$1" '{command: $c, timeout_ms: 120000}')" http://127.0.0.1:1024/v1/exec; }
+model_out() { as_model "$1" | jq -r .stdout; }
+model_code() { as_model "$1" | jq -r .exit_code; }
+AGENTD_PID=$(pgrep -o -u dotagentd -f 'bin/dot-agentd')
+AGENT_SOCK=/run/invisible-dots-agent/agent.sock
+ZERO=0000000000000000
+check "dot-agentd runs as dotagentd, and no process of it is root's or dot's" "[ -n \"$AGENTD_PID\" ] && ! pgrep -u root -f 'bin/dot-agentd' >/dev/null && ! pgrep -u dot -f 'bin/dot-agentd' >/dev/null"
+# CAP_KILL (5), CAP_SETGID (6) and CAP_SETUID (7) are 0xe0. Its ambient set is empty in every thread: it
+# emptied it at start, so that nothing it starts inherits them.
+daemon_caps_are_the_units() {
+  [ "$(awk '/^CapEff:/ {print $2}' /proc/$AGENTD_PID/status)" = 00000000000000e0 ] || return 1
+  local f
+  for f in /proc/$AGENTD_PID/task/*/status; do [ "$(awk '/^CapAmb:/ {print $2}' "$f")" = $ZERO ] || return 1; done
+}
+check "dot-agentd holds CAP_SETUID, CAP_SETGID and CAP_KILL and nothing else, and no thread of it keeps them in its ambient set" "daemon_caps_are_the_units"
+model_identity() {
+  [ "$(model_out 'echo $(id -un) $HOME $USER $LOGNAME $SHELL')" = 'dot /home/dot dot dot /bin/bash' ] && [ "$(model_out 'id -G')" = "$(id -G dot)" ]
+}
+check "a command of the model runs as dot, with dot's home, user, shell and groups, not the daemon's" "model_identity"
+MODEL_CAPS="grep -E '^Cap(Prm|Eff|Amb):' /proc/self/status | cut -f2 | sort -u"
+check "a command of the model holds no capability: nothing dot-agentd starts inherits the three it has" "[ \"\$(model_out \"\$MODEL_CAPS\")\" = $ZERO ]"
+# What the engine's relay starts through the process route, on pipes and on a terminal.
+printf '%s\n' 'id -un' "$MODEL_CAPS" 'stat -c %U "$(readlink /proc/self/fd/0)" 2>/dev/null' > /usr/local/lib/smoke-fake/who.sh
+relay_who() { su -s /bin/bash dotengine -c "/opt/invisible-dots/bin/dot-agentd relay --socket /run/invisible-dots/agentd.sock $1 -- /bin/bash /usr/local/lib/smoke-fake/who.sh" </dev/null | tr -d '\r' | tr '\n' ' '; }
+check "the process route starts a program as dot with no capability, and the terminal it gives one is dot's" "[ \"\$(relay_who '')\" = 'dot $ZERO ' ] && [ \"\$(relay_who --tty)\" = 'dot $ZERO dot ' ]"
+check "the model cannot signal dot-agentd, and dot has no sudo rule" "[ \"\$(model_code 'kill -9 $AGENTD_PID')\" = 1 ] && [ \"\$(model_code 'sudo -n true')\" = 1 ] && kill -0 $AGENTD_PID"
+# The poweroff runs as dot-agentd's own user and may become root, so what it starts must not be found in a
+# directory the model writes. The model opens its home (it owns it) and plants a program named like the one
+# the daemon runs in ~/.local/bin, which is where the commands of the model look first; the host then stops
+# the VM (POST /v1/system/poweroff). The planted program must never run, as dotagentd or as anyone.
+poweroff_runs_nothing_of_the_models() {
+  local modes mode path ran=false
+  rm -f /tmp/hijacked
+  su -s /bin/bash dot -c 'mkdir -p /home/dot/.local/bin' || return 1
+  modes=$(stat -c '%a %n' /home/dot /home/dot/.local /home/dot/.local/bin)
+  su -s /bin/bash dot -c 'printf "#!/bin/sh\nid -un > /tmp/hijacked\n" > /home/dot/.local/bin/sudo && chmod 0755 /home/dot/.local/bin/sudo && chmod o+x /home/dot /home/dot/.local /home/dot/.local/bin' || return 1
+  api -o /dev/null -X POST http://127.0.0.1:1024/v1/system/poweroff
+  sleep 3
+  [ -e /tmp/hijacked ] && ran=true
+  rm -f /home/dot/.local/bin/sudo /tmp/hijacked
+  while read -r mode path; do chmod "$mode" "$path"; done <<< "$modes"
+  ! $ran
+}
+check "the poweroff the host asks for runs nothing the model planted in dot's .local/bin, though the model opened its home" "poweroff_runs_nothing_of_the_models"
+# The engine's API: PUT /config would allow everything and remove the 'ask' of every permission, POST /events
+# would approve the model's own parked calls.
+check "the model cannot enter the engine's socket directory or dot-agentd's, so a PUT /config or a POST /events on agent.sock never connects" "[ \"\$(model_code 'ls /run/invisible-dots-agent')\" = 2 ] && [ \"\$(model_code 'ls /run/invisible-dots')\" = 2 ] && [ \"\$(model_code \"curl -sS --unix-socket $AGENT_SOCK -X PUT http://x/config -d '{}'\")\" = 7 ] && [ \"\$(model_code \"curl -sS --unix-socket $AGENT_SOCK -X POST http://x/events -d '{}'\")\" = 7 ] && [ \"\$(model_code 'curl -sS --unix-socket /run/invisible-dots/agentd.sock http://x/v1/health')\" = 7 ]"
+# The engine's own check, with the directory and the socket opened to everyone as a mistake would: it reads
+# the user of each connection from the kernel and refuses dot's.
+peers_refused() {
+  chmod o+rx /run/invisible-dots-agent && chmod o+rw "$AGENT_SOCK" || return 1
+  local answers=() body
+  for body in "-X PUT -d '{\"name\":\"x\"}' http://x/config" \
+    "-X POST -d '{\"id\":\"e1\",\"type\":\"approval.received\",\"ts\":\"2026-10-04T10:00:00Z\",\"data\":{\"approval_id\":\"a\",\"decision\":\"approved\"}}' http://x/events" \
+    "-X POST -d '{\"openrouter_api_key\":\"sk-or-v1-model\"}' http://x/secrets" \
+    "http://x/health"; do
+    answers+=("$(model_out "curl -sS -w ' %{http_code}' --unix-socket $AGENT_SOCK -H 'content-type: application/json' $body")")
+  done
+  chmod o-rx /run/invisible-dots-agent; chmod o-rw "$AGENT_SOCK"
+  local answer
+  for answer in "${answers[@]}"; do
+    [[ $answer == *'"error":"forbidden_peer"'*' 403' ]] || { echo "not refused: $answer"; return 1; }
+  done
+  [ "$(grep -c 'a request was refused for its peer' /tmp/engine.log)" -ge 4 ]
+}
+check "the engine's socket refuses a process of dot even when its directory and socket are open to everyone: PUT /config, POST /events, POST /secrets and GET /health are 403 forbidden_peer" "peers_refused"
+check "the engine kept the config the host pushed and its key: nothing of the model's attempts was applied" "api $A/health | jq -e '.openrouter_configured == true' >/dev/null && [ \"\$(api -o /dev/null -w '%{http_code}' $A/tools)\" = 200 ]"
+# The Dot's token.
+token_nowhere_the_model_reads() {
+  [ "$(model_code 'cat /etc/invisible-dots/config.json')" = 1 ] || return 1
+  [ "$(model_code "cat /proc/$AGENTD_PID/environ")" = 1 ] || return 1
+  [ "$(model_code "cat /proc/$AGENTD_PID/maps")" = 1 ] || return 1
+  ! grep -qF "$TOKEN" /proc/$AGENTD_PID/cmdline || return 1
+  # A sweep of the files dot can read, which finds a file that holds the token (one planted for the purpose) and
+  # no other.
+  su -s /bin/bash dot -c "printf %s '$TOKEN' > /home/dot/token-canary.txt"
+  local found
+  found=$(model_out "grep -rIlF -e '$TOKEN' /etc /run /var /opt/invisible-dots /home /usr/local /srv 2>/dev/null")
+  rm -f /home/dot/token-canary.txt
+  [ "$found" = /home/dot/token-canary.txt ]
+}
+check "the model reads the token nowhere: not its file, not dot-agentd's environment, memory map or command line, and no file of the guest it can read holds it" "token_nowhere_the_model_reads"
+refused_with_401() {
+  local code arg
+  for arg in "http://127.0.0.1:1024/v1/health" "-X PUT -d {} http://127.0.0.1:1024/v1/agent/config" "-X POST -d {} http://127.0.0.1:1024/v1/agent/events" \
+    "-H 'Authorization: Bearer nope' http://127.0.0.1:1024/v1/agent/health"; do
+    code=$(model_out "curl -s -o /dev/null -w '%{http_code}' $arg")
+    [ "$code" = 401 ] || { echo "$arg answered $code"; return 1; }
+  done
+}
+check "from inside the guest the dot-agentd port answers 401 to the model without the token and with a wrong one, for its own routes and the engine's behind it" "refused_with_401"
 
 # The event stream, read the way the host reads it (lib.sh's start_host_stream).
 start_host_stream
@@ -340,11 +437,16 @@ lists_links_as_other() {
   [ "$(files_list etc-link | tail -n 1)" = 403 ] || return 1
   files_list . | head -n 1 | jq -e '([.entries[]|select(.name=="environ-link" or .name=="etc-link" or .name=="config-link")|.type]|sort)==["other","other","other"] and ([.entries[]|select(.name=="hello-link")|.type]==["file"])' >/dev/null
 }
-engine_socket_reads_link() { [ "$(curl -sS --unix-socket /run/invisible-dots/agentd.sock -o /dev/null -w '%{http_code}' 'http://agentd/v1/files?path=config-link')" = 200 ]; }
+engine_socket_status() { curl -sS --unix-socket /run/invisible-dots/agentd.sock -o /dev/null -w '%{http_code}' "http://agentd/v1/files?path=$1"; }
+host_wrote_file_as_dot() {
+  [ "$(api -o /dev/null -w '%{http_code}' -X PUT --data-binary hi 'http://127.0.0.1:1024/v1/files?path=notes/host-wrote.txt')" = 204 ] || return 1
+  [ "$(stat -c %U:%G /home/dot/notes/host-wrote.txt)" = dot:dot ] && [ "$(stat -c %U:%G /home/dot/notes)" = dot:dot ]
+}
 check "the TCP port reads a file under home, also through a link that stays in home" "reads_hello hello.txt && reads_hello hello-link"
 check "the TCP port refuses a link under home to /proc/<pid>/environ, to the token file and to /etc, and a path outside home (403 outside_home)" "refuses_outside_home environ-link config-link etc-link/hostname /proc/self/environ /etc/hostname ../../etc/hostname"
 check "the TCP port refuses to list a directory behind a link out of home, and lists such a link as other" "lists_links_as_other"
-check "the engine's socket still reads through such a link (the Dot owns its computer)" "engine_socket_reads_link"
+check "the engine's socket still reads through such a link out of home (the Dot owns its computer), the file system's own answer for dot" "[ \"\$(engine_socket_status etc-link/hostname)\" = 200 ]"
+check "the files of the engine's socket and of the TCP port are dot's, not dot-agentd's: the token behind a link is refused to them as to dot (403), and the host's file is written and owned by dot" "[ \"\$(engine_socket_status config-link)\" = 403 ] && [ \"\$(files_get config-link | tail -n 1)\" = 403 ] && host_wrote_file_as_dot"
 # A call of a tool the model was not offered (the stand-in makes it anyway) never runs: the turn's
 # registry holds only the offered tools, so the call fails as an unknown tool before the gate is asked
 # (design: an unknown tool never reaches the gate; tool.called reports it with decision allow, ok false).

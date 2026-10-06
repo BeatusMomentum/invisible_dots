@@ -47,6 +47,8 @@ type settings struct {
 	display      string
 	importBin    string
 	logLevel     string
+	// runAs is the user the model's commands run as; empty runs them as the daemon's own.
+	runAs string
 }
 
 func parseFlags(args []string) (settings, error) {
@@ -61,7 +63,8 @@ func parseFlags(args []string) (settings, error) {
 	fs.StringVar(&s.agentSocket, "agent-socket", envOr("INVISIBLE_DOTS_AGENT_SOCKET", agentd.DefaultAgentSocket), "socket of the agent, in a directory of the engine's user (INVISIBLE_DOTS_AGENT_SOCKET)")
 	fs.StringVar(&s.listen, "listen", envOr("INVISIBLE_DOTS_AGENTD_LISTEN", agentd.DefaultListenAddr), "IP address and TCP port of the token-protected routes (INVISIBLE_DOTS_AGENTD_LISTEN)")
 	fs.StringVar(&s.display, "display", envOr("INVISIBLE_DOTS_DISPLAY", agentd.DefaultDisplay), "X display for screenshots and exec (INVISIBLE_DOTS_DISPLAY)")
-	fs.StringVar(&s.importBin, "import-bin", envOr("INVISIBLE_DOTS_IMPORT_BIN", "import"), "ImageMagick import executable (INVISIBLE_DOTS_IMPORT_BIN)")
+	fs.StringVar(&s.importBin, "import-bin", envOr("INVISIBLE_DOTS_IMPORT_BIN", agentd.DefaultImportBin), "path of ImageMagick's import executable (INVISIBLE_DOTS_IMPORT_BIN)")
+	fs.StringVar(&s.runAs, "run-as", envOr("INVISIBLE_DOTS_RUN_AS", agentd.DefaultRunAs), "user the model's commands, the files done for the model and screenshots run as; the daemon needs CAP_SETUID, CAP_SETGID and CAP_KILL for it; --run-as= (empty) runs them as the daemon's own user (INVISIBLE_DOTS_RUN_AS)")
 	fs.StringVar(&s.logLevel, "log-level", envOr("INVISIBLE_DOTS_LOG_LEVEL", "info"), "debug, info, warn or error (INVISIBLE_DOTS_LOG_LEVEL)")
 	if err := fs.Parse(args); err != nil {
 		return s, err
@@ -123,9 +126,29 @@ func serve(ctx context.Context, s settings, log *slog.Logger, onListen func(name
 	}
 	log.Info("guest config loaded", "path", s.configPath, "dot_id", cfg.DotID)
 
+	// Whatever the unit granted as ambient capabilities (CAP_SETUID, CAP_SETGID, CAP_KILL) is
+	// emptied before anything is started, whoever the model's commands run as: left in the set,
+	// every command of the model would keep them across exec and could become root. The daemon
+	// keeps what it holds, which is all it needs to act as another user.
+	if err := agentd.ForgetAmbientCapabilities(); err != nil {
+		return err
+	}
+
+	var account *agentd.Account
+	if s.runAs != "" {
+		if account, err = agentd.ResolveRunAs(s.runAs); err != nil {
+			return err
+		}
+		log.Info("the model's commands run as", "user", account.Name, "uid", account.UID)
+	}
+	if account == nil || account.SharesDaemonUser() {
+		log.Warn("the model's commands run as the daemon's own user: they can read the Dot's token and reach the engine's socket (architecture 4.1)")
+	}
+
 	srv := agentd.New(agentd.Options{
 		Token:       cfg.Token,
 		Home:        s.home,
+		RunAs:       account,
 		AgentSocket: s.agentSocket,
 		Display:     s.display,
 		ImportBin:   s.importBin,

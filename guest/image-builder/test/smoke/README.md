@@ -1,6 +1,7 @@
 # The engine smoke
 
-A Dot's guest runs two daemons as two users: `dot-agentd` as `dot`, the engine
+A Dot's guest runs two daemons as two users, and the model's commands as a third:
+`dot-agentd` as `dotagentd` (it starts everything of the model's as `dot`), the engine
 (`invisible_engine_dots`, run as `python -m nanobot`) as `dotengine`. The unit tests of
 each side cannot show that the two work together as the golden image and the runtime
 disk lay them out. This smoke does, in one Linux container, with no QEMU:
@@ -12,10 +13,21 @@ disk lay them out. This smoke does, in one Linux container, with no QEMU:
   templates, the lock, `LICENSE`, `UPSTREAM.md`) and every module imports with what
   the lock installed and nothing else;
 - `dot-agentd`, built from the same tree, and the engine run under their two users
-  with `install.sh`'s directories and socket modes, a fake host talking to
+  with `install.sh`'s directories and socket modes (`dot-agentd` through `setpriv`, with the three
+  capabilities its unit gives it and no others), a fake host talking to
   `dot-agentd`'s TCP port with the Dot's token, and a stand-in for OpenRouter;
 - the checks (`smoke.sh`) are about the seams: privileges (the engine has no sudo
-  rule and cannot read the host's token, `dot` cannot read the engine's state),
+  rule, and neither the engine nor `dot` can read the host's token; `dot` cannot read the engine's state),
+  and what the model can reach, tried as the model does it, as a command through `POST /v1/exec`: a command
+  runs as `dot` with dot's home, shell and groups and holds no capability (on pipes and on a terminal `dot`
+  owns, through the engine's relay too); it cannot enter the engine's socket directory or connect to
+  `agent.sock` (so no `PUT /config` and no `POST /events`), and when the directory and the socket are
+  opened to everyone as a mistake would, the engine's own check of the connecting user refuses it (403
+  `forbidden_peer` for `PUT /config`, `POST /events`, `POST /secrets` and `GET /health`); it reads the Dot's
+  token nowhere (not its file, not `dot-agentd`'s environment, memory map or command line, and a sweep of
+  the files it can read finds only a file planted for the purpose); it gets `401` on the daemon's TCP port,
+  for the daemon's own routes and the engine's behind it; it cannot signal `dot-agentd`; and the files the
+  host writes through the TCP port are `dot`'s,
   the event stream (`seq` 1..N across `kill -9`, no loss, no repeat), commands
   that run as `dot` and end with the call that started them (cancel, terminate,
   SIGTERM within systemd's 30 s), a program on a pseudo-terminal (`exec` with `tty`) that
@@ -148,7 +160,7 @@ removes the volume and the container on exit.
 
 | file | what it is |
 |---|---|
-| `run.sh` | the entry: builds `dot-agentd` in `golang:1.26`, starts `ubuntu:24.04` with the tree, checks the exit status and the summary line; `--suite browser` runs the browser smoke |
+| `run.sh` | the entry: runs dot-agentd's `privileged` Go tests as root in `golang:1.26` (they run work as another user; a skipped one fails the run), builds `dot-agentd` there, starts `ubuntu:24.04` with the tree, checks the exit status and the summary line; `--suite browser` runs the browser smoke |
 | `prepare-engine.sh` | in the container: the golden image's users, `uv`, the engine's environment, the staged engine source (and for the browser suite the apt packages and the browser); then it runs the suite's checks |
 | `lib.sh` | what both suites share: the guest laid out as `install.sh` lays it out, `dot-agentd` and the engine started and restarted, the key and config push, the event stream and the helpers that read it |
 | `smoke.sh` | the engine smoke's checks; prints `PASS:` or `FAIL:` per check and the summary line |

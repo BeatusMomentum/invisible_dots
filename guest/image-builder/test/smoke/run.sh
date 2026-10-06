@@ -72,6 +72,19 @@ else
   tree_mount=(-v "$tree_dir":/tree:ro)
 fi
 
+# The tests of dot-agentd that need to become another user (the tag `privileged`: they run the model's commands,
+# files and terminals as a user the test is not), which take root and a build without cgo: this container is
+# root's, as the guest's daemon is not, so they run here, and a skipped one fails the run like a failed one.
+# --init: a process the tests kill is a zombie until its parent reaps it, and the tests ask whether it is gone.
+if ! privileged=$(docker run --rm --init -v "$run_id":/work "${tree_mount[@]}" \
+  -e CGO_ENABLED=0 -e GOCACHE=/work/gocache -e GOTOOLCHAIN=local -e GOFLAGS=-buildvcs=false \
+  -w "$tree/guest/dot-agentd" golang:1.26 \
+  go test -count=1 -v -tags privileged ./... 2>&1) || printf '%s\n' "$privileged" | grep -q -e '--- SKIP'; then
+  printf '%s\n' "$privileged" | grep -v -e '^=== ' | tail -40 >&2
+  echo "run.sh: dot-agentd's privileged tests did not pass, or one was skipped" >&2
+  exit 1
+fi
+
 # dot-agentd for the guest, as CI's go job builds it. GOTOOLCHAIN=local: the
 # image's Go is the one that builds, nothing is downloaded. -buildvcs=false:
 # the mounted tree belongs to another user, and a build must not depend on git.

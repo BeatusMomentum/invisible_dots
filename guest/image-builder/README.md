@@ -95,8 +95,8 @@ image's SHA-256; `invisible-dots doctor` checks an image against it with
    `/opt/invisible-dots-engine/requirements.lock`, tiktoken's encoding table
    prefetched into `share/tiktoken`, and the whole venv owned by root and not
    writable by anyone else. It removes any sudo rule the
-   image had (the builder seed gives `dot` none; each Dot's seed adds its own
-   single poweroff rule), cleans the instance state and powers off.
+   image had (the builder seed gives no user one; each Dot's seed adds a single
+   poweroff rule for `dotagentd`, the user dot-agentd runs as), cleans the instance state and powers off.
 5. Follows the serial console while the VM runs: `idots-build:` lines are
    progress, `IDOTS-BUILD-COMPONENT:` lines go into the manifest as what was
    installed, and `IDOTS-BUILD-RESULT: ok` is the verdict. A VM that does not
@@ -156,9 +156,9 @@ bit has to survive a Windows host.
 
 Each Dot's seed mounts the ISO by label at `/opt/invisible-dots` and runs
 `install.sh` on every boot. The hook copies the units into
-`/etc/systemd/system`, creates the two socket directories through tmpfiles and
-the engine's state directory, refuses a golden image without
-`/opt/invisible-dots-engine/bin/python`, enables lingering for `dot`, then
+`/etc/systemd/system`, creates the two socket directories through tmpfiles (each
+admits the two daemons and not `dot`) and the engine's state directory, refuses a golden image without
+`dotagentd` or without `/opt/invisible-dots-engine/bin/python`, enables lingering for `dot`, then
 enables and starts the units (restarting any whose unit file changed).
 
 ## Guest units
@@ -166,11 +166,14 @@ enables and starts the units (restarting any whose unit file changed).
 | unit | runs |
 |---|---|
 | `dot-desktop.service` | `Xvfb :0 -nolisten tcp` and `xfce4-session` under `dbus-launch` |
-| `dot-agentd.service` | `/opt/invisible-dots/bin/dot-agentd`, on TCP port 1024 of every guest address (QEMU's user-mode NAT delivers the host's forward to 10.0.2.15) |
+| `dot-agentd.service` | `/opt/invisible-dots/bin/dot-agentd`, as `dotagentd`, on TCP port 1024 of every guest address (QEMU's user-mode NAT delivers the host's forward to 10.0.2.15); it starts the model's commands as `dot`, with `AmbientCapabilities=CAP_SETUID CAP_SETGID CAP_KILL` and no other privilege (architecture 4.1) |
 | `invisible-dots-agent.service` | `/opt/invisible-dots-engine/bin/python -I -B -m nanobot`, as `dotengine`: the Dot's engine (architecture sections 4.1 and 8.8) |
 
-The first two run as `dot`, the engine as `dotengine`; all with `DISPLAY=:0` and `PATH` starting with
-`/home/dot/.local/bin`, where the provisioner linked `invisible-playwright-mcp`. The guest
+The desktop runs as `dot`, the computer daemon as `dotagentd`, the engine as `dotengine` (the builder seed makes the three users); all with `DISPLAY=:0`; the desktop and the engine with a `PATH` starting with
+`/home/dot/.local/bin`, where the provisioner linked `invisible-playwright-mcp`. The
+daemon's own `PATH` holds system directories only (it starts the poweroff as
+itself, so nothing in a directory dot writes may be found through it); it gives the model's commands the `PATH` with
+`~/.local/bin`. The guest
 enables no firewall: X listens on no TCP port, and port 1024 must stay
 reachable from the NAT; every request to it needs the Dot's token.
 
@@ -182,9 +185,10 @@ and the builder refuses a CRLF file instead of shipping it).
 
 ## The engine smoke
 
-`test/smoke/` runs `dot-agentd` and the engine under their two users in one Linux
-container, with the engine's environment built by `builder/build-engine-env.sh` on the
-hashed lock, as `provision.sh` builds it, and the engine's source staged as the runtime
+`test/smoke/` runs `dot-agentd` (as `dotagentd`, with the capabilities of its unit and
+no others) and the engine (as `dotengine`) in one Linux container, with the model's commands
+as `dot`. The engine's environment is built by `builder/build-engine-env.sh` on the
+hashed lock, as `provision.sh` builds it, and the engine's source is staged as the runtime
 ISO stages it. `test/smoke/run.sh` is the entry, and the `smoke` job of
 `.github/workflows/tests.yml` runs it; its README says what it proves and how to run it
 from Linux or WSL.

@@ -21,8 +21,14 @@ import (
 // localSocket serves the local handler on a unix socket, as the daemon does.
 func localSocket(t *testing.T) (string, *Server) {
 	t.Helper()
-	home := t.TempDir()
-	srv := New(Options{Home: home, Logger: slog.New(slog.NewTextHandler(io.Discard, nil))})
+	return localSocketWith(t, Options{Home: t.TempDir()})
+}
+
+// localSocketWith is localSocket for a server with these options.
+func localSocketWith(t *testing.T, opts Options) (string, *Server) {
+	t.Helper()
+	opts.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := New(opts)
 	sock := filepath.Join(shortTempDir(t), "agentd.sock")
 	ln, err := ListenUnix(sock)
 	if err != nil {
@@ -107,7 +113,13 @@ func TestProcFollowsAResizeAndForwardsSignals(t *testing.T) {
 
 func TestProcDiesWithItsCaller(t *testing.T) {
 	sock, _ := localSocket(t)
-	pidFile := filepath.Join(t.TempDir(), "pid")
+	procDiesWithItsCaller(t, sock, filepath.Join(t.TempDir(), "pid"))
+}
+
+// procDiesWithItsCaller runs a command that leaves a background child and writes its pid to pidFile, ends the
+// caller and waits for the child to be gone: the whole process group goes with the connection.
+func procDiesWithItsCaller(t *testing.T, sock, pidFile string) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -171,5 +183,28 @@ func TestProcAsksForTheProtocolSwitch(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusUpgradeRequired || resp.Header.Get("Upgrade") != ProcUpgradeProtocol {
 		t.Errorf("status %d, upgrade %q", resp.StatusCode, resp.Header.Get("Upgrade"))
+	}
+}
+
+func TestProcFindsTheProgramInThePATHItIsStartedWith(t *testing.T) {
+	sock, _ := localSocket(t)
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "smoke-tool"), []byte("#!/bin/sh\necho found-by-path\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "not-executable"), []byte("#!/bin/sh\necho no\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"PATH": bin + ":/usr/bin:/bin"}
+	code, out, _ := relay(t, sock, RelayOptions{Argv: []string{"smoke-tool"}, Env: env}, "")
+	if code != 0 || out != "found-by-path\n" {
+		t.Fatalf("code %d, out %q", code, out)
+	}
+	// A file without the execute bit is not a program, and a name that is nowhere is refused, not run.
+	for _, name := range []string{"not-executable", "no-such-tool"} {
+		_, err := RunRelay(context.Background(), RelayOptions{Socket: sock, Argv: []string{name}, Env: env}, nil, io.Discard, io.Discard)
+		if err == nil || !strings.Contains(err.Error(), "executable file not found") {
+			t.Errorf("%s: got %v", name, err)
+		}
 	}
 }

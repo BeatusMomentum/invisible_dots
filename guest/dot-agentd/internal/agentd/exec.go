@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -93,7 +95,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		}
 		cwd = p
 	}
-	if info, err := os.Stat(cwd); err != nil || !info.IsDir() {
+	if !s.isDirectory(cwd) {
 		writeError(w, http.StatusBadRequest, "invalid_cwd", "cwd "+cwd+" is not an existing directory")
 		return
 	}
@@ -122,7 +124,7 @@ func (s *Server) runCommand(parent context.Context, command, cwd string, timeout
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	cmd.WaitDelay = execPipeGrace
-	setProcessGroup(cmd)
+	setProcessGroup(cmd, s.opts.RunAs)
 
 	start := time.Now()
 	if err := cmd.Start(); err != nil {
@@ -155,14 +157,95 @@ func (s *Server) runCommand(parent context.Context, command, cwd string, timeout
 	return answer, nil
 }
 
-// execEnv is the daemon's environment plus DISPLAY, so a GUI program started
-// from a command lands on the Dot's desktop.
+// SystemPath is the directories of the system, which only root writes.
+const SystemPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+// modelPath is the PATH of everything that runs for the model: the Dot's own
+// ~/.local/bin (uv linked invisible-playwright-mcp there) in front of the
+// system's. It is built here, from the Dot's home, and is not the daemon's PATH:
+// that one holds no directory the model can write, because what the daemon starts
+// as itself (the poweroff) is found through it (DefaultPowerOff names paths too).
+func modelPath(home string) string {
+	return path.Join(home, ".local", "bin") + ":" + SystemPath
+}
+
+// execEnv is the environment of what runs for the model: the daemon's, with
+// the account's own HOME, USER, LOGNAME and SHELL in place of the daemon's
+// (the unit gives the daemon's user those) and the PATH of the Dot (modelPath),
+// plus DISPLAY, so a GUI program started from a command lands on the Dot's
+// desktop.
 func (s *Server) execEnv() []string {
-	env := os.Environ()
+	env := withVariables(os.Environ(), "PATH="+modelPath(s.opts.Home))
+	if as := s.opts.RunAs; as != nil {
+		env = withVariables(env, "HOME="+s.opts.Home, "USER="+as.Name, "LOGNAME="+as.Name, "SHELL="+as.Shell)
+	}
 	for _, kv := range env {
 		if strings.HasPrefix(kv, "DISPLAY=") {
 			return env
 		}
 	}
 	return append(env, "DISPLAY="+s.opts.Display)
+}
+
+// withVariables is env with each NAME=value set, replacing a variable of the same name.
+func withVariables(env []string, set ...string) []string {
+	out := make([]string, 0, len(env)+len(set))
+next:
+	for _, kv := range env {
+		for _, s := range set {
+			name, _, _ := strings.Cut(s, "=")
+			if strings.HasPrefix(kv, name+"=") {
+				continue next
+			}
+		}
+		out = append(out, kv)
+	}
+	return append(out, set...)
+}
+
+// isDirectory reports whether p is a directory the account can see: the
+// daemon's own user may not be able to (the Dot's home is closed to others).
+func (s *Server) isDirectory(p string) bool {
+	restore, err := actAs(s.opts.RunAs)
+	if err != nil {
+		s.log.Error("act as the Dot's user", "error", err)
+		return false
+	}
+	defer restore()
+	info, err := os.Stat(p)
+	return err == nil && info.IsDir()
+}
+
+// lookProgram is the file a name on argv[0] stands for, found the way the
+// account's own shell would find it: a name with a slash is left to the exec,
+// any other is searched for in the PATH the program is started with, in the
+// directories the account can see. The daemon's own user may not see them (the
+// Dot's home, where uv put invisible-playwright-mcp, is closed to others), and
+// the daemon's own PATH is not the program's, so the daemon's lookup is not the
+// answer.
+func lookProgram(name string, env []string, as *Account) (string, error) {
+	if strings.Contains(name, "/") {
+		return name, nil
+	}
+	path := ""
+	for _, kv := range env {
+		if value, ok := strings.CutPrefix(kv, "PATH="); ok {
+			path = value
+		}
+	}
+	restore, err := actAs(as)
+	if err != nil {
+		return "", err
+	}
+	defer restore()
+	for _, dir := range filepath.SplitList(path) {
+		if dir == "" {
+			dir = "."
+		}
+		candidate := filepath.Join(dir, name)
+		if info, err := os.Stat(candidate); err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0 {
+			return candidate, nil
+		}
+	}
+	return "", &exec.Error{Name: name, Err: exec.ErrNotFound}
 }

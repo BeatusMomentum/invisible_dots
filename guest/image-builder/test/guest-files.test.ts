@@ -104,11 +104,12 @@ describe("guest files", () => {
 });
 
 describe("the sudo grants (architecture section 4.1)", () => {
-  it("the builder seed gives dot and dotengine no sudo rule, and the provisioner removes any the image had", () => {
+  it("the builder seed gives dot, dotagentd and dotengine no sudo rule, and the provisioner removes any the image had", () => {
     const builder = text("builder/user-data.yaml");
     expect(builder).toContain("  - name: dot\n");
+    expect(builder).toContain("  - name: dotagentd\n");
     expect(builder).toContain("  - name: dotengine\n");
-    expect(builder.match(/^\s*sudo:.*$/gm)).toEqual(["    sudo: false", "    sudo: false"]);
+    expect(builder.match(/^\s*sudo:.*$/gm)).toEqual(["    sudo: false", "    sudo: false", "    sudo: false"]);
     // provision.sh runs as root and reaches dot through root's own sudo -u.
     expect(text("builder/provision.sh")).toContain("rm -f /etc/sudoers.d/90-cloud-init-users");
   });
@@ -198,14 +199,57 @@ describe("the Dot's browser", () => {
 });
 
 describe("guest units", () => {
-  it.each(GUEST_UNITS)("%s runs with the display and uv's bin dir, as dot or the engine's own user", (name) => {
+  /** Each unit's own user (architecture 4.1): the desktop is dot's, the computer daemon and the engine have their own. */
+  const UNIT_USER = { "dot-desktop.service": "dot", "dot-agentd.service": "dotagentd", "invisible-dots-agent.service": "dotengine" } as const;
+
+  it("has one user for each unit it installs", () => {
+    expect(Object.keys(UNIT_USER).sort()).toEqual([...GUEST_UNITS].sort());
+  });
+
+  /** The PATH of a unit: its one Environment=PATH= line. */
+  const unitPath = (name: (typeof GUEST_UNITS)[number]): string[] => {
+    const lines = text(unitAsset(name)).split("\n").filter((line) => line.startsWith("Environment=PATH="));
+    expect(lines, name).toHaveLength(1);
+    return lines[0]!.slice("Environment=PATH=".length).split(":");
+  };
+
+  it.each(GUEST_UNITS.filter((name) => name !== "dot-agentd.service"))("%s runs with the display and uv's bin dir, as its own user", (name) => {
     const unit = text(unitAsset(name));
-    expect(unit).toMatch(name === "invisible-dots-agent.service" ? /^User=dotengine$/m : /^User=dot$/m);
+    expect(unit).toMatch(new RegExp(`^User=${UNIT_USER[name]}$`, "m"));
     expect(unit).toMatch(/^Environment=DISPLAY=:0$/m);
-    expect(unit).toMatch(/^Environment=PATH=\/home\/dot\/\.local\/bin:/m);
+    expect(unitPath(name)[0]).toBe("/home/dot/.local/bin");
     expect(unit).toMatch(/^RequiresMountsFor=\/opt\/invisible-dots$/m);
     expect(unit).toMatch(/^Restart=on-failure$/m);
     expect(unit).toMatch(/^WantedBy=multi-user\.target$/m);
+  });
+
+  it("runs dot-agentd with the display, as its own user, and a PATH of system directories only", () => {
+    const unit = text(unitAsset("dot-agentd.service"));
+    expect(unit).toMatch(/^User=dotagentd$/m);
+    expect(unit).toMatch(/^Environment=DISPLAY=:0$/m);
+    expect(unit).toMatch(/^RequiresMountsFor=\/opt\/invisible-dots$/m);
+    expect(unit).toMatch(/^Restart=on-failure$/m);
+    expect(unit).toMatch(/^WantedBy=multi-user\.target$/m);
+    // The daemon starts the poweroff as itself, and may become root through it: nothing it finds may be in a
+    // directory dot (the model) can write, so its PATH has no entry of /home (dot's ~/.local/bin included) and
+    // none that is relative or empty. The PATH of the model's commands is the daemon's to build.
+    const path = unitPath("dot-agentd.service");
+    expect(path.length).toBeGreaterThan(0);
+    for (const dir of path) expect(dir, `PATH entry ${dir}`).toMatch(/^\/(usr\/local\/|usr\/)?s?bin$/);
+  });
+
+  it("runs dot-agentd as its own user, with the three capabilities that take it to start the model's work as dot and no others", () => {
+    const unit = text(unitAsset("dot-agentd.service"));
+    const settings = unit.split("\n").filter((line) => !line.startsWith("#")).join("\n");
+    expect(unit).toMatch(/^User=dotagentd$/m);
+    expect(unit).toMatch(/^Group=dotagentd$/m);
+    // CAP_SETUID and CAP_SETGID to change to dot, CAP_KILL to end a process group of dot's: every capability more
+    // makes the daemon's compromise more than it has to be.
+    expect(unit).toMatch(/^AmbientCapabilities=CAP_SETUID CAP_SETGID CAP_KILL$/m);
+    // The environment of what the daemon starts for the model is dot's, which the daemon sets from the account it
+    // runs them as: the unit gives it no home of dot's, and the daemon is told no other user to run them as.
+    expect(settings).not.toMatch(/Environment=(HOME|USER|LOGNAME|SHELL)=|WorkingDirectory=|--run-as|INVISIBLE_DOTS_RUN_AS/);
+    expect(settings).not.toMatch(/^User=dot$/m);
   });
 
   it("starts dot-agentd from the runtime disk without overriding its TCP 1024 listener", () => {
@@ -245,10 +289,12 @@ describe("guest units", () => {
     expect(settings).not.toMatch(/API_KEY|NODE_ENV|sudo|INSTALLER/);
   });
 
-  it("gives each socket a directory only its two users reach, and dotengine no root command", () => {
+  it("gives each socket a directory only its two daemons reach, never dot, and dotengine no root command", () => {
     const install = text("runtime/install.sh");
-    expect(install).toContain("d /run/invisible-dots 2750 dot dotengine -");
-    expect(install).toContain("d /run/invisible-dots-agent 2750 dotengine dot -");
+    // The group of each directory is the other daemon's: dot-agentd reaches the engine's, the engine reaches its own.
+    expect(install).toContain("d /run/invisible-dots 2750 dotagentd dotengine -");
+    expect(install).toContain("d /run/invisible-dots-agent 2750 dotengine dotagentd -");
+    expect(install).not.toMatch(/d \/run\/invisible-dots(-agent)? 2750 [a-z]+ dot( |\\n)/);
     expect(install).toContain("install -d -o dotengine -g dotengine -m 0700 /home/dotengine/state");
     // No sudoers rule and no config directory are written: the engine's config lives in its database.
     expect(install).not.toMatch(/visudo|NOPASSWD|sudoers\.d|\/etc\/invisible-dots\/[a-z]+\//);
@@ -260,6 +306,11 @@ describe("guest units", () => {
     for (const file of ["builder/provision.sh", "runtime/install.sh"]) {
       expect(text(file), file).toContain(`install -d -o dot -g dot -m 0700 ${GUEST_PATHS.mcpHomes}\n`);
     }
+  });
+
+  it("install.sh and the provisioner refuse a golden image without dot-agentd's user, as they do one without the engine's", () => {
+    expect(text("runtime/install.sh")).toContain('id dotagentd >/dev/null 2>&1 || die "user dotagentd does not exist');
+    expect(text("builder/provision.sh")).toContain("id dotagentd >/dev/null 2>&1 ||");
   });
 
   it("install.sh refuses a golden image without the engine's environment", () => {

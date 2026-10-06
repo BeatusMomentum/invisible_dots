@@ -279,7 +279,26 @@ func (h fileRoutes) fail(w http.ResponseWriter, err error) {
 	writeError(w, status, code, message)
 }
 
+// actAsAccount makes the rest of the request act as the Dot's user: a file the
+// model asks for is opened, created and owned as that user (account_linux.go
+// says how), never as the daemon's. The home confinement of the remote
+// listener is decided on top of it, by homeFS, as before.
+func (h fileRoutes) actAsAccount(w http.ResponseWriter) (restore func(), ok bool) {
+	restore, err := actAs(h.s.opts.RunAs)
+	if err != nil {
+		h.s.log.Error("act as the Dot's user", "error", err)
+		writeError(w, http.StatusInternalServerError, "io_error", "the file operation could not act as the Dot's user")
+		return nil, false
+	}
+	return restore, true
+}
+
 func (h fileRoutes) get(w http.ResponseWriter, r *http.Request) {
+	restore, ok := h.actAsAccount(w)
+	if !ok {
+		return
+	}
+	defer restore()
 	fsys, p, done, err := h.target(r.URL.Query().Get("path"))
 	if err != nil {
 		h.fail(w, err)
@@ -312,6 +331,11 @@ func (h fileRoutes) get(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h fileRoutes) put(w http.ResponseWriter, r *http.Request) {
+	restore, ok := h.actAsAccount(w)
+	if !ok {
+		return
+	}
+	defer restore()
 	fsys, p, done, err := h.target(r.URL.Query().Get("path"))
 	if err != nil {
 		h.fail(w, err)
@@ -397,6 +421,11 @@ type FileListAnswer struct {
 const mtimeLayout = "2006-01-02T15:04:05.000Z07:00"
 
 func (h fileRoutes) list(w http.ResponseWriter, r *http.Request) {
+	restore, ok := h.actAsAccount(w)
+	if !ok {
+		return
+	}
+	defer restore()
 	raw := r.URL.Query().Get("path")
 	if raw == "" {
 		raw = "."

@@ -401,9 +401,12 @@ What protects you:
   is pushed to the Dot after every start and held in the engine's memory only;
   the engine refuses to start if it finds a credential on disk
   ([architecture: secrets](docs/architecture.md#43-secrets)).
-- The engine runs as its own user. Everything the model runs goes through the
-  computer daemon as another user, `dot`, which cannot read the engine's state
-  or become root.
+- The engine and the computer daemon each run as a user of their own, and the
+  model's commands as a third, `dot`, which can reach neither: it cannot read
+  the engine's state or the Dot's token, cannot connect to the engine's socket
+  (so it cannot change the Dot's permissions or approve its own calls), cannot
+  stop either daemon and cannot become root
+  ([architecture: processes](docs/architecture.md#41-processes-systemd-each-unit-as-the-user-it-names)).
 - The channel between host and guest goes one way: the host calls the guest
   on a loopback port, with the Dot's token, and only after the guest proves it
   holds that token. The API needs a bearer token; the web UI a session.
@@ -418,8 +421,6 @@ What it does not protect against, by design or not yet:
 - The model's commands run as `dot`, which can read an identity's proxy,
   password included, from the open browser's environment and from the browser
   server's own session file.
-- `dot` could replace the computer daemon on its port, and the replacement
-  would then receive the key.
 - When typing in the browser is set to `ask`, the approval shows the text being
   typed, password or not.
 - Each Dot can reach services on your PC's loopback through `10.0.2.2`.

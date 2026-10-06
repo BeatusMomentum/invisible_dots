@@ -42,9 +42,10 @@ One more branch exists only to let tests run on a Windows developer host:
 there, because Node cannot serve a unix socket on Windows. The guest
 code that serves sockets decides from the path (`socketIsAFile()`), never
 from the platform. dot-agentd ships for linux/amd64 only, and the build
-constraints of eight of its files let its package compile and its tests run on a
+constraints of ten of its files let its package compile and its tests run on a
 Windows developer host; no shipped binary contains the `!unix` or `!linux` side:
 
+- the account the model's work runs as (`LookupAccount`, `actAs`, `ForgetAmbientCapabilities`, `RequireCapabilities`; passwd, `setfsuid` and `prctl` are Linux calls, section 4.1): `guest/dot-agentd/internal/agentd/account_linux.go`, `guest/dot-agentd/internal/agentd/account_other.go`
 - `setProcessGroup`: `guest/dot-agentd/internal/agentd/exec_unix.go`, `guest/dot-agentd/internal/agentd/exec_other.go`
 - `listenUnixPrivate`: `guest/dot-agentd/internal/agentd/listen_unix.go`, `guest/dot-agentd/internal/agentd/listen_other.go`
 - `diskUsage`: `guest/dot-agentd/internal/agentd/platform_unix.go`, `guest/dot-agentd/internal/agentd/platform_other.go`
@@ -441,29 +442,87 @@ document says so.
 
 ## 4. Guest
 
-### 4.1 Processes (systemd, all as user `dot` unless stated)
+### 4.1 Processes (systemd, each unit as the user it names)
 
-| unit | what |
-|---|---|
-| `dot-desktop.service` | `Xvfb :0 -nolisten tcp` plus a minimal XFCE session on it |
-| `dot-agentd.service` | the computer daemon; TCP port 1024 (reached only through the host's port forward) and a local unix socket |
-| `invisible-dots-agent.service` | the Dot itself: the engine (`/opt/invisible-dots-engine/bin/python -I -B -m nanobot`), as the user `dotengine` |
+| unit | user | what |
+|---|---|---|
+| `dot-desktop.service` | `dot` | `Xvfb :0 -nolisten tcp` plus a minimal XFCE session on it |
+| `dot-agentd.service` | `dotagentd` | the computer daemon; TCP port 1024 (reached only through the host's port forward) and a local unix socket |
+| `invisible-dots-agent.service` | `dotengine` | the Dot itself: the engine (`/opt/invisible-dots-engine/bin/python -I -B -m nanobot`) |
 
-The engine has a user of its own, `dotengine` (created by the image builder's
-seed, in group `dot` so it can read and seed the Dot's workspace; its unit runs
-it with `UMask=0002`). It holds the OpenRouter key in memory and owns its state
-(`/home/dotengine/state`, 0700) and nothing of the model's runs under it:
-every command, background process and file operation of the model goes through
-dot-agentd as `dot` (section 5.2, `nanobot/dots/computer.py`), so the model can
-read or change neither the engine's state nor its memory. The engine needs no
-privilege: there is no sudo rule for `dotengine` and no root-owned
-configuration file (the Dot's config is stored in the engine's own database,
-section 8.8), and its unit sets `NoNewPrivileges=yes`, so nothing it starts can
-gain one. What the split does not close: `dot` can read the Dot token
-(`/etc/invisible-dots/config.json`) and can stop dot-agentd, which runs as `dot`
-too, and listen on port 1024 in its place; a process that does so receives what
-the host sends there, the key included. Closing that needs dot-agentd under a
-user of its own.
+Three users, none of them shared (all made by the image builder's seed):
+
+- `dot` runs the desktop, the browser and **every command of the model**. It is
+  the one user the model controls. It is in the groups `audio`, `video` and
+  `systemd-journal` (it reads its computer's system journal; cloud-init adds no
+  group to a user that exists already, so the groups are given where the user is
+  created, by the image builder's seed). It has no sudo rule.
+- `dotagentd` runs dot-agentd. It holds the Dot's token (`/etc/invisible-dots/config.json`,
+  0600) and owns `agentd.sock`. It has no home, no login and no group but its own.
+  It is the one user that may run one command as root, `/usr/bin/systemctl
+  poweroff` without a password, which is what dot-agentd starts when the host
+  stops the VM (section 5.2). The Dot's seed writes that rule; the golden image's
+  builder seed gives nobody one and the provisioner removes any rule the image
+  had, because a Dot's seed only adds its rule to that file.
+- `dotengine` runs the engine. It is in group `dot` so it can read and seed the
+  Dot's workspace, and its unit runs it with `UMask=0002`. It holds the
+  OpenRouter key in memory and owns its state (`/home/dotengine/state`, 0700).
+  It needs no privilege: there is no sudo rule for it and no root-owned
+  configuration file (the Dot's config is stored in the engine's own database,
+  section 8.8), and its unit sets `NoNewPrivileges=yes`, so nothing it starts can
+  gain one.
+
+dot-agentd does not run the model's work as itself. Every command (`POST /v1/exec`
+and the engine's `dot-agentd relay`), every file operation of the file routes of
+both listeners, the browser's MCP servers (which the engine starts through the
+relay) and the screenshot run as `dot`:
+
+- a process is started with `SysProcAttr.Credential`: dot's uid, gid and
+  supplementary groups (the daemon's own are not inherited);
+- a file route acts as `dot` for the length of the request: the file-system user
+  and groups of the thread that serves it are dot's, as an NFS server's are for a
+  client's. The files it opens, creates and renames are dot's and are checked as
+  dot's, and the home confinement of the TCP listener (section 5.2) is decided on
+  top of that, unchanged;
+- a pseudo-terminal for a command is opened as `dot`, so the terminal belongs to
+  it.
+
+The privileges that takes are the unit's `AmbientCapabilities=CAP_SETUID
+CAP_SETGID CAP_KILL` (change to dot; end a process group of dot's) and nothing
+else. The daemon empties its ambient set before it starts anything, whatever
+`--run-as` says, so no program it starts holds one: a command of the model has
+`CapPrm`, `CapEff` and `CapAmb` zero, and the smoke asserts it. It refuses to
+start without the three when it is to act as another user. `--run-as` (default
+`dot`, `INVISIBLE_DOTS_RUN_AS`) names the user; an empty value runs the work as
+the daemon's own user, which is for development and which the daemon says in its
+log (the ambient set is emptied then too).
+
+What the daemon runs as itself is found through no directory the model writes.
+The unit gives it a `PATH` of system directories only, and every program it
+starts for itself is named by path (`/usr/bin/sudo -n /usr/bin/systemctl
+poweroff`, `/bin/bash`, `/usr/bin/import`): a `sudo` planted in dot's
+`~/.local/bin` (dot owns its home and can open it) would otherwise be run as
+`dotagentd` by the next poweroff. The `PATH` of the model's commands, dot's
+`~/.local/bin` in front of the system's, is built by the daemon with the rest of
+their environment (`execEnv`), not inherited from its own.
+
+What this closes: no process of the model's shares a uid with a daemon, so the
+model can neither read the Dot's token nor read the memory of dot-agentd or of
+the engine, nor signal or stop either, nor reach either socket (their
+directories admit only the two daemons, section 4.2). The engine's socket does
+not rely on its directory alone: the engine asks the kernel who connected
+(`SO_PEERCRED`) and refuses a process of `dot` (`INVISIBLE_DOTS_MODEL_USER`,
+default `dot`; the engine does not start when that user does not exist). The
+engine's API has no authentication of its own, so what would let the model
+`PUT /config` with every permission `allow`, or approve its own parked calls
+with `POST /events`, is exactly what these two walls keep out, and the smoke
+tries both as the model does. The model can connect to TCP port 1024 inside its own
+computer too, and gets `401` without the token. A process of `dot` could listen
+on port 1024 only while dot-agentd is not running, and the host does not send
+the token or the key to a listener that cannot answer the proof of section 5.1.
+What stays: the daemon's three capabilities make a flaw in dot-agentd worth
+more than a flaw in an ordinary program; it is a small program and its one door,
+the TCP port, needs the token.
 
 There is no long-running browser service. The engine's `BrowserManager`
 starts one `invisible-playwright-mcp` process per launched browser identity
@@ -472,20 +531,15 @@ as `dotengine`: its environment is the one the relay builds for `dot` (none of
 the engine's variables, never the OpenRouter key) plus the variables of
 section 6. The engine closes them with the rest of its work (section 8.8).
 
-`dot` may run exactly one command as root, `/usr/bin/systemctl poweroff`
-without a password, which is what dot-agentd starts when the host stops the
-VM (section 5.2). The Dot's seed writes that rule; the golden image's builder
-seed gives `dot` none and the provisioner removes any rule the image had,
-because a Dot's seed only adds its rule to that file. Everything the model
-runs (the engine's `exec`, `POST /v1/exec`) therefore runs as `dot`. `dot` is in
-the `systemd-journal` group, so it can read its computer's system journal;
-the group is given where the user is created, by the image builder's seed,
-because cloud-init adds no group to a user that exists already.
+Everything the model runs (the engine's `exec`, `POST /v1/exec`) therefore runs
+as `dot`, which has no way to become root: the model cannot power its computer
+off through sudo. A Dot that stops without being asked is still recorded as
+STOPPED and started again when it has work (section 9.5).
 
 ### 4.2 Guest filesystem
 
 ```text
-/etc/invisible-dots/config.json     written by cloud-init: dotId, token (0600, owner dot)
+/etc/invisible-dots/config.json     written by cloud-init: dotId, token (0600, owner dotagentd: dot-agentd's alone)
 /opt/invisible-dots/                the runtime ISO, read-only: the engine's source (engine/), dot-agentd and the units
 /opt/invisible-dots-engine/         the engine's Python environment, built into the golden image (section 3.3)
 /home/dotengine/state/              the engine's state (0700): engine.sqlite, which holds the Dot's tables and the
@@ -498,10 +552,10 @@ because cloud-init adds no group to a user that exists already.
     profile/                        the browser profile
 /var/lib/invisible-dots/            root, 0755
   mcp/<identity_id>/                INVISIBLE_MCP_HOME for that identity's server (dot, 0700; outside /home/dot on purpose)
-/run/invisible-dots/                dot:dotengine 2750
-  agentd.sock                       dot-agentd's local API for the engine (dot:dotengine 0660)
-/run/invisible-dots-agent/          dotengine:dot 2750
-  agent.sock                        the engine's API, reached by dot-agentd's proxy (dotengine:dot 0660)
+/run/invisible-dots/                dotagentd:dotengine 2750
+  agentd.sock                       dot-agentd's local API for the engine (dotagentd:dotengine 0660)
+/run/invisible-dots-agent/          dotengine:dotagentd 2750
+  agent.sock                        the engine's API, reached by dot-agentd's proxy (dotengine:dotagentd 0660)
 ```
 
 The home of an identity's MCP server is not under `/home/dot` because the
@@ -515,8 +569,13 @@ provisioner and by `install.sh` (dot owns it, the server runs as dot) and the
 
 Each socket sits in a directory its server owns and only the other side may
 enter, setgid so the socket takes that side's group (`install.sh` writes both
-to tmpfiles). `dot` cannot write `/run/invisible-dots-agent/`, so nothing of
-the model's can put another socket where the host pushes the key.
+to tmpfiles): dot-agentd's directory is `dotagentd:dotengine`, so the engine
+(group `dotengine`) reaches `agentd.sock`, and the engine's is
+`dotengine:dotagentd`, so dot-agentd (group `dotagentd`) reaches `agent.sock`.
+`dot` is in neither group and owns neither directory: it cannot enter either
+one, so it can neither talk to the engine or to dot-agentd's local socket nor
+put another socket where the host pushes the key. The engine adds a check of
+its own on the connection (section 4.1).
 
 One engine process owns `engine.sqlite`: it opens it in SQLite's exclusive
 locking mode and takes the write lock at once, so a second process on the same
@@ -545,12 +604,12 @@ again. The Dot's own token is the one secret in the seed; it only
 authorizes requests to this one VM.
 
 "Memory only" keeps the key off every disk; it is not on its own what keeps
-it from the commands the model runs, which run as the same user `dot`. What
-does: `dot` cannot become root (section 4.1), so it cannot read another
-process's memory through root; Ubuntu's Yama `ptrace_scope=1` lets a process
-trace only its own descendants, and the model's commands descend from
-dot-agentd, not from the engine; and the engine is a process of another user,
-so ptrace of it is refused in any case. CPython opens no debugger or inspector
+it from the commands the model runs. What does: they run as `dot`, a user that
+is neither the engine's nor dot-agentd's, and `dot` cannot become root (section
+4.1), so it cannot read another process's memory through root; Ubuntu's Yama
+`ptrace_scope=1` lets a process trace only its own descendants, and the
+model's commands descend from dot-agentd, not from the engine; and the engine
+is a process of another user, so ptrace of it is refused in any case. CPython opens no debugger or inspector
 on a signal, so nothing can be asked of the process from outside; the unit's
 `LimitCORE=0` keeps the key out of core files and `NoNewPrivileges=yes` keeps
 anything the engine starts from gaining a privilege. A change to any of these
@@ -622,13 +681,16 @@ sees the token, the key or the config; the call fails with
 | `PUT /v1/files` | `?path=`, body = bytes | `204` |
 | `GET /v1/files/list` | `?path=` | `{ entries: [{ name, type: "file"\|"dir"\|"other", size, mtime }] }` |
 | `GET /v1/screenshot` | | `image/png` of display `:0` |
-| `POST /v1/system/poweroff` | | `202 { status: "powering_off" }` after starting `sudo -n systemctl poweroff` detached (the seed lets `dot` run exactly that without a password, section 4.1); `500 poweroff_failed` when it cannot be started. How the control plane stops a VM (section 3.4) |
+| `POST /v1/system/poweroff` | | `202 { status: "powering_off" }` after starting `/usr/bin/sudo -n /usr/bin/systemctl poweroff` detached (the seed lets `dotagentd`, the user the daemon runs as, run exactly that without a password, section 4.1); `500 poweroff_failed` when it cannot be started. How the control plane stops a VM (section 3.4) |
 | `* /v1/agent/<rest>` | | reverse proxy to `unix:/run/invisible-dots-agent/agent.sock` at `/<rest>` |
 
 The three file routes are limited to home on the TCP port, the host's door:
 the path is resolved with every symbolic link followed and a real location not
 under home is a `403 outside_home`. On `agentd.sock` they take any path the
-Dot's user may open.
+Dot's user may open. On both, the routes act as `dot` (section 4.1): the daemon
+runs as `dotagentd`, which cannot open the Dot's files, and a file one of them
+creates belongs to `dot`. So a path `dot` may not open, the Dot's token file
+and the engine's state among them, is a `403 permission_denied` on both.
 
 The same routes, without `/v1/agent`, `/v1/proof` and `/v1/system/poweroff`,
 are served on `agentd.sock` for the engine (no token: section 4.2 says who can
@@ -638,8 +700,11 @@ reach the socket), plus one route of that socket only:
 |---|---|---|
 | `POST /v1/proc` | `{ argv, cwd?, env?, tty?: { cols, rows } }`, with `Connection: Upgrade`, `Upgrade: dots-proc/1` | `101 Switching Protocols`, then frames both ways (one type byte, a big-endian uint32 length, the payload): from the caller `i` input, `e` end of input (^D on a terminal), `r` size (uint16 cols, uint16 rows), `s` a signal number for the process group; from dot-agentd `o` output, `E` error output (none on a terminal), and last `x`, the JSON `{ exit_code, signal? }`. `426` without the upgrade, `400` for an empty program or a bad cwd |
 
-It runs the program as `dot`, without a shell, in its own process group, on a
-pseudo-terminal when asked (a new session whose controlling terminal it is).
+It runs the program as `dot` (the daemon changes to that user for the program;
+section 4.1), without a shell, in its own process group, on a pseudo-terminal
+when asked (a new session whose controlling terminal it is, and which `dot`
+owns). The program's environment is the daemon's with `HOME`, `USER`, `LOGNAME`
+and `SHELL` of `dot`'s account, plus `DISPLAY` and the request's `env`.
 The process lives exactly as long as the connection: a caller that goes away
 takes the whole group with it. Its client is `dot-agentd relay [--socket P]
 [--cwd DIR] [--tty] [--env NAME=VALUE]... [--env-from NAME]... -- PROGRAM
@@ -649,12 +714,12 @@ terminal on its input it puts that terminal in raw mode and forwards its size
 changes. The engine runs the model's every command through it, and reads and
 writes the model's files through the `/v1/files` routes of the same socket
 (section 8.8). Sleep, stop and reboot are the control plane's decisions,
-and the agent's socket offers no poweroff. That is not a guarantee that a Dot
-cannot power its own computer off: the model runs commands as `dot`, which
-may run the same `systemctl poweroff`, and can read the token in
-`/etc/invisible-dots/config.json`. A Dot owns its computer. What the control
-plane guarantees is the outcome: a VM that stops without being asked is
-recorded as STOPPED, and started again when its Dot has work (section 9.5).
+and the agent's socket offers no poweroff. Nor can the model power its computer
+off through sudo: `dot` has no sudo rule (section 4.1), and cannot read the
+token in `/etc/invisible-dots/config.json` either. A Dot owns its computer, not
+the daemon that serves it. What the control plane guarantees is the outcome: a
+VM that stops without being asked is recorded as STOPPED, and started again
+when its Dot has work (section 9.5).
 Paths in file routes are resolved against `/home/dot` when relative.
 
 A command of `POST /v1/exec` runs in its own process group, and dot-agentd

@@ -6,7 +6,7 @@ import "syscall"
 
 // The process route and the relay run on the Linux guest only; elsewhere they
 // say so, which keeps `go vet ./...` working on a developer's machine.
-func startProc([]string, string, []string, *ProcTTY) (*procHandle, error) {
+func startProc([]string, string, []string, *ProcTTY, *Account) (*procHandle, error) {
 	return nil, errProcUnsupported
 }
 

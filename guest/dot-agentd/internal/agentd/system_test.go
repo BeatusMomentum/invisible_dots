@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -121,7 +122,21 @@ func TestPowerOffIsNotOfferedToTheAgent(t *testing.T) {
 }
 
 func TestDefaultPowerOffIsTheContractCommand(t *testing.T) {
-	if got := New(Options{}).opts.PowerOff; len(got) != 4 || got[0] != "sudo" || got[1] != "-n" || got[2] != "systemctl" || got[3] != "poweroff" {
+	if got := New(Options{}).opts.PowerOff; len(got) != 4 || got[0] != "/usr/bin/sudo" || got[1] != "-n" || got[2] != "/usr/bin/systemctl" || got[3] != "poweroff" {
 		t.Errorf("default poweroff %v", got)
+	}
+}
+
+// What the daemon starts as itself is found through no PATH: the poweroff runs as the daemon's user and may
+// become root, so a name looked up in a directory the model can write would run the model's program as it.
+func TestTheProgramsTheDaemonStartsAreNamedByPath(t *testing.T) {
+	opts := New(Options{}).opts
+	for name, program := range map[string]string{"poweroff": opts.PowerOff[0], "bash": opts.Bash, "import": opts.ImportBin} {
+		if !path.IsAbs(program) {
+			t.Errorf("%s is %q, a name looked up in a PATH", name, program)
+		}
+	}
+	if got := DefaultPowerOff[0]; !path.IsAbs(got) {
+		t.Errorf("DefaultPowerOff starts %q", got)
 	}
 }

@@ -11,14 +11,19 @@ import (
 	"unsafe"
 )
 
-// startProc starts argv as its own process group: with pipes, or as the
-// session leader of a new pseudo-terminal when tty is set.
-func startProc(argv []string, cwd string, env []string, tty *ProcTTY) (*procHandle, error) {
-	cmd := exec.Command(argv[0], argv[1:]...)
+// startProc starts argv as the account, as its own process group: with pipes,
+// or as the session leader of a new pseudo-terminal when tty is set.
+func startProc(argv []string, cwd string, env []string, tty *ProcTTY, as *Account) (*procHandle, error) {
+	program, err := lookProgram(argv[0], env, as)
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.Command(program, argv[1:]...)
+	cmd.Args[0] = argv[0]
 	cmd.Dir = cwd
 	cmd.Env = env
 	if tty != nil {
-		return startProcOnPTY(cmd, tty)
+		return startProcOnPTY(cmd, tty, as)
 	}
 	stdinR, stdinW, err := os.Pipe()
 	if err != nil {
@@ -35,7 +40,7 @@ func startProc(argv []string, cwd string, env []string, tty *ProcTTY) (*procHand
 		return nil, err
 	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = stdinR, stdoutW, stderrW
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Credential: credentialOf(as)}
 	if err := cmd.Start(); err != nil {
 		closeAll(stdinR, stdinW, stdoutR, stdoutW, stderrR, stderrW)
 		return nil, fmt.Errorf("start %s: %w", argv[0], err)
@@ -59,8 +64,8 @@ func startProc(argv []string, cwd string, env []string, tty *ProcTTY) (*procHand
 	}, nil
 }
 
-func startProcOnPTY(cmd *exec.Cmd, tty *ProcTTY) (*procHandle, error) {
-	master, slave, err := openPTY()
+func startProcOnPTY(cmd *exec.Cmd, tty *ProcTTY, as *Account) (*procHandle, error) {
+	master, slave, err := openPTYAs(as)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +76,7 @@ func startProcOnPTY(cmd *exec.Cmd, tty *ProcTTY) (*procHandle, error) {
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = slave, slave, slave
 	// A new session whose controlling terminal is the slave (fd 0 in the
 	// child): the shell gets job control, and the session id is the group id.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0, Credential: credentialOf(as)}
 	if err := cmd.Start(); err != nil {
 		closeAll(master, slave)
 		return nil, fmt.Errorf("start %s: %w", cmd.Path, err)
@@ -102,6 +107,18 @@ func (p ptyReader) Read(b []byte) (int, error) {
 		}
 	}
 	return n, err
+}
+
+// openPTYAs opens the pseudo-terminal as the account: the kernel makes the
+// slave belong to the user that opens /dev/ptmx, and a program that opens it
+// again by name (/dev/pts/N) has to be that user.
+func openPTYAs(as *Account) (*os.File, *os.File, error) {
+	restore, err := actAs(as)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer restore()
+	return openPTY()
 }
 
 func openPTY() (*os.File, *os.File, error) {

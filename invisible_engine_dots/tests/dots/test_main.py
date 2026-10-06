@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import pwd
 import re
 import sqlite3
 import shutil
@@ -38,12 +40,17 @@ from nanobot.dots.main import (
     check_golden_lock,
     main,
     read_environment,
+    refused_peer_uids,
     serve,
 )
 from nanobot.dots.store import DotStore
 
 ENGINE_ROOT = Path(__file__).resolve().parents[2]
 TS = "2026-10-04T10:00:00.000Z"
+
+
+# The user the API socket refuses: a machine that runs these tests has no user dot, so they name their own.
+OWN_USER = pwd.getpwuid(os.getuid()).pw_name
 
 
 def short_dir() -> Path:
@@ -105,6 +112,8 @@ class TestTheEnvironment:
         assert env.openrouter_url is None
         assert env.network_check == "openrouter.ai:443"
         assert env.mcp_command == "invisible-playwright-mcp"
+        # The user of the model's commands, whose processes the API socket refuses (architecture 4.1).
+        assert env.model_user == "dot"
 
     def test_the_names_the_unit_and_the_smoke_set(self) -> None:
         env = read_environment(
@@ -117,6 +126,7 @@ class TestTheEnvironment:
                 "INVISIBLE_DOTS_OPENROUTER_URL": " http://127.0.0.1:9999/api/v1 ",
                 "INVISIBLE_DOTS_NETWORK_CHECK": "127.0.0.1:9999",
                 "INVISIBLE_DOTS_MCP_COMMAND": "/opt/mcp",
+                "INVISIBLE_DOTS_MODEL_USER": "model",
                 "PATH": "/a:/b",
                 "HOME": "/home/dotengine",
             }
@@ -133,6 +143,7 @@ class TestTheEnvironment:
             mcp_command="/opt/mcp",
             path="/a:/b",
             home="/home/dotengine",
+            model_user="model",
         )
 
     def test_a_blank_value_is_the_default(self) -> None:
@@ -176,6 +187,7 @@ class TestWhatItRefusesToStartOn:
         return {
             "INVISIBLE_DOTS_ENGINE_STATE": str(state),
             "INVISIBLE_DOTS_AGENT_SOCKET": str(state.parent / "agent.sock"),
+            "INVISIBLE_DOTS_MODEL_USER": OWN_USER,
             "HOME": str(state.parent / "home"),
             **extra,
         }
@@ -248,6 +260,7 @@ class TestWhatItRefusesToStartOn:
                 "INVISIBLE_DOTS_ENGINE_STATE": str(directory / "state"),
                 "INVISIBLE_DOTS_AGENT_SOCKET": str(directory / "agent.sock"),
                 "INVISIBLE_DOTS_AGENTD_BIN": str(directory / "no-dot-agentd"),
+                "INVISIBLE_DOTS_MODEL_USER": OWN_USER,
                 "HOME": str(directory),
             }
 
@@ -322,6 +335,33 @@ class TestTheGoldenLock:
 
         assert code == 1
         assert capsys.readouterr().err == f"refusing to start: {LOCK_MISMATCH}\n"
+        assert not state.exists()
+
+
+class TestTheModelUser:
+    """The API socket refuses the user of the model's commands, so the engine has to be able to name it."""
+
+    def test_the_user_is_named_by_its_id(self) -> None:
+        assert refused_peer_uids("root") == frozenset({0})
+        assert refused_peer_uids(OWN_USER) == frozenset({os.getuid()})
+
+    def test_no_user_named_refuses_no_one(self) -> None:
+        assert refused_peer_uids(None) == frozenset()
+
+    def test_a_user_that_does_not_exist_is_refused_with_the_way_out(self) -> None:
+        with pytest.raises(GoldenImageError, match="has no user nobody-here, the user of the model's commands"):
+            refused_peer_uids("nobody-here")
+
+    @pytest.mark.usefixtures("a_run_that_ends")
+    def test_main_refuses_to_start_before_it_opens_the_state(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        state = tmp_path / "state"
+
+        code = main([], {"INVISIBLE_DOTS_ENGINE_STATE": str(state), "INVISIBLE_DOTS_MODEL_USER": "nobody-here", "HOME": str(tmp_path / "home")})
+
+        assert code == 1
+        assert "refusing to start: the golden image has no user nobody-here" in capsys.readouterr().err
         assert not state.exists()
 
 
@@ -457,6 +497,7 @@ async def served() -> AsyncIterator[Served]:
         mcp_command="invisible-playwright-mcp",
         path="",
         home=str(directory),
+        model_user=None,
     )
     stop = asyncio.Event()
     task = asyncio.get_running_loop().create_task(serve(environment, stop))

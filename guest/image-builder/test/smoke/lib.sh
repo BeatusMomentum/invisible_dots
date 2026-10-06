@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # What the two smokes (smoke.sh and browser/smoke.sh) share: the Dot's guest laid out the way the
-# runtime disk's install.sh lays it out, dot-agentd as dot, the engine as dotengine and restarted
-# when it dies as systemd would, the stand-in for OpenRouter, the fake host that reads the event
+# runtime disk's install.sh lays it out, dot-agentd as dotagentd (starting the model's commands as
+# dot), the engine as dotengine and restarted when it dies as systemd would, the stand-in for OpenRouter, the fake host that reads the event
 # stream and pushes the key and the config, and the helpers that read events and drive a chat turn.
 # Sourced, never run. The caller starts the guest in this order (each step is one function here):
 #
@@ -18,9 +18,12 @@ ENGINE_PY=/opt/invisible-dots-engine/bin/python
 # The key has this one owner; the stand-in gets it on its command line (not its environment: a check
 # asserts that no process environment holds it) and refuses to start without it.
 KEY=sk-or-v1-smoke-0123456789abcdef
-# What the units give the daemons: the display and uv's bin dir (invisible-dots-agent.service,
-# dot-agentd.service).
+# What the units give the engine and the desktop: the display and uv's bin dir (invisible-dots-agent.service).
 GUEST_PATH=/home/dot/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# What the unit gives dot-agentd, read from the unit itself so the smoke starts the daemon with the PATH the
+# image has: system directories only, none of them dot's (a program the daemon starts as itself, the poweroff,
+# is found through it).
+DAEMON_PATH=$(sed -n 's/^Environment=PATH=//p' "$SMOKE_DIR/../../units/dot-agentd.service")
 # Every request the stand-in for OpenRouter receives is appended, whole, to this file.
 FULL="${FULL:-/tmp/fake-full.jsonl}"
 
@@ -29,7 +32,7 @@ FULL="${FULL:-/tmp/fake-full.jsonl}"
 # the sweep is made once as each user that runs one.
 environ_holds() { # text
   local user
-  for user in root dot dotengine nobody; do
+  for user in root dot dotagentd dotengine nobody; do
     if su -s /bin/bash "$user" -c "grep -a -l -F -e '$1' /proc/[0-9]*/environ 2>/dev/null" | grep -q .; then return 0; fi
   done
   return 1
@@ -48,23 +51,23 @@ cmdline_holds() { # text
 }
 
 # --- the runtime disk's directories (install.sh's directory and socket steps; the systemd parts do not run here) ---
-# The users (dot, dotengine) are the golden image's: prepare-engine.sh made them.
+# The users (dot, dotagentd, dotengine) are the golden image's: prepare-engine.sh made them.
 lay_out_guest() {
   mkdir -p /opt/invisible-dots/bin /etc/invisible-dots /run
   cp "$AGENTD_BIN" /opt/invisible-dots/bin/dot-agentd; chmod 0755 /opt/invisible-dots/bin/dot-agentd
-  install -d -o dot -g dotengine -m 2750 /run/invisible-dots
-  install -d -o dotengine -g dot -m 2750 /run/invisible-dots-agent
+  install -d -o dotagentd -g dotengine -m 2750 /run/invisible-dots
+  install -d -o dotengine -g dotagentd -m 2750 /run/invisible-dots-agent
   install -d -o dot -g dot -m 2775 /home/dot/workspace
   install -d -o root -g root -m 0755 /var/lib/invisible-dots
   install -d -o dot -g dot -m 0700 /var/lib/invisible-dots/mcp
   install -d -o dotengine -g dotengine -m 0700 /home/dotengine /home/dotengine/state
 }
 
-# The host's token for dot-agentd, in the file dot-agentd reads.
+# The host's token for dot-agentd, in the file dot-agentd reads: its own user's, and no one else's.
 write_host_token() {
   TOKEN="smoke-token-$(head -c 8 /dev/urandom | od -An -tx1 | tr -d ' \n')"
   printf '{"dotId":"dot_smoke","token":"%s"}' "$TOKEN" > /etc/invisible-dots/config.json
-  chown dot:dot /etc/invisible-dots/config.json; chmod 0600 /etc/invisible-dots/config.json
+  chown dotagentd:dotagentd /etc/invisible-dots/config.json; chmod 0600 /etc/invisible-dots/config.json
 }
 
 # The stand-in for OpenRouter. Copied out of the tree under test, where the unprivileged user may not
@@ -74,12 +77,17 @@ start_fake_openrouter() {
   su -s /bin/bash nobody -c "python3 /usr/local/lib/smoke-fake/fake_openrouter.py 9999 $KEY" > /tmp/fake.log 2>&1 &
 }
 
-# dot-agentd as dot, with the environment its unit gives it, and the engine as dotengine, restarted by
+# dot-agentd as dotagentd, the way its unit starts it: with the capabilities of the unit's AmbientCapabilities
+# (setuid, setgid, kill) and no others, and the environment systemd gives that user plus the unit's (DAEMON_PATH); and the
+# engine as dotengine, restarted by
 # start_engine when it dies as systemd would (KillMode=control-group: every process of the engine goes
 # with it). The engine's environment is its unit's, plus the program it runs for a browser when
 # MCP_COMMAND names one (without it the engine finds invisible-playwright-mcp on its PATH).
 start_guest_daemons() {
-  su -s /bin/bash dot -c "HOME=/home/dot DISPLAY=:0 PATH=$GUEST_PATH /opt/invisible-dots/bin/dot-agentd --listen 127.0.0.1:1024" > /tmp/agentd.log 2>&1 &
+  setpriv --reuid=dotagentd --regid=dotagentd --init-groups \
+    --inh-caps=+setuid,+setgid,+kill --ambient-caps=+setuid,+setgid,+kill \
+    env HOME=/nonexistent USER=dotagentd LOGNAME=dotagentd SHELL=/usr/sbin/nologin DISPLAY=:0 PATH=$DAEMON_PATH \
+    /opt/invisible-dots/bin/dot-agentd --listen 127.0.0.1:1024 > /tmp/agentd.log 2>&1 &
   cat > /tmp/engine.sh <<EOF
 export HOME=/home/dotengine
 export PATH=$GUEST_PATH

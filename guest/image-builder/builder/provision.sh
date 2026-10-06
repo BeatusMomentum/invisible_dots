@@ -55,6 +55,9 @@ rm -rf "$uv_tmp"
 /usr/local/bin/uv --version
 
 id dot >/dev/null 2>&1 || useradd --create-home --shell /bin/bash dot
+# The computer daemon's user comes from the builder seed's user list like the engine's (architecture 4.1): an
+# image without it would fail at every boot, so it fails the build.
+id dotagentd >/dev/null 2>&1 || { console "the builder seed made no user dotagentd"; false; }
 
 step "installing invisible-playwright-mcp $MCP_VERSION, fetching the browser engine and installing the GeoIP database"
 # The whole environment comes from the hashed lock on the seed and is built as dot by the script the

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import pwd
 import signal
 import sys
 from collections.abc import Mapping, Sequence
@@ -39,6 +40,8 @@ from nanobot.dots.server import AgentServer
 from nanobot.dots.store import DotStore, StoreOwnedError, StoreVersionError
 
 DEFAULT_AGENT_SOCKET = "/run/invisible-dots-agent/agent.sock"
+# The user every command of the model runs as (dot-agentd's `--run-as`): the one the API socket refuses.
+DEFAULT_MODEL_USER = "dot"
 DEFAULT_STATE_DIR = "/home/dotengine/state"
 # The nanobot commit the fork was copied at (UPSTREAM.md holds the full id).
 UPSTREAM_COMMIT = "f75470e7"
@@ -66,6 +69,12 @@ GEOIP_MISSING = (
 )
 
 
+MODEL_USER_MISSING = (
+    "the golden image has no user {user}, the user of the model's commands, whose processes the engine's socket "
+    "refuses: build a new golden image"
+)
+
+
 class GoldenImageError(Exception):
     """The golden image is not the one this runtime disk's engine needs: another lock, or a file missing."""
 
@@ -85,6 +94,9 @@ class Environment:
     mcp_command: str
     path: str
     home: str
+    # The user of the model's commands, whose processes the API socket refuses. None refuses no one: a development
+    # machine has no such user.
+    model_user: str | None = DEFAULT_MODEL_USER
 
 
 def read_environment(environ: Mapping[str, str]) -> Environment:
@@ -102,7 +114,19 @@ def read_environment(environ: Mapping[str, str]) -> Environment:
         mcp_command=value("INVISIBLE_DOTS_MCP_COMMAND", DEFAULT_BROWSER_COMMAND),
         path=environ.get("PATH", ""),
         home=environ.get("HOME", "").strip() or str(Path.home()),
+        model_user=value("INVISIBLE_DOTS_MODEL_USER", DEFAULT_MODEL_USER),
     )
+
+
+def refused_peer_uids(model_user: str | None) -> frozenset[int]:
+    """The user ids the API socket refuses: the model's user. The user must exist: an engine that cannot name the
+    user it is to refuse would serve everyone, so it does not start."""
+    if model_user is None:
+        return frozenset()
+    try:
+        return frozenset({pwd.getpwnam(model_user).pw_uid})
+    except KeyError:
+        raise GoldenImageError(MODEL_USER_MISSING.format(user=model_user)) from None
 
 
 def check_golden_lock(source_root: Path, prefix: Path) -> None:
@@ -145,6 +169,7 @@ def configure_logging() -> int:
 
 async def serve(environment: Environment, stop: asyncio.Event) -> None:
     """Run the engine and its API until `stop` is set, then shut down in order."""
+    refused_uids = refused_peer_uids(environment.model_user)
     state_dir = Path(environment.state_dir)
     store = DotStore.open(state_dir / "engine.sqlite")
     try:
@@ -179,7 +204,13 @@ async def serve(environment: Environment, stop: asyncio.Event) -> None:
             network_target=environment.network_check,
             path=environment.path,
         )
-        server = AgentServer(engine=engine, key_holder=key_holder, checks=checks, automations=cron)
+        server = AgentServer(
+            engine=engine,
+            key_holder=key_holder,
+            checks=checks,
+            automations=cron,
+            refused_uids=refused_uids,
+        )
         await server.listen(environment.agent_socket)
         retry: asyncio.Task[None] | None = None
         try:

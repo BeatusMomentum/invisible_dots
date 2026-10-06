@@ -15,13 +15,15 @@ const screenshotTimeout = 15 * time.Second
 var pngMagic = []byte("\x89PNG\r\n\x1a\n")
 
 // handleScreenshot captures the whole X display with ImageMagick's
-// `import -window root`. Xvfb runs without an auth file, so DISPLAY alone is
-// enough to reach it.
+// `import -window root`, as the Dot's user. Xvfb runs without an auth file, so
+// DISPLAY alone is enough to reach it.
 func (s *Server) handleScreenshot(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), screenshotTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, s.opts.ImportBin, "-window", "root", "-display", s.opts.Display, "png:-")
 	cmd.Env = append(s.execEnv(), "DISPLAY="+s.opts.Display)
+	// The display belongs to the Dot's user: Xvfb admits that user's clients and no other.
+	setAccount(cmd, s.opts.RunAs)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
