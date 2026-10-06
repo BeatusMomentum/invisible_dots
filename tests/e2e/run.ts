@@ -55,7 +55,7 @@ import {
   keyFromFile,
   lastEventId,
   pngInfo,
-  proxyIsRedacted,
+  proxyIsMasked,
   rowsHolding,
   ROUTES,
   route,
@@ -942,7 +942,7 @@ async function main(): Promise<void> {
     return `closed identity not launched by a page tool; max_open 2 closed ${research.id} for the third launch; frame of a closed identity 409 not_open; host close, and host delete of an open identity, leave no browser server and no directory`;
   });
 
-  await step("i", "approvals of identity create and delete: arguments redacted, nothing deleted before the approval", async () => {
+  await step("i", "approvals of identity create and delete: proxy masked, nothing deleted before the approval", async () => {
     const dotId = state.dotId!;
     const password = `pw-${randomBytes(6).toString("hex")}`;
     const proxy = `socks5://e2euser:${password}@127.0.0.1:9`;
@@ -952,14 +952,14 @@ async function main(): Promise<void> {
     );
     const creating = await waitApproval(task.id, "browser_identity_create");
     assert(creating.permission === "browser.identity.create", `the creation asks under ${creating.permission}`);
-    assert(proxyIsRedacted(creating.arguments.proxy, password), `the approval shows the proxy as ${JSON.stringify(creating.arguments.proxy)}`);
+    assert(proxyIsMasked(creating.arguments.proxy), `the approval shows the proxy as ${JSON.stringify(creating.arguments.proxy)}`);
     assert(!(await identities(dotId)).some((i) => i.name === "disposable"), "the identity exists while its creation waits for approval");
     await approve(creating.id);
     const deleting = await waitApproval(task.id, "browser_identity_delete");
     assert(deleting.permission === "browser.identity.delete", `the delete asks under ${deleting.permission}`);
     const target = (await identities(dotId)).find((i) => i.name === "disposable");
     assert(target && deleting.arguments.identity_id === target.id, `the delete approval names ${JSON.stringify(deleting.arguments)}, the identity is ${target?.id}`);
-    assert(proxyIsRedacted(target.proxy, password), `the host lists the proxy as ${JSON.stringify(target.proxy)}`);
+    assert(target.hasProxy === true && !("proxy" in target), `the host lists the identity as ${JSON.stringify(target)}: it should say only that it has a proxy`);
     assert((await guestExec(dotId, `test -d ${BROWSERS}/${target.id} && echo there`)).stdout.trim() === "there", "the identity's directory is gone while its delete waits for approval");
     await approve(deleting.id);
     await waitTask(task.id);
@@ -975,7 +975,7 @@ async function main(): Promise<void> {
     assert(rowsHolding(shown, Buffer.from(password, "utf8")) === 0, "the proxy password is in an approval, an identity record or a call event");
     await assertJournalClean(password.slice(0, 7), "the proxy password");
     await configure();
-    return `create approval shows the proxy redacted, delete approval names ${target.id}; both approved; the password is in no approval, identity record or call event, nor in the guest journal`;
+    return `create approval shows the proxy masked, delete approval names ${target.id}; both approved; the password is in no approval, identity record or call event, nor in the guest journal`;
   });
 
   await step("j", "stop, start, and everything is still there; the browser is closed on the way down and launched again", async () => {

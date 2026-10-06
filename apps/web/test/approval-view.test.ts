@@ -158,10 +158,10 @@ describe("the body of the card, by tool", () => {
     ]);
   });
 
-  it("masks the password of an identity's proxy, and keeps an argument it has no word for under its own name", () => {
+  it("hides an identity's proxy whole, and keeps an argument it has no word for under its own name", () => {
     expect(argumentFacts({ name: "shop", proxy: "http://user:secret@proxy.example:8080" })).toEqual([
       { label: "Name", value: "shop" },
-      { label: "Proxy", value: "http://user:***@proxy.example:8080" },
+      { label: "Proxy", value: "***" },
     ]);
     expect(argumentFacts({ max_output_chars: 100, flag: true, nothing: null, empty: "" })).toEqual([
       { label: "Max output chars", value: "100" },
@@ -211,7 +211,8 @@ describe("the raw arguments", () => {
   it("never carry the password of a proxy, whatever reached the page", () => {
     const { text } = boundedJson({ name: "shop", proxy: "http://user:hunter2@proxy.example:8080" });
     expect(text).not.toContain("hunter2");
-    expect(text).toContain("http://user:***@proxy.example:8080");
+    expect(text).not.toContain("proxy.example");
+    expect(text).toContain('"proxy": "***"');
   });
 });
 

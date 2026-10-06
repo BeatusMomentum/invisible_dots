@@ -5,7 +5,7 @@
  * The arguments come from the engine's table (`tool_arguments` in nanobot/dots/permissions.py): all of a call's
  * arguments, bar a secret the table redacts. So what is shown here is what the call will do, not a summary of it.
  */
-import { GUEST_PATHS, isPermission, PERMISSION_INFO, redactProxy, type Permission, type PermissionInfo, type PermissionRisk, type ToolInfo } from "@invisible-dots/shared/browser";
+import { GUEST_PATHS, isPermission, PERMISSION_INFO, type Permission, type PermissionInfo, type PermissionRisk, type ToolInfo } from "@invisible-dots/shared/browser";
 import { additionDiff, replacementDiff, type DiffLine } from "./diff";
 import { toolLabel } from "./events/tool-labels";
 import { formatDate } from "./format";
@@ -189,7 +189,7 @@ export function argumentFacts(args: Record<string, unknown>): Fact[] {
   }
   if (typeof args.x === "number" && typeof args.y === "number") facts.push({ label: "Position", value: `${args.x}, ${args.y}` });
   const proxy = text(args.proxy);
-  if (proxy !== "") facts.push({ label: "Proxy", value: redactProxy(proxy) });
+  if (proxy !== "") facts.push({ label: "Proxy", value: "***" });
   const schedule = schedulePhrase(args);
   if (schedule !== "") facts.push({ label: "Schedule", value: schedule });
   for (const [key, value] of Object.entries(args)) {
@@ -236,12 +236,11 @@ export function approvalBody(ask: ApprovalAsk): ApprovalBody {
 
 /**
  * The raw arguments, as JSON, cut when they are enormous (a file's whole content can be); `cut` says it was. The engine
- * already replaces the password of a proxy before it sends the request; it is replaced here too, by the same rule
- * (`redactProxy` of the shared package, the engine's own), so that no path to this page can show one (the password is
- * the Dot's, never the host UI's).
+ * already shows an identity's proxy as `***`; it is hidden here too, so that no path to this page can show one (a
+ * proxy is a secret of the Dot, never the host UI's).
  */
 export function boundedJson(args: Record<string, unknown>, max = 20_000): { text: string; cut: boolean } {
-  const shown = typeof args.proxy === "string" ? { ...args, proxy: redactProxy(args.proxy) } : args;
+  const shown = typeof args.proxy === "string" ? { ...args, proxy: "***" } : args;
   const full = JSON.stringify(shown, null, 2);
   return full.length <= max ? { text: full, cut: false } : { text: full.slice(0, max), cut: true };
 }

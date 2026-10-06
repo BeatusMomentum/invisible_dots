@@ -282,7 +282,7 @@ QEMU on the same disk would corrupt it.
   the browser layer is told to use as it is and which an image built before it
   was part of the contract lacks. A runtime disk (the one that carries the lock)
   refuses to start on such an image with "build a new golden image", instead of
-  a launch that fails behind a proxy or takes the VM's own timezone.
+  a launch that fails or takes the VM's own timezone.
 - Every input of the golden image is pinned by content: the cloud image, Node
   and `uv` by SHA-256 (`virtualization/images/base.json`,
   `guest/image-builder/pins.json`), the GeoIP database as one release of
@@ -577,7 +577,8 @@ STOPPED and started again when it has work (section 9.5).
 ```
 
 The home of an identity's MCP server is not under `/home/dot` because the
-server saves who its browser is, the proxy with its password included, in
+server saves who its browser is, and for an identity that has a proxy of its
+own that proxy with its password included, in
 `<home>/sessions/<identity_id>.json` on every `browser_open`: a file under
 `/home/dot` would be served by the host's file routes (section 9.6), which read
 `/home/dot` and nothing else, and dot-agentd's TCP listener refuses a path
@@ -759,8 +760,8 @@ command detached into another session outlives it.
 | `POST /events` | `InboundEvent` | `202 { accepted: true }` |
 | `GET /events/stream` | `?after=<seq>` | `text/event-stream`, one SSE message per outbound event, `id: <seq>` |
 | `GET /state` | | `{ state, current_task_id, pending_approval }`; `pending_approval` is the id of the oldest approval the engine waits on, or `null` |
-| `GET /browser-identities` | | `{ identities: BrowserIdentity[] }`, oldest first, the proxy with its password replaced |
-| `POST /browser-identities` | `{ name, proxy? }` | `201 BrowserIdentity`; `400 invalid` (name, or a proxy that is not an `http`, `https`, `socks4` or `socks5` URL with a host and a written port: the browser's server refuses one without a port at a launch, with a message that prints the URL and its password), `409 limit` (`max_identities`) |
+| `GET /browser-identities` | | `{ identities: BrowserIdentity[] }`, oldest first; an identity says `hasProxy` and nothing of its proxy, which is a secret |
+| `POST /browser-identities` | `{ name, proxy? }`; `proxy` is an explicit option: absent, `null` or blank means none, the normal case | `201 BrowserIdentity`; `400 invalid` (a name that is empty or too long, or a proxy that is not a string; a proxy that is a string is kept as written and judged by invisible-playwright-mcp when the identity launches), `409 limit` (`max_identities`) |
 | `GET /browser-identities/:id` | | `BrowserIdentity`; `404 not_found` |
 | `DELETE /browser-identities/:id` | | `204` after the identity's browser is closed and its directory removed; `404 not_found` |
 | `GET /browser-identities/:id/frame` | | `200 image/jpeg` (`Cache-Control: no-store`), one frame of the identity's window, taken with the server's `browser_watch`; `404 not_found`; `409 not_open` when the identity is closed; `503 busy` when a call of the Dot held the identity for longer than 5 seconds; `502 frame_failed` (the server has no page to show, or sent a frame that is not a JPEG: the engine is the one owner of that rule, the host passes the bytes on as `image/jpeg`) or `crashed` |
@@ -919,9 +920,9 @@ The `arguments` of `approval.requested` are what the person decides on, and
 they leave the guest: a tool argument that carries a secret is redacted there
 by the engine, at the point where the event is built, and nowhere after it: the
 host, the web UI and a chat prompt (section 9.8) show the arguments as the event
-has them. The engine redacts the proxy URL of `browser_identity_create`, whose
-password is replaced by the rule of `redactProxy()` in
-`packages/shared/src/identity-rules.ts`, and the user and password of the URL of
+has them. The engine masks the proxy of `browser_identity_create` (shown as `***`: a
+proxy is a secret, and neither its user, its password nor its host is shown), and
+removes the user and password of the URL of
 `browser_navigate` (the query and the fragment stay: see section 6). The pending
 call in the Dot's database keeps the full arguments, so the approved call is made
 as asked.
@@ -975,6 +976,25 @@ ignores anything else.
 
 ## 6. Browser identities
 
+- Where a browser exits to the internet. An identity has no proxy of its own
+  unless the person gave it one: that is the default everywhere (the API, the
+  SDK, the CLI and the engine accept a create with a name only, and nothing
+  asks for or fills in a proxy). The browser then inherits the egress of the
+  Dot's VM: through the VM proxy when the Dot has one, directly otherwise (the
+  VM proxy is a per-Dot setting that is designed and not built yet, so today
+  the VM's egress is the host's own address). Its time zone, locale and
+  geography follow the exit the browser actually uses, which the browser layer
+  learns from the address-echo services at each launch. A per-identity proxy
+  stays an explicit option for one identity. It is one optional string, stored as
+  a secret and handed to `invisible-playwright-mcp` unchanged, in the setting the
+  library reads (`STEALTHFOX_PROXY`): the library owns what a proxy is (its
+  schemes, its host and port, the errors it raises for one it cannot use, at the
+  launch), and invisible_dots has no rule, parser or display form of its own for
+  it. What is invisible_dots's own is that the secret is shown nowhere (below);
+  when both a VM proxy and an identity proxy are set, the
+  identity's proxy is reached through the VM's tunnel, so the exit is the
+  identity proxy's. An identity proxy is not the way to give a browser a
+  location: a Dot that should appear somewhere gets that from its VM's egress.
 - An identity is a row of the engine's `dots_browser_identities` table (id,
   name, proxy, created, last used, archived) and a directory under
   `/home/dot/browsers/<identity_id>/`. Its id is a slug of its name plus a short
@@ -982,10 +1002,10 @@ ignores anything else.
   exist; the host never mirrors the list, it asks the guest. Whether an
   identity is open is never stored: it is derived from the live browser
   sessions of the running engine, so a file never claims an open browser for a
-  process that is gone. The proxy is stored as given, password included, in
+  process that is gone. An identity's proxy, when it has one, is stored as given, password included, in
   the engine's database (`dotengine`'s state directory, 0700, which the model
-  cannot read); everything shown to a model, a person, an event or a log has
-  the password replaced. The browser's own process is the one exception, by
+  cannot read); nothing of it is shown to a model, a person, an event or a log:
+  an identity says only that it has a proxy (`hasProxy`). The browser's own process is the one exception, by
   decision: it runs as `dot` with the proxy in its environment, so the `dot`
   user, and the model through `exec`, can read the proxy of an identity whose
   browser is open from that process's `/proc/<pid>/environ`. The server's
@@ -1011,7 +1031,8 @@ ignores anything else.
   server's documented settings: its home (`INVISIBLE_MCP_HOME=/var/lib/invisible-dots/mcp/<identity_id>`)
   and session id (`INVISIBLE_MCP_SESSION_ID=<identity_id>`), the identity's
   profile directory (`<identity>/profile`), headed mode, `DISPLAY=:0`, and the
-  identity's proxy when it has one, and two settings of the libraries it
+  identity's proxy only when it has one (otherwise no proxy variable is set at
+  all), and two settings of the libraries it
   uses: `STEALTHFOX_GEOIP_MMDB`, the image's pinned GeoIP file (section 3.3),
   and `INVISIBLE_CORE_AUTOFIX=off`, which stops `invisible_core` from
   reinstalling itself from the package index at a launch when its version
@@ -1023,8 +1044,8 @@ ignores anything else.
   on the Dot's desktop and shows up in its screenshots.
 - A launch also connects out, which no setting here turns off: to the
   address-echo services of the library (`api.ipify.org`, `icanhazip.com`,
-  `checkip.amazonaws.com`, through the identity's proxy when it has one) to learn
-  the exit address for the timezone and locale; to the library's launch counter
+  `checkip.amazonaws.com`, from the VM's egress, or through the identity's proxy
+  when it has one) to learn the exit address for the timezone and locale; to the library's launch counter
   (a download of a file of `feder-cr/firefox_antidetect_patch`'s releases,
   switched off only by a preference the MCP server gives no way to pass); and
   it probes the exit's capabilities and caches the answer in
@@ -1069,9 +1090,8 @@ ignores anything else.
   stored]`, and the engine adds the newest three images of a turn to each model
   request in one user message after the last tool message. A later turn
   replays the placeholder; the model takes another screenshot when it wants one.
-- Secrets in the arguments. The proxy password has no place in anything shown:
-  `approval.requested` carries `browser_identity_create`'s proxy with the
-  password replaced and `browser_navigate`'s URL without its user and password
+- Secrets in the arguments. The proxy has no place in anything shown:
+  `approval.requested` carries `browser_identity_create`'s proxy as `***` and `browser_navigate`'s URL without its user and password
   (the parked call keeps the real ones, so the approved call runs as asked), and
   no `target` of `tool.called` holds typed text; the `target` of a navigation
   also has the values of its query masked, because it is logged and not decided
@@ -1243,8 +1263,8 @@ does not know.
 | `memory_get` | `memory.read` | reads one memory note (offered only when `memory.enabled`) |
 | `cron` | `automations` | adds, lists and removes the Dot's own scheduled automations |
 | `computer_screenshot` | `computer.screenshot` | takes a screenshot of the Dot's whole desktop and shows it to the model (no arguments) |
-| `browser_identity_list` | `browser.identity.list` | lists the browser identities with their status (open or available), their proxy with its password replaced, and the two limits |
-| `browser_identity_create` | `browser.identity.create` | makes an identity, closed: `name`, `proxy?` (offered only when `managed_by_dot`) |
+| `browser_identity_list` | `browser.identity.list` | lists the browser identities with their status (open or available), whether each has a proxy of its own (and nothing of the proxy), and the two limits |
+| `browser_identity_create` | `browser.identity.create` | makes an identity, closed: `name`, `proxy?` (an explicit option that the model leaves out unless the person gave one; offered only when `managed_by_dot`) |
 | `browser_identity_delete` | `browser.identity.delete` | closes an identity and deletes it with its profile: `identity_id` (offered only when `managed_by_dot`) |
 | `browser_identity_launch` | `browser.identity.launch` | opens the browser of an identity, closing the least recently used one at `max_open`: `identity_id` |
 | `browser_identity_close` | `browser.identity.close` | closes the browser of an identity, keeping its profile: `identity_id` |
@@ -1541,7 +1561,7 @@ state.
   holds the offered ones, so a denied tool is not even seen, and the gate
   decides every call by the same table. The table also says which arguments
   of a call an `approval.requested` may carry (all of them, but for the proxy
-  password of `browser_identity_create`) and which tools exist only while the
+  of `browser_identity_create`) and which tools exist only while the
   Dot manages its browser identities itself (`browser.identities.managed_by_dot`).
   The engine has no MCP server of its own to configure: the one server it runs
   is `invisible-playwright-mcp`, and only through the `BrowserManager`, on a
@@ -1573,8 +1593,10 @@ state.
   when it happens, from the client's transport, so a process that dies while idle
   is closed at once, frees its slot of `max_open`, and the next action says
   `not_open`; a file never claims an open browser for a process that is gone. Text
-  a page tool returns, and its errors, have the proxy in its redacted form and its
-  password in none: the server splits the URL into a user and a decoded password, so
+  a page tool returns, and its errors, have a proxy that carries credentials hidden
+  (the whole URL as `[proxy]`, a piece of its credentials as `***`; `invisible-playwright-mcp`
+  quotes the URL it refuses in its own error and has nothing that hides a secret, so this
+  scrub is invisible_dots's own) and its password in no form: the server splits the URL into a user and a decoded password, so
   the password alone, as written, decoded or encoded again (`quote` with and without
   `safe=""`), the user with it, the Basic credentials of a header, and the URL and the
   password as a traceback or a JSON log line writes them (`repr`, JSON escapes) are hidden

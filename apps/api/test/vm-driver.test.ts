@@ -173,7 +173,7 @@ describe("VmManagerDriver over VmManager", () => {
     const identity = await client.createBrowserIdentity({ name: "Shop" });
     expect((await client.listBrowserIdentities()).identities.map((i) => i.id)).toEqual([identity.id]);
     expect((await client.getBrowserIdentity(identity.id)).name).toBe("Shop");
-    await expect(client.createBrowserIdentity({ name: "proxied", proxy: "ftp://example.com" })).rejects.toMatchObject({ status: 400, code: "invalid" });
+    await expect(client.createBrowserIdentity({ name: "proxied", proxy: 8080 as never })).rejects.toMatchObject({ status: 400, code: "invalid" });
     await client.putConfig({ ...guest!.config!, browser: { identities: { managed_by_dot: true, max_identities: 1, max_open: 1 } } } as never);
     await expect(client.createBrowserIdentity({ name: "second" })).rejects.toMatchObject({ status: 409, code: "limit" });
     await client.deleteBrowserIdentity(identity.id);

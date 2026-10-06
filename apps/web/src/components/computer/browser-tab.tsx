@@ -18,7 +18,7 @@ import { NewIdentityDialog } from "./new-identity-dialog";
 import { useBrowserActivity } from "./use-browser-activity";
 
 /**
- * The Dot's browsers: each identity as a card (open or closed, last used, the proxy with its password hidden, and
+ * The Dot's browsers: each identity as a card (open or closed, last used, whether it has a proxy of its own, and
  * whether the Dot is working in it this moment), the window of an open one live, and the means to create, close and
  * delete them. The Dot opens and drives its browsers itself; the person watches and keeps house.
  */

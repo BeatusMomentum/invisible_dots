@@ -139,7 +139,10 @@ async function handle(req: IncomingMessage, res: ServerResponse) {
     case `GET /api/dots/${dot.id}/browser-identities`:
       if (stopped) return send(res, 409, { error: "computer_stopped", message: "the computer of Dot fare-watch is STOPPED; start it first" });
       return send(res, 200, {
-        identities: [{ id: "shop-abc123", name: "Shop", createdAt: now, lastUsedAt: null, status: "available", profilePath: "/p" }],
+        identities: [
+          { id: "shop-abc123", name: "Shop", createdAt: now, lastUsedAt: null, status: "available", profilePath: "/p", hasProxy: false },
+          { id: "work-def456", name: "Work", createdAt: now, lastUsedAt: null, status: "available", profilePath: "/q", hasProxy: true },
+        ],
       });
     case "GET /api/approvals":
       return send(res, 200, {
@@ -353,7 +356,12 @@ describe("commands", () => {
       expect(requests.at(-1)?.path).toBe(`/api/dots/fare-watch/computer/${action}`);
     }
     expect((await cli(["computer", "fare-watch", "pause"])).code).toBe(EXIT.usage);
-    expect((await cli(["browser", "fare-watch", "identities"])).stdout).toContain("shop-abc123");
+    const listed = (await cli(["browser", "fare-watch", "identities"])).stdout;
+    expect(listed).toContain("shop-abc123");
+    // The identity has no proxy of its own, the normal case: the column says none instead of asking for one; one that has a
+    // proxy says only that.
+    expect(listed).toMatch(/shop-abc123\s+Shop\s+available\s+never\s+-\s*$/m);
+    expect(listed).toMatch(/work-def456\s+Work\s+available\s+never\s+yes\s*$/m);
     stopped = true;
     const conflict = await cli(["browser", "fare-watch", "identities"]);
     expect(conflict.code).toBe(EXIT.failed);

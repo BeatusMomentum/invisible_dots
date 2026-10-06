@@ -30,7 +30,7 @@ afterEach(() => {
 const requested = (pattern: RegExp) => plane.requests.filter((r) => pattern.test(r));
 
 function identity(id: string, name: string, status: BrowserIdentity["status"]): BrowserIdentity {
-  return { id, name, status, createdAt: "2026-01-01T00:00:00Z", lastUsedAt: null, profilePath: `/home/dot/.browser/${id}` };
+  return { id, name, status, createdAt: "2026-01-01T00:00:00Z", lastUsedAt: null, profilePath: `/home/dot/.browser/${id}`, hasProxy: false };
 }
 
 async function renderPanel(computerState: string | null = "RUNNING") {

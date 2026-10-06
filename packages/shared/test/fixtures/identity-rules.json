@@ -1,5 +1,5 @@
 {
-  "//": "One behavior of the browser identity rules (architecture section 6) in two languages: packages/shared/test/identity-rules.test.ts runs these cases against packages/shared/src/identity-rules.ts and ids.ts, invisible_engine_dots/tests/dots/test_identity_rules.py runs the same cases against nanobot/dots/identity_rules.py. A case changes here and in both implementations, or not at all. `input` of a check case is the request body: a key that is absent is `undefined`, a JSON null is null. `existing` and `max` default to 0 and 20. `ok.proxy` is absent when the request has no proxy.",
+  "//": "One behavior of the browser identity rules (architecture section 6) in two languages: packages/shared/test/identity-rules.test.ts runs these cases against packages/shared/src/identity-rules.ts and ids.ts, invisible_engine_dots/tests/dots/test_identity_rules.py runs the same cases against nanobot/dots/identity_rules.py. A case changes here and in both implementations, or not at all. `input` of a check case is the request body: a key that is absent is `undefined`, a JSON null is null. `existing` and `max` default to 0 and 20. `ok.proxy` is absent when the request has no proxy. A proxy is judged by no rule here: a string that is not blank is kept as written and invisible-playwright-mcp reads it at launch.",
   "name_max": 80,
   "id_max": 64,
   "check_request": [
@@ -176,51 +176,18 @@
       }
     },
     {
-      "case": "an http proxy",
-      "input": {
-        "name": "Work",
-        "proxy": "http://proxy.example.com:8080"
-      },
-      "ok": {
-        "name": "Work",
-        "proxy": "http://proxy.example.com:8080"
-      }
-    },
-    {
-      "case": "an https proxy",
-      "input": {
-        "name": "Work",
-        "proxy": "https://proxy.example.com:8443"
-      },
-      "ok": {
-        "name": "Work",
-        "proxy": "https://proxy.example.com:8443"
-      }
-    },
-    {
-      "case": "a socks4 proxy",
-      "input": {
-        "name": "Work",
-        "proxy": "socks4://10.0.0.1:1080"
-      },
-      "ok": {
-        "name": "Work",
-        "proxy": "socks4://10.0.0.1:1080"
-      }
-    },
-    {
-      "case": "a socks5 proxy with credentials, trimmed, returned as given",
+      "case": "a proxy with credentials is kept exactly as written, spaces and all",
       "input": {
         "name": "Work",
         "proxy": "  socks5://user:s3cret@10.0.0.1:1080  "
       },
       "ok": {
         "name": "Work",
-        "proxy": "socks5://user:s3cret@10.0.0.1:1080"
+        "proxy": "  socks5://user:s3cret@10.0.0.1:1080  "
       }
     },
     {
-      "case": "the scheme is case insensitive and the value is returned as given",
+      "case": "a proxy is kept as written, whatever its case",
       "input": {
         "name": "Work",
         "proxy": "HTTP://Proxy.Example.COM:8080"
@@ -228,17 +195,6 @@
       "ok": {
         "name": "Work",
         "proxy": "HTTP://Proxy.Example.COM:8080"
-      }
-    },
-    {
-      "case": "an IPv6 host",
-      "input": {
-        "name": "Work",
-        "proxy": "http://[::1]:3128"
-      },
-      "ok": {
-        "name": "Work",
-        "proxy": "http://[::1]:3128"
       }
     },
     {
@@ -253,6 +209,17 @@
       }
     },
     {
+      "case": "a proxy that is not a URL is kept: the browser's server judges it when the identity launches",
+      "input": {
+        "name": "Work",
+        "proxy": "not a url"
+      },
+      "ok": {
+        "name": "Work",
+        "proxy": "not a url"
+      }
+    },
+    {
       "case": "a proxy that is a number",
       "input": {
         "name": "Work",
@@ -264,14 +231,13 @@
       }
     },
     {
-      "case": "a proxy that is null",
+      "case": "a proxy that is null means none, as an absent one does",
       "input": {
         "name": "Work",
         "proxy": null
       },
-      "error": {
-        "code": "invalid",
-        "message": "proxy must be a string"
+      "ok": {
+        "name": "Work"
       }
     },
     {
@@ -283,182 +249,6 @@
       "error": {
         "code": "invalid",
         "message": "proxy must be a string"
-      }
-    },
-    {
-      "case": "a proxy that is not a URL",
-      "input": {
-        "name": "Work",
-        "proxy": "not a url"
-      },
-      "error": {
-        "code": "invalid",
-        "message": "proxy must be a URL such as http://user:pass@host:port or socks5://host:port"
-      }
-    },
-    {
-      "case": "an http proxy with no host",
-      "input": {
-        "name": "Work",
-        "proxy": "http://"
-      },
-      "error": {
-        "code": "invalid",
-        "message": "proxy must be a URL such as http://user:pass@host:port or socks5://host:port"
-      }
-    },
-    {
-      "case": "a port that is not a number",
-      "input": {
-        "name": "Work",
-        "proxy": "http://host:abc"
-      },
-      "error": {
-        "code": "invalid",
-        "message": "proxy must be a URL such as http://user:pass@host:port or socks5://host:port"
-      }
-    },
-    {
-      "case": "a port above 65535",
-      "input": {
-        "name": "Work",
-        "proxy": "http://host:70000"
-      },
-      "error": {
-        "code": "invalid",
-        "message": "proxy must be a URL such as http://user:pass@host:port or socks5://host:port"
-      }
-    },
-    {
-      "case": "a scheme that is not a proxy scheme",
-      "input": {
-        "name": "Work",
-        "proxy": "ftp://host"
-      },
-      "error": {
-        "code": "invalid",
-        "message": "proxy must use http, https, socks4 or socks5 and name a host; got \"ftp://host\""
-      }
-    },
-    {
-      "case": "the message never carries the password",
-      "input": {
-        "name": "Work",
-        "proxy": "ftp://user:hunter2@host"
-      },
-      "error": {
-        "code": "invalid",
-        "message": "proxy must use http, https, socks4 or socks5 and name a host; got \"ftp://user:***@host\""
-      }
-    },
-    {
-      "case": "host and port with no scheme read as a scheme",
-      "input": {
-        "name": "Work",
-        "proxy": "localhost:8080"
-      },
-      "error": {
-        "code": "invalid",
-        "message": "proxy must use http, https, socks4 or socks5 and name a host; got \"localhost:8080\""
-      }
-    },
-    {
-      "case": "a proxy without a port is refused: the browser's server would refuse it at launch, printing the password",
-      "input": {
-        "name": "Work",
-        "proxy": "https://proxy.example.com"
-      },
-      "error": {
-        "code": "invalid",
-        "message": "proxy must name a port, as in http://host:8080; got \"https://proxy.example.com\""
-      }
-    },
-    {
-      "case": "a port-less proxy with credentials is refused and the message never carries the password",
-      "input": {
-        "name": "Work",
-        "proxy": "http://user:hunter2@host"
-      },
-      "error": {
-        "code": "invalid",
-        "message": "proxy must name a port, as in http://host:8080; got \"http://user:***@host\""
-      }
-    },
-    {
-      "case": "a socks5 proxy without a port is refused",
-      "input": {
-        "name": "Work",
-        "proxy": "socks5://10.0.0.1"
-      },
-      "error": {
-        "code": "invalid",
-        "message": "proxy must name a port, as in http://host:8080; got \"socks5://10.0.0.1\""
-      }
-    },
-    {
-      "case": "an empty port is no port",
-      "input": {
-        "name": "Work",
-        "proxy": "http://host:"
-      },
-      "error": {
-        "code": "invalid",
-        "message": "proxy must name a port, as in http://host:8080; got \"http://host\""
-      }
-    },
-    {
-      "case": "an IPv6 host without a port is refused",
-      "input": {
-        "name": "Work",
-        "proxy": "http://[::1]"
-      },
-      "error": {
-        "code": "invalid",
-        "message": "proxy must name a port, as in http://host:8080; got \"http://[::1]\""
-      }
-    },
-    {
-      "case": "a path after a port-less host does not count as a port",
-      "input": {
-        "name": "Work",
-        "proxy": "http://host/a:8080"
-      },
-      "error": {
-        "code": "invalid",
-        "message": "proxy must name a port, as in http://host:8080; got \"http://host/a:8080\""
-      }
-    },
-    {
-      "case": "the default port of the scheme, written, is a port",
-      "input": {
-        "name": "Work",
-        "proxy": "http://host:80"
-      },
-      "ok": {
-        "name": "Work",
-        "proxy": "http://host:80"
-      }
-    },
-    {
-      "case": "the default https port, written, is a port",
-      "input": {
-        "name": "Work",
-        "proxy": "https://u:p@host:443"
-      },
-      "ok": {
-        "name": "Work",
-        "proxy": "https://u:p@host:443"
-      }
-    },
-    {
-      "case": "a port after a password that holds a colon",
-      "input": {
-        "name": "Work",
-        "proxy": "http://user:a:b@host:8080"
-      },
-      "ok": {
-        "name": "Work",
-        "proxy": "http://user:a:b@host:8080"
       }
     },
     {
@@ -521,94 +311,17 @@
       "max": 20
     },
     {
-      "case": "the proxy is checked before the limit",
+      "case": "a proxy that is not a string is refused before the limit",
       "input": {
         "name": "Work",
-        "proxy": "not a url"
-      },
-      "error": {
-        "code": "invalid",
-        "message": "proxy must be a URL such as http://user:pass@host:port or socks5://host:port"
+        "proxy": 7
       },
       "existing": 20,
-      "max": 20
-    }
-  ],
-  "redact_proxy": [
-    {
-      "case": "a password is replaced",
-      "input": "http://user:secret@host:8080",
-      "expect": "http://user:***@host:8080"
-    },
-    {
-      "case": "a trailing slash is dropped",
-      "input": "http://user:secret@host:8080/",
-      "expect": "http://user:***@host:8080"
-    },
-    {
-      "case": "no password, nothing replaced",
-      "input": "http://user@host:8080",
-      "expect": "http://user@host:8080"
-    },
-    {
-      "case": "no credentials",
-      "input": "http://host:8080",
-      "expect": "http://host:8080"
-    },
-    {
-      "case": "a socks5 proxy",
-      "input": "socks5://u:p@host:1080",
-      "expect": "socks5://u:***@host:1080"
-    },
-    {
-      "case": "an encoded password",
-      "input": "http://user:p%40ss@host",
-      "expect": "http://user:***@host"
-    },
-    {
-      "case": "an @ in the password",
-      "input": "http://user:p@ss@host:8080",
-      "expect": "http://user:***@host:8080"
-    },
-    {
-      "case": "an empty user name",
-      "input": "http://:secret@host",
-      "expect": "http://:***@host"
-    },
-    {
-      "case": "the default port is dropped",
-      "input": "http://user:secret@host:80",
-      "expect": "http://user:***@host"
-    },
-    {
-      "case": "the default https port, host lower-cased, path kept without its last slash",
-      "input": "https://user:secret@Host.Example:443/path/",
-      "expect": "https://user:***@host.example/path"
-    },
-    {
-      "case": "a query is kept",
-      "input": "http://user:secret@host:8080/a?token=1",
-      "expect": "http://user:***@host:8080/a?token=1"
-    },
-    {
-      "case": "an IPv6 host",
-      "input": "http://u:p@[::1]:3128",
-      "expect": "http://u:***@[::1]:3128"
-    },
-    {
-      "case": "not a URL",
-      "input": "not a url",
-      "expect": "<unparseable proxy>"
-    },
-    {
-      "case": "the empty string",
-      "input": "",
-      "expect": "<unparseable proxy>"
-    },
-    {
-      "case": "a bad port",
-      "input": "http://host:abc",
-      "expect": "<unparseable proxy>"
+      "max": 20,
+      "error": {
+        "code": "invalid",
+        "message": "proxy must be a string"
+      }
     }
   ],
   "slugify": [

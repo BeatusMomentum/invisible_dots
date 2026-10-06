@@ -211,7 +211,7 @@ every other command). It is described in docs/architecture.md, section 8.8.
   `MCPServerConfig.stderr_filter` (nanobot/agent/tools/mcp_stderr.py): a stdio server whose
   config sets it gets a pipe for its stderr, which a thread reads, passes through the
   filter line by line and writes to the engine's stderr, instead of inheriting the
-  engine's stderr; the BrowserManager sets it to hide the proxy password. The filter
+  engine's stderr; the BrowserManager sets it to hide the credentials of a proxy. The filter
   (`StderrFilter`) carries the length of the longest text it finds, and a line that is
   cut keeps that many characters behind, so no password is too long to straddle a cut.
   The one server is `invisible-playwright-mcp`, started by the `BrowserManager`

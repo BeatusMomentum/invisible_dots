@@ -22,7 +22,6 @@ from nanobot.dots.identity_rules import (
     check_identity_request,
     is_valid_identity_id,
     new_identity_id,
-    redact_proxy,
     slugify,
 )
 
@@ -39,7 +38,6 @@ def test_the_fixture_holds_cases_for_every_rule() -> None:
     checks = CASES["check_request"]
     assert len(checks) > 30
     assert {case["error"]["code"] for case in checks if "error" in case} == {"invalid", "limit"}
-    assert len(CASES["redact_proxy"]) > 10
 
 
 @pytest.mark.parametrize("case", CASES["check_request"], ids=lambda case: case["case"])
@@ -53,11 +51,6 @@ def test_check_identity_request(case: dict[str, Any]) -> None:
         check_identity_request(case["input"], existing, maximum)
     assert {"code": caught.value.code, "message": caught.value.message} == case["error"]
     assert str(caught.value) == case["error"]["message"]
-
-
-@pytest.mark.parametrize("case", CASES["redact_proxy"], ids=lambda case: case["case"])
-def test_redact_proxy(case: dict[str, str]) -> None:
-    assert redact_proxy(case["input"]) == case["expect"]
 
 
 @pytest.mark.parametrize("case", CASES["slugify"], ids=lambda case: case["case"])

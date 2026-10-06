@@ -59,7 +59,6 @@ from nanobot.dots.identity_rules import (
     check_identity_request,
     is_valid_identity_id,
     new_identity_id,
-    redact_proxy,
 )
 from nanobot.dots.protocol import BROWSER_ENV, BROWSERS_DIR, GEOIP_DATABASE, GUEST_DISPLAY, MCP_HOMES_DIR
 from nanobot.dots.store import BrowserIdentityRow, DotStore
@@ -133,7 +132,7 @@ class BrowserIdentityError(Exception):
 
 @dataclass(frozen=True)
 class BrowserIdentity:
-    """An identity as callers see it. The proxy is the redacted form: the password never leaves the manager."""
+    """An identity as callers see it. Whether it has a proxy of its own is all that leaves the manager of it."""
 
     id: str
     name: str
@@ -141,7 +140,7 @@ class BrowserIdentity:
     created_at: int
     last_used_at: int | None
     profile_path: str
-    proxy: str | None
+    has_proxy: bool
 
 
 class _Session:
@@ -287,11 +286,12 @@ class BrowserManager:
     # ------------------------------------------------------------------
 
     async def create(self, name: str, proxy: str | None = None) -> BrowserIdentity:
-        """Make an identity: its directories on the computer, its row and `browser.identity.created`."""
+        """Make an identity: its directories on the computer, its row and `browser.identity.created`.
+
+        `proxy` is an explicit option, off by default: with none the identity's browser inherits the VM's egress.
+        """
         async with self._create_lock:
-            body: dict[str, object] = {"name": name}
-            if proxy is not None:
-                body["proxy"] = proxy
+            body: dict[str, object] = {"name": name, "proxy": proxy}
             count = self._store.read(dots_store.count_identities)
             try:
                 request = check_identity_request(body, count, self._max_identities)
@@ -309,7 +309,7 @@ class BrowserManager:
                 )
 
             self._store.write(record)
-            where = f" with proxy {redact_proxy(request.proxy)}" if request.proxy else ""
+            where = " with a proxy of its own" if request.proxy else ""
             logger.info("browser identity {} created ({}){}", identity_id, request.name, where)
             return self._view(self._require(identity_id))
 
@@ -512,7 +512,7 @@ class BrowserManager:
             created_at=row.created_at,
             last_used_at=row.last_used_at,
             profile_path=posixpath.join(self._browsers_dir, row.id, "profile"),
-            proxy=redact_proxy(row.proxy) if row.proxy else None,
+            has_proxy=bool(row.proxy),
         )
 
     def _require(self, identity_id: str) -> BrowserIdentityRow:
@@ -538,9 +538,9 @@ class BrowserManager:
     def _paths(self, identity_id: str) -> tuple[str, str, str]:
         """The identity's directory, its profile, and the home of its MCP server.
 
-        The home is not under the identity's directory, nor anywhere under /home/dot: the server saves the
-        proxy of its browser, password included, in a session file under its home, and the host's file routes
-        read /home/dot and nothing else.
+        The home is not under the identity's directory, nor anywhere under /home/dot: for an identity that has a
+        proxy of its own the server saves it, password included, in a session file under its home, and the host's
+        file routes read /home/dot and nothing else.
         """
         root = posixpath.join(self._browsers_dir, identity_id)
         return root, posixpath.join(root, "profile"), posixpath.join(self._mcp_homes_dir, identity_id)
@@ -578,8 +578,10 @@ class BrowserManager:
             # from a hashed lock, and a drift has to fail loudly instead of bringing in files nobody checked.
             BROWSER_ENV["CORE_AUTOFIX"]: "off",
         }
-        # The proxy carries a password: it goes to the relay by its environment, never by its command line,
-        # which every user of the VM can read in /proc.
+        # An identity has no proxy unless the person gave it one: then no proxy variable is set at all and the
+        # browser inherits the egress of the VM, whatever the engine's own environment holds. A proxy carries a
+        # password: it goes to the relay by its environment, never by its command line, which every user of the
+        # VM can read in /proc.
         secrets = {BROWSER_ENV["PROXY"]: proxy} if proxy else {}
         argv = self._computer.relay_argv([self._mcp_command], cwd=root, env=environment, secrets=secrets)
         return MCPServerConfig(
@@ -843,56 +845,78 @@ def _escaped_forms(text: str) -> set[str]:
     }
 
 
-@functools.lru_cache(maxsize=64)
-def _proxy_scrubber(proxy: str) -> tuple[re.Pattern[str], dict[str, str]]:
-    """What to find in a text of the server and what to put there, for one stored proxy URL.
+# What replaces a proxy that carries credentials, and what replaces one of its secrets, in a text of the server. Neither
+# shows a user.
+_PROXY_HIDDEN = "[proxy]"
+_SECRET_HIDDEN = "***"
 
-    The server splits the URL into a server, a user and a password (percent-decoded), so what it or Firefox
-    repeats is not only the URL as stored: it is the password alone, as written, decoded or encoded again
-    (`quote` with `safe=""` and with its default `safe="/"`), the user and the password together, or the Basic
+
+@functools.lru_cache(maxsize=64)
+def _proxy_scrubber(proxy: str) -> tuple[re.Pattern[str], dict[str, str]] | None:
+    """What to find in a text of the server and what to put there, for one stored proxy; None when it holds no secret.
+
+    invisible-playwright-mcp reads the proxy itself and, when it refuses one, quotes it whole in its error
+    (`proxy URL 'socks5://user:pass@host' has no port`); it has nothing that hides a secret in what it says,
+    so this is ours. A proxy with no user and no password has no secret: what the library says of it (its
+    scheme, host and port, which it prints as its own safe form) is left as it is.
+
+    The library splits the URL into a server, a user and a password (percent-decoded), so what it or Firefox
+    repeats is not only the URL as stored but the password alone, as written, decoded or encoded again (`quote`
+    with `safe=""` and with its default `safe="/"`), the user and the password together, or the Basic
     credentials of a `Proxy-Authorization` header. A traceback also writes the URL and the password escaped
-    (`repr`, JSON). All of them are found in one pass, longest first, so that the text put in place of one
-    is never searched again. A password too short to be told from the text around it is hidden too: the page
-    text it garbles is the price of a password that leaves nowhere.
+    (`repr`, JSON). All of them are found in one pass, longest first, so that the text put in place of one is
+    never searched again. A password too short to be told from the text around it is hidden too: the page text
+    it garbles is the price of a password that leaves nowhere. The credentials are cut out of the URL by the
+    standard library's `urlsplit`, the way the library cuts them; a URL that cannot be cut is hidden whole.
     """
-    redacted = redact_proxy(proxy)
-    replacements = {found: redacted for found in _escaped_forms(proxy)}
     try:
         parts = urlsplit(proxy.strip())
         written_user, written_password = parts.username or "", parts.password or ""
     except ValueError:
-        written_user = written_password = ""  # the server's own parse fails too: only the URL can be named
-    if written_password:
-        user, password = unquote(written_user), unquote(written_password)
-        users = {written_user, user, quote(user, safe="")}
-        passwords = {form for form in (written_password, password, quote(password, safe=""), quote(password)) if form}
-        for form in users:
-            for secret in passwords:
-                replacements[f"{form}:{secret}"] = f"{form}:***"
-        replacements[base64.b64encode(f"{user}:{password}".encode()).decode()] = "***"
+        written_user = written_password = ""
+        unreadable = True
+    else:
+        unreadable = False
+    if not (written_user or written_password or unreadable):
+        return None
+    replacements = {found: _PROXY_HIDDEN for url in {proxy, proxy.strip()} for found in _escaped_forms(url)}
+    user, password = unquote(written_user), unquote(written_password)
+    users = {written_user, user, quote(user, safe="")}
+    passwords = {form for form in (written_password, password, quote(password, safe=""), quote(password)) if form}
+    for form in users:
         for secret in passwords:
-            for found in _escaped_forms(secret):
-                replacements.setdefault(found, "***")
+            replacements[f"{form}:{secret}"] = _SECRET_HIDDEN
+    if password:
+        replacements[base64.b64encode(f"{user}:{password}".encode()).decode()] = _SECRET_HIDDEN
+    for secret in passwords:
+        for found in _escaped_forms(secret):
+            replacements.setdefault(found, _SECRET_HIDDEN)
     pattern = re.compile("|".join(re.escape(found) for found in sorted(replacements, key=len, reverse=True)))
     return pattern, replacements
 
 
 def _proxy_stderr_filter(proxy: str) -> StderrFilter:
-    """The scrub of one proxy as a filter for the server's stderr, with the length of the longest text it finds."""
-    _, replacements = _proxy_scrubber(proxy)
-    return StderrFilter(lambda text: _scrub(text, proxy), max(len(found) for found in replacements))
+    """The scrub of one proxy as a filter for the server's stderr, with the length of the longest text it finds.
+
+    A proxy with no secret in it gets the filter too, which then changes nothing: the stderr of a server that was
+    handed a proxy always takes the one road, through the pipe.
+    """
+    scrubber = _proxy_scrubber(proxy)
+    longest = max((len(found) for found in scrubber[1]), default=1) if scrubber else 1
+    return StderrFilter(lambda text: _scrub(text, proxy), longest)
 
 
 def _scrub(text: str, proxy: str | None) -> str:
-    """A text of the server with the proxy it may echo, and its password in any form, redacted."""
-    if not proxy:
+    """A text of the server with the proxy it may echo, and its credentials in any form, hidden."""
+    scrubber = _proxy_scrubber(proxy) if proxy else None
+    if scrubber is None:
         return text
-    pattern, replacements = _proxy_scrubber(proxy)
+    pattern, replacements = scrubber
     return pattern.sub(lambda found: replacements[found.group(0)], text)
 
 
 def _scrub_result(result: Any, proxy: str | None) -> Any:
-    """What a call of the server returned, with the proxy in its redacted form wherever it is named.
+    """What a call of the server returned, with the proxy hidden wherever it is named.
 
     This is the one place that answers of the server enter the engine, so a tool result, an error and a
     frame all leave it free of the password, and so does everything the caller writes to the transcript.

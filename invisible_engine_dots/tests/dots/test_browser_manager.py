@@ -121,11 +121,11 @@ async def test_creates_the_directories_and_the_row_and_follows_them_through_laun
     assert (root / "profile").is_dir() and env.mcp_home(identity.id).is_dir()
     assert not (root / "mcp").exists()
     assert not (root / "metadata.json").exists()
-    assert (identity.name, identity.status, identity.last_used_at, identity.proxy) == (
+    assert (identity.name, identity.status, identity.last_used_at, identity.has_proxy) == (
         "Shopping Account",
         "available",
         None,
-        None,
+        False,
     )
     assert identity.profile_path == str(env.browsers / identity.id / "profile")
 
@@ -150,16 +150,12 @@ async def test_open_is_never_stored_so_another_manager_on_the_same_database_sees
     assert after_restart.open_count == 0
 
 
-async def test_refuses_an_empty_name_a_bad_proxy_and_more_than_max_identities(env: Env) -> None:
+async def test_refuses_an_empty_name_and_more_than_max_identities(env: Env) -> None:
     manager = env.manager(max_identities=2)
 
     with pytest.raises(BrowserIdentityError, match="non-empty name") as empty:
         await manager.create("   ")
     assert empty.value.code == "invalid"
-    with pytest.raises(BrowserIdentityError, match="http, https, socks4 or socks5"):
-        await manager.create("a", "ftp://host:21")
-    with pytest.raises(BrowserIdentityError, match="must be a URL"):
-        await manager.create("a", "not a url")
     await manager.create("one")
     await manager.create("two")
     with pytest.raises(BrowserIdentityError, match="max_identities 2") as limit:
@@ -169,15 +165,28 @@ async def test_refuses_an_empty_name_a_bad_proxy_and_more_than_max_identities(en
     assert len(list((env.browsers).iterdir())) == 2
 
 
-async def test_the_proxy_is_kept_for_the_launch_and_shown_only_redacted(env: Env) -> None:
+async def test_the_proxy_is_kept_as_given_for_the_launch_and_shown_to_no_one(env: Env) -> None:
     manager = env.manager()
     identity = await manager.create("proxied", "http://user:pw@proxy.test:8080")
 
-    assert identity.proxy == "http://user:***@proxy.test:8080"
+    assert identity.has_proxy
     stored = env.store.read(lambda conn: dots_store.get_identity(conn, identity.id))
     assert stored is not None and stored.proxy == "http://user:pw@proxy.test:8080"
-    assert "pw" not in str(env.events())
+    assert not any(text in repr(identity) + str(env.events()) for text in ("pw", "user", "proxy.test"))
     assert manager.list_identities() == [identity]
+
+
+@pytest.mark.parametrize("proxy", ["not a url", "ftp://host:21", "http://host", "  socks5://user:s3cr3t-pw@host:1080  "])
+async def test_a_proxy_is_not_judged_by_the_manager_and_reaches_the_server_as_written(env: Env, proxy: str) -> None:
+    # invisible-playwright-mcp owns the reading of a proxy (its scheme, host and port, its errors): the manager
+    # keeps what it is given and hands it over unchanged, at the launch.
+    manager = env.manager()
+    identity = await manager.create("as written", proxy)
+
+    await manager.launch(identity.id)
+
+    [start] = [entry for entry in env.record(identity.id) if entry["kind"] == "start"]
+    assert start["env"][BROWSER_ENV["PROXY"]] == proxy
 
 
 async def test_delete_closes_the_session_removes_the_directory_and_the_row(env: Env) -> None:
@@ -369,7 +378,7 @@ async def test_reports_a_browser_that_did_not_start_and_leaves_nothing_open(env:
     assert env.record(identity.id)[-1]["kind"] == "exit"
 
 
-async def test_what_the_server_says_of_the_proxy_reaches_the_caller_redacted(env: Env) -> None:
+async def test_what_the_server_says_of_the_proxy_reaches_the_caller_hidden(env: Env) -> None:
     manager = env.manager()
     identity = await manager.create("echo", "http://user:s3cret@proxy.test:8080")
     write_control(env.mcp_home(identity.id), fail_open=True, echo_proxy=True)
@@ -377,11 +386,11 @@ async def test_what_the_server_says_of_the_proxy_reaches_the_caller_redacted(env
     with pytest.raises(BrowserIdentityError) as failed:
         await manager.launch(identity.id)
 
-    assert "http://user:***@proxy.test:8080" in failed.value.message
-    assert "s3cret" not in failed.value.message
+    assert "[proxy]" in failed.value.message
+    assert "s3cret" not in failed.value.message and "proxy.test" not in failed.value.message
 
 
-async def test_what_a_page_tool_returns_of_the_proxy_is_redacted_in_results_and_in_errors(env: Env) -> None:
+async def test_what_a_page_tool_returns_of_the_proxy_is_hidden_in_results_and_in_errors(env: Env) -> None:
     manager = env.manager()
     identity = await manager.create("echo pages", "http://user:s3cret@proxy.test:8080")
     write_control(env.mcp_home(identity.id), echo_proxy_on_pages=True)
@@ -392,8 +401,8 @@ async def test_what_a_page_tool_returns_of_the_proxy_is_redacted_in_results_and_
 
     assert result_is_error(failed) and not result_is_error(read)
     for result in (failed, read):
-        assert "http://user:***@proxy.test:8080" in result_text(result)
-        assert "s3cret" not in result_text(result)
+        assert "[proxy]" in result_text(result)
+        assert "s3cret" not in result_text(result) and "proxy.test" not in result_text(result)
 
 
 # The credentials of the first proxy are written percent-encoded, with a lowercase escape, so the password as
@@ -449,8 +458,10 @@ async def test_the_password_leaves_in_no_form_a_server_can_repeat_it(env: Env, p
     read = await manager.call_tool(identity.id, "browser_read_text", {})
 
     assert result_is_error(failed) and not result_is_error(read)
+    # The whole URL is replaced by "[proxy]" and a piece of its credentials by "***".
+    hidden = "[proxy]" if form.startswith("url_") else "***"
     for said in (failed_launch.value.message, result_text(failed), result_text(read)):
-        assert "***" in said
+        assert hidden in said
         for secret in secrets:
             assert secret not in said
 
@@ -473,7 +484,7 @@ async def test_the_password_does_not_reach_the_journal_through_the_stderr_of_the
     # line, which the pump has to cut, so a password may be split across two reads.
     for name in proxy_forms(proxy):
         assert f"[{name}] " in journal
-    assert "[url] http://us%40er:***@proxy.test:8080" in journal
+    assert "[url] [proxy]" in journal
     assert journal.count("padding") >= 40_000
     assert "***" in journal
     for secret in secrets:
@@ -513,6 +524,23 @@ def test_a_password_with_a_backslash_and_both_quotes_is_hidden_in_a_traceback_an
         assert scrubbed != text
         for piece in ("w'rd", "w\\'rd", "w\\\\'rd", "ss\\\\w", "pa\\\"ss", "pa\"ss"):
             assert piece not in scrubbed, (piece, scrubbed)
+
+
+@pytest.mark.parametrize(
+    ("proxy", "said", "scrubbed"),
+    [
+        ("socks5://user@proxy.test:1080", "refused socks5://user@proxy.test:1080", "refused [proxy]"),
+        ("http://[::1", "refused http://[::1", "refused [proxy]"),
+        ("socks5://proxy.test:1080", "refused socks5://proxy.test:1080", "refused socks5://proxy.test:1080"),
+        ("not a url", "refused not a url", "refused not a url"),
+    ],
+    ids=["a user alone", "a URL that cannot be read", "no credentials", "not a URL"],
+)
+def test_a_proxy_is_hidden_when_it_carries_credentials_or_cannot_be_read_and_otherwise_left_alone(
+    proxy: str, said: str, scrubbed: str
+) -> None:
+    # What the library prints of a proxy with nothing secret in it (scheme, host, port) is its own safe form.
+    assert _scrub(said, proxy) == scrubbed
 
 
 def test_the_stderr_filter_of_a_proxy_knows_the_longest_text_it_hides() -> None:

@@ -72,7 +72,7 @@ export const PERMISSION_INFO: Record<Permission, PermissionInfo> = {
   },
   "browser.identity.create": {
     label: "Create browser identities",
-    description: "Create a new browser profile with its own cookies, logins and fingerprint, optionally behind a proxy.",
+    description: "Create a new browser profile with its own cookies, logins and fingerprint. It uses the Dot's own network exit unless a proxy is given for that one profile.",
     risk: "medium",
   },
   "browser.identity.delete": {

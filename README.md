@@ -47,8 +47,9 @@ What sets it apart:
   [invisible-playwright-mcp](https://github.com/feder-cr/invisible_playwright_mcp),
   on [invisible_playwright](https://github.com/feder-cr/invisible_playwright): a
   Firefox patched in C++, with the fingerprint set inside the engine instead of
-  injected into the page. Each identity keeps its own profile, fingerprint and
-  optional proxy.
+  injected into the page. Each identity keeps its own profile and fingerprint.
+  A browser has no proxy of its own by default: it uses the egress of the Dot's
+  VM, and a proxy for one identity is an explicit option.
 - **You set what it may do.** Every tool belongs to a permission, and each
   permission is allow, ask or deny. An ask waits for your answer, survives a
   restart, and lets that one call run once.
@@ -412,15 +413,16 @@ What protects you:
   holds that token. The API needs a bearer token; the web UI a session.
 - Files the host shows from a Dot come only from `/home/dot`, at most 16 MiB,
   never served as a type a browser would run.
-- Proxy passwords are replaced in everything shown: approvals, events, logs.
+- The proxy of an identity, when it has one, is a secret and is shown nowhere: an identity says only that it has one, an approval shows it as `***`, and it is in no event or log.
 - Secrets on the host (the OpenRouter key, channel tokens, WhatsApp keys) are
   stored encrypted; see [Configuration](#configuration).
 
 What it does not protect against, by design or not yet:
 
-- The model's commands run as `dot`, which can read an identity's proxy,
-  password included, from the open browser's environment and from the browser
-  server's own session file.
+- The model's commands run as `dot`, which can read the proxy of an identity
+  that was given one, password included, from the open browser's environment
+  and from the browser server's own session file. An identity with no proxy,
+  the default, has nothing to read.
 - The split between the three users is the guest operating system's. A flaw in
   the guest's kernel, or a way to become root that this repository does not
   know of, would end it. The VM is what stands between the Dot and your PC
@@ -445,8 +447,17 @@ What it does not protect against, by design or not yet:
 
 Each browser identity is a separate Firefox profile under
 `/home/dot/browsers/<id>/`, with its own cookies, storage, logins and
-fingerprint, the same fingerprint at every launch, and an optional proxy. It
-runs on the Dot's desktop, so it appears in screenshots of the desktop.
+fingerprint, the same fingerprint at every launch. It runs on the Dot's desktop, so it appears in screenshots of the desktop.
+
+A browser has no proxy of its own by default, and nothing asks for one: it
+inherits the egress of the Dot's VM (through the VM proxy when the Dot has one,
+directly otherwise; the VM proxy is designed and not built yet, so today that
+is your own address), and its time zone, language and location follow the exit
+it actually uses. A proxy for one identity is an explicit option, set when that
+identity is created, as the URL the browser library reads (`http://user:pass@host:port`
+or `socks5://host:port`); the library, not this project, judges it when the identity
+launches. When a VM proxy and an identity proxy are both set, the identity's proxy is
+reached through the VM's tunnel.
 
 In the web UI (Computer, Browser) you can create an identity with an optional
 proxy, close one, delete one (asked first), and watch the window of each open
@@ -574,7 +585,7 @@ flowchart LR
   ENG -->|"model requests"| OR["OpenRouter"]
   HUB <-->|"bot messages"| TG["Telegram"]
   HUB <-->|"linked device"| WA["WhatsApp, opt-in"]
-  BR -->|"pages, through the proxy if any"| SITES["The web"]
+  BR -->|"pages, from the VM's egress"| SITES["The web"]
 ```
 
 - **One process on the host.** `invisible-dots server` runs the API, the
@@ -687,8 +698,8 @@ it, and to whom:
   service fetches a link of a message on its own (an approval prompt shows
   the address a call is about to open); a person who taps a link opens it
   themselves.
-- **The sites a Dot visits** see its browser, through the identity's proxy
-  when it has one.
+- **The sites a Dot visits** see its browser, coming from the egress of the Dot's
+  VM, or from the identity's proxy when you gave that one identity a proxy.
 - **Publishers of what the images are made of** (Ubuntu, Node, uv, the Python
   packages, the browser engine, a GeoIP database on GitHub) serve the downloads
   when you build them; on Windows, `setup` downloads the official QEMU
@@ -699,8 +710,8 @@ it, and to whom:
   release, carrying no identifier.
 - **Address-echo services** (`api.ipify.org`, `icanhazip.com`,
   `checkip.amazonaws.com`) are asked by the browser library at each launch for
-  the public address the identity exits from, through its proxy when it has
-  one, to set the time zone and locale. The GeoIP lookup itself is local: the
+  the public address the browser exits from (the VM's egress, or through the
+  identity's proxy when it has one), to set the time zone and locale. The GeoIP lookup itself is local: the
   database is part of the golden image.
 - **The web UI** loads nothing from other sites: its pages, scripts and styles
   come from the server on your PC and its fonts are your system's. A link you

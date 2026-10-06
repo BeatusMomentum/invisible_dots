@@ -38,7 +38,7 @@ more); `exec` cuts earlier, at `EXEC_TARGET_MAX`.
 The table also says, per tool, which function states what of the arguments leaves the guest in an
 `approval.requested`, which a person decides on (on the web and, when the Dot's channel is on, in a chat
 that a third party carries): the arguments as they are, except that the proxy of `browser_identity_create`
-has its password replaced and the URL of `browser_navigate` has no user and password. The query of that URL
+is masked and the URL of `browser_navigate` has no user and password. The query of that URL
 stays: it is where a model that was talked into it puts what it sends out, so it is what the approver has to
 see. The text of `browser_type` and the value of `browser_select_option` stay for the same reason.
 """
@@ -48,8 +48,6 @@ from __future__ import annotations
 import re
 from collections.abc import Mapping
 from typing import Any
-
-from nanobot.dots.identity_rules import redact_proxy
 
 # The longest first line of a command shown, the ellipsis included.
 EXEC_TARGET_MAX = 120
@@ -404,9 +402,8 @@ def navigate_arguments(params: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def identity_create_arguments(params: Mapping[str, Any]) -> dict[str, Any]:
-    """The arguments of `browser_identity_create` with the password of its proxy replaced."""
+    """The arguments of `browser_identity_create` with its proxy masked: an approval says that one is given, not which."""
     shown = dict(params)
-    proxy = shown.get("proxy")
-    if isinstance(proxy, str) and proxy:
-        shown["proxy"] = redact_proxy(proxy)
+    if isinstance(shown.get("proxy"), str) and shown["proxy"]:
+        shown["proxy"] = "***"
     return shown

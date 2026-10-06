@@ -136,8 +136,9 @@ says what was changed.
 
 ## GeoIP data in the golden image
 
-The browser of a Dot looks up the time zone and the coordinates of its proxy's
-address in a GeoIP database when a launch leaves the time zone to `auto`. The
+The browser of a Dot looks up the time zone and the coordinates of the address
+it exits from (the Dot's VM egress, or its identity's proxy when it has one)
+in a GeoIP database when a launch leaves the time zone to `auto`. The
 golden image carries one release of it, at a fixed read-only path that the
 engine hands the browser through the library's own `STEALTHFOX_GEOIP_MMDB`, so a
 launch downloads nothing and asks for no newer release: the file `geoip-aio-all.mmdb.zip` of one release of

@@ -96,24 +96,19 @@ test("the browsers are made here, watched with the page the Dot is on, closed an
   // Nothing below reloads the page: this marker would not survive it.
   await page.evaluate(() => ((window as unknown as { marker: number }).marker = 7));
 
-  // A bad proxy is refused before the control plane hears of it.
+  // A proxy is optional and judged by the browser library, not here.
   await page.getByRole("button", { name: "New browser" }).click();
   const dialog = page.getByRole("dialog", { name: "New browser" });
   await dialog.getByRole("textbox", { name: "Name" }).fill("Shopping");
   // The field does not show what is typed: a proxy URL may hold a password.
   await expect(dialog.getByLabel(/^Proxy/)).toHaveAttribute("type", "password");
-  await dialog.getByLabel(/^Proxy/).fill("ftp://host");
-  await dialog.getByRole("button", { name: "Create browser" }).click();
-  await expect(dialog.getByRole("alert")).toContainText("http, https, socks4 or socks5");
-  expect(await harness.api.listIdentities(dot.id)).toEqual([]);
-
   await dialog.getByLabel(/^Proxy/).fill("http://user:hunter2@proxy.example:8080");
   await dialog.getByRole("button", { name: "Create browser" }).click();
   const card = page.getByRole("article", { name: "Shopping" });
   await expect(card).toBeVisible();
   await expect(card.getByText(/^Status: Closed$/)).toBeVisible();
-  // The password shows nowhere: not the form's field after it closes, nor the card.
-  await expect(card.getByText("http://user:***@proxy.example:8080")).toBeVisible();
+  // The proxy shows nowhere: the card says only that there is one.
+  await expect(card.getByText("proxy.example")).toHaveCount(0);
   await expect(page.getByText("hunter2")).toHaveCount(0);
 
   // The Dot opens it: its window shows, without a bar page until the Dot has opened one.

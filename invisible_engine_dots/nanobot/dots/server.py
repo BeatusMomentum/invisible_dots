@@ -83,18 +83,16 @@ def _identity_error(error: BrowserIdentityError) -> HttpError:
 
 
 def _identity_json(identity: BrowserIdentity) -> dict[str, object]:
-    """An identity as `BrowserIdentity` of packages/shared protocol.ts has it; the proxy is the redacted one."""
-    body: dict[str, object] = {
+    """An identity as `BrowserIdentity` of packages/shared protocol.ts has it; it says whether there is a proxy, not which."""
+    return {
         "id": identity.id,
         "name": identity.name,
         "createdAt": iso_from_ms(identity.created_at),
         "lastUsedAt": iso_from_ms(identity.last_used_at) if identity.last_used_at is not None else None,
         "status": identity.status,
         "profilePath": identity.profile_path,
+        "hasProxy": identity.has_proxy,
     }
-    if identity.proxy:
-        body["proxy"] = identity.proxy
-    return body
 
 
 async def _read_json(request: web.Request, max_bytes: int) -> object:

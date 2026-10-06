@@ -173,7 +173,7 @@ export interface Identity {
   status: string;
   profilePath: string;
   lastUsedAt: string | null;
-  proxy?: string;
+  hasProxy: boolean;
 }
 export interface Approval {
   id: string;
@@ -335,12 +335,9 @@ export function journalCleanHash(nonce: string): string {
   return sha256Text(`0 ${nonce}`);
 }
 
-/**
- * A proxy URL as a person or a model sees it after redaction must hold no password and say it was redacted: the
- * user and the host stay, the password becomes ***.
- */
-export function proxyIsRedacted(shown: unknown, password: string): boolean {
-  return typeof shown === "string" && shown.includes("***") && !shown.includes(password);
+/** A proxy as an approval shows it: masked whole, so that neither its password nor its user nor its host is there. */
+export function proxyIsMasked(shown: unknown): boolean {
+  return shown === "***";
 }
 
 // The Dot's token and the guest's proof (architecture section 5.1)

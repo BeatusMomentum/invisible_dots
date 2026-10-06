@@ -1,6 +1,5 @@
 "use client";
 
-import { redactProxy } from "@invisible-dots/shared/browser";
 import { EyeIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -110,7 +109,7 @@ export function IdentityCard({
           )}
         </dd>
         <dt>Proxy</dt>
-        <dd>{identity.proxy ? <code>{redactProxy(identity.proxy)}</code> : "none"}</dd>
+        <dd>{identity.hasProxy ? "yes" : "none"}</dd>
         <dt>Id</dt>
         <dd>
           <code>{identity.id}</code>

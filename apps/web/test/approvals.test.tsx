@@ -247,7 +247,7 @@ describe("what a tool's card shows", () => {
     expect(card.getByRole("group", { name: "New content of notes.md" }).querySelectorAll("[data-kind=add]")).toHaveLength(2);
   });
 
-  it("shows a browser call as its facts, an identity's proxy without its password, and an automation as its schedule", async () => {
+  it("shows a browser call as its facts, an identity's proxy hidden whole, and an automation as its schedule", async () => {
     const page = within(await renderCard(askOf("a1", { tool: "browser_navigate", permission: "browser.navigate", arguments: { identity_id: "shop-abc123", url: "https://example.com/cart" } })));
     expect(page.getByText("Address")).toBeTruthy();
     expect(page.getByText("https://example.com/cart")).toBeTruthy();
@@ -255,7 +255,7 @@ describe("what a tool's card shows", () => {
     plane.approvals = [];
 
     const identity = within(await renderCard(askOf("a2", { tool: "browser_identity_create", permission: "browser.identity.create", arguments: { name: "shop", proxy: "http://u:hunter2@proxy.example:8080" } })));
-    expect(identity.getByText("http://u:***@proxy.example:8080")).toBeTruthy();
+    expect(identity.getByText("***")).toBeTruthy();
     // The password is in no text of the card, the raw arguments included.
     expect(identity.getByText("Details").closest("details")?.textContent).not.toContain("hunter2");
     cleanup();

@@ -384,7 +384,7 @@ export class FakeGuest implements GuestApi {
       lastUsedAt: null,
       status: "available",
       profilePath: `/home/dot/browsers/${id}/profile`,
-      ...(checked.proxy ? { proxy: checked.proxy } : {}),
+      hasProxy: checked.proxy !== undefined,
     };
     this.identities.set(id, identity);
     this.emit("browser.identity.created", { identity_id: id, name: checked.name });

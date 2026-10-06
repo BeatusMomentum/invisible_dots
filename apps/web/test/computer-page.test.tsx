@@ -37,7 +37,7 @@ afterEach(() => {
 const requested = (pattern: RegExp) => plane.requests.filter((r) => pattern.test(r));
 
 function identity(id: string, name: string, status: BrowserIdentity["status"], change: Partial<BrowserIdentity> = {}): BrowserIdentity {
-  return { id, name, status, createdAt: "2026-01-01T00:00:00Z", lastUsedAt: null, profilePath: `/home/dot/browsers/${id}`, ...change };
+  return { id, name, status, createdAt: "2026-01-01T00:00:00Z", lastUsedAt: null, profilePath: `/home/dot/browsers/${id}`, hasProxy: false, ...change };
 }
 
 /** The Computer page as the Dot's layout puts it: inside the Dot's shell, with the view the address names. */
@@ -118,9 +118,9 @@ describe("the screen", () => {
 });
 
 describe("the browsers", () => {
-  it("lists them open first, with the state in words, the proxy without its password and the time of last use", async () => {
+  it("lists them open first, with the state in words, whether it has a proxy (never the proxy itself) and the time of last use", async () => {
     plane.identities = [
-      identity("closed-1", "Closed one", "available", { proxy: "http://user:hunter2@proxy.example:8080", lastUsedAt: secondsAgo(3 * 3600) }),
+      identity("closed-1", "Closed one", "available", { hasProxy: true, lastUsedAt: secondsAgo(3 * 3600) }),
       identity("open-1", "Open one", "open", { lastUsedAt: secondsAgo(120) }),
     ];
     await renderComputer({ view: "browser" });
@@ -137,8 +137,7 @@ describe("the browsers", () => {
     expect(within(closed).getByText("3h ago")).toBeTruthy();
     // The control plane replaces the password before it answers; whatever reached the page, it is replaced again by the
     // same rule (the shared package's, the engine's own), which keeps the user.
-    expect(within(closed).getByText("http://user:***@proxy.example:8080")).toBeTruthy();
-    expect(within(closed).queryByText(/hunter2/)).toBeNull();
+    expect(within(closed).getByText("yes")).toBeTruthy();
   });
 
   it("explains the limits, and the empty case", async () => {
@@ -280,16 +279,12 @@ describe("the browsers", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("refuses a bad name or proxy before asking the control plane, in the engine's words", async () => {
+  it("refuses a missing name before asking the control plane, in the engine's words (a proxy is judged by the browser library)", async () => {
     await renderComputer({ view: "browser" });
     await userEvent.click(await screen.findByRole("button", { name: "New browser" }));
     const dialog = await screen.findByRole("dialog", { name: "New browser" });
     await userEvent.click(within(dialog).getByRole("button", { name: "Create browser" }));
     expect((await within(dialog).findByRole("alert")).textContent).toBe("an identity needs a non-empty name");
-    await userEvent.type(within(dialog).getByRole("textbox", { name: "Name" }), "Shopping");
-    await userEvent.type(within(dialog).getByLabelText(/^Proxy/), "ftp://host");
-    await userEvent.click(within(dialog).getByRole("button", { name: "Create browser" }));
-    expect((await within(dialog).findByRole("alert")).textContent).toContain("http, https, socks4 or socks5");
     expect(plane.createdIdentities).toEqual([]);
   });
 

@@ -98,7 +98,8 @@ opens are served from the container. The browser needs the network twice, at the
 engine, the GeoIP file) and at a launch (the egress address, for the timezone). What it pins:
 
 - the model launches an identity and the real server answers that its browser is open; Firefox
-  and the server run as `dot`, the server with the profile, its home, a real window on `:0` and
+  and the server run as `dot`, the server with the profile, its home, a real window on `:0`, no
+  proxy variable (an identity with no proxy of its own, the default, inherits the VM's egress) and
   none of the engine's variables nor the key, and nothing of the browser runs as `dotengine`;
 - the model navigates to a page, reads its text and takes a snapshot, and what the page says
   reaches the model's request; a screenshot reaches the next request as an image part that is a
@@ -121,8 +122,11 @@ engine, the GeoIP file) and at a launch (the egress address, for the timezone). 
 - Firefox killed under a live server: the model's next page action is answered that the browser is gone and to
   launch the identity again, nothing is reopened (no Firefox), the identity is closed with its server ended, and
   a launch brings back the same person (the seed file is unchanged);
-- a proxy without a port is refused at create (400), and an identity with a proxy (a small authenticating
-  proxy of the smoke, `browser/proxy.py`, whose credentials come by its environment) launches: its egress
+- a proxy is not judged at create: one without a port, which the library cannot use, is kept as written (201, the
+  answer says only `hasProxy`), and the model's launch of it fails with the library's own refusal, which names the
+  missing port, with the password in nothing the model is sent; an identity with a proxy of its own, an
+  explicit option (a small authenticating proxy
+  of the smoke, `browser/proxy.py`, whose credentials come by its environment) launches: its egress
   lookup went through the proxy with the credentials. The real server saves the proxy with its password in
   its session file under its home (`/var/lib/invisible-dots/mcp/<id>/sessions/<id>.json`, outside
   `/home/dot`): no file under `/home/dot` holds the password, the TCP port refuses the file (`403

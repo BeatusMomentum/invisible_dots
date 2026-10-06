@@ -470,7 +470,7 @@ export class FakeControlPlane {
         const body = JSON.parse(String(init?.body)) as { name: string; proxy?: string };
         this.createdIdentities.push(body);
         if (this.failIdentityAction) return json({ error: this.failIdentityAction.error, message: this.failIdentityAction.message }, this.failIdentityAction.status);
-        const created: BrowserIdentity = { id: `${body.name}-x${this.createdIdentities.length}`, name: body.name, status: "available", createdAt: new Date().toISOString(), lastUsedAt: null, profilePath: "/home/dot/browsers/x", ...(body.proxy ? { proxy: body.proxy } : {}) };
+        const created: BrowserIdentity = { id: `${body.name}-x${this.createdIdentities.length}`, name: body.name, status: "available", createdAt: new Date().toISOString(), lastUsedAt: null, profilePath: "/home/dot/browsers/x", hasProxy: Boolean(body.proxy) };
         this.identities.push(created);
         this.push(record.id, "browser.identity.created", { identity_id: created.id, name: created.name });
         return json(created, 201);

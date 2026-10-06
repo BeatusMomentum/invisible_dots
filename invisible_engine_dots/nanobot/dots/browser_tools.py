@@ -272,7 +272,7 @@ def _identity_json(identity: BrowserIdentity) -> dict[str, Any]:
         "name": identity.name,
         "status": identity.status,
         "last_used_at": iso_from_ms(identity.last_used_at) if identity.last_used_at is not None else None,
-        "proxy": identity.proxy,
+        "has_proxy": identity.has_proxy,
     }
 
 
@@ -321,8 +321,10 @@ class BrowserIdentityCreateTool(_BrowserTool):
     @property
     def description(self) -> str:
         return (
-            "Create a browser identity: a new browser profile with its own cookies, logins and fingerprint, "
-            "optionally behind a proxy. It is created closed; open it with browser_identity_launch."
+            "Create a browser identity: a new browser profile with its own cookies, logins and fingerprint. "
+            "It is created closed; open it with browser_identity_launch. Give only a name: the browser then uses "
+            "this computer's own network exit, which is what it should do unless the person asked for this one "
+            "identity to go through a particular proxy."
         )
 
     @property
@@ -333,7 +335,10 @@ class BrowserIdentityCreateTool(_BrowserTool):
                 "name": _string("What the identity is for, for example shopping or research.", maxLength=80),
                 "proxy": {
                     "type": ["string", "null"],
-                    "description": "An http, https, socks4 or socks5 proxy URL, such as socks5://user:pass@host:1080.",
+                    "description": (
+                        "Leave this out. Only when the person gave you a proxy for this identity: its URL as they gave "
+                        "it, such as http://user:pass@host:port or socks5://host:port."
+                    ),
                 },
             },
             "required": ["name"],
