@@ -35,7 +35,8 @@ step "installing packages: $APT_PACKAGES"
 apt_wait=(-o DPkg::Lock::Timeout=600)
 apt-get "${apt_wait[@]}" update
 # shellcheck disable=SC2086
-apt-get "${apt_wait[@]}" install -y --no-install-recommends $APT_PACKAGES
+# unsafe-io: no fsync per package, the builder VM is thrown away if the build fails anyway.
+apt-get "${apt_wait[@]}" -o Dpkg::Options::=--force-unsafe-io install -y --no-install-recommends $APT_PACKAGES
 
 step "installing Node $NODE_VERSION"
 node_root=/usr/local/lib/nodejs

@@ -35,6 +35,14 @@
     "curl",
     "git",
     "xz-utils",
-    "nftables"
+    "nftables",
+    "jq",
+    "file",
+    "less",
+    "nano",
+    "rsync",
+    "zstd",
+    "lsof",
+    "iputils-ping"
   ]
 }

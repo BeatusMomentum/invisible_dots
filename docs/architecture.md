@@ -185,7 +185,7 @@ host (`%USERPROFILE%\.invisible-dots` on Windows):
   db/                                   the embedded PostgreSQL (PGlite) data directory
   server.lock                           { pid, host_uptime_s } of the one server running on this home
   images/
-    noble-server-cloudimg-amd64.img     pinned by SHA-256 (virtualization/images/base.json)
+    noble-minimal-cloudimg-amd64.img     pinned by SHA-256 (virtualization/images/base.json)
     golden-<version>.qcow2              immutable, read-only
     golden-<version>.json               its manifest: inputs, versions, SHA-256
     runtime-<version>.iso               our code: agent bundle + dot-agentd + units
