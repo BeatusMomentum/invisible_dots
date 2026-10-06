@@ -13,8 +13,9 @@ export default defineConfig({
   workers: 1,
   fullyParallel: false,
   forbidOnly: Boolean(process.env.CI),
-  // CI reads the JUnit report: .github/scripts/test-guard.mjs counts what ran against the floors file.
-  reporter: process.env.CI ? [["list"], ["junit", { outputFile: "playwright-report.xml" }]] : "list",
+  // The JUnit report is written on every run, not only under CI: .github/scripts/test-guard.mjs counts what ran
+  // against the floors file, and a local run must not leave an older report for it to read.
+  reporter: [["list"], ["junit", { outputFile: "playwright-report.xml" }]],
   use: { trace: "retain-on-failure" },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
 });

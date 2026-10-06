@@ -48,6 +48,19 @@ function manyDots(count: number) {
 }
 
 describe("Home", () => {
+  it("re-reads only the spend of the Dot that spent: a message of one Dot does not reload every card", async () => {
+    plane.dots = [dotRecord("d1", { name: "first" }), dotRecord("d2", { name: "second" }), dotRecord("d3", { name: "third" })];
+    await renderHome();
+    await waitFor(() => expect(plane.requests.filter((r) => r.endsWith("/usage"))).toHaveLength(3));
+    plane.requests.length = 0;
+    plane.spentUsd = 1.25;
+    act(() => plane.push("d2", "message.assistant", { text: "done" }));
+    await waitFor(() => expect(plane.requests).toContain("GET /api/dots/d2/usage"));
+    // Past the refresh delay (300 ms), so a card that was going to reload has done so.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect(plane.requests.filter((r) => r.endsWith("/usage"))).toEqual(["GET /api/dots/d2/usage"]);
+  });
+
   it("shows placeholders while the Dots load, and says so when they cannot", async () => {
     plane.dots = [dotRecord("d1")];
     let release: () => void = () => {};

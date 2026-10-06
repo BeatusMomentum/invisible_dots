@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { statePill } from "../../lib/agent";
 import { api } from "../../lib/api";
-import { taskRunning } from "../../lib/computer";
+import { allowedActions, taskRunning } from "../../lib/computer";
 import { cn } from "../../lib/utils";
 import type { Dot } from "../../lib/types";
 import { ErrorBox, useResource, type Resource } from "../ui";
@@ -18,6 +18,7 @@ import { useDotLive, useShell } from "../shell/attention";
 import { DotAvatar } from "../shell/DotAvatar";
 import { CostPill } from "./CostPill";
 import { PowerMenu } from "./PowerMenu";
+import { usePower } from "./use-power";
 import { TONE_CLASS } from "./tone";
 import { useDotRing } from "./use-ring";
 
@@ -39,6 +40,8 @@ export function DotHeader({ dotId, dot }: { dotId: string; dot: Resource<Dot> })
   // The computer's own last error explains an ERROR; asked only then.
   const computer = useResource(() => (hasError ? api.computer(dotId) : Promise.resolve(null)), `computer-error:${dotId}:${hasError}`);
 
+  const power = usePower({ dotId, taskRunning: record !== undefined && taskRunning(record.status), onDone: dot.reload });
+
   if (record === undefined) {
     return (
       <header className="space-y-3" aria-busy={dot.loading}>
@@ -53,6 +56,10 @@ export function DotHeader({ dotId, dot }: { dotId: string; dot: Resource<Dot> })
 
   const pill = statePill(record.status, live.agent);
   const goal = record.config?.goal ?? "";
+  // What the error banner offers besides the settings: a reboot, which the host only does to a computer that is up;
+  // with the computer itself in ERROR the way back is to start it again.
+  const allowed = allowedActions(record.computer_state ?? "");
+  const recovery = record.computer_state === null ? null : allowed.reboot ? "reboot" : allowed.start ? "start" : null;
   const pillClass = cn("rounded-full px-2.5 py-0.5 text-xs font-medium", TONE_CLASS[pill.tone], pill.working && "animate-pulse");
 
   return (
@@ -115,6 +122,11 @@ export function DotHeader({ dotId, dot }: { dotId: string; dot: Resource<Dot> })
             {record.error ? <p>{record.error}</p> : null}
             {computer.data?.last_error ? <p>Computer: {computer.data.last_error}</p> : null}
             <div className="mt-1 flex gap-2">
+              {recovery !== null ? (
+                <Button type="button" variant="outline" size="xs" disabled={power.pending} onClick={() => void power.act(recovery)}>
+                  {recovery === "reboot" ? "Reboot" : "Start the computer"}
+                </Button>
+              ) : null}
               <Button asChild variant="outline" size="xs">
                 <Link href={`/dots/${encodeURIComponent(dotId)}/settings`}>Open settings</Link>
               </Button>

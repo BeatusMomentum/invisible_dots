@@ -1,4 +1,4 @@
-// Derived from shadcn/ui apps/v4/registry/new-york-v4/ui/button.tsx at 0e3abd65, MIT; changed: the import of cn is relative; the destructive variant uses the destructive-foreground token and no dark override (the dark destructive fill is its own token).
+// Derived from shadcn/ui apps/v4/registry/new-york-v4/ui/button.tsx at 0e3abd65, MIT; changed: the import of cn is relative; the destructive variant uses the destructive-foreground token and no dark override (the dark destructive fill is its own token); the default variant hovers to the primary-hover token, not primary at 90 percent, which falls under AA.
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "../../lib/utils"
@@ -9,7 +9,7 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground hover:bg-primary/90",
+        default: "bg-primary text-primary-foreground hover:bg-primary-hover",
         destructive:
           "bg-destructive text-destructive-foreground hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40",
         outline:

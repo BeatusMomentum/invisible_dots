@@ -1,39 +1,14 @@
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { FAVICON_ATTENTION, FAVICON_PRIMARY } from "../src/lib/favicon";
+import { contrast as contrastOf, fromHex } from "./support/contrast";
+import { SRC, themes } from "./support/tokens";
 
-const APP = join(dirname(fileURLToPath(import.meta.url)), "../src/app");
-const tokensCss = readFileSync(join(APP, "tokens.css"), "utf8");
-const globalsCss = readFileSync(join(APP, "globals.css"), "utf8");
-
-/** The custom properties declared in one block of tokens.css. */
-function block(selector: string): Record<string, string> {
-  const start = tokensCss.indexOf(`${selector} {`);
-  if (start < 0) throw new Error(`no ${selector} block in tokens.css`);
-  const body = tokensCss.slice(start, tokensCss.indexOf("}", start));
-  return Object.fromEntries([...body.matchAll(/^\s*--([\w-]+):\s*([^;]+);/gm)].map((m) => [m[1]!, m[2]!.trim()]));
-}
-
-/** Not colors, so not themed: they are declared once, in the light block. */
-const SHARED = ["radius", "font-ui", "font-code"];
-const colorsOf = (tokens: Record<string, string>) => Object.fromEntries(Object.entries(tokens).filter(([key]) => !SHARED.includes(key)));
-const themes = { light: colorsOf(block(":root")), dark: colorsOf(block(':root[data-theme="dark"]')) };
-
-function luminance(hex: string): number {
-  const channel = (offset: number) => {
-    const value = parseInt(hex.slice(offset, offset + 2), 16) / 255;
-    return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
-}
+const globalsCss = readFileSync(join(SRC, "app/globals.css"), "utf8");
 
 /** WCAG 2.x contrast ratio of two #rrggbb colors. */
-function contrast(a: string, b: string): number {
-  const [light, dark] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-  return (light! + 0.05) / (dark! + 0.05);
-}
+const contrast = (a: string, b: string) => contrastOf(fromHex(a), fromHex(b));
 
 /** Text on its surface: WCAG AA for normal text. */
 const TEXT_PAIRS: [string, string][] = [
@@ -46,6 +21,7 @@ const TEXT_PAIRS: [string, string][] = [
   ["secondary-foreground", "secondary"],
   ["accent-foreground", "accent"],
   ["primary-foreground", "primary"],
+  ["primary-foreground", "primary-hover"],
   ["destructive-foreground", "destructive"],
   // Status text on its soft surface, and on the plain surfaces it also appears on.
   ["ok", "ok-soft"],

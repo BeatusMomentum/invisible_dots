@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { toast } from "sonner";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DotShell } from "../src/components/DotShell";
 import { DotEventScope, EventStreamProvider } from "../src/components/events";
@@ -23,6 +24,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  toast.dismiss();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -112,6 +114,32 @@ describe("the Dot header", () => {
     await waitFor(() => expect(within(banner).getByText("Computer: qemu exited with 1")).toBeTruthy());
     expect(within(banner).getByRole("link", { name: "Open settings" }).getAttribute("href")).toBe("/dots/d1/settings");
     expect(screen.getByRole("img", { name: "Needs attention: error" })).toBeTruthy();
+  });
+
+  it("offers a Reboot in the error banner when the computer is up", async () => {
+    plane.dots = [dotRecord("d1", { status: "ERROR", error: "the agent died", computer_state: "RUNNING" })];
+    await renderDot();
+    const banner = (await screen.findByText("This Dot is in an error state")).closest('[data-slot="alert"]') as HTMLElement;
+    expect(within(banner).queryByRole("button", { name: "Start the computer" })).toBeNull();
+    await userEvent.click(within(banner).getByRole("button", { name: "Reboot" }));
+    await waitFor(() => expect(plane.requests).toContain("POST /api/dots/d1/computer/reboot"));
+  });
+
+  it("offers to start the computer instead when the computer itself is in error, as the host reboots only a running one", async () => {
+    plane.dots = [dotRecord("d1", { status: "ERROR", error: "the start failed", computer_state: "ERROR" })];
+    await renderDot();
+    const banner = (await screen.findByText("This Dot is in an error state")).closest('[data-slot="alert"]') as HTMLElement;
+    expect(within(banner).queryByRole("button", { name: "Reboot" })).toBeNull();
+    await userEvent.click(within(banner).getByRole("button", { name: "Start the computer" }));
+    await waitFor(() => expect(plane.requests).toContain("POST /api/dots/d1/computer/start"));
+  });
+
+  it("offers no power action in the banner of a Dot that has no computer", async () => {
+    plane.dots = [dotRecord("d1", { status: "ERROR", error: "never created", computer_state: null })];
+    await renderDot();
+    const banner = (await screen.findByText("This Dot is in an error state")).closest('[data-slot="alert"]') as HTMLElement;
+    expect(within(banner).queryByRole("button")).toBeNull();
+    expect(within(banner).getByRole("link", { name: "Open settings" })).toBeTruthy();
   });
 
   it("does not ask the computer for an error that is not there", async () => {

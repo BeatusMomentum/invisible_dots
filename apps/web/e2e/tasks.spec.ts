@@ -191,14 +191,18 @@ async function lookOf(page: import("@playwright/test").Page, selector: string) {
       });
       return 0.2126 * lr + 0.7152 * lg + 0.0722 * lb;
     };
-    // The surface under the element: the nearest ancestor that paints one.
-    let surface: [number, number, number, number] = rgba(getComputedStyle(document.body).backgroundColor);
+    // The surface under the text: the fills from the nearest opaque one down to the element's own, each painted over
+    // the one below (a button's `bg-input/30` is a fraction of a color, not a color).
+    const layers: Array<[number, number, number, number]> = [];
     for (let node: Element | null = element; node; node = node.parentElement) {
       const painted = rgba(getComputedStyle(node).backgroundColor);
-      if (painted[3] > 0.99) {
-        surface = painted;
-        break;
-      }
+      if (painted[3] > 0) layers.push(painted);
+      if (painted[3] > 0.99) break;
+    }
+    let surface: [number, number, number, number] = rgba(getComputedStyle(document.body).backgroundColor);
+    for (const layer of layers.reverse()) {
+      const [r, g, b, alpha] = layer;
+      surface = [0, 1, 2].map((i) => [r, g, b][i]! * alpha + surface[i]! * (1 - alpha)).concat(1) as [number, number, number, number];
     }
     const style = getComputedStyle(element);
     const [high, low] = [luminance(rgba(style.color)), luminance(surface)].sort((a, b) => b - a);

@@ -1,4 +1,4 @@
-import type { StoredEvent } from "@invisible-dots/shared/browser";
+import { MAX_EVENT_PAGE, type StoredEvent } from "@invisible-dots/shared/browser";
 import { describe, expect, it } from "vitest";
 import { isTaskEvent, loadTaskEvents, mergeTaskEvents, progressOf, storyOf, taskIdOf } from "../src/lib/task-events";
 
@@ -31,7 +31,7 @@ describe("which events can belong to a task", () => {
 describe("loadTaskEvents", () => {
   it("reads the log page by page to its end and keeps the events of tasks", async () => {
     const log: StoredEvent[] = [];
-    for (let i = 0; i < 2300; i++) log.push(i % 2 === 0 ? event("task.progress", { task_id: "t1", text: `p${i}` }) : event("agent.state", { state: "IDLE" }));
+    for (let i = 0; i < 2 * MAX_EVENT_PAGE + 300; i++) log.push(i % 2 === 0 ? event("task.progress", { task_id: "t1", text: `p${i}` }) : event("agent.state", { state: "IDLE" }));
     const asked: Array<{ after?: number; limit?: number }> = [];
     const client = {
       async events(_dot: string, options: { after?: number; limit?: number } = {}) {
@@ -40,16 +40,16 @@ describe("loadTaskEvents", () => {
       },
     };
     const read = await loadTaskEvents(client, "d1");
-    expect(read).toHaveLength(1150);
+    expect(read).toHaveLength(MAX_EVENT_PAGE + 150);
     expect(read.every((e) => e.type === "task.progress")).toBe(true);
-    // 1000, 1000, 300: the short page ends it.
+    // A full page, a full page, 300: the short page ends it.
     expect(asked).toHaveLength(3);
-    expect(asked.map((a) => a.limit)).toEqual([1000, 1000, 1000]);
-    expect(asked[1]!.after).toBe(log[999]!.id);
+    expect(asked.map((a) => a.limit)).toEqual([MAX_EVENT_PAGE, MAX_EVENT_PAGE, MAX_EVENT_PAGE]);
+    expect(asked[1]!.after).toBe(log[MAX_EVENT_PAGE - 1]!.id);
   });
 
   it("ends on a page that is exactly full only after asking once more", async () => {
-    const log = Array.from({ length: 1000 }, (_, i) => event("task.progress", { task_id: "t1", text: String(i) }));
+    const log = Array.from({ length: MAX_EVENT_PAGE }, (_, i) => event("task.progress", { task_id: "t1", text: String(i) }));
     let calls = 0;
     const client = {
       async events(_dot: string, options: { after?: number; limit?: number } = {}) {
@@ -57,11 +57,11 @@ describe("loadTaskEvents", () => {
         return log.filter((e) => e.id > (options.after ?? 0)).slice(0, options.limit);
       },
     };
-    expect(await loadTaskEvents(client, "d1")).toHaveLength(1000);
+    expect(await loadTaskEvents(client, "d1")).toHaveLength(MAX_EVENT_PAGE);
     expect(calls).toBe(2);
   });
 
-  it("lets a failure through and stops reading when told to", async () => {
+  it("lets a failure through", async () => {
     await expect(
       loadTaskEvents(
         {
@@ -72,18 +72,6 @@ describe("loadTaskEvents", () => {
         "d1",
       ),
     ).rejects.toThrow("the log is down");
-    const controller = new AbortController();
-    let calls = 0;
-    const full = Array.from({ length: 1000 }, (_, i) => event("task.progress", { task_id: "t1", text: String(i) }));
-    const client = {
-      async events() {
-        calls++;
-        controller.abort();
-        return full;
-      },
-    };
-    await loadTaskEvents(client, "d1", controller.signal);
-    expect(calls).toBe(1);
   });
 });
 

@@ -7,6 +7,13 @@ import { z } from "zod";
 import { AGENT_STATES, type AgentState, type EventSource, type VmState } from "./states.js";
 import { PERMISSIONS, type Permission } from "./tools.js";
 
+/**
+ * The most events one read of the event log returns (`GET /api/dots/:id/events?limit=`): the store clamps to it, the
+ * route refuses more, and a client that pages through the log asks for exactly this many, so a page shorter than it
+ * is the last one.
+ */
+export const MAX_EVENT_PAGE = 1000;
+
 export const INBOUND_EVENT_TYPES = ["user.message", "task.created", "approval.received", "system.event"] as const;
 export type InboundEventType = (typeof INBOUND_EVENT_TYPES)[number];
 

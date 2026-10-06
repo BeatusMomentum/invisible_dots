@@ -27,6 +27,8 @@
   /* The Dot's identity and the primary action. */
   --primary: #5b5bd6;
   --primary-foreground: #ffffff;
+  /* The fill of the primary action under the pointer: a deeper accent, so its text keeps AA (a fill at 90 percent of the accent over a light surface does not). */
+  --primary-hover: #4a4ac4;
 
   /* Status: saturated color is for status only. Each has a soft surface to sit on. */
   --ok: #19794a;
@@ -69,6 +71,7 @@
 
   --primary: #8b8cf0;
   --primary-foreground: #0f0f10;
+  --primary-hover: #a3a4f5;
 
   --ok: #5fd28f;
   --ok-soft: #12301f;

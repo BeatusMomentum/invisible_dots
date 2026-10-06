@@ -1,4 +1,4 @@
-// Derived from shadcn/ui apps/v4/registry/new-york-v4/ui/badge.tsx at 0e3abd65, MIT; changed: the import of cn is relative; the destructive variant uses the destructive-foreground token and no dark override.
+// Derived from shadcn/ui apps/v4/registry/new-york-v4/ui/badge.tsx at 0e3abd65, MIT; changed: the import of cn is relative; the destructive variant uses the destructive-foreground token and no dark override; the default variant hovers to the primary-hover token.
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
 import { cn } from "../../lib/utils"
@@ -9,7 +9,7 @@ const badgeVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground [a&]:hover:bg-primary/90",
+        default: "bg-primary text-primary-foreground [a&]:hover:bg-primary-hover",
         secondary:
           "bg-secondary text-secondary-foreground [a&]:hover:bg-secondary/90",
         destructive:

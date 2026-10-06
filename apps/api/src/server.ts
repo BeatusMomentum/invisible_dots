@@ -17,7 +17,7 @@ import type {
   TasksAnswer,
   UsageAnswer,
 } from "@invisible-dots/sdk/types";
-import { APPROVAL_STATUSES, type ApprovalStatus } from "@invisible-dots/shared";
+import { APPROVAL_STATUSES, MAX_EVENT_PAGE, type ApprovalStatus } from "@invisible-dots/shared";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 
 export const API_VERSION = "0.1.0";
@@ -259,7 +259,7 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     "/api/dots/:id/events",
     async (request): Promise<EventsAnswer> => {
       const after = intParam(request.query.after, "after");
-      const limit = intParam(request.query.limit, "limit", 1000);
+      const limit = intParam(request.query.limit, "limit", MAX_EVENT_PAGE);
       return { events: await scheduler.listEvents(request.params.id, after, limit) };
     },
   );

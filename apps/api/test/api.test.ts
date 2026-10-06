@@ -4,7 +4,7 @@ import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-
 import { Scheduler } from "@invisible-dots/scheduler";
 import { FakeDriver, ManualClock, waitFor, waitUntilSettledReady } from "@invisible-dots/scheduler/testing";
 import { ApiError, InvisibleDotsClient } from "@invisible-dots/sdk";
-import { OPENROUTER_KEY_RULE, type StoredEvent } from "@invisible-dots/shared";
+import { MAX_EVENT_PAGE, OPENROUTER_KEY_RULE, type StoredEvent } from "@invisible-dots/shared";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { buildServer, type FastifyInstance } from "../src/index.js";
 
@@ -155,7 +155,7 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     expect(events.find((e) => e.type === "task.completed")?.data).toMatchObject({ task_id: task.id });
     const after = events[1]!.id;
     expect((await api.events(dot.id, { after, limit: 2 })).map((e) => e.id)).toEqual(events.slice(2, 4).map((e) => e.id));
-    await expect(api.events(dot.id, { limit: 5000 })).rejects.toMatchObject({ status: 400 });
+    await expect(api.events(dot.id, { limit: MAX_EVENT_PAGE + 1 })).rejects.toMatchObject({ status: 400 });
     await expect(api.cancelTask(task.id)).rejects.toMatchObject({ status: 409, code: "task_finished" });
   });
 

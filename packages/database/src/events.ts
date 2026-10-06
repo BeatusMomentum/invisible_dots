@@ -1,4 +1,4 @@
-import { USAGE_EVENT_TYPES, type EventSource, type OutboundEvent, type StoredEvent } from "@invisible-dots/shared";
+import { MAX_EVENT_PAGE, USAGE_EVENT_TYPES, type EventSource, type OutboundEvent, type StoredEvent } from "@invisible-dots/shared";
 import { isoRequired, type Queryable } from "./rows.js";
 
 interface EventRow {
@@ -33,8 +33,6 @@ export interface EventQuery {
   /** At most this many, oldest first (default 500). */
   limit?: number;
 }
-
-export const MAX_EVENT_PAGE = 1000;
 
 /**
  * Key of the transaction-scoped advisory lock every event insert takes

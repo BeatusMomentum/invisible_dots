@@ -24,7 +24,7 @@ export function sectionOf(task: Pick<Task, "status" | "scheduled_at">, now: numb
 export interface TaskSections {
   running: Task[];
   scheduled: Task[];
-  /** In the order the dispatcher takes them: higher priority first, then the older. */
+  /** In the order the dispatcher takes them: higher priority first, then the older, then by id. */
   queue: Task[];
   /** The newest finished first. */
   history: Task[];
@@ -34,12 +34,21 @@ function time(value: string | null): number {
   return value === null ? 0 : new Date(value).getTime();
 }
 
+/**
+ * The order the dispatcher takes pending tasks in: `ORDER BY t.priority DESC, t.created_at, t.id` of `CLAIM_SQL`
+ * (packages/database/src/tasks.ts; test/task-view.test.ts reads that clause and fails if it changes), so "Next" names
+ * the task the dispatcher will take, ties included.
+ */
+function dispatchOrder(a: Task, b: Task): number {
+  return b.priority - a.priority || time(a.created_at) - time(b.created_at) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+
 export function groupTasks(tasks: readonly Task[], now: number): TaskSections {
   const sections: TaskSections = { running: [], scheduled: [], queue: [], history: [] };
   for (const task of tasks) sections[sectionOf(task, now)].push(task);
   sections.running.sort((a, b) => time(a.started_at ?? a.created_at) - time(b.started_at ?? b.created_at));
   sections.scheduled.sort((a, b) => time(a.scheduled_at) - time(b.scheduled_at) || b.priority - a.priority);
-  sections.queue.sort((a, b) => b.priority - a.priority || time(a.created_at) - time(b.created_at));
+  sections.queue.sort(dispatchOrder);
   sections.history.sort((a, b) => time(b.finished_at ?? b.created_at) - time(a.finished_at ?? a.created_at));
   return sections;
 }

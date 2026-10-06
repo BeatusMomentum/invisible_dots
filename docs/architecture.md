@@ -893,6 +893,11 @@ limits:
   max_cost_per_task_usd: 1.00          # USD of model spend of a task or a chat turn, 0.01..100; the last request may exceed it (section 8.2)
 ```
 
+The ranges and defaults of the numbers in that file (`computer.cpu`, `memory`,
+`disk`, the default `idle_timeout` and `limits.max_cost_per_task_usd`) are
+`CONFIG_BOUNDS` in `packages/shared`. The schema takes its numbers from it and
+so does the web client's form, so a slider can never offer what the API refuses.
+
 `models` has one role, `summary`, and no other: the roles are what the engine
 asks a model for, and a role it never asks for would be a setting that does
 nothing, so a config that names another is refused as `unknown model role
@@ -1576,6 +1581,11 @@ GET    /api/health
 openrouter_configured }`; the last field is whether a global OpenRouter key is
 stored, which `invisible-dots doctor` reports.
 
+`GET /api/dots/:id/events` returns at most `MAX_EVENT_PAGE` (1000, in
+`packages/shared`) events a call: the store clamps to it, the route refuses a
+larger `limit` with a 400, and a client that pages through the log asks for
+exactly that many, so a shorter page is the last one.
+
 `GET /api/dots/:id/usage` answers the model spend the Dot's guest reported, in
 USD, since `since` (the first event when omitted; a malformed `since` is a 400).
 The event log is its one source: it sums `spent_usd` over the events that end a
@@ -1637,14 +1647,37 @@ scoped to `.legacy`. The browser tests (`apps/web/e2e`, Playwright) start the
 real control plane in-process over the fake VM layer and the built web client
 against it (`e2e/harness.ts`), so a test drives what a Dot's computer does.
 
+Home (`/`) is a card per Dot: its avatar ring, name and goal, the state with the
+recorded reason beside an ERROR, the model, what it spent today, the approvals
+that wait, Open chat and the computer's power menu. Each card's spend pill is
+scoped to its own Dot, so a message of one Dot re-reads only that Dot's usage.
+Search appears above six Dots, and with no Dot the page invites the first. The
+card has no "last activity": no route returns the newest event yet.
+
+Create a Dot (`/new`) is a form in three steps (Identity, Brain, Computer and
+safety) with sliders inside `CONFIG_BOUNDS`, the idle timeout, the Careful,
+Balanced and Autonomous permission presets, the cost cap and the optional
+summary model; or the same config as YAML, where the form refuses to take back
+YAML that sets what it has no control for instead of dropping it. The shared
+config schema is the only judge: `lib/dot-form.ts` maps its issues onto the
+controls, and a name another Dot has is refused at once. A preflight panel shows
+what `GET /api/health` reports (the control plane, its database, the OpenRouter
+key). Submitting is `POST /api/dots`, and then the Dot's chat opens.
+
+The Dot header's error banner gives the reason and "Open settings", and one way
+back: Reboot while the computer is up (the host reboots only a running
+computer), or Start the computer when the computer itself is in ERROR. Both
+use the power menu's one action, with its confirm while a task runs.
+
 The Tasks page (`/dots/<id>/tasks`) shows a Dot's tasks in four sections:
 Running (the newest `task.progress` line of each task, what it has spent from
 the task row's `spent_usd`, how long it has run, Cancel after a question),
 Scheduled and Queue (in the order the dispatcher takes them: priority, then
-age), and History (filtered by how the task ended, twenty at a time). A task
+age, then id, which a test pins to the dispatcher's `ORDER BY`), and History (filtered by how the task ended, twenty at a time). A task
 has its own address, `/dots/<id>/tasks/<taskId>`, which opens a drawer over the
 list with its state, its result as markdown or the reason it failed, and its
-story. The story and the progress lines come from the Dot's event log, which
+story. The task route knows a task by its id alone, so a task of another Dot
+opened under this Dot's address is shown as missing. The story and the progress lines come from the Dot's event log, which
 the page reads from its start (`lib/event-log.ts` is the one function that
 pages through it, the route having no filter yet) only once a task is running
 or open, and then keeps current from the live stream. The newest progress line of a running task is also under the goal in

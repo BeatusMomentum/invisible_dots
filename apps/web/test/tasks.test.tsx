@@ -420,6 +420,18 @@ describe("the task drawer", () => {
     expect(within(drawer).getByRole("link", { name: "Back to the tasks" }).getAttribute("href")).toBe("/dots/d1/tasks");
   });
 
+  it("treats a task of another Dot as missing under this Dot's address, and shows nothing of it", async () => {
+    plane.dots = [dotRecord("d1", { name: "fares" }), dotRecord("d2", { name: "mailer" })];
+    plane.tasks = [taskRecord("theirs", { dot_id: "d2", description: "Their private errand", status: "COMPLETED", finished_at: minutesAgo(1), summary: "Their secret result" })];
+    await renderTasks("theirs");
+    const drawer = await screen.findByRole("dialog");
+    expect((await within(drawer).findByText("This task does not exist")).closest("[role=alert]")).toBeTruthy();
+    expect(within(drawer).getByRole("link", { name: "Back to the tasks" }).getAttribute("href")).toBe("/dots/d1/tasks");
+    expect(screen.queryByText("Their private errand")).toBeNull();
+    expect(screen.queryByText("Their secret result")).toBeNull();
+    expect(within(drawer).queryByRole("button", { name: /^Cancel/ })).toBeNull();
+  });
+
   it("says when the history cannot be read, and reads it again on request", async () => {
     plane.tasks = [taskRecord("t3", { description: "Quiet", status: "COMPLETED", finished_at: minutesAgo(1) })];
     plane.failEvents = 500;

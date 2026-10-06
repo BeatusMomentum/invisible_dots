@@ -8,6 +8,7 @@ import { isFinished, priorityLabel, workedSeconds } from "../../lib/task-view";
 import { api, ApiError } from "../../lib/api";
 import { useNow } from "../../lib/use-now";
 import { ErrorAlert } from "../ErrorAlert";
+import { useDot } from "../DotShell";
 import { useLiveRefresh } from "../events";
 import { Markdown } from "../markdown";
 import { useResource } from "../ui";
@@ -33,17 +34,21 @@ function Fact({ label, children }: { label: string; children: React.ReactNode })
 
 /**
  * One task, opened over the list at its own address: its state and numbers, its result or the reason it failed, and
- * its story from the Dot's event log. Closing it goes back to the list.
+ * its story from the Dot's event log. Closing it goes back to the list. The route that serves a task knows it by its id
+ * alone, so a task of another Dot is as good as missing here: this address is one Dot's.
  */
 export function TaskDrawer({ taskId }: { taskId: string }) {
   const { dotId, tasks, history } = useTasks();
   const router = useRouter();
   const task = useResource(() => api.getTask(taskId), `task:${taskId}`);
   useLiveRefresh(task.reload, TASK_EVENTS);
-  const record = task.data;
+  const { dot } = useDot();
+  // Shown only once the Dot's own id is known (the address may be its name), and only if the task is that Dot's.
+  const foreign = task.data !== undefined && dot.data !== undefined && task.data.dot_id !== dot.data.id;
+  const record = dot.data !== undefined && !foreign ? task.data : undefined;
   const now = useNow(1000, record !== undefined && !isFinished(record.status));
   const close = () => router.push(`/dots/${encodeURIComponent(dotId)}/tasks`);
-  const missing = task.error instanceof ApiError && task.error.status === 404;
+  const missing = foreign || (task.error instanceof ApiError && task.error.status === 404);
 
   return (
     <Sheet open onOpenChange={(open) => (open ? undefined : close())}>
@@ -65,9 +70,9 @@ export function TaskDrawer({ taskId }: { taskId: string }) {
               </AlertDescription>
             </Alert>
           ) : (
-            <ErrorAlert error={task.error} title="Could not load the task" />
+            <ErrorAlert error={task.error ?? dot.error} title="Could not load the task" />
           )}
-          {record === undefined && !task.error ? <Skeleton className="h-20 w-full" /> : null}
+          {record === undefined && !missing && !task.error && !dot.error ? <Skeleton className="h-20 w-full" /> : null}
 
           {record ? (
             <>

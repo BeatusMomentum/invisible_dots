@@ -1,15 +1,11 @@
 "use client";
 
 import { ChevronDownIcon, PlayIcon, RotateCwIcon, SquareIcon } from "lucide-react";
-import { useState } from "react";
-import { toast } from "sonner";
-import { api, computerAction, type ComputerAction } from "../../lib/api";
 import { allowedActions } from "../../lib/computer";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "../ui/dropdown-menu";
-
-const DOING: Record<ComputerAction, string> = { start: "Starting the computer", stop: "Stopping the computer", reboot: "Rebooting the computer" };
+import { usePower } from "./use-power";
 
 const STATE_DOT: Record<string, string> = {
   RUNNING: "bg-ok",
@@ -26,22 +22,8 @@ const STATE_DOT: Record<string, string> = {
  * task is running, since it would cut the task off.
  */
 export function PowerMenu({ dotId, computerState, taskRunning, onDone }: { dotId: string; computerState: string | null; taskRunning: boolean; onDone: () => void }) {
-  const [pending, setPending] = useState(false);
+  const { act, pending } = usePower({ dotId, taskRunning, onDone });
   const allowed = allowedActions(computerState ?? "");
-
-  async function act(action: ComputerAction) {
-    if (action !== "start" && taskRunning && !window.confirm(`A task is running. ${action === "stop" ? "Stop" : "Reboot"} the computer anyway?`)) return;
-    setPending(true);
-    try {
-      await computerAction(api, dotId, action);
-      toast.success(DOING[action]);
-      onDone();
-    } catch (failure) {
-      toast.error(failure instanceof Error ? failure.message : String(failure));
-    } finally {
-      setPending(false);
-    }
-  }
 
   if (computerState === null) {
     return (

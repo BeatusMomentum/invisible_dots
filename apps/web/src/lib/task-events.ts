@@ -24,8 +24,8 @@ export function isTaskEvent(event: Pick<StoredEvent, "type" | "data">): boolean 
 }
 
 /** Every event of the Dot's log that can belong to a task, oldest first (the route has no filter by task yet, see `readEventLog`). */
-export function loadTaskEvents(client: Pick<InvisibleDotsClient, "events">, dotId: string, signal?: AbortSignal): Promise<StoredEvent[]> {
-  return readEventLog(client, dotId, isTaskEvent, signal);
+export function loadTaskEvents(client: Pick<InvisibleDotsClient, "events">, dotId: string): Promise<StoredEvent[]> {
+  return readEventLog(client, dotId, isTaskEvent);
 }
 
 export function mergeTaskEvents(current: readonly StoredEvent[], incoming: readonly StoredEvent[]): StoredEvent[] {

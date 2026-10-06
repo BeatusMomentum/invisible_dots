@@ -3,7 +3,7 @@
  * sends, answered from memory, and `/api/stream` as a live SSE body the test pushes events into. `install()` puts
  * it behind the global `fetch`, which is where the web client's SDK looks.
  */
-import type { ApprovalRecord, BrowserIdentity, ComputerAnswer, DotConfig, DotSummary, StoredEvent } from "@invisible-dots/shared/browser";
+import { MAX_EVENT_PAGE, type ApprovalRecord, type BrowserIdentity, type ComputerAnswer, type DotConfig, type DotSummary, type StoredEvent } from "@invisible-dots/shared/browser";
 import type { TaskRecord } from "@invisible-dots/sdk";
 import { vi } from "vitest";
 
@@ -69,7 +69,7 @@ export class FakeControlPlane {
   /** Answer `POST /api/tasks/:id/cancel` with this error instead of cancelling. */
   failCancel: { status: number; error: string; message: string } | null = null;
   /** The most events one `GET .../events` page holds (the real route's is 1000). */
-  eventPage = 1000;
+  eventPage = MAX_EVENT_PAGE;
   /** Answer `GET .../events` with this status instead of the log. */
   failEvents: number | null = null;
   /** The text of every `POST /api/dots/:id/messages`, as the browser sent it. */

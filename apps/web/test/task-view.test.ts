@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { filterHistory, groupTasks, HISTORY_PAGE, isFinished, isRunning, priorityLabel, PRIORITIES, sectionOf, statusLabel, statusTone, workedSeconds } from "../src/lib/task-view";
 import type { Task } from "../src/lib/types";
@@ -45,6 +48,19 @@ describe("groupTasks", () => {
 
   it("queues in the order the dispatcher takes them: priority, then age", () => {
     expect(ids(sections.queue)).toEqual(["new-urgent", "old-normal", "new-normal", "old-low"]);
+  });
+
+  it("breaks a tie of priority and creation time by id, as the dispatcher does, whatever order the host listed them in", () => {
+    const at = iso(-40);
+    const tied = (order: string[]) => ids(groupTasks(order.map((id) => task(id, { created_at: at })), NOW).queue);
+    expect(tied(["c", "a", "b"])).toEqual(["a", "b", "c"]);
+    expect(tied(["a", "b", "c"])).toEqual(["a", "b", "c"]);
+  });
+
+  it("is pinned to the dispatcher's own ORDER BY: it fails when CLAIM_SQL changes and this order does not", () => {
+    const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../../packages/database/src/tasks.ts"), "utf8");
+    const claim = source.slice(source.indexOf("export const CLAIM_SQL"));
+    expect(/ORDER BY ([^\n]+)/.exec(claim)?.[1]).toBe("t.priority DESC, t.created_at, t.id");
   });
 
   it("orders the rest the way a person looks for them", () => {
