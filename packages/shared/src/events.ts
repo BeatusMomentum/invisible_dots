@@ -53,6 +53,16 @@ export type HostEventType = (typeof HOST_EVENT_TYPES)[number];
 /** Every type that can appear in the host event log. */
 export type EventType = OutboundEventType | HostEventType;
 
+/**
+ * Every type name a row of the host event log can carry: the guest's, the host's, and the person's own
+ * `user.message` (stored by the host, so it is neither). The filter of `GET /api/dots/:id/events?types=` takes these.
+ */
+export const STORED_EVENT_TYPES: readonly string[] = [...OUTBOUND_EVENT_TYPES, ...HOST_EVENT_TYPES, "user.message"];
+
+export function isStoredEventType(value: unknown): value is string {
+  return typeof value === "string" && STORED_EVENT_TYPES.includes(value);
+}
+
 /** The messaging channels the control plane can bridge a Dot to. */
 export const CHANNEL_KINDS = ["telegram", "whatsapp"] as const;
 export type ChannelKind = (typeof CHANNEL_KINDS)[number];

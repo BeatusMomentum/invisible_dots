@@ -1516,7 +1516,9 @@ GET    /api/approvals                ?status=pending|approved|rejected|expired
 POST   /api/approvals/:id/approve    body: { note? }
 POST   /api/approvals/:id/reject     body: { note? }
 
-GET    /api/dots/:id/events          ?after=<id>&limit=
+GET    /api/dots/:id/events          ?after=<id>&limit=&types=<a,b>&task_id=   `types` are event type names (an unknown one is a 400), `task_id` keeps the events whose `data.task_id` it is
+GET    /api/dots/:id/files/list      ?path=   { path, entries: [{ name, type, size, mtime }] }: a directory under /home/dot (home when omitted)
+GET    /api/dots/:id/files           ?path=   the bytes of a file under /home/dot, at most 16 MiB (413 `file_too_large`)
 GET    /api/dots/:id/usage           ?since=<ISO 8601 timestamp>   { dot_id, since, spent_usd }
 GET    /api/stream                   SSE: every event, ?dot_id= to filter
 PUT    /api/secrets/openrouter       body: { value, dot_id? }
@@ -1545,8 +1547,35 @@ reported an end (a cancelled task) is not in the
 total; the task's own `spent_usd` still shows what was heard of it. Like
 `/events`, it reads the history of a deleted Dot by id.
 
-Browser identity routes need the Dot's computer running: on a stopped Dot they
-answer `409 { error: "computer_stopped" }`.
+`GET /api/dots/:id/events` filters in the database: `types` is a comma-separated
+list of type names, `task_id` matches `data->>'task_id'` (the one place the
+contract puts the task, so the host's `task.created` and `task.cancelled` and
+the guest's `task.*`, `tool.called` and `approval.requested` of a task all
+match), and both combine with `after` and `limit`. A chat turn's events carry
+no task. Migration `0007_events_task.sql` adds the expression index the task
+filter reads. A type name no event has (`tool.calls`) is a 400, so a typo does not
+look like a quiet Dot.
+
+`GET /api/dots/:id/files/list` and `GET /api/dots/:id/files` read the Dot's
+computer through dot-agentd's `GET /v1/files/list` and `GET /v1/files`, and
+only under `/home/dot`: `path` is absolute, relative to `/home/dot` or `~`, and
+the control plane normalizes it (`checkHomePath` in `packages/shared`) so the
+guest always gets an absolute one; a path outside home, or with any `..` segment,
+is a `400 invalid_path` without a call to the guest. The check is lexical:
+dot-agentd runs as `dot`, so what a symbolic link inside home may lead to is what
+`dot` may read anyway. A read is one buffered answer of at most 16 MiB; a larger
+file is a `413 file_too_large` and the host stops reading it as soon as it passes
+the limit. The bytes are the Dot's own (a model wrote them, perhaps after reading
+hostile text) and the web server answers from the page's origin, so the type is
+never one a browser runs: images are served as `image/png`, `image/jpeg`,
+`image/gif` or `image/webp` inline, source and markup (`.md`, `.json`, `.html`,
+`.svg`, ...) as `text/plain` inline, everything else as a download, always with
+`nosniff`, `Content-Security-Policy: default-src 'none'; sandbox` and `no-store`
+(the web proxy passes those headers on). The guest's own refusals pass through
+with their code (`404 not_found`, `400 is_a_directory`, `400 not_a_directory`).
+
+Browser identity and file routes need the Dot's computer running: on a stopped
+Dot they answer `409 { error: "computer_stopped" }`.
 
 Errors are `{ error: <code>, message }` with a 4xx or 5xx status.
 

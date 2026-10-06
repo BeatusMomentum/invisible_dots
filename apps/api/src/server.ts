@@ -16,6 +16,7 @@ import type {
   DoctorAnswer,
   DotsAnswer,
   EventsAnswer,
+  FilesListAnswer,
   HealthResponse,
   IdentitiesAnswer,
   MessagesAnswer,
@@ -24,6 +25,7 @@ import type {
 } from "@invisible-dots/sdk/types";
 import { APPROVAL_STATUSES, CHANNEL_KINDS, type ApprovalStatus, type ChannelKind, type DoctorCheck } from "@invisible-dots/shared";
 import { doctorAnswer } from "@invisible-dots/vm-manager";
+import { serveFile } from "./file-types.js";
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 
 export const API_VERSION = "0.1.0";
@@ -345,14 +347,44 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     async (request): Promise<UsageAnswer> => scheduler.usage(request.params.id, sinceParam(request.query.since)),
   );
 
-  app.get<{ Params: Params; Querystring: { after?: string; limit?: string } }>(
+  app.get<{ Params: Params; Querystring: { after?: string; limit?: string; types?: unknown; task_id?: unknown } }>(
     "/api/dots/:id/events",
     async (request): Promise<EventsAnswer> => {
       const after = intParam(request.query.after, "after");
       const limit = intParam(request.query.limit, "limit", 1000);
-      return { events: await scheduler.listEvents(request.params.id, after, limit) };
+      const { types, task_id: taskId } = request.query;
+      if (types !== undefined && typeof types !== "string") throw bad("types must be one comma-separated list");
+      if (taskId !== undefined && typeof taskId !== "string") throw bad("task_id must be a single value");
+      return {
+        events: await scheduler.listEvents(request.params.id, {
+          after,
+          limit,
+          types: types?.split(",").map((type) => type.trim()).filter(Boolean),
+          taskId,
+        }),
+      };
     },
   );
+
+  // Files of the Dot's computer, under /home/dot, read-only; they need the computer running (409 computer_stopped).
+
+  app.get<{ Params: Params; Querystring: { path?: unknown } }>(
+    "/api/dots/:id/files/list",
+    async (request): Promise<FilesListAnswer> => scheduler.listFiles(request.params.id, request.query.path as string | undefined),
+  );
+
+  app.get<{ Params: Params; Querystring: { path?: unknown } }>("/api/dots/:id/files", async (request, reply) => {
+    const { path, content } = await scheduler.readFile(request.params.id, request.query.path);
+    const { contentType, disposition } = serveFile(path);
+    return reply
+      .code(200)
+      .header("content-type", contentType)
+      .header("content-disposition", disposition)
+      .header("x-content-type-options", "nosniff")
+      .header("content-security-policy", "default-src 'none'; sandbox")
+      .header("cache-control", "no-store")
+      .send(Buffer.from(content));
+  });
 
   app.get<{ Querystring: { dot_id?: string; after?: string } }>("/api/stream", async (request, reply) => {
     let dotId: string | undefined;

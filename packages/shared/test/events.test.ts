@@ -7,10 +7,12 @@ import {
   isHostEventType,
   isInboundEventType,
   isOutboundEventType,
+  isStoredEventType,
   OUTBOUND_EVENT_TYPES,
   parseInboundEvent,
   parseMessageOrigin,
   parseOutboundEvent,
+  STORED_EVENT_TYPES,
   TOOL_TARGET_MAX,
   USAGE_EVENT_TYPES,
 } from "../src/index.js";
@@ -18,6 +20,15 @@ import {
 const ts = "2026-10-02T08:15:00.000Z";
 
 describe("event type lists", () => {
+  it("name every type of the stored log once: the guest's, the host's and the person's message", () => {
+    expect(new Set(STORED_EVENT_TYPES).size).toBe(STORED_EVENT_TYPES.length);
+    expect(STORED_EVENT_TYPES).toHaveLength(OUTBOUND_EVENT_TYPES.length + HOST_EVENT_TYPES.length + 1);
+    for (const type of ["tool.called", "task.progress", "memory.written", "approval.resolved", "channel.status", "user.message"]) {
+      expect(isStoredEventType(type), type).toBe(true);
+    }
+    for (const type of ["tool.calls", "", "approval.received", "system.event", 7, undefined]) expect(isStoredEventType(type), String(type)).toBe(false);
+  });
+
   it("match section 5.4", () => {
     expect(INBOUND_EVENT_TYPES).toEqual(["user.message", "task.created", "approval.received", "system.event"]);
     expect(OUTBOUND_EVENT_TYPES).toHaveLength(14);

@@ -8,7 +8,7 @@
  */
 import type { DotConfig } from "./config.js";
 import type { ChannelKind, ChannelStatus, MessageOrigin, StoredEvent } from "./events.js";
-import type { BrowserIdentity, SystemAnswer } from "./protocol.js";
+import type { BrowserIdentity, FileEntry, SystemAnswer } from "./protocol.js";
 import type { ApprovalStatus, DotState, TaskState, VmState } from "./states.js";
 
 export interface DotRecord {
@@ -266,6 +266,15 @@ export interface MessagesAnswer {
 
 export interface EventsAnswer {
   events: StoredEvent[];
+}
+
+/**
+ * `GET /api/dots/:id/files/list`: the directory as dot-agentd lists it, with the normalized absolute `path`
+ * that was listed (what the caller asked for may have been relative or `~`).
+ */
+export interface FilesListAnswer {
+  path: string;
+  entries: FileEntry[];
 }
 
 /**

@@ -19,6 +19,7 @@ import type {
   DotsAnswer,
   DotSummary,
   EventsAnswer,
+  FilesListAnswer,
   HealthResponse,
   IdentitiesAnswer,
   MessageAnswer,
@@ -318,12 +319,32 @@ export class InvisibleDotsClient {
 
   // Events
 
-  async events(idOrName: string, options: { after?: number; limit?: number } = {}): Promise<StoredEvent[]> {
+  /**
+   * The Dot's stored events, oldest first. `types` keeps only those type names and `taskId` only the events of that
+   * task (`data.task_id`); an unknown type name is a 400.
+   */
+  async events(
+    idOrName: string,
+    options: { after?: number; limit?: number; types?: readonly string[]; taskId?: string } = {},
+  ): Promise<StoredEvent[]> {
     return (
       await this.#json<EventsAnswer>("GET", `/api/dots/${enc(idOrName)}/events`, {
-        query: { after: options.after, limit: options.limit },
+        query: { after: options.after, limit: options.limit, types: options.types?.length ? options.types.join(",") : undefined, task_id: options.taskId },
       })
     ).events;
+  }
+
+  // Files of the Dot's computer: read-only, under /home/dot, and the computer must be running (409 computer_stopped)
+
+  /** The entries of a directory (`path` is absolute, relative to /home/dot, or `~`; omitted: home) and the path listed. */
+  listFiles(idOrName: string, path?: string): Promise<FilesListAnswer> {
+    return this.#json("GET", `/api/dots/${enc(idOrName)}/files/list`, { query: { path } });
+  }
+
+  /** The bytes of a file; one over 16 MiB is a 413 `file_too_large`. */
+  async readFile(idOrName: string, path: string): Promise<Uint8Array<ArrayBuffer>> {
+    const response = await this.#send("GET", `/api/dots/${enc(idOrName)}/files`, { query: { path } });
+    return new Uint8Array(await response.arrayBuffer());
   }
 
   /**

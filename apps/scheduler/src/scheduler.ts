@@ -19,9 +19,12 @@ import type {
   UsageAnswer,
 } from "@invisible-dots/shared";
 import {
+  checkHomePath,
   checkOpenRouterKey,
   computerResources,
   DotConfigError,
+  isStoredEventType,
+  MAX_HOST_FILE_BYTES,
   newId,
   parseDotConfig,
   parseMessageOrigin,
@@ -33,6 +36,7 @@ import {
   type BrowserIdentity,
   type CreateBrowserIdentityRequest,
   type DotConfig,
+  type FilesListAnswer,
   type InboundEvent,
   type MessageOrigin,
   type StoredEvent,
@@ -68,6 +72,13 @@ export interface SchedulerOptions {
 }
 
 const TOKEN_BYTES = 32;
+
+/** A path the files routes may read, normalized; the 400 of the rule of `checkHomePath` otherwise. */
+function homePath(raw: unknown): string {
+  const checked = checkHomePath(raw);
+  if (!checked.ok) throw new ControlPlaneError(400, "invalid_path", checked.problem);
+  return checked.path;
+}
 
 export class Scheduler {
   readonly db: Database;
@@ -530,6 +541,22 @@ export class Scheduler {
     return this.#guestCall(dotId, "screenshot", () => guest.screenshot());
   }
 
+  /** The files of a directory under /home/dot, as dot-agentd lists them; `path` defaults to home itself. */
+  async listFiles(idOrName: string, path: string = "~"): Promise<FilesListAnswer> {
+    const checked = homePath(path);
+    const { dotId, guest } = await this.#runningGuest(idOrName);
+    const { entries } = await this.#guestCall(dotId, "list files", () => guest.listFiles(checked));
+    return { path: checked, entries };
+  }
+
+  /** The bytes of a file under /home/dot; a file larger than MAX_HOST_FILE_BYTES is a 413. */
+  async readFile(idOrName: string, path: unknown): Promise<{ path: string; content: Uint8Array }> {
+    const checked = homePath(path);
+    const { dotId, guest } = await this.#runningGuest(idOrName);
+    const content = await this.#guestCall(dotId, "read a file", () => guest.readFile(checked, { maxBytes: MAX_HOST_FILE_BYTES }));
+    return { path: checked, content };
+  }
+
   async listIdentities(idOrName: string): Promise<BrowserIdentity[]> {
     const { dotId, guest } = await this.#runningGuest(idOrName);
     return (await this.#guestCall(dotId, "list browser identities", () => guest.listBrowserIdentities())).identities;
@@ -612,8 +639,19 @@ export class Scheduler {
     return dotId;
   }
 
-  async listEvents(idOrName: string, after?: number, limit?: number): Promise<StoredEvent[]> {
-    return this.events.query({ dotId: await this.#historyDotId(idOrName), after, limit });
+  /**
+   * The Dot's events, oldest first: those after an id, of these types (an unknown type name is a 400, so a typo
+   * does not look like a quiet Dot) and of this task.
+   */
+  async listEvents(
+    idOrName: string,
+    filter: { after?: number; limit?: number; types?: readonly string[]; taskId?: string } = {},
+  ): Promise<StoredEvent[]> {
+    const unknown = filter.types?.filter((type) => !isStoredEventType(type)) ?? [];
+    if (unknown.length > 0) throw new ControlPlaneError(400, "invalid_request", `unknown event type: ${unknown.join(", ")}`);
+    if (filter.taskId === "") throw new ControlPlaneError(400, "invalid_request", "task_id must not be empty");
+    const types = filter.types === undefined || filter.types.length === 0 ? undefined : filter.types;
+    return this.events.query({ dotId: await this.#historyDotId(idOrName), after: filter.after, limit: filter.limit, types, taskId: filter.taskId });
   }
 
   /** The model spend the Dot's guest reported since `since` (every event when omitted), from the event log. */

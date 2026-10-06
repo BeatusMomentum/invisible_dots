@@ -98,6 +98,45 @@ export const GUEST_PATHS = {
   agentSocket: "/run/invisible-dots-agent/agent.sock",
 } as const;
 
+/** The most a read of one guest file through the host API returns (`GET /api/dots/:id/files`): 16 MiB. */
+export const MAX_HOST_FILE_BYTES = 16 * 1024 * 1024;
+
+/** The `error` code of a read refused for its size: by the host client when the file passes the limit it was given. */
+export const FILE_TOO_LARGE = "file_too_large";
+
+/** The longest path the host API takes for a guest file; Linux's own PATH_MAX. */
+const MAX_HOST_PATH_LENGTH = 4096;
+
+export type HomePathCheck = { ok: true; path: string } | { ok: false; problem: string };
+
+/**
+ * The one rule for which guest paths the host API reads (`/api/dots/:id/files` and `/files/list`): those under
+ * `/home/dot`. `raw` is an absolute path, a path relative to `/home/dot`, or `~` / `~/...` (which dot-agentd also
+ * resolves against home); the answer is the normalized absolute path that goes to dot-agentd, `.` and empty
+ * segments dropped. A `..` segment is refused rather than resolved, so a path never means more than it says.
+ * The check is lexical: what the guest's own files route may open is up to the operating system, which runs it
+ * as `dot`, and a symbolic link inside home leads wherever `dot` may go.
+ */
+export function checkHomePath(raw: unknown): HomePathCheck {
+  if (typeof raw !== "string" || raw === "") return { ok: false, problem: "path must be a non-empty string" };
+  if (raw.length > MAX_HOST_PATH_LENGTH) return { ok: false, problem: `path is longer than ${MAX_HOST_PATH_LENGTH} characters` };
+  if (raw.includes("\0")) return { ok: false, problem: "path contains a NUL byte" };
+  const home = GUEST_PATHS.home.split("/").filter(Boolean);
+  let segments: string[];
+  if (raw === "~" || raw.startsWith("~/")) segments = [...home, ...raw.slice(1).split("/")];
+  else if (raw.startsWith("/")) segments = raw.split("/");
+  else segments = [...home, ...raw.split("/")];
+  const kept: string[] = [];
+  for (const segment of segments) {
+    if (segment === "..") return { ok: false, problem: 'path must not contain ".." segments' };
+    if (segment !== "" && segment !== ".") kept.push(segment);
+  }
+  if (!home.every((segment, i) => kept[i] === segment)) {
+    return { ok: false, problem: `path must be inside ${GUEST_PATHS.home}` };
+  }
+  return { ok: true, path: `/${kept.join("/")}` };
+}
+
 /** Paths of one browser identity under a browsers root (default `/home/dot/browsers`). */
 export function identityPaths(identityId: string, browsersDir: string = GUEST_PATHS.browsers) {
   const root = join(browsersDir, identityId);

@@ -11,6 +11,7 @@ import {
   abortableSleep,
   AGENTD_ROUTES,
   AGENT_ROUTES,
+  FILE_TOO_LARGE,
   GUEST_PROOF_CONTEXT,
   GUEST_UNPROVEN,
   GuestHealthTimeoutError,
@@ -73,6 +74,8 @@ interface Call {
   contentType?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /** The most the answer may hold; a larger one ends the call with `FILE_TOO_LARGE` and is not buffered. */
+  maxBytes?: number;
 }
 
 interface Answer {
@@ -203,7 +206,16 @@ export class GuestClient {
       const timer = setTimeout(() => finish(new GuestRequestError(route, 0, `no answer from ${this.address} within ${timeoutMs} ms`)), timeoutMs);
       req.on("response", (res: IncomingMessage) => {
         const chunks: Buffer[] = [];
-        res.on("data", (chunk: Buffer) => chunks.push(chunk));
+        let received = 0;
+        const tooLarge = () => new GuestRequestError(route, 413, `the answer is larger than ${call.maxBytes} bytes`, FILE_TOO_LARGE);
+        // An error answer is small and its text is the reason; only a successful body is held to the limit.
+        const limited = call.maxBytes !== undefined && (res.statusCode ?? 0) >= 200 && (res.statusCode ?? 0) < 300;
+        if (limited && Number(res.headers["content-length"]) > call.maxBytes!) return finish(tooLarge());
+        res.on("data", (chunk: Buffer) => {
+          received += chunk.length;
+          if (limited && received > call.maxBytes!) return finish(tooLarge());
+          chunks.push(chunk);
+        });
         res.on("error", (error) => finish(new GuestRequestError(route, 0, `answer interrupted: ${error.message}`)));
         res.on("end", () => finish(undefined, { status: res.statusCode ?? 0, body: Buffer.concat(chunks) }));
       });
@@ -249,8 +261,9 @@ export class GuestClient {
     return this.json({ method: "POST", path: AGENTD_ROUTES.exec, body, timeoutMs });
   }
 
-  async readFile(path: string): Promise<Buffer> {
-    return (await this.send({ path: `${AGENTD_ROUTES.files}${filesQuery(path)}` })).body;
+  /** The file's bytes; with `maxBytes`, a larger file is refused (413 `FILE_TOO_LARGE`) without being read in full. */
+  async readFile(path: string, options: { maxBytes?: number } = {}): Promise<Buffer> {
+    return (await this.send({ path: `${AGENTD_ROUTES.files}${filesQuery(path)}`, maxBytes: options.maxBytes })).body;
   }
 
   writeFile(path: string, content: string | Uint8Array): Promise<void> {

@@ -5,10 +5,14 @@
  * memory only (lost on every reboot and every agent restart), `agent.started`
  * at every start of the agent, inbound events accepted once per id, an
  * outbox with monotonically increasing `seq` replayed after a cursor, and
- * browser identities under the same rules as the real agent's.
+ * browser identities under the same rules as the real agent's, and a small
+ * file system (`putFile`) served through the files routes with the real
+ * daemon's errors.
  */
 import {
   checkIdentityRequest,
+  FILE_TOO_LARGE,
+  GUEST_PATHS,
   IdentityRequestError,
   newId,
   newIdentityId,
@@ -19,6 +23,8 @@ import {
   type BrowserIdentityListAnswer,
   type CreateBrowserIdentityRequest,
   type DotRuntimeConfig,
+  type FileEntry,
+  type FileListAnswer,
   type GuestChecks,
   type HealthAnswer,
   type InboundEvent,
@@ -97,6 +103,8 @@ export class FakeGuest implements GuestApi {
   readonly outbox: OutboundEvent[] = [];
   readonly inbound: InboundEvent[] = [];
   readonly identities = new Map<string, BrowserIdentity>();
+  /** The files of the guest by absolute path; directories exist where a file is under them (and home always). */
+  readonly files = new Map<string, { content: Uint8Array; mtime: Date }>();
   readonly calls: string[] = [];
   pendingApproval: { approval_id: string; task_id?: string } | null = null;
   onInbound: InboundHandler = completeEverything;
@@ -306,6 +314,42 @@ export class FakeGuest implements GuestApi {
     if (!identity) throw new FakeGuestError(404, `identity ${id} not found`, "not_found");
     this.identities.delete(id);
     this.emit("browser.identity.deleted", { identity_id: id, name: identity.name });
+  }
+
+  /** Put a file in the guest's file system (the Dot wrote it). */
+  putFile(path: string, content: string | Uint8Array, mtime: Date = new Date()): void {
+    this.files.set(path, { content: typeof content === "string" ? new TextEncoder().encode(content) : content, mtime });
+  }
+
+  #isDirectory(path: string): boolean {
+    return path === GUEST_PATHS.home || [...this.files.keys()].some((file) => file.startsWith(`${path}/`));
+  }
+
+  async readFile(path: string, options: { maxBytes?: number } = {}): Promise<Uint8Array> {
+    this.#reachable("readFile");
+    if (this.#isDirectory(path)) throw new FakeGuestError(400, `${path} is a directory; use /v1/files/list`, "is_a_directory");
+    const file = this.files.get(path);
+    if (!file) throw new FakeGuestError(404, `open ${path}: no such file or directory`, "not_found");
+    if (options.maxBytes !== undefined && file.content.length > options.maxBytes) {
+      throw new FakeGuestError(413, `the answer is larger than ${options.maxBytes} bytes`, FILE_TOO_LARGE);
+    }
+    return file.content;
+  }
+
+  async listFiles(path: string): Promise<FileListAnswer> {
+    this.#reachable("listFiles");
+    if (this.files.has(path)) throw new FakeGuestError(400, `${path} is not a directory`, "not_a_directory");
+    if (!this.#isDirectory(path)) throw new FakeGuestError(404, `stat ${path}: no such file or directory`, "not_found");
+    const entries = new Map<string, FileEntry>();
+    for (const [file, { content, mtime }] of this.files) {
+      if (!file.startsWith(`${path}/`)) continue;
+      const [name, ...rest] = file.slice(path.length + 1).split("/");
+      const modified = mtime.toISOString();
+      const known = entries.get(name!);
+      if (rest.length > 0) entries.set(name!, { name: name!, type: "dir", size: 0, mtime: known && known.mtime > modified ? known.mtime : modified });
+      else entries.set(name!, { name: name!, type: "file", size: content.length, mtime: modified });
+    }
+    return { entries: [...entries.values()].sort((a, b) => (a.name < b.name ? -1 : 1)) };
   }
 
   async prepareSleep(): Promise<void> {

@@ -37,7 +37,7 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect(again.applied).toEqual([]);
     expect(again.alreadyApplied).toContain("0001_initial");
     const { rows } = await db.query<{ version: string }>("SELECT version FROM schema_migrations ORDER BY version");
-    expect(rows.map((r) => r.version)).toEqual(["0001_initial", "0002_inbound_events", "0003_task_spend", "0004_channels", "0005_channel_prompts", "0006_inbound_by_event"]);
+    expect(rows.map((r) => r.version)).toEqual(["0001_initial", "0002_inbound_events", "0003_task_spend", "0004_channels", "0005_channel_prompts", "0006_inbound_by_event", "0007_events_task"]);
   });
 
   it("dots: unique names, resolve by id or name, status with error", async () => {
@@ -97,6 +97,45 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
     expect(await db.events.list({ dotId: dot.id, types: ["computer.state"] })).toHaveLength(1);
     expect((await db.events.tail(dot.id, 1))[0]?.id).toBe(host.id);
     expect(await db.events.latestId()).toBeGreaterThanOrEqual(host.id);
+  });
+
+  it("events: one task's events come by data.task_id, with the other filters, and the index serves the query", async () => {
+    const dot = await seedDot(db, "taskwise");
+    const other = await seedDot(db, "taskless");
+    let seq = 0;
+    const guest = (id: string, type: OutboundEvent["type"], data: Record<string, unknown>) =>
+      db.events.insertGuest(id, outbound(++seq, type, data));
+    const started = await guest(dot.id, "task.started", { task_id: "task_a" });
+    await guest(dot.id, "task.started", { task_id: "task_b" });
+    await guest(dot.id, "tool.called", { task_id: "task_a", tool: "exec", permission: "exec.run", decision: "allow", ok: true, duration_ms: 3 });
+    await guest(dot.id, "tool.called", { tool: "exec", permission: "exec.run", decision: "allow", ok: true, duration_ms: 3 });
+    await guest(dot.id, "task.completed", { task_id: "task_a", summary: "done" });
+    await guest(other.id, "task.started", { task_id: "task_a" });
+    await db.events.insertHost(dot.id, "task.cancelled", { task_id: "task_b" });
+
+    const types = (events: { type: string }[]) => events.map((e) => e.type);
+    expect(types(await db.events.list({ dotId: dot.id, taskId: "task_a" }))).toEqual(["task.started", "tool.called", "task.completed"]);
+    expect(types(await db.events.list({ dotId: dot.id, taskId: "task_b" }))).toEqual(["task.started", "task.cancelled"]);
+    // The task id is matched whole, in this Dot, and an event without one belongs to no task.
+    expect(await db.events.list({ dotId: dot.id, taskId: "task" })).toEqual([]);
+    expect(await db.events.list({ dotId: dot.id, taskId: "" })).toEqual([]);
+    expect((await db.events.list({ dotId: other.id, taskId: "task_a" })).map((e) => e.dot_id)).toEqual([other.id]);
+    // With the other filters, and the limit counts the filtered events.
+    expect(types(await db.events.list({ dotId: dot.id, taskId: "task_a", types: ["tool.called", "task.completed"] }))).toEqual(["tool.called", "task.completed"]);
+    expect(types(await db.events.list({ dotId: dot.id, taskId: "task_a", after: started!.id }))).toEqual(["tool.called", "task.completed"]);
+    expect(types(await db.events.list({ dotId: dot.id, taskId: "task_a", limit: 2 }))).toEqual(["task.started", "tool.called"]);
+
+    // Among many events of other kinds the planner takes events_task_idx for the query list() builds.
+    await db.query(
+      `INSERT INTO events (dot_id, type, data, source) SELECT $1, 'agent.state', '{"state":"IDLE"}'::jsonb, 'host' FROM generate_series(1, 6000)`,
+      [dot.id],
+    );
+    await db.query("ANALYZE events");
+    const plan = await db.query<Record<string, string>>(
+      `EXPLAIN SELECT * FROM events WHERE dot_id = $1 AND id > $2 AND data->>'task_id' = $3 ORDER BY id LIMIT 100`,
+      [dot.id, 0, "task_a"],
+    );
+    expect(plan.rows.map((r) => Object.values(r)[0]).join("\n")).toContain("events_task_idx");
   });
 
   it("events: the spend of a Dot sums the events that end a unit of spend, from a moment on", async () => {

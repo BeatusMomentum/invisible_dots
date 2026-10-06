@@ -10,6 +10,7 @@ import type {
   ComputerResources,
   CreateBrowserIdentityRequest,
   DotRuntimeConfig,
+  FileListAnswer,
   HealthAnswer,
   InboundEvent,
   OutboundEvent,
@@ -37,6 +38,9 @@ export interface GuestApi {
   deleteBrowserIdentity(id: string): Promise<void>;
   prepareSleep(timeoutMs?: number): Promise<void>;
   screenshot(): Promise<Uint8Array>;
+  /** The bytes of a file; a file larger than `maxBytes` is refused with status 413 and code `FILE_TOO_LARGE`. */
+  readFile(path: string, options?: { maxBytes?: number }): Promise<Uint8Array>;
+  listFiles(path: string): Promise<FileListAnswer>;
   /**
    * The outbound event stream after `after`. It reconnects by itself on
    * network errors and ends only when `signal` aborts or it hits an error

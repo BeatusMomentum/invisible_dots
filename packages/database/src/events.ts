@@ -30,6 +30,8 @@ export interface EventQuery {
   after?: number;
   /** Only these types. */
   types?: readonly string[];
+  /** Only the events of this task (`data.task_id`). */
+  taskId?: string;
   /** At most this many, oldest first (default 500). */
   limit?: number;
 }
@@ -100,14 +102,23 @@ export class EventsRepository {
 
   async list(query: EventQuery = {}): Promise<StoredEvent[]> {
     const limit = Math.min(Math.max(query.limit ?? 500, 1), MAX_EVENT_PAGE);
+    // The task filter is added only when asked for: `$n IS NULL OR ...` would keep the planner off events_task_idx.
+    const params: unknown[] = [query.dotId ?? null, query.after ?? 0, query.types ? [...query.types] : null];
+    let taskFilter = "";
+    if (query.taskId !== undefined) {
+      params.push(query.taskId);
+      taskFilter = `AND data->>'task_id' = $${params.length}`;
+    }
+    params.push(limit);
     const { rows } = await this.q.query<EventRow>(
       `SELECT * FROM events
         WHERE ($1::text IS NULL OR dot_id = $1)
           AND id > $2
           AND ($3::text[] IS NULL OR type = ANY($3))
+          ${taskFilter}
         ORDER BY id
-        LIMIT $4`,
-      [query.dotId ?? null, query.after ?? 0, query.types ? [...query.types] : null, limit],
+        LIMIT $${params.length}`,
+      params,
     );
     return rows.map(toStored);
   }

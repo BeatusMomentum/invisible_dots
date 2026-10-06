@@ -480,6 +480,58 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     await expect(scheduler.requireDot("goner")).rejects.toMatchObject({ status: 404 });
   });
 
+  it("events: filters by type and task, refuses a type no event has, and filters a deleted Dot's history by id", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "filtered");
+    const task = await scheduler.createTask(dot.id, { description: "look" });
+    await waitFor(async () => (await db.tasks.get(task.id))?.status === "COMPLETED", "task COMPLETED");
+    await scheduler.sendMessage(dot.id, "hello");
+    driver.guestOf(dot.id).emit("memory.written", { key: "a.md" });
+    await waitFor(async () => (await scheduler.listEvents(dot.id, { types: ["memory.written"] })).length === 1, "note stored");
+
+    expect(types(await scheduler.listEvents(dot.id, { types: ["user.message", "memory.written"] }))).toEqual(["user.message", "memory.written"]);
+    expect(types(await scheduler.listEvents(dot.id, { taskId: task.id }))).toEqual(
+      expect.arrayContaining(["task.created", "task.started", "task.completed"]),
+    );
+    expect((await scheduler.listEvents(dot.id, { taskId: task.id, types: ["task.completed"] })).map((e) => e.data.task_id)).toEqual([task.id]);
+    // An empty list is no filter; a name that is no event type is an error rather than a quiet Dot.
+    expect((await scheduler.listEvents(dot.id, { types: [] })).length).toBeGreaterThan(5);
+    await expect(scheduler.listEvents(dot.id, { types: ["task.completed", "task.done"] })).rejects.toMatchObject({ status: 400, code: "invalid_request" });
+    await expect(scheduler.listEvents(dot.id, { taskId: "" })).rejects.toMatchObject({ status: 400 });
+
+    await scheduler.deleteDot("filtered");
+    await scheduler.settle();
+    expect(types(await scheduler.listEvents(dot.id, { taskId: task.id, types: ["task.completed"] }))).toEqual(["task.completed"]);
+  });
+
+  it("files: the path rule comes before the guest, the guest's refusals pass through, and a stopped computer is 409", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "filer");
+    const guest = driver.guestOf(dot.id);
+    guest.putFile("/home/dot/memory/a.md", "alpha");
+    const calls = guest.calls.length;
+
+    expect(await scheduler.listFiles(dot.id)).toMatchObject({ path: "/home/dot", entries: [{ name: "memory", type: "dir" }] });
+    expect(await scheduler.listFiles("filer", "memory")).toMatchObject({ path: "/home/dot/memory", entries: [{ name: "a.md", size: 5 }] });
+    const read = await scheduler.readFile(dot.id, "~/memory/a.md");
+    expect(read.path).toBe("/home/dot/memory/a.md");
+    expect(new TextDecoder().decode(read.content)).toBe("alpha");
+    expect(guest.calls.slice(calls)).toEqual(["listFiles", "listFiles", "readFile"]);
+
+    const before = guest.calls.length;
+    await expect(scheduler.readFile(dot.id, "/etc/passwd")).rejects.toMatchObject({ status: 400, code: "invalid_path" });
+    await expect(scheduler.listFiles(dot.id, "memory/../..")).rejects.toMatchObject({ status: 400, code: "invalid_path" });
+    await expect(scheduler.readFile(dot.id, undefined)).rejects.toMatchObject({ status: 400, code: "invalid_path" });
+    expect(guest.calls.length).toBe(before);
+
+    await expect(scheduler.readFile(dot.id, "memory/none.md")).rejects.toMatchObject({ status: 404, code: "not_found" });
+    guest.putFile("/home/dot/big", new Uint8Array(16 * 1024 * 1024 + 1));
+    await expect(scheduler.readFile(dot.id, "big")).rejects.toMatchObject({ status: 413, code: "file_too_large" });
+    // A guest that cannot be reached is the Dot's computer not answering, not the caller's fault.
+    guest.powerOff();
+    await expect(scheduler.readFile(dot.id, "memory/a.md")).rejects.toMatchObject({ status: 502, code: "guest_unavailable" });
+  });
+
   it("delete removes the Dot's own OpenRouter key and keeps the global one", async () => {
     const { scheduler } = make();
     const dot = await readyDot(scheduler, "keyed");

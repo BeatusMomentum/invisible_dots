@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { GUEST_UNPROVEN, type HealthAnswer, type OutboundEvent } from "@invisible-dots/shared";
+import { FILE_TOO_LARGE, GUEST_UNPROVEN, type HealthAnswer, type OutboundEvent } from "@invisible-dots/shared";
 import { afterEach, describe, expect, it } from "vitest";
 import { GuestClient, GuestHealthTimeoutError, GuestRequestError, guestProof, waitForGuestHealth } from "../src/index.js";
 
@@ -260,6 +260,48 @@ describe("GuestClient transport", () => {
     expect(client.address).toBe(`127.0.0.1:${port}`);
     expect((await client.getBrowserIdentity("a b")).name).toBe("a");
     expect(seen[0]!.url).toBe("/v1/agent/browser-identities/a%20b");
+  });
+
+  describe("readFile with a size limit", () => {
+    it("returns a file within the limit, whole", async () => {
+      const { port } = await serve((req, res) => res.writeHead(200).end(Buffer.alloc(100, 7)));
+      expect(await new GuestClient(port, TOKEN).readFile("a", { maxBytes: 100 })).toEqual(Buffer.alloc(100, 7));
+    });
+
+    it("refuses a file whose announced length is over it, before reading it", async () => {
+      const { port } = await serve((req, res) => {
+        res.writeHead(200, { "content-length": 101 });
+        res.write(Buffer.alloc(10));
+        // The rest is never sent: a client that waited for it would run into the test's timeout.
+      });
+      const error = await new GuestClient(port, TOKEN).readFile("a", { maxBytes: 100 }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(GuestRequestError);
+      expect(error).toMatchObject({ status: 413, code: FILE_TOO_LARGE });
+      expect((error as Error).message).toContain("larger than 100 bytes");
+    });
+
+    it("stops reading a body of unannounced length once it passes the limit", async () => {
+      const { port } = await serve((req, res) => {
+        // Chunked: no content-length, so only the running count can tell.
+        res.writeHead(200);
+        res.write(Buffer.alloc(60));
+        res.write(Buffer.alloc(60));
+        res.write(Buffer.alloc(60));
+      });
+      const error = await new GuestClient(port, TOKEN).readFile("a", { maxBytes: 100 }).catch((e: unknown) => e);
+      expect(error).toMatchObject({ status: 413, code: FILE_TOO_LARGE });
+    });
+
+    it("keeps the guest's own error for a failed read, whatever the limit", async () => {
+      const { port } = await serve((req, res) => json(res, 404, { error: "not_found", message: "no such file: " + "x".repeat(300) }));
+      const error = await new GuestClient(port, TOKEN).readFile("a", { maxBytes: 10 }).catch((e: unknown) => e);
+      expect(error).toMatchObject({ status: 404, code: "not_found" });
+    });
+
+    it("reads without a limit as before", async () => {
+      const { port } = await serve((req, res) => res.writeHead(200).end(Buffer.alloc(5000, 1)));
+      expect((await new GuestClient(port, TOKEN).readFile("a")).length).toBe(5000);
+    });
   });
 
   it("names the guest port when nothing listens there", async () => {

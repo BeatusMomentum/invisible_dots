@@ -175,6 +175,139 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     await expect(api.cancelTask(task.id)).rejects.toMatchObject({ status: 409, code: "task_finished" });
   });
 
+  it("events: filtered by type names and by task, together and with after and limit", async () => {
+    const dot = await readyDot("event-filters");
+    const guest = driver.guestOf(dot.id);
+    const one = await api.createTask(dot.id, { description: "one" });
+    const two = await api.createTask(dot.id, { description: "two" });
+    await waitFor(async () => (await api.getTask(two.id)).status === "COMPLETED", "second task done");
+    const call = { tool: "exec", permission: "exec.run", decision: "allow", ok: true, duration_ms: 5 } as const;
+    guest.emit("tool.called", { task_id: one.id, ...call, target: "ls" });
+    guest.emit("tool.called", { ...call, target: "date" });
+    guest.emit("memory.written", { key: "fares.md" });
+    await waitFor(async () => (await api.events(dot.id, { types: ["memory.written"] })).length === 1, "events stored");
+
+    const types = (events: StoredEvent[]) => events.map((e) => e.type);
+    expect(types(await api.events(dot.id, { types: ["tool.called"] }))).toEqual(["tool.called", "tool.called"]);
+    expect(types(await api.events(dot.id, { types: ["tool.called", "memory.written"] }))).toEqual(["tool.called", "tool.called", "memory.written"]);
+    // A task's events: the host's own and the guest's, in id order; the chat's tool call belongs to no task.
+    const ofOne = await api.events(dot.id, { taskId: one.id });
+    expect(types(ofOne)).toEqual(expect.arrayContaining(["task.created", "task.started", "task.completed", "tool.called"]));
+    expect(ofOne.every((e) => e.data.task_id === one.id)).toBe(true);
+    expect(ofOne.map((e) => e.id)).toEqual([...ofOne.map((e) => e.id)].sort((a, b) => a - b));
+    expect(ofOne.filter((e) => e.type === "tool.called").map((e) => e.data.target)).toEqual(["ls"]);
+    expect((await api.events(dot.id, { taskId: two.id, types: ["tool.called"] })).length).toBe(0);
+    expect(types(await api.events(dot.id, { taskId: one.id, types: ["tool.called"] }))).toEqual(["tool.called"]);
+    expect((await api.events(dot.id, { taskId: one.id, limit: 1 })).length).toBe(1);
+    expect((await api.events(dot.id, { taskId: one.id, after: ofOne.at(-1)!.id })).length).toBe(0);
+    expect(await api.events(dot.id, { taskId: "task_nobody" })).toEqual([]);
+
+    // The raw query: an empty types is no filter, a type nobody emits is refused, so is a repeated or empty parameter.
+    const get = async (query: string) => {
+      const response = await fetch(`${base}/api/dots/${dot.id}/events?${query}`, { headers: { authorization: `Bearer ${TOKEN}` } });
+      return { status: response.status, body: (await response.json()) as { events?: StoredEvent[]; error?: string; message?: string } };
+    };
+    expect((await get("types=")).body.events!.length).toBeGreaterThan(5);
+    expect(await get("types=tool.called,tool.calls")).toMatchObject({ status: 400, body: { error: "invalid_request", message: "unknown event type: tool.calls" } });
+    expect((await get("types=tool.called&types=memory.written")).status).toBe(400);
+    expect((await get("task_id=a&task_id=b")).status).toBe(400);
+    expect((await get("task_id=")).status).toBe(400);
+    await expect(api.events("no-such-dot", { types: ["tool.called"] })).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("files: list and read what is under /home/dot, as the guest answers, and nothing else", async () => {
+    const dot = await readyDot("file-reader");
+    const guest = driver.guestOf(dot.id);
+    const note = "# Fares\n\nCheapest day is Tuesday.\n";
+    guest.putFile("/home/dot/memory/fares.md", note, new Date("2026-10-01T10:00:00Z"));
+    guest.putFile("/home/dot/memory/trips/rome.md", "Rome", new Date("2026-10-02T10:00:00Z"));
+    guest.putFile("/home/dot/workspace/shot.png", Uint8Array.from([0x89, 0x50, 0x4e, 0x47]));
+    guest.putFile("/home/dot/notes.txt", "hi");
+    guest.putFile("/etc/passwd", "root:x:0:0");
+
+    expect(await api.listFiles(dot.id, "/home/dot/memory")).toEqual({
+      path: "/home/dot/memory",
+      entries: [
+        { name: "fares.md", type: "file", size: note.length, mtime: "2026-10-01T10:00:00.000Z" },
+        { name: "trips", type: "dir", size: 0, mtime: "2026-10-02T10:00:00.000Z" },
+      ],
+    });
+    // Home by default, and relative or ~ paths mean the same as the absolute one.
+    const home = await api.listFiles(dot.id);
+    expect(home.path).toBe("/home/dot");
+    expect(home.entries.map((e) => e.name)).toEqual(["memory", "notes.txt", "workspace"]);
+    expect(await api.listFiles(dot.id, "~/memory")).toEqual(await api.listFiles(dot.id, "memory/"));
+
+    expect(new TextDecoder().decode(await api.readFile(dot.id, "/home/dot/memory/fares.md"))).toBe(note);
+    expect(new TextDecoder().decode(await api.readFile(dot.id, "memory/trips/rome.md"))).toBe("Rome");
+    expect([...(await api.readFile(dot.id, "workspace/shot.png"))]).toEqual([0x89, 0x50, 0x4e, 0x47]);
+
+    // Outside home, or with a .. segment: 400 before the guest is asked, whatever the guest holds.
+    const callsBefore = guest.calls.length;
+    for (const path of ["/etc/passwd", "/home", "/home/dotter/x", "../../etc/passwd", "memory/../../../etc/passwd", "/home/dot/memory/.."]) {
+      await expect(api.readFile(dot.id, path), path).rejects.toMatchObject({ status: 400, code: "invalid_path" });
+      await expect(api.listFiles(dot.id, path), path).rejects.toMatchObject({ status: 400, code: "invalid_path" });
+    }
+    expect(guest.calls.length).toBe(callsBefore);
+    const raw = (route: string, query: string) => fetch(`${base}/api/dots/${dot.id}/${route}${query}`, { headers: { authorization: `Bearer ${TOKEN}` } });
+    expect((await raw("files", "")).status).toBe(400);
+    expect((await raw("files", "?path=")).status).toBe(400);
+    expect((await raw("files", "?path=a&path=b")).status).toBe(400);
+    expect((await raw("files/list", "?path=")).status).toBe(400);
+    expect((await fetch(`${base}/api/dots/${dot.id}/files?path=notes.txt`)).status).toBe(401);
+
+    // The guest's own refusals pass through with their code.
+    await expect(api.readFile(dot.id, "memory/missing.md")).rejects.toMatchObject({ status: 404, code: "not_found" });
+    await expect(api.listFiles(dot.id, "memory/missing")).rejects.toMatchObject({ status: 404, code: "not_found" });
+    await expect(api.readFile(dot.id, "memory")).rejects.toMatchObject({ status: 400, code: "is_a_directory" });
+    await expect(api.listFiles(dot.id, "notes.txt")).rejects.toMatchObject({ status: 400, code: "not_a_directory" });
+  });
+
+  it("files: a read says what it is, so the page never runs a Dot's file; a large one is refused", async () => {
+    const dot = await readyDot("file-types");
+    const guest = driver.guestOf(dot.id);
+    guest.putFile("/home/dot/page.html", "<script>alert(1)</script>");
+    guest.putFile("/home/dot/pic.png", Uint8Array.from([1, 2, 3]));
+    guest.putFile("/home/dot/data.bin", Uint8Array.from([4, 5]));
+    guest.putFile("/home/dot/é \"q\".txt", "x");
+    guest.putFile("/home/dot/big.bin", new Uint8Array(16 * 1024 * 1024 + 1));
+    guest.putFile("/home/dot/limit.bin", new Uint8Array(16 * 1024 * 1024));
+    const read = (path: string) => fetch(`${base}/api/dots/${dot.id}/files?path=${encodeURIComponent(path)}`, { headers: { authorization: `Bearer ${TOKEN}` } });
+
+    const html = await read("page.html");
+    expect(html.headers.get("content-type")).toBe("text/plain; charset=utf-8");
+    expect(html.headers.get("content-disposition")).toMatch(/^inline; filename="page\.html"/);
+    expect(html.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(html.headers.get("content-security-policy")).toBe("default-src 'none'; sandbox");
+    expect(html.headers.get("cache-control")).toBe("no-store");
+    expect(await html.text()).toBe("<script>alert(1)</script>");
+    expect((await read("pic.png")).headers.get("content-type")).toBe("image/png");
+    const bin = await read("data.bin");
+    expect(bin.headers.get("content-type")).toBe("application/octet-stream");
+    expect(bin.headers.get("content-disposition")).toMatch(/^attachment; filename="data\.bin"/);
+    expect((await read("é \"q\".txt")).headers.get("content-disposition")).toBe(
+      "inline; filename=\"_ _q_.txt\"; filename*=UTF-8''%C3%A9%20%22q%22.txt",
+    );
+
+    expect((await read("limit.bin")).status).toBe(200);
+    const big = await read("big.bin");
+    expect(big.status).toBe(413);
+    expect(await big.json()).toMatchObject({ error: "file_too_large" });
+    await expect(api.readFile(dot.id, "big.bin")).rejects.toMatchObject({ status: 413, code: "file_too_large" });
+  });
+
+  it("files need a running computer (409 computer_stopped) and a Dot that exists", async () => {
+    const dot = await readyDot("file-sleeper");
+    await api.stopComputer(dot.id);
+    await scheduler.settle();
+    await expect(api.listFiles(dot.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(api.readFile(dot.id, "notes.txt")).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await api.startComputer(dot.id);
+    await waitFor(async () => (await api.computer(dot.id)).ready, "started again");
+    await expect(api.listFiles("no-such-dot")).rejects.toMatchObject({ status: 404 });
+    await expect(api.readFile("no-such-dot", "a")).rejects.toMatchObject({ status: 404 });
+  });
+
   it("the stream filters by Dot and replays after an id without duplicates", async () => {
     const a = await readyDot("stream-a");
     const b = await readyDot("stream-b");

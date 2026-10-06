@@ -36,6 +36,37 @@ describe("InvisibleDotsClient", () => {
     expect(seen[0]?.headers.get("authorization")).toBe("Bearer secret-token");
   });
 
+  it("events and file methods send the query the API routes expect, with names and paths encoded", async () => {
+    const seen: string[] = [];
+    const client = new InvisibleDotsClient({
+      baseUrl: "http://api.test",
+      token: "t",
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        seen.push(new URL(request.url).pathname + new URL(request.url).search);
+        if (request.url.includes("/files/list")) return new Response(JSON.stringify({ path: "/home/dot", entries: [] }));
+        if (request.url.includes("/files?")) return new Response(Uint8Array.from([1, 2, 3]));
+        return new Response(JSON.stringify({ events: [event(1)] }));
+      },
+    });
+    expect(await client.events("a b")).toHaveLength(1);
+    await client.events("a", { after: 4, limit: 10, types: ["tool.called", "memory.written"], taskId: "task_1" });
+    await client.events("a", { types: [] });
+    await client.events("a", { types: ["tool.called"] });
+    expect(await client.listFiles("a b")).toEqual({ path: "/home/dot", entries: [] });
+    await client.listFiles("a", "memory/trips & more");
+    expect([...(await client.readFile("a", "memory/é.md"))]).toEqual([1, 2, 3]);
+    expect(seen).toEqual([
+      "/api/dots/a%20b/events",
+      "/api/dots/a/events?after=4&limit=10&types=tool.called%2Cmemory.written&task_id=task_1",
+      "/api/dots/a/events",
+      "/api/dots/a/events?types=tool.called",
+      "/api/dots/a%20b/files/list",
+      "/api/dots/a/files/list?path=memory%2Ftrips+%26+more",
+      "/api/dots/a/files?path=memory%2F%C3%A9.md",
+    ]);
+  });
+
   it("channel methods send the method, path and body the API routes expect, with names and ids encoded", async () => {
     const seen: { method: string; url: string; body: string }[] = [];
     const record = { kind: "telegram", enabled: true, status: "connected", status_detail: null, account: "b", settings: { approvals: true, notify_tasks: true }, peers: [], created_at: "now" };
