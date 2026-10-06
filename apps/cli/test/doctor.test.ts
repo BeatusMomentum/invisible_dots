@@ -3,6 +3,7 @@ import {
   acceleratorProbeArgs,
   checkDataDirectory,
   checkNode,
+  checkWebBuild,
   MIN_FREE_BYTES,
   PROBE_TIMEOUT_MS,
   runDoctor,
@@ -25,7 +26,7 @@ describe("doctor checks", () => {
       acceleratorAccess: async () => ({ id: "accelerator", label: "accelerator", status: "failed", detail: "darwin hosts are not supported", fix: "run invisible_dots on Linux or Windows (x86-64)" }),
     });
     const results = await runDoctor(deps);
-    expect(ids(results)).toEqual(["node", "qemu", "qemu-img", "accelerator", "accelerator-probe", "disk", "golden-image", "runtime-image", "openrouter"]);
+    expect(ids(results)).toEqual(["node", "qemu", "qemu-img", "accelerator", "accelerator-probe", "disk", "golden-image", "runtime-image", "web", "openrouter"]);
     expect(find(results, "accelerator")).toMatchObject({ status: "failed", detail: "darwin hosts are not supported" });
     expect(find(results, "accelerator-probe")).toMatchObject({ status: "failed", detail: expect.stringContaining("does not run on darwin") });
     expect(calls.filter((c) => c.args.includes("-accel"))).toEqual([]);
@@ -33,7 +34,7 @@ describe("doctor checks", () => {
 
   it("runs every check of section 11.1 in the contract's order", async () => {
     const results = await runDoctor(healthyDoctor().deps);
-    expect(ids(results)).toEqual(["node", "qemu", "qemu-img", "accelerator", "accelerator-probe", "disk", "golden-image", "runtime-image", "openrouter"]);
+    expect(ids(results)).toEqual(["node", "qemu", "qemu-img", "accelerator", "accelerator-probe", "disk", "golden-image", "runtime-image", "web", "openrouter"]);
     expect(results.every((r) => r.status === "ok")).toBe(true);
   });
 
@@ -157,15 +158,19 @@ describe("doctor checks", () => {
       images: async () => {
         throw new Error("readdir exploded");
       },
+      webBuild: async () => {
+        throw new Error("stat exploded");
+      },
       findQemu: async () => {
         throw new Error("PATH unreadable");
       },
     });
     const results = await runDoctor(deps);
-    expect(results).toHaveLength(9);
+    expect(results).toHaveLength(10);
     expect(find(results, "disk")).toMatchObject({ status: "failed", detail: "the check itself failed: statfs exploded" });
     expect(find(results, "golden-image").status).toBe("failed");
     expect(find(results, "runtime-image").status).toBe("failed");
+    expect(find(results, "web")).toMatchObject({ status: "failed", detail: "the check itself failed: stat exploded" });
     expect(find(results, "qemu").detail).toBe("qemu-system-x86_64 not found (the search failed: PATH unreadable)");
   });
 
@@ -179,6 +184,20 @@ describe("doctor checks", () => {
       status: "failed",
       detail: "5.0 GiB free at /data, less than 20.0 GiB",
       fix: "free some space, or set INVISIBLE_DOTS_HOME to a directory on a larger disk",
+    });
+  });
+
+  it("reports the web client built, or missing with the command that builds it", async () => {
+    const entry = "/repo/apps/web/.next/standalone/apps/web/server.js";
+    expect(checkWebBuild({ entry, missing: undefined })).toEqual({ id: "web", label: "web client", status: "ok", detail: `built at ${entry}` });
+    const missing = "/repo/apps/web/.next/standalone/apps/web/.next/static";
+    const { deps } = healthyDoctor({ webBuild: async () => ({ entry, missing }) });
+    expect(find(await runDoctor(deps), "web")).toEqual({
+      id: "web",
+      label: "web client",
+      status: "missing",
+      detail: `not built: ${missing} does not exist`,
+      fix: "npm run build --workspace @invisible-dots/web",
     });
   });
 
@@ -220,7 +239,7 @@ describe("doctor report", () => {
   it("exits 0 only when every check is ok, and prints JSON with --json", async () => {
     let text = "";
     expect(await doctorCommand(healthyDoctor().deps, { json: false }, (t) => (text += t))).toBe(EXIT.ok);
-    expect(text.endsWith("all 9 checks ok\n")).toBe(true);
+    expect(text.endsWith("all 10 checks ok\n")).toBe(true);
 
     let json = "";
     const missing = healthyDoctor({ findQemu: async () => ({ ...FOUND, img: undefined }) }).deps;

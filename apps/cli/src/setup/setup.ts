@@ -1,13 +1,14 @@
 /**
  * `invisible-dots setup` (architecture section 11.2): run doctor, install
  * only what is missing for QEMU and its accelerator, then check again. The
- * rest of doctor's list (images, the OpenRouter key) has its own commands,
+ * rest of doctor's list (images, the web client, the OpenRouter key) has its own commands,
  * which setup names at the end instead of running.
  */
 import { allOk, runDoctor, type CheckId, type CheckResult, type DoctorDeps } from "../doctor/checks.js";
 import { renderReport } from "../doctor/render.js";
 import { STORE_OPENROUTER_KEY } from "../commands.js";
 import { EXIT } from "../exit.js";
+import { WEB_BUILD_COMMAND } from "../web.js";
 import { installHostPrerequisites, setupRefusal, type InstallDeps, type InstallOutcome, type InstallRequest } from "./install.js";
 
 /** The checks setup is responsible for; it succeeds when these are ok. */
@@ -35,6 +36,7 @@ export function nextSteps(results: readonly CheckResult[]): string[] {
   const checks = byId(results);
   const steps: string[] = [];
   if (checks.get("golden-image")?.status !== "ok" || checks.get("runtime-image")?.status !== "ok") steps.push("invisible-dots image build");
+  if (checks.get("web")?.status !== "ok") steps.push(WEB_BUILD_COMMAND);
   if (checks.get("openrouter")?.status !== "ok") {
     steps.push("invisible-dots server   (keep it running, then in another terminal:)");
     steps.push(STORE_OPENROUTER_KEY);

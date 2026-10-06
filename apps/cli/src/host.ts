@@ -16,7 +16,7 @@ import { mkdtemp, open, readFile, rm, stat, statfs } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { latestImage, runServer } from "@invisible-dots/api";
+import { latestImage, parseListen, serverLogger, startServer, untilStopSignal } from "@invisible-dots/api";
 import {
   buildGoldenImage,
   buildRuntimeIso,
@@ -47,7 +47,9 @@ import { doctorCommand } from "./doctor/command.js";
 import { EXIT } from "./exit.js";
 import { checkAcceleratorAccess, currentUserIsRoot, type InstallDeps } from "./setup/install.js";
 import { parseWindowsQemuPin } from "./setup/qemu-pin.js";
+import { serve } from "./serve.js";
 import { runSetup } from "./setup/setup.js";
+import { locateWebBuild, startWebServer } from "./web.js";
 
 /**
  * The vm-manager's discovery, with each program reported separately for
@@ -141,6 +143,7 @@ function doctorDeps(io: CliIo): DoctorDeps {
     home: paths.home,
     freeSpace: () => freeSpace(paths.home),
     images: async () => [await imageCheck(paths, "golden-image"), await imageCheck(paths, "runtime-image")],
+    webBuild: () => locateWebBuild(REPO_ROOT),
     openRouterKey: () => openRouterKey(io.env, io.fetch),
   };
 }
@@ -215,8 +218,11 @@ export function realHostCommands(): HostCommands {
     doctor: (options, io) => doctorCommand(doctorDeps(io), options, io.stdout),
     setup: (io) => runSetup({ doctor: doctorDeps(io), install: installDeps(io), out: io.stdout }),
     imageBuild,
-    server: async (io) => {
-      await runServer({ env: io.env });
+    server: async (io, options) => {
+      await serve(
+        { env: io.env, logger: serverLogger(io.env), web: options.web, repoRoot: REPO_ROOT },
+        { startServer, untilStopSignal, parseListen, startWebServer },
+      );
       return EXIT.ok;
     },
   };

@@ -55,6 +55,8 @@ export const OPENROUTER_REFERER = "https://github.com/feder-cr/dots";
 export const OPENROUTER_TITLE = "invisible_dots";
 
 export const DEFAULT_LISTEN = "127.0.0.1:8787";
+/** Where `invisible-dots server` serves the web client (section 9.7). */
+export const DEFAULT_WEB_LISTEN = "127.0.0.1:3000";
 
 /** Environment variable names. */
 export const ENV = {
@@ -63,6 +65,10 @@ export const ENV = {
   /** The one directory QEMU is looked for in, when set (section 3.1). */
   QEMU_DIR: "INVISIBLE_DOTS_QEMU_DIR",
   LISTEN: "INVISIBLE_DOTS_LISTEN",
+  /** Where the web client listens when `invisible-dots server` starts it, as host:port. */
+  WEB_LISTEN: "INVISIBLE_DOTS_WEB_LISTEN",
+  /** Extra host names (comma separated) the web server may be reached by, besides loopback. */
+  WEB_ALLOWED_HOSTS: "INVISIBLE_DOTS_WEB_ALLOWED_HOSTS",
   /** The API token itself, instead of the api.token file: the server's token, or the one a client sends. */
   TOKEN: "INVISIBLE_DOTS_TOKEN",
   /** Where clients (CLI, web server) reach the API. Default http://127.0.0.1:8787. */

@@ -30,6 +30,7 @@ describe("server settings", () => {
     expect(parseListen("[::1]:8787")).toEqual({ host: "::1", port: 8787 });
     expect(parseListen("8080")).toEqual({ host: "127.0.0.1", port: 8080 });
     expect(() => parseListen("localhost:http")).toThrow(/INVISIBLE_DOTS_LISTEN/);
+    expect(() => parseListen("localhost:http", "INVISIBLE_DOTS_WEB_LISTEN")).toThrow(/INVISIBLE_DOTS_WEB_LISTEN must look like/);
   });
 
   it("creates the API token once and reads it back; the environment wins; short tokens are refused", async () => {

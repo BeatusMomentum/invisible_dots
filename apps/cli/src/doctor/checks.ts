@@ -22,6 +22,7 @@ import {
   type RunResult,
 } from "@invisible-dots/vm-manager";
 import { ENV } from "@invisible-dots/shared";
+import { WEB_BUILD_COMMAND, type WebBuild } from "../web.js";
 
 export type CheckStatus = "ok" | "missing" | "failed";
 
@@ -34,6 +35,7 @@ export type CheckId =
   | "disk"
   | "golden-image"
   | "runtime-image"
+  | "web"
   | "openrouter";
 
 export interface CheckResult {
@@ -72,6 +74,8 @@ export interface DoctorDeps {
   freeSpace(): Promise<{ path: string; bytes: number }>;
   /** The golden image and the runtime ISO against their manifests, one result each. */
   images(): Promise<CheckResult[]>;
+  /** Where the built web client is, and the first file of it that is missing. */
+  webBuild(): Promise<WebBuild>;
   /** Whether an OpenRouter key is stored. */
   openRouterKey(): Promise<CheckResult>;
 }
@@ -248,6 +252,12 @@ export function checkDataDirectory(home: string, space: { path: string; bytes: n
   );
 }
 
+/** The web client `invisible-dots server` serves: built where the server looks for it. */
+export function checkWebBuild(build: WebBuild): CheckResult {
+  if (!build.missing) return result("web", "web client", "ok", `built at ${build.entry}`);
+  return result("web", "web client", "missing", `not built: ${build.missing} does not exist`, WEB_BUILD_COMMAND);
+}
+
 /** Runs one check; a check that throws is reported as failed instead of ending the report. */
 async function guarded(id: CheckId, label: string, check: () => Promise<CheckResult>): Promise<CheckResult> {
   try {
@@ -279,6 +289,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<CheckResult[]> {
     const detail = `the check itself failed: ${(error as Error).message}`;
     results.push(result("golden-image", "golden image", "failed", detail), result("runtime-image", "runtime ISO", "failed", detail));
   }
+  results.push(await guarded("web", "web client", async () => checkWebBuild(await deps.webBuild())));
   results.push(await guarded("openrouter", "OpenRouter key", () => deps.openRouterKey()));
   return results;
 }

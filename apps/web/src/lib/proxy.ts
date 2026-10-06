@@ -14,7 +14,7 @@ export const WEB_ENV = {
   /** The API token itself; when unset, the `api.token` file is read. */
   token: ENV.TOKEN,
   /** Extra host names (comma separated) this web server may be reached by, besides loopback. */
-  allowedHosts: "INVISIBLE_DOTS_WEB_ALLOWED_HOSTS",
+  allowedHosts: ENV.WEB_ALLOWED_HOSTS,
 } as const;
 
 type Env = Record<string, string | undefined>;

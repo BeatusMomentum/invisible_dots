@@ -1535,7 +1535,20 @@ Errors are `{ error: <code>, message }` with a 4xx or 5xx status.
 
 ### 9.7 Web client
 
-`apps/web` is a Next.js server on `127.0.0.1:3000`. It answers `/api/...` with
+`apps/web` is a Next.js server on `127.0.0.1:3000`. `invisible-dots server`
+starts it: the build `npm run build --workspace @invisible-dots/web` leaves
+(Next's standalone server and the browser files beside it, assembled by
+`apps/web/scripts/standalone.mjs`) is run with `node` as a child process of the
+server, on `INVISIBLE_DOTS_WEB_LISTEN` (default `127.0.0.1:3000`), with
+`INVISIBLE_DOTS_URL` set to the control plane's address. The child gets an
+allowlisted environment, not the server's: the data directory (so it reads
+`api.token` itself on every request), `INVISIBLE_DOTS_TOKEN` only when the
+server was given the token that way, and `INVISIBLE_DOTS_WEB_ALLOWED_HOSTS`.
+The web client is a companion, not a dependency: when it is not built, its
+port is taken or it exits, the server logs why and the control plane and the
+command line go on; `server --no-web` does not start it. A stop signal closes
+the web client first, then the control plane, and a Ctrl+C while the web
+client is still starting ends that start. It answers `/api/...` with
 the control plane's own paths, so the browser uses the SDK unchanged, and
 adds the API token on the way, so the browser never sees it. It holds that
 token and listens on the host's loopback, which every guest reaches as
@@ -1572,7 +1585,7 @@ The same four commands on every host:
 invisible-dots setup         get QEMU and its accelerator ready (may ask for administrator rights once)
 invisible-dots doctor        check everything, print one line per check and the command that fixes a failure
 invisible-dots image build   build the golden image and the runtime ISO (section 3.3)
-invisible-dots server        run the control plane in the foreground
+invisible-dots server        run the control plane and the web client in the foreground (section 9.7)
 ```
 
 `invisible-dots server` is the one entry point of the control plane; no
@@ -1598,7 +1611,8 @@ running QEMU with `-nodefaults -no-user-config -machine q35 -accel <kvm|whpx>
 with code 0; the data directory, `INVISIBLE_DOTS_HOME`, a path QEMU can be
 given (plain ASCII, no comma, section 3.2) with enough free space;
 the golden image and runtime ISO present and matching their manifests; the
-OpenRouter key stored. `doctor` never changes anything and creates nothing.
+web client built (the files `invisible-dots server` serves, section 9.7; the
+fix is its build command); the OpenRouter key stored. `doctor` never changes anything and creates nothing.
 Exit code 0 only when every check is `ok`. On a host invisible_dots does not
 run on, the accelerator rows say so, and the report still prints.
 

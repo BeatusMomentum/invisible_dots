@@ -12,7 +12,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { ApiError, type DotSummary, type InvisibleDotsClient, type TaskRecord } from "@invisible-dots/sdk";
-import { ENV, type StoredEvent } from "@invisible-dots/shared";
+import { DEFAULT_WEB_LISTEN, ENV, type StoredEvent } from "@invisible-dots/shared";
 import { apiUrl, AuthSetupError, connectApi, DEFAULT_URL } from "./api-client.js";
 import { STORE_OPENROUTER_KEY } from "./commands.js";
 import { EXIT } from "./exit.js";
@@ -31,7 +31,7 @@ export interface HostCommands {
   doctor(options: { json: boolean }, io: CliIo): Promise<number>;
   setup(io: CliIo): Promise<number>;
   imageBuild(io: CliIo): Promise<number>;
-  server(io: CliIo): Promise<number>;
+  server(io: CliIo, options: { web: boolean }): Promise<number>;
 }
 
 export interface CliIo {
@@ -63,7 +63,7 @@ Getting this host ready (the same four commands on Linux and Windows):
   invisible-dots setup                          get QEMU and its accelerator ready (may ask for administrator rights once)
   invisible-dots doctor [--json]                check everything; one line per check and the command that fixes a failure
   invisible-dots image build                    build the golden image and the runtime ISO
-  invisible-dots server                         run the control plane in the foreground
+  invisible-dots server [--no-web]              run the control plane and the web client in the foreground (--no-web: the control plane only)
 
 Using the server:
   invisible-dots init [file] [--force]          write a sample Dot config (default dot.yaml), check the server
@@ -88,6 +88,7 @@ Using the server:
 
 Environment:
   ${ENV.HOME}       the data directory (default ~/.invisible-dots)
+  ${ENV.WEB_LISTEN}   where the web client listens, host:port (default ${DEFAULT_WEB_LISTEN})
   ${ENV.QEMU_DIR}   the one directory QEMU is looked for in, when set (otherwise the official installer's directory, then PATH)
   ${ENV.URL}        server URL (default ${DEFAULT_URL})
   ${ENV.TOKEN}      API token (default: the first line of <${ENV.HOME}>/config/api.token)
@@ -135,6 +136,7 @@ const OPTIONS = {
   dot: { type: "string" },
   tail: { type: "string" },
   "no-follow": { type: "boolean" },
+  "no-web": { type: "boolean" },
   all: { type: "boolean" },
   help: { type: "boolean", short: "h" },
   version: { type: "boolean", short: "v" },
@@ -233,7 +235,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
       }
       case "server":
         noArguments(args, "server");
-        return await (await host()).server(io);
+        return await (await host()).server(io, { web: values["no-web"] !== true });
       case "init": {
         const file = resolve(io.cwd, args[0] ?? "dot.yaml");
         try {

@@ -12,6 +12,7 @@ $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [En
 git clone https://github.com/feder-cr/dots; cd dots
 npm ci
 npm run build --workspace @invisible-dots/cli
+npm run build --workspace @invisible-dots/web
 $env:CGO_ENABLED = "0"; $env:GOOS = "linux"; $env:GOARCH = "amd64"
 go -C guest/dot-agentd build -trimpath -o bin/dot-agentd ./cmd/dot-agentd
 Remove-Item Env:CGO_ENABLED, Env:GOOS, Env:GOARCH
@@ -34,6 +35,7 @@ sudo snap install go --classic
 git clone https://github.com/feder-cr/dots && cd dots
 npm ci
 npm run build --workspace @invisible-dots/cli
+npm run build --workspace @invisible-dots/web
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go -C guest/dot-agentd build -trimpath -o bin/dot-agentd ./cmd/dot-agentd
 node apps/cli/dist/invisible-dots.mjs setup
 node apps/cli/dist/invisible-dots.mjs image build
@@ -54,15 +56,11 @@ node apps/cli/dist/invisible-dots.mjs message my-first-dot "What is on your desk
 `create`. `invisible-dots doctor` checks the host and names the command that
 fixes anything missing.
 
-The web client:
-
-```text
-npm run build --workspace @invisible-dots/web
-npm run start --workspace @invisible-dots/web
-```
-
-Open http://127.0.0.1:3000 and sign in with the first line of
-`config/api.token` in `~/.invisible-dots`.
+The web client: `invisible-dots server` serves it too, built by the
+`npm run build --workspace @invisible-dots/web` line above. Open
+http://127.0.0.1:3000 and sign in with the first line of `config/api.token` in
+`~/.invisible-dots`. `server --no-web` runs the control plane alone, and
+`INVISIBLE_DOTS_WEB_LISTEN` moves the web client to another `host:port`.
 
 ## What a Dot is
 

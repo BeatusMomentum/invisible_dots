@@ -22,8 +22,11 @@ export interface ListenAddress {
   port: number;
 }
 
-/** Parse `host:port`, `[v6]:port` or a bare port (which binds 127.0.0.1). */
-export function parseListen(value: string = DEFAULT_LISTEN): ListenAddress {
+/**
+ * Parse `host:port`, `[v6]:port` or a bare port (which binds 127.0.0.1).
+ * `variable` is the setting the value came from, named in the error.
+ */
+export function parseListen(value: string = DEFAULT_LISTEN, variable: string = ENV.LISTEN): ListenAddress {
   const text = value.trim();
   let host = "127.0.0.1";
   let portText = text;
@@ -38,7 +41,7 @@ export function parseListen(value: string = DEFAULT_LISTEN): ListenAddress {
   }
   const port = Number(portText);
   if (!host || !/^\d+$/.test(portText) || port < 0 || port > 65535) {
-    throw new Error(`${ENV.LISTEN} must look like "127.0.0.1:8787", got "${value}"`);
+    throw new Error(`${variable} must look like "127.0.0.1:8787", got "${value}"`);
   }
   return { host, port };
 }

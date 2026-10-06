@@ -368,7 +368,7 @@ describe("host commands", () => {
     const host: HostCommands = {
       doctor: async (options, io) => {
         calls.push(`doctor json=${options.json}`);
-        io.stdout("all 9 checks ok\n");
+        io.stdout("all 10 checks ok\n");
         return EXIT.ok;
       },
       setup: async () => {
@@ -379,8 +379,8 @@ describe("host commands", () => {
         calls.push("image build");
         return EXIT.failed;
       },
-      server: async () => {
-        calls.push("server");
+      server: async (_io, options) => {
+        calls.push(`server web=${options.web}`);
         return EXIT.ok;
       },
     };
@@ -389,12 +389,13 @@ describe("host commands", () => {
 
   it("routes setup, doctor, image build and server, and returns their exit codes", async () => {
     const { host, calls } = fakeHost();
-    expect((await cli(["doctor"], { host })).stdout).toBe("all 9 checks ok\n");
+    expect((await cli(["doctor"], { host })).stdout).toBe("all 10 checks ok\n");
     expect((await cli(["doctor", "--json"], { host })).code).toBe(EXIT.ok);
     expect((await cli(["setup"], { host })).code).toBe(EXIT.restart);
     expect((await cli(["image", "build"], { host })).code).toBe(EXIT.failed);
     expect((await cli(["server"], { host })).code).toBe(EXIT.ok);
-    expect(calls).toEqual(["doctor json=false", "doctor json=true", "setup", "image build", "server"]);
+    expect((await cli(["server", "--no-web"], { host })).code).toBe(EXIT.ok);
+    expect(calls).toEqual(["doctor json=false", "doctor json=true", "setup", "image build", "server web=true", "server web=false"]);
     // None of them needs the API or its token.
     expect(requests).toHaveLength(0);
   });

@@ -1,8 +1,9 @@
 /**
  * The control plane as one process (architecture section 2): the database,
  * the vm-manager, the scheduler and the HTTP API, composed in the order a
- * first start needs. `invisible-dots server` calls `runServer`; tests call
- * `startServer` and close the handle themselves.
+ * first start needs. `invisible-dots server` calls `startServer` and waits
+ * with `untilStopSignal`; tests call `startServer` and close the handle
+ * themselves.
  */
 import type { Database } from "@invisible-dots/database";
 import { errorMessage, prefixedStderrLogger, Scheduler, type ComputerDriver, type Logger, type SchedulerOptions } from "@invisible-dots/scheduler";
@@ -23,6 +24,11 @@ export interface StartServerOptions {
   driver?: ComputerDriver;
   /** Passed through to the Scheduler (timers, lifecycle and dispatcher tuning). */
   scheduler?: Omit<SchedulerOptions, "db" | "driver" | "logger">;
+}
+
+/** The logger of the `invisible-dots` process: lines on stderr prefixed with its name, debug lines when INVISIBLE_DOTS_DEBUG=1. */
+export function serverLogger(env: Record<string, string | undefined> = process.env): Logger {
+  return prefixedStderrLogger("invisible-dots", env.INVISIBLE_DOTS_DEBUG === "1");
 }
 
 export interface RunningServer {
@@ -50,7 +56,7 @@ export interface RunningServer {
 export async function startServer(options: StartServerOptions = {}): Promise<RunningServer> {
   const env = options.env ?? process.env;
   const debug = env.INVISIBLE_DOTS_DEBUG === "1";
-  const logger = options.logger ?? prefixedStderrLogger("invisible-dots", debug);
+  const logger = options.logger ?? serverLogger(env);
   const paths = hostPaths(env);
   const listen = parseListen(options.listen ?? (env[ENV.LISTEN] || undefined));
 
@@ -149,15 +155,4 @@ export function untilStopSignal(close: () => Promise<void>, logger: Logger, sign
     };
     for (const name of STOP_SIGNALS) signals.on(name, onSignal);
   });
-}
-
-/**
- * `invisible-dots server`: start, then run in the foreground until a stop
- * signal (STOP_SIGNALS). Resolves after a clean stop.
- */
-export async function runServer(options: StartServerOptions = {}): Promise<void> {
-  const logger = options.logger ?? prefixedStderrLogger("invisible-dots", (options.env ?? process.env).INVISIBLE_DOTS_DEBUG === "1");
-  const server = await startServer({ ...options, logger });
-  logger.info(`API token in ${server.paths.apiTokenPath}; stop with Ctrl+C (Dots keep running)`);
-  await untilStopSignal(() => server.close(), logger);
 }

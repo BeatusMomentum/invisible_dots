@@ -3,6 +3,7 @@ import type { CheckResult, DoctorDeps } from "../src/doctor/checks.js";
 import { EXIT } from "../src/exit.js";
 import type { InstallDeps, InstallOutcome, InstallRequest } from "../src/setup/install.js";
 import { nextSteps, runSetup } from "../src/setup/setup.js";
+import { WEB_BUILD_COMMAND } from "../src/web.js";
 import { FOUND, healthyDoctor } from "./fakes.js";
 
 const MISSING_QEMU = async () => ({ searched: ["PATH"] });
@@ -135,6 +136,7 @@ describe("setup", () => {
     const missingKey: CheckResult[] = [
       { id: "golden-image", label: "golden image", status: "ok", detail: "" },
       { id: "runtime-image", label: "runtime ISO", status: "ok", detail: "" },
+      { id: "web", label: "web client", status: "ok", detail: "" },
       { id: "openrouter", label: "OpenRouter key", status: "failed", detail: "" },
     ];
     expect(nextSteps(missingKey)).toEqual([
@@ -142,5 +144,15 @@ describe("setup", () => {
       // One command for both hosts: "<" is a parser error in Windows PowerShell.
       "invisible-dots secret openrouter",
     ]);
+  });
+
+  it("names the web build as a next step while the web client is not built", () => {
+    const notBuilt: CheckResult[] = [
+      { id: "golden-image", label: "golden image", status: "ok", detail: "" },
+      { id: "runtime-image", label: "runtime ISO", status: "ok", detail: "" },
+      { id: "web", label: "web client", status: "missing", detail: "", fix: WEB_BUILD_COMMAND },
+      { id: "openrouter", label: "OpenRouter key", status: "ok", detail: "" },
+    ];
+    expect(nextSteps(notBuilt)).toEqual(["npm run build --workspace @invisible-dots/web", "invisible-dots server"]);
   });
 });
