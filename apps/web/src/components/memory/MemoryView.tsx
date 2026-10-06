@@ -2,6 +2,7 @@
 
 import { computerIsUp } from "@invisible-dots/shared/browser";
 import { MEMORY_VIEW_LABELS, MEMORY_VIEWS, memoryHref, type MemoryQuery } from "../../lib/memory-view";
+import { AutomationsNote } from "../computer/automations-note";
 import { ComputerOff } from "../computer/computer-off";
 import { useDot } from "../DotShell";
 import { Skeleton } from "../ui/skeleton";
@@ -17,7 +18,8 @@ const NEEDS_THE_COMPUTER = { notes: "Start the computer to read its notes", auto
  * The Memory page (S10): what the Dot keeps for later and what it does on its own. Notes are the files it wrote under
  * its memory folder, read only; Automations are the jobs its cron tool made, which the person can pause or delete.
  * The view and the open note are in the address. Both read the Dot's computer, so a computer that is not running is
- * said, with a Start button, and the page follows it starting.
+ * said, with a Start button, and the page follows it starting. The Automations view also says whether they are paused
+ * because the person stopped the computer, and when the next one is due.
  */
 export function MemoryView({ query }: { query: MemoryQuery }) {
   const { dotId, dot } = useDot();
@@ -27,6 +29,8 @@ export function MemoryView({ query }: { query: MemoryQuery }) {
     <div className="space-y-5">
       <ViewTabs label="Memory views" views={MEMORY_VIEWS} labels={MEMORY_VIEW_LABELS} current={query.view} hrefOf={(view) => memoryHref(dotId, { view })} />
       {query.view === "notes" ? <MemorySwitch /> : null}
+      {/* Whether the automations are paused by the person's stop, and the next one's time: known while the computer is off too. */}
+      {query.view === "automations" ? <AutomationsNote dotId={dotId} /> : null}
       <Body query={query} dotId={dotId} state={state} />
     </div>
   );

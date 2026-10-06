@@ -1,6 +1,8 @@
 /** What the Computer page shows: allocated resources from the config, live usage from the VM when it runs. */
 import { COMPUTER_STOPPED, computerIsUp, FRAME_ERROR_CODES } from "@invisible-dots/shared/browser";
 import { ApiError } from "./api";
+import { whenLabel } from "./automations";
+import { relativeTime } from "./time";
 import type { Computer, DotConfig, SystemAnswer, VmState } from "./types";
 
 /** The routes that reach into the Dot's computer (identities, files, tools) answer 409 `computer_stopped` while it is off. */
@@ -76,13 +78,37 @@ export function computerView(
 }
 
 /**
- * What the person is asked before a power action that is not a start. Stopping says what it costs: a computer the
- * person stopped runs none of its automations until the person starts it again (architecture section 9.5).
+ * What the person is asked before a power action, or null when the action goes ahead without a question. Stopping
+ * always asks, because it says what it costs: a computer the person stopped runs none of its automations until the
+ * person starts it again (architecture section 9.5). A reboot and a stop also ask while a task runs, which they cut off.
  */
-export function confirmText(action: "stop" | "reboot"): string {
-  return action === "stop"
-    ? "Stop this Dot's computer? Its automations do not run while it is stopped; start it again to resume them."
-    : "Reboot this Dot's computer?";
+export function confirmText(action: "stop" | "reboot", taskRunning: boolean): string | null {
+  if (action === "stop") {
+    const cost = "Its automations do not run while it is stopped; start it again to resume them.";
+    return taskRunning ? `A task is running. Stop the computer anyway? ${cost}` : `Stop this Dot's computer? ${cost}`;
+  }
+  return taskRunning ? "A task is running. Reboot the computer anyway?" : null;
+}
+
+export interface AutomationsNote {
+  /** The person stopped the computer, so the host does not start it for an automation until the person does. */
+  paused: boolean;
+  text: string;
+}
+
+/**
+ * What the Dot's automations are doing, from the host's record of the computer (which holds it while the computer is
+ * off, when the guest cannot be asked): paused because the person stopped it, due at the time the engine last
+ * reported (`next_automation_at`, which the host wakes a sleeping computer for), or none due.
+ */
+export function automationsNote(computer: Pick<Computer, "state" | "stop_reason" | "next_automation_at">, now: number, locale?: string): AutomationsNote {
+  if (computer.stop_reason === "user") {
+    return { paused: true, text: "Paused: you stopped this computer, so its automations do not run. Start it to resume them." };
+  }
+  const due = computer.next_automation_at === null ? Number.NaN : new Date(computer.next_automation_at).getTime();
+  if (Number.isNaN(due)) return { paused: false, text: "No automation is due." };
+  const asleep = computer.state === "STOPPED" ? " The computer is asleep and starts shortly before then." : "";
+  return { paused: false, text: `Next automation: ${whenLabel(due, locale)} (${relativeTime(due, now)}).${asleep}` };
 }
 
 /** Which power buttons make sense in a state. Unknown states enable everything and let the API decide. */

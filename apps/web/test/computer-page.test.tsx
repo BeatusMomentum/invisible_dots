@@ -508,6 +508,30 @@ describe("the usage", () => {
     expect(await screen.findByText("Rebooting the computer")).toBeTruthy();
   });
 
+  it("says in its own card when the next automation is due, and when the person's stop has paused them", async () => {
+    plane.nextAutomationAt = new Date(Date.now() + 2 * 3_600_000 + 60_000).toISOString();
+    await renderComputer({ view: "usage" });
+    const card = await screen.findByRole("region", { name: "Automations" });
+    expect((await within(card).findByRole("status")).textContent).toMatch(/^Next automation: .*\(in 2h\)\.$/);
+
+    plane.dots = [dotRecord("d1", { name: "fares", computer_state: "STOPPED" })];
+    plane.computerStopReason = "user";
+    cleanup();
+    await renderComputer({ view: "usage" });
+    const paused = await within(await screen.findByRole("region", { name: "Automations" })).findByRole("status");
+    expect(paused.textContent).toMatch(/^Paused: you stopped this computer, so its automations do not run/);
+    expect(paused.getAttribute("data-paused")).toBe("true");
+  });
+
+  it("follows the next run the engine reports", async () => {
+    await renderComputer({ view: "usage" });
+    const card = await screen.findByRole("region", { name: "Automations" });
+    expect((await within(card).findByRole("status")).textContent).toBe("No automation is due.");
+    plane.nextAutomationAt = new Date(Date.now() + 3 * 3_600_000 + 60_000).toISOString();
+    act(() => plane.push("d1", "automation.next_run", { next_run_at_ms: Date.parse(plane.nextAutomationAt!) }));
+    await waitFor(() => expect(within(card).getByRole("status").textContent).toMatch(/\(in 3h\)\.$/));
+  });
+
   it("does not stop the computer under a running task without asking", async () => {
     plane.dots = [dotRecord("d1", { name: "fares", status: "RUNNING" as never })];
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);

@@ -213,6 +213,7 @@ describe("Home", () => {
 
   it("stops and starts a Dot's computer from its card", async () => {
     plane.dots = [dotRecord("d1", { name: "power" })];
+    vi.spyOn(window, "confirm").mockReturnValue(true);
     await renderHome();
     const power = await screen.findByRole("article", { name: "power" });
     await userEvent.click(within(power).getByRole("button", { name: /^Computer: RUNNING/ }));

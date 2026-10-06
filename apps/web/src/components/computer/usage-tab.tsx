@@ -15,6 +15,7 @@ import { useResource } from "../ui";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Skeleton } from "../ui/skeleton";
+import { AutomationsNote } from "./automations-note";
 import { ComputerStatus } from "./computer-status";
 
 const COMPUTER_EVENTS = ["computer.state", "computer.started", "computer.stopped"];
@@ -180,6 +181,10 @@ export function UsageTab() {
               <dt>Runtime image</dt>
               <dd>{computer.data.runtime_image ? <code className="text-xs">{computer.data.runtime_image}</code> : "-"}</dd>
             </Facts>
+          </Card>
+
+          <Card id="usage-automations" title="Automations">
+            <AutomationsNote dotId={dotId} />
           </Card>
 
           <Spend dotId={dotId} />

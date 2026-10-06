@@ -103,6 +103,7 @@ test("the Home page shows a card per Dot and the computer's power on it works", 
   await expect(card.getByRole("img", { name: "Ready" })).toBeVisible();
 
   await card.getByRole("button", { name: /^Computer: RUNNING/ }).click();
+  page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("menuitem", { name: "Stop" }).click();
   await expect(card.getByRole("button", { name: /^Computer: STOPPED/ })).toBeVisible();
   await expect(card.getByRole("img", { name: "Computer stopped" })).toBeVisible();

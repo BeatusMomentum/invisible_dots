@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allowedActions, computerView, confirmText } from "../src/lib/computer";
+import { allowedActions, automationsNote, computerView, confirmText } from "../src/lib/computer";
 import { formatBytes, formatDuration, formatMillis, formatUsd, maskProxy, startOfToday, statusTone } from "../src/lib/format";
 import type { DotConfig } from "../src/lib/types";
 
@@ -76,8 +76,35 @@ describe("computerView", () => {
   });
 
   it("says in the stop confirmation that the automations do not run while the computer is stopped", () => {
-    expect(confirmText("stop")).toMatch(/automations do not run while it is stopped/);
-    expect(confirmText("reboot")).not.toMatch(/automation/);
+    expect(confirmText("stop", false)).toMatch(/^Stop this Dot's computer\? Its automations do not run while it is stopped/);
+    expect(confirmText("stop", true)).toMatch(/^A task is running\. Stop the computer anyway\? Its automations do not run while it is stopped/);
+  });
+
+  it("asks before a reboot only while a task runs, and says nothing of automations there", () => {
+    expect(confirmText("reboot", false)).toBeNull();
+    expect(confirmText("reboot", true)).toBe("A task is running. Reboot the computer anyway?");
+  });
+});
+
+describe("automationsNote", () => {
+  const now = Date.parse("2026-10-06T10:00:00Z");
+
+  it("says the automations are paused when the person stopped the computer, whatever time is recorded", () => {
+    const note = automationsNote({ state: "STOPPED", stop_reason: "user", next_automation_at: "2026-10-06T12:00:00Z" }, now);
+    expect(note.paused).toBe(true);
+    expect(note.text).toMatch(/^Paused: you stopped this computer, so its automations do not run/);
+  });
+
+  it("says when the next one is due, and that a computer asleep is started shortly before", () => {
+    const running = automationsNote({ state: "RUNNING", stop_reason: null, next_automation_at: "2026-10-06T12:00:00Z" }, now, "en-US");
+    expect(running.paused).toBe(false);
+    expect(running.text).toMatch(/^Next automation: .*\(in 2h\)\.$/);
+    const asleep = automationsNote({ state: "STOPPED", stop_reason: "idle", next_automation_at: "2026-10-06T12:00:00Z" }, now, "en-US");
+    expect(asleep.text).toMatch(/\(in 2h\)\. The computer is asleep and starts shortly before then\.$/);
+  });
+
+  it("says none is due when the engine reported no time", () => {
+    expect(automationsNote({ state: "RUNNING", stop_reason: null, next_automation_at: null }, now)).toEqual({ paused: false, text: "No automation is due." });
   });
 });
 

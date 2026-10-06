@@ -222,7 +222,20 @@ describe("the power menu", () => {
     await renderDot();
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     await userEvent.click(within(await openMenu()).getByRole("menuitem", { name: "Stop" }));
-    expect(confirm).toHaveBeenCalledWith("A task is running. Stop the computer anyway?");
+    expect(confirm).toHaveBeenCalledWith("A task is running. Stop the computer anyway? Its automations do not run while it is stopped; start it again to resume them.");
+    expect(plane.requests).not.toContain("POST /api/dots/d1/computer/stop");
+
+    confirm.mockReturnValue(true);
+    await userEvent.click(within(await openMenu()).getByRole("menuitem", { name: "Stop" }));
+    await waitFor(() => expect(plane.requests).toContain("POST /api/dots/d1/computer/stop"));
+  });
+
+  it("asks before it stops any computer, says what that costs the automations, and does nothing when the person says no", async () => {
+    plane.dots = [dotRecord("d1", { status: "READY" })];
+    await renderDot();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    await userEvent.click(within(await openMenu()).getByRole("menuitem", { name: "Stop" }));
+    expect(confirm).toHaveBeenCalledWith("Stop this Dot's computer? Its automations do not run while it is stopped; start it again to resume them.");
     expect(plane.requests).not.toContain("POST /api/dots/d1/computer/stop");
 
     confirm.mockReturnValue(true);

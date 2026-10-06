@@ -1748,7 +1748,7 @@ web, `exited` for a VM that stopped by itself), kept while the computer is
 STOPPING or STOPPED and cleared by any start. A computer the person stopped is
 not started for its automations, missed or due, until the person starts it
 again: they are paused while it is stopped, and the CLI (`status`, `computer
-stop`) and the web (the stop confirmation) say so. A message or a task for it
+stop`) and the web (the stop confirmation, and the note below) say so. A message or a task for it
 still starts it, as it does for any stopped Dot, and from that start on it
 sleeps and wakes for its automations like any other. The person's stop of a
 computer that is already asleep is recorded too. A stop that the control plane
@@ -2049,7 +2049,7 @@ the Dot after its name has been typed.
 The Dot header's error banner gives the reason and "Open settings", and one way
 back: Reboot while the computer is up (the host reboots only a running
 computer), or Start the computer when the computer itself is in ERROR. Both
-use the power menu's one action, with its confirm while a task runs.
+use the power menu's one action, which asks before a stop and, while a task runs, before a reboot.
 
 The Tasks page (`/dots/<id>/tasks`) shows a Dot's tasks in four sections:
 Running (the newest `task.progress` line of each task, what it has spent from
@@ -2166,7 +2166,14 @@ table the API serves a file by too (markup and svg are text, so a file the Dot
 wrote is never run); a file named text that holds a NUL byte is not shown. Usage
 reads while the computer is off: what it was given, what it uses (`GET /computer`
 embeds the guest's `system` while it runs), the images, why the last start failed,
-the model spend today and in total, and Start, Reboot and Stop.
+the model spend today and in total, an Automations card, and Start, Reboot and Stop.
+Stop always asks and says that the automations do not run while the computer is stopped
+(Reboot asks only while a task runs). The Automations card, and a note above the list on
+the Memory page's Automations view, read the host's record of the computer (`GET
+/computer`: `stop_reason` and `next_automation_at`), which holds both while the computer is
+off: "Paused: you stopped this computer" when the person's stop paused them, otherwise when
+the next one is due (and that a computer asleep starts shortly before), or that none is due;
+both follow `computer.*` events and `automation.next_run`.
 
 The Memory page (`/dots/<id>/memory`) has two views, named in the address
 (`?view=notes|automations`, Notes when it says nothing). Both read the Dot's own

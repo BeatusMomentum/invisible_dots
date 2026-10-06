@@ -18,8 +18,8 @@ const STATE_DOT: Record<string, string> = {
 };
 
 /**
- * The computer pill: its state, and a menu to start, stop or reboot it. Stopping or rebooting asks first while a
- * task is running, since it would cut the task off.
+ * The computer pill: its state, and a menu to start, stop or reboot it. Stopping asks first (it pauses the automations),
+ * and rebooting asks while a task is running, since it would cut the task off.
  */
 export function PowerMenu({ dotId, computerState, taskRunning, onDone }: { dotId: string; computerState: string | null; taskRunning: boolean; onDone: () => void }) {
   const { act, pending } = usePower({ dotId, taskRunning, onDone });

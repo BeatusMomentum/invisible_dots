@@ -70,8 +70,16 @@ test("the Computer page shows the screen, the files and what the computer uses",
   await expect(page.getByRole("region", { name: "Images" })).toContainText("golden-");
   await expect(page.getByRole("region", { name: "Model spend" })).toContainText("$0.00");
   await expect(page.getByRole("button", { name: "Start", exact: true })).toBeDisabled();
+  // The Dot's automations are the Dot's own: the page says when the next one is due (none is yet).
+  await expect(page.getByRole("region", { name: "Automations" })).toContainText("No automation is due.");
+  // Stopping asks, and says what it costs.
+  page.once("dialog", (dialog) => {
+    expect(dialog.message()).toContain("Its automations do not run while it is stopped");
+    void dialog.accept();
+  });
   await page.getByRole("button", { name: "Stop", exact: true }).click();
   await expect(page.getByRole("button", { name: /^Computer: STOPPED/ })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Automations" })).toContainText("Paused: you stopped this computer, so its automations do not run");
   await expect(page.getByRole("button", { name: "Start", exact: true })).toBeEnabled();
   await expect(page.getByText("What it uses is shown while the computer runs.")).toBeVisible();
 });

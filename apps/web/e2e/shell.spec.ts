@@ -74,6 +74,7 @@ test("the computer pill stops and starts the computer", async ({ signedIn: page,
   await page.goto(`${harness.webUrl}/dots/${dot.id}/chat`);
   const pill = page.getByRole("button", { name: /^Computer: RUNNING/ });
   await pill.click();
+  page.once("dialog", (dialog) => void dialog.accept());
   await page.getByRole("menuitem", { name: "Stop" }).click();
   await expect(page.getByRole("button", { name: /^Computer: STOPPED/ })).toBeVisible();
   await expect(page.getByRole("navigation", { name: "Dots" }).getByRole("link", { name: /shell-power/ }).getByRole("img", { name: "Computer stopped" })).toBeVisible();

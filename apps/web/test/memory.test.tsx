@@ -82,6 +82,32 @@ describe("the views of the Memory page", () => {
     expect(requested(/files|automations/)).toEqual([]);
   });
 
+  it("says on the Automations view of a computer the person stopped that the automations are paused", async () => {
+    plane.dots = [dotRecord("d1", { name: "fares", computer_state: "STOPPED" })];
+    plane.computerStopReason = "user";
+    plane.nextAutomationAt = new Date(Date.now() + 3_600_000).toISOString();
+    await renderMemory({ view: "automations" });
+    const paused = await screen.findByText(/^Paused: you stopped this computer, so its automations do not run/);
+    expect(paused.closest("[role=status]")?.getAttribute("data-paused")).toBe("true");
+    expect(screen.getByText("Start the computer to see its automations")).toBeTruthy();
+  });
+
+  it("says when a sleeping computer is due to start for the next automation", async () => {
+    plane.dots = [dotRecord("d1", { name: "fares", computer_state: "STOPPED" })];
+    plane.computerStopReason = "idle";
+    plane.nextAutomationAt = new Date(Date.now() + 2 * 3_600_000 + 60_000).toISOString();
+    await renderMemory({ view: "automations" });
+    expect((await screen.findByText(/^Next automation: /)).textContent).toMatch(/\(in 2h\)\. The computer is asleep and starts shortly before then\.$/);
+  });
+
+  it("does not say it on the Notes view", async () => {
+    plane.nextAutomationAt = new Date(Date.now() + 3_600_000).toISOString();
+    await renderMemory();
+    await screen.findByRole("navigation", { name: "Memory views" });
+    expect(requested(/GET \/api\/dots\/d1\/computer$/)).toEqual([]);
+    expect(screen.queryByText(/^Next automation: /)).toBeNull();
+  });
+
   it("says so too when the computer stopped after the page asked", async () => {
     plane.automations = null;
     await renderMemory({ view: "automations" });

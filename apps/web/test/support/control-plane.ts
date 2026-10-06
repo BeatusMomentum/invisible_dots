@@ -184,6 +184,9 @@ export class FakeControlPlane {
   /** Answer `GET /api/doctor` with this status instead of the report. */
   failDoctor: number | null = null;
   computerLastError: string | null = null;
+  /** `stop_reason` and `next_automation_at` of `GET .../computer`: what the host records, which is there while the computer is off. */
+  computerStopReason: ComputerAnswer["stop_reason"] = null;
+  nextAutomationAt: string | null = null;
   /** Every request as "METHOD path", in order. */
   requests: string[] = [];
   /** Answer a computer action with this error status instead of 202. */
@@ -564,6 +567,8 @@ export class FakeControlPlane {
           dot_id: record.id,
           state,
           last_error: this.computerLastError,
+          stop_reason: this.computerStopReason,
+          next_automation_at: this.nextAutomationAt,
           ready: this.ready,
           system: computerIsUp(state) ? this.system : null,
           last_active_at: "2026-03-10T12:00:00Z",
