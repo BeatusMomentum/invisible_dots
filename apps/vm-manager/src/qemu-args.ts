@@ -58,6 +58,21 @@ function integerInRange(label: string, value: number, min: number, max: number):
 }
 
 /**
+ * The CPU model of every VM of this project (section 3.4): the host's own
+ * CPU, without the virtualization extensions. A Dot never runs a hypervisor,
+ * and under WHPX a guest that sees VMX stops: measured with QEMU 11.1 on
+ * Windows 11 (Intel Core Ultra 7 255H, the hypervisor running), `-cpu host`
+ * and `-cpu max` pause the VM at its first firmware instructions with
+ * `WHPX: Unexpected VP exit code 4` (WHvRunVpExitReasonUnrecoverableException),
+ * while `-cpu host,-vmx` boots the Ubuntu cloud image to its login prompt and
+ * so does every named model. No other feature of the host CPU matters
+ * (bisected). Public reports give the same remedy (`vmx=off`). `-svm` is the
+ * AMD spelling of the same extension; QEMU accepts both names on every host.
+ * One value on every accelerator, because section 1.1 keeps one command line.
+ */
+export const CPU_MODEL = "host,-vmx,-svm";
+
+/**
  * The machine every VM of this project runs on, Dots and the image
  * builder's VM alike, so a golden image is provisioned on the machine type,
  * accelerator and CPU model a Dot later boots it on: changing one here
@@ -70,7 +85,7 @@ export function machineArgs(spec: { accelerator: Accelerator; cpus: number; memo
     "-accel",
     spec.accelerator,
     "-cpu",
-    "host",
+    CPU_MODEL,
     "-smp",
     String(integerInRange("cpus", spec.cpus, 1, 16)),
     "-m",

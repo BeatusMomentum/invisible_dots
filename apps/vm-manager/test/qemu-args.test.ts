@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { qemuArgs, qemuPathProblem, VmManagerError, type QemuArgsSpec } from "../src/index.js";
+import { CPU_MODEL, machineArgs, qemuArgs, qemuPathProblem, VmManagerError, type QemuArgsSpec } from "../src/index.js";
 
 const linux: QemuArgsSpec = {
   dotId: "dot_01k6",
@@ -17,7 +17,7 @@ describe("qemuArgs", () => {
   it("is the command line of section 3.4, argument by argument", () => {
     expect(qemuArgs(linux)).toEqual([
       "-name", "invisible-dot-dot_01k6",
-      "-machine", "q35", "-accel", "kvm", "-cpu", "host",
+      "-machine", "q35", "-accel", "kvm", "-cpu", "host,-vmx,-svm",
       "-smp", "2", "-m", "4096",
       "-drive", "if=virtio,file=/home/u/.invisible-dots/vms/dot_01k6/disk.qcow2,format=qcow2,discard=unmap",
       "-drive", "media=cdrom,file=/home/u/.invisible-dots/vms/dot_01k6/seed.iso,format=raw,readonly=on",
@@ -49,7 +49,21 @@ describe("qemuArgs", () => {
 
   it("never asks for a fallback CPU model or software emulation", () => {
     const args = qemuArgs(linux).join(" ");
-    expect(args).not.toMatch(/tcg|-cpu (?!host)|max/);
+    expect(args).not.toMatch(/tcg|max/);
+    expect(args).toMatch(/-cpu host,/);
+  });
+
+  it("gives every accelerator the host CPU without the virtualization extensions", () => {
+    // Measured with QEMU 11.1 under WHPX (architecture section 3.4): plain `host` and `max` pause the VM
+    // with "WHPX: Unexpected VP exit code 4" because the guest sees VMX; `host,-vmx` boots to the login.
+    expect(CPU_MODEL).toBe("host,-vmx,-svm");
+    for (const accelerator of ["kvm", "whpx"] as const) {
+      const args = machineArgs({ accelerator, cpus: 2, memoryMiB: 2048 });
+      expect(args[args.indexOf("-cpu") + 1]).toBe(CPU_MODEL);
+      const features = CPU_MODEL.split(",").slice(1);
+      expect(features).toEqual(expect.arrayContaining(["-vmx", "-svm"]));
+      expect(CPU_MODEL.split(",")[0]).toBe("host");
+    }
   });
 
   it("has no monitor and nothing that pauses the VM", () => {

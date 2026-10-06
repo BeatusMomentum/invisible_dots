@@ -127,7 +127,7 @@ describe("buildGoldenImage", () => {
     expect(runner.spawns).toHaveLength(1);
     expect(runner.spawns[0]!.command).toBe("/opt/qemu/qemu-system-x86_64");
     expect(runner.spawns[0]!.args).toEqual(
-      expect.arrayContaining(["-accel", "kvm", "-cpu", "host", "-m", String(GOLDEN_DEFAULTS.memoryMib), "-smp", String(GOLDEN_DEFAULTS.cpus)]),
+      expect.arrayContaining(["-accel", "kvm", "-cpu", "host,-vmx,-svm", "-m", String(GOLDEN_DEFAULTS.memoryMib), "-smp", String(GOLDEN_DEFAULTS.cpus)]),
     );
     // The seed carried both tarballs and the GeoIP archive.
     expect(seedSize).toBeGreaterThan(NODE.length + UV.length + GEOIP.length);

@@ -129,7 +129,7 @@ describe("setup", () => {
     });
     expect(result.code).toBe(EXIT.failed);
     expect(result.requests).toEqual([]);
-    expect(result.text).toContain("setup cannot fix this by installing something:\n  accelerator probe: qemu-system-x86_64 -accel kvm -cpu host -machine q35 failed: WHPX: No accelerator found");
+    expect(result.text).toContain("setup cannot fix this by installing something:\n  accelerator probe: qemu-system-x86_64 -accel kvm -cpu host,-vmx,-svm -machine q35 failed: WHPX: No accelerator found");
   });
 
   it("names the server and the key as the next steps while they are missing", () => {

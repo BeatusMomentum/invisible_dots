@@ -27,7 +27,7 @@ describe("builderQemuArgs", () => {
   it("uses the Dot machine, CPU model and devices, and no host-facing channel", () => {
     const args = builderQemuArgs({ ...spec, accelerator: "kvm" });
     expect(values(args, "-machine")).toEqual(["q35"]);
-    expect(values(args, "-cpu")).toEqual(["host"]);
+    expect(values(args, "-cpu")).toEqual(["host,-vmx,-svm"]);
     expect(values(args, "-smp")).toEqual(["2"]);
     expect(values(args, "-m")).toEqual(["4096"]);
     expect(values(args, "-drive")).toEqual([

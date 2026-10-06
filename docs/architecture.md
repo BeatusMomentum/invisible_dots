@@ -335,7 +335,7 @@ host apart from the accelerator:
 ```text
 qemu-system-x86_64
   -name invisible-dot-<dot_id>
-  -machine q35 -accel <kvm|whpx> -cpu host
+  -machine q35 -accel <kvm|whpx> -cpu host,-vmx,-svm
   -smp <cpu> -m <memory MiB>
   -drive if=virtio,file=<vms/id/disk.qcow2>,format=qcow2,discard=unmap
   -drive media=cdrom,file=<vms/id/seed.iso>,readonly=on
@@ -351,8 +351,8 @@ qemu-system-x86_64
   `-no-shutdown`. QEMU starts running the guest at once and exits when the
   guest powers off. A test fails on any of these flags.
 - No fallback: if `-accel` fails, the start fails and the error names the
-  fix. If `-cpu host` is rejected by an accelerator, the error says so; it is
-  not replaced by a guessed model without an explicit decision recorded here.
+  fix. If the CPU model is rejected by an accelerator, the error says so; it
+  is not replaced by a guessed model without an explicit decision recorded here.
 - Start: spawn QEMU detached (so the control plane can restart without
   stopping Dots), with an allowlist of the server's environment
   (`allowlistedEnvironment()`, `packages/shared/src/environment.ts`: what a
@@ -417,13 +417,14 @@ qemu-system-x86_64
 - Measured with QEMU 8.2.2 (Ubuntu 24.04) and KVM: this argv starts, the
   forward listens about 0.2 s after the spawn, and a taken port exits with
   `Could not set up host forwarding rule`, the message the start retries on.
-- OPEN: measured on QEMU 11.1 with the Windows Hypervisor Platform feature
-  disabled, `-accel whpx -cpu host` starts and then pauses the VM with
-  `WHPX: Unexpected VP exit code 4` (QEMU keeps running, so the start succeeds
-  and READY fails with that line from QEMU's log); `-cpu qemu64` ran the whole
-  lifecycle. Whether `-cpu host` works once `invisible-dots setup` has enabled
-  the feature is not measured yet. If it does not, the CPU model under WHPX
-  needs a decision recorded here.
+- The CPU model is the host's own without the virtualization extensions,
+  `host,-vmx,-svm` (`CPU_MODEL` in apps/vm-manager/src/qemu-args.ts), on every
+  accelerator: a Dot never runs a hypervisor. Measured with QEMU 11.1 on
+  Windows 11 (Intel Core Ultra 7 255H, hypervisor running): `-cpu host` and
+  `-cpu max` pause the VM at its first firmware instructions with
+  `WHPX: Unexpected VP exit code 4`, while `-cpu host,-vmx` boots the Ubuntu
+  cloud image to its login prompt; no other host CPU feature mattered
+  (bisected). `-svm` is the AMD name of the same extension.
 
 ### 3.5 Port forwards
 
@@ -2720,7 +2721,7 @@ the accelerator usable (Linux: `/dev/kvm` opens read-write; Windows: the
 `HypervisorPlatform` optional feature is enabled, read without administrator
 rights through `Get-CimInstance Win32_OptionalFeature`), confirmed by actually
 running QEMU with `-nodefaults -no-user-config -machine q35 -accel <kvm|whpx>
--cpu host -display none -no-reboot -boot reboot-timeout=0` and seeing it exit
+-cpu host,-vmx,-svm -display none -no-reboot -boot reboot-timeout=0` and seeing it exit
 with code 0; the data directory, `INVISIBLE_DOTS_HOME`, a path QEMU can be
 given (plain ASCII, no comma, section 3.2) with enough free space;
 the golden image and runtime ISO present and matching their manifests; the
