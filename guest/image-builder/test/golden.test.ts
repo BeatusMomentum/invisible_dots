@@ -46,14 +46,14 @@ beforeEach(async () => {
   home = mkdtempSync(join(tmpdir(), "idots-golden-"));
   paths = hostPaths({ INVISIBLE_DOTS_HOME: home });
   base = {
-    name: "ubuntu-24.04-minimal-cloudimg-amd64",
+    name: "ubuntu-24.04-server-cloudimg-amd64",
     release: "24.04",
     serial: "20260926",
     url: http.url("/noble/base.img"),
     sha256sums_url: http.url("/noble/SHA256SUMS"),
     sha256sums_entry: "base.img",
     sha256: sha256(BASE),
-    local_name: "noble-minimal-cloudimg-amd64.img",
+    local_name: "noble-server-cloudimg-amd64.img",
   };
   pins = {
     uv: { version: "0.12.22", url: http.url(`/uv/${UV_FILE}`), shasums_url: http.url(`/uv/${UV_FILE}.sha256`), shasums_entry: UV_FILE, sha256: sha256(UV) },
@@ -145,7 +145,7 @@ describe("buildGoldenImage", () => {
     // The guest's progress reached the person; the work directory and the lock are gone.
     expect(logs).toEqual(expect.arrayContaining(["guest: installing packages: xvfb", "guest: installing uv 0.12.22"]));
     expect((await readdir(paths.imagesDir)).sort()).toEqual(
-      [".cache", "noble-minimal-cloudimg-amd64.img", `golden-${result.version}.json`, `golden-${result.version}.qcow2`].sort(),
+      [".cache", "noble-server-cloudimg-amd64.img", `golden-${result.version}.json`, `golden-${result.version}.qcow2`].sort(),
     );
     expect((await readdir(join(paths.imagesDir, ".cache"))).sort()).toEqual([TUNNEL_FILE, UV_FILE].sort());
   });

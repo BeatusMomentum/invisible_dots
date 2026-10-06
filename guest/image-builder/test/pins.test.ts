@@ -8,7 +8,7 @@ describe("the pins in this checkout", () => {
     expect(BASE_IMAGE.sha256sums_url).toContain(`/release-${BASE_IMAGE.serial}/SHA256SUMS`);
     expect(BASE_IMAGE.url.endsWith(`/${BASE_IMAGE.sha256sums_entry}`)).toBe(true);
     // The name architecture section 3.2 gives the downloaded image.
-    expect(BASE_IMAGE.local_name).toBe("noble-minimal-cloudimg-amd64.img");
+    expect(BASE_IMAGE.local_name).toBe("noble-server-cloudimg-amd64.img");
   });
 
   it("pin uv and the browser layer exactly, and no Node: nothing in the guest runs it", () => {
