@@ -23,9 +23,10 @@ await build({
   target: "node24",
   sourcemap: true,
   // pg loads its optional native binding with require(); it is never installed here.
-  // baileys (the opt-in WhatsApp client) stays out of the bundle: it depends on libsignal, which is GPL-3.0, and a bundle
-  // that held it would be a GPL work. It is loaded from node_modules when WhatsApp is linked, and only then.
-  external: ["pg-native", "baileys"],
+  // The opt-in WhatsApp client (Baileys, which depends on libsignal, GPL-3.0) is not in the bundle either: the adapter
+  // loads it at run time from optional/whatsapp/ by path (packages/channels/src/whatsapp-baileys/client.ts), so no
+  // import of it is in the bundle's graph, and a bundle that held it would be a GPL work.
+  external: ["pg-native"],
   banner: {
     // CommonJS dependencies inside an ESM bundle still call require().
     js: "#!/usr/bin/env node\nimport { createRequire as __createRequire } from 'node:module';\nconst require = __createRequire(import.meta.url);",

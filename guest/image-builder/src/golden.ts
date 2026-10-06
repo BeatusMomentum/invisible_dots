@@ -11,7 +11,7 @@ import { writeIso } from "@invisible-dots/iso";
 import { hostPaths, replaceFile, type HostPaths } from "@invisible-dots/shared";
 import { BUILDER_BROWSER_BUILD, BUILDER_ENGINE_BUILD, BUILDER_ENGINE_LOCK, BUILDER_PROVISION, BUILDER_PYTHON_LOCK, BUILDER_USER_DATA, defaultAssetRoot, readGuestAsset } from "./assets.js";
 import { DownloadError, fetchVerified, sha256File, type Fetch, type FetchVerifiedOptions } from "./download.js";
-import { GEOIP_NOTICES } from "./geoip-notices.js";
+import { GEOIP_NOTICES, GEOIP_STATEMENT } from "./geoip-notices.js";
 import { acquireLock, type Lock } from "./lock.js";
 import { manifestPathFor, writeManifest, type GoldenManifest } from "./manifest.js";
 import { BASE_IMAGE, downloadFileName, geoipCacheName, GUEST_PINS, isGeoipCacheName, type BaseImagePin, type GeoipPin, type GuestPins, type PinnedDownload } from "./pins.js";
@@ -250,6 +250,7 @@ async function buildLocked(options: GoldenBuildOptions & Resolved, target: Targe
         apt_packages: [...pins.apt_packages],
       },
       notices: [...GEOIP_NOTICES],
+      notices_statement: GEOIP_STATEMENT,
       engine: { lock_sha256: createHash("sha256").update(target.engineLock).digest("hex") },
       installed: installedComponents(consoleText),
       builder: { accelerator: options.accelerator },

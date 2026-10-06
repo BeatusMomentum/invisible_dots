@@ -3,21 +3,22 @@
  * links the Dot as a device of a WhatsApp account, which WhatsApp does not allow for automation and can end with
  * the account banned. It is pinned to one exact release candidate because the protocol changes under it.
  *
- * This file is the only one that knows Baileys, and it loads it when a connection opens (`import()`), so a server
- * that never links WhatsApp never loads it. It translates and decides nothing: who may talk, what is answered
+ * This file is the only one that talks to Baileys, through `loadWhatsAppClient` when a connection opens (see
+ * `client.ts`: the library is an opt-in install, and a server that never links WhatsApp never loads it). It
+ * translates and decides nothing: who may talk, what is answered
  * and how a person is told apart are the channel's (`WhatsAppChannel`). The real network is not reached by any
  * test; what is tested is `toIncoming`, `endOf` and the auth state, which carry the protocol's traps (LID
  * addresses, the many ways a connection closes).
  */
-import type { WAMessage, WASocket } from "baileys";
 import type { ChannelSecrets } from "../channel.js";
-import { AuthStore, type BaileysAuthLib } from "./auth-state.js";
+import { AuthStore } from "./auth-state.js";
+import { loadWhatsAppClient, type WhatsAppClient, type WhatsAppMessage, type WhatsAppSocket } from "./client.js";
 import { isDirectJid, phoneOf } from "./jid.js";
 import type { WhatsAppConnection, WhatsAppConnector, WhatsAppContent, WhatsAppEnd, WhatsAppEvents, WhatsAppIncoming } from "./port.js";
 
-type Baileys = typeof import("baileys");
-
 export interface BaileysOptions {
+  /** Where the opt-in client is installed (`whatsappClientDir`). */
+  clientDir: string;
   /** The WebSocket address of WhatsApp; default Baileys'. Tests point it at nothing. */
   waWebSocketUrl?: string;
   /** The WhatsApp Web version to present; default the one Baileys was released with. When WhatsApp stops accepting it, the release has to be upgraded. */
@@ -55,7 +56,7 @@ const SILENT_LOGGER = {
 };
 
 /** What a Baileys message is to the channel. Null for one that has no id or no chat, which no one could answer. */
-export function toIncoming(message: WAMessage, lib: Pick<Baileys, "normalizeMessageContent">): WhatsAppIncoming | null {
+export function toIncoming(message: WhatsAppMessage, lib: Pick<WhatsAppClient, "normalizeMessageContent">): WhatsAppIncoming | null {
   const { id, remoteJid, remoteJidAlt, fromMe } = message.key;
   if (!id || !remoteJid) return null;
   const inner = lib.normalizeMessageContent(message.message);
@@ -98,19 +99,19 @@ export class BaileysConnector implements WhatsAppConnector {
   constructor(
     private readonly dotId: string,
     private readonly secrets: ChannelSecrets,
-    private readonly options: BaileysOptions = {},
+    private readonly options: BaileysOptions,
   ) {}
 
   async connect(events: WhatsAppEvents): Promise<WhatsAppConnection> {
-    const lib: Baileys = await import("baileys");
-    const auth = await AuthStore.open(this.dotId, this.secrets, lib as unknown as BaileysAuthLib);
+    const lib = await loadWhatsAppClient(this.options.clientDir);
+    const auth = await AuthStore.open(this.dotId, this.secrets, lib);
     let closing = false;
     const socket = lib.makeWASocket({
       auth: auth.state,
       browser: BROWSER,
       logger: SILENT_LOGGER,
       // Only the chats of single people: a group's members would see what the Dot says, and nothing here answers a group.
-      shouldIgnoreJid: (jid) => !isDirectJid(jid),
+      shouldIgnoreJid: (jid: string) => !isDirectJid(jid),
       shouldSyncHistoryMessage: () => false,
       syncFullHistory: false,
       markOnlineOnConnect: false,
@@ -146,7 +147,7 @@ export class BaileysConnector implements WhatsAppConnector {
 
 class BaileysConnection implements WhatsAppConnection {
   constructor(
-    private readonly socket: WASocket,
+    private readonly socket: WhatsAppSocket,
     private readonly auth: AuthStore,
     private readonly beginClosing: () => void,
   ) {}

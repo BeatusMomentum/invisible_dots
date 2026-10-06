@@ -395,7 +395,13 @@ curl -X PATCH http://127.0.0.1:8787/api/dots/my-first-dot/channels/telegram \
 > which can get the account restricted or banned. Use a number of its own, such
 > as a spare SIM or eSIM, never the one you live on.
 
-Start the server with `INVISIBLE_DOTS_WHATSAPP=1`, then:
+The WhatsApp client is not part of the default install (see below). Install it
+once, from the repository folder, then start the server with
+`INVISIBLE_DOTS_WHATSAPP=1`:
+
+```sh
+npm run whatsapp:install
+```
 
 ```sh
 invisible-dots channel link whatsapp --dot my-first-dot
@@ -409,10 +415,12 @@ never writes first, to anyone, answers only people who paired, in private
 chats, and takes text only. Approvals are answered in words
 (`yes ap-xxxxxx` or `no ap-xxxxxx`); a bare `yes` is an ordinary message.
 
-Baileys depends on `libsignal`, which is GPL-3.0. `npm ci` installs both into
-`node_modules` for everyone; neither is in this repository or in the bundled
-command, and the server loads them only when WhatsApp is linked
-([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
+Baileys depends on `libsignal`, which is GPL-3.0, so nothing of it is installed
+by default: `npm ci` installs neither, and neither is in the bundled command.
+`npm run whatsapp:install` installs them into `optional/whatsapp/`, pinned to
+one release by a lock file with the integrity of every package, and the server
+loads them from there only when WhatsApp is linked. Without them, linking says
+how to enable it ([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)).
 
 The details of both:
 [architecture: messaging channels](docs/architecture.md#98-messaging-channels).
@@ -513,7 +521,7 @@ so it is kept private to your user.
 | `INVISIBLE_DOTS_WEB_LISTEN` | `127.0.0.1:3000` | where the web client listens |
 | `INVISIBLE_DOTS_WEB_ALLOWED_HOSTS` | loopback only | other host names the web client answers to |
 | `INVISIBLE_DOTS_QEMU_DIR` | official installer's folder, then `PATH` | the one folder QEMU is looked for in |
-| `INVISIBLE_DOTS_WHATSAPP` | off | `1` offers the WhatsApp channel |
+| `INVISIBLE_DOTS_WHATSAPP` | off | `1` offers the WhatsApp channel (after `npm run whatsapp:install`) |
 | `DATABASE_URL` | embedded PGlite | an external PostgreSQL 16 or newer |
 | `INVISIBLE_DOTS_DEBUG` | off | `1` adds debug lines to the server's log |
 
@@ -672,9 +680,15 @@ parts of this repository's history come from Open Multi-Agent, also MIT. Their
 notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). QEMU (GPL-2.0)
 is installed from its official installer or your distribution and only run as
 a separate program, never bundled. The guest operating system, the browser
-engine and the packages a host downloads keep their own licenses; whoever
-copies a golden image to another machine takes on theirs
-([architecture: licensing](docs/architecture.md#113-licensing)).
+engine and the packages a host downloads keep their own licenses, and so does
+the GeoIP data in the golden image: it is built on your machine from the
+sources' free databases (CC BY-SA 4.0, the GeoLite2 EULA, CC BY 4.0 and others,
+listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)), and invisible_dots
+does not redistribute it. Whoever copies a golden image to another machine takes
+on those licenses
+([architecture: licensing](docs/architecture.md#113-licensing)). Nothing under
+the GPL is installed by default; the WhatsApp client, which brings a GPL-3.0
+dependency, is an opt-in install.
 
 invisible_dots is an independent project, not affiliated with OpenRouter,
 Telegram, WhatsApp or Meta.

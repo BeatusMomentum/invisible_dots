@@ -18,6 +18,17 @@ const ANN_LID = "99887766554433@lid";
 const BEN = "393334445555@s.whatsapp.net";
 const NUMBER = "15550001111";
 
+/**
+ * What the auth state needs of the library, as JSON: this test is about what the hub deletes with a Dot and about a
+ * write that must not come back, not about how Baileys serializes its keys (the real library is in
+ * test-optin/auth-state.test.ts).
+ */
+const SESSION_LIB: BaileysAuthLib = {
+  initAuthCreds: () => ({}),
+  BufferJSON: { replacer: (_key, value) => value, reviver: (_key, value) => value },
+  proto: { Message: { AppStateSyncKeyData: { fromObject: (object) => object } } },
+};
+
 describe.each(testAdapters())("the hub with the WhatsApp channel, with the real Scheduler and a fake guest (%s)", { timeout: 60_000 }, (kind) => {
   let t: TestDatabase;
   let db: Database;
@@ -272,7 +283,7 @@ describe.each(testAdapters())("the hub with the WhatsApp channel, with the real 
     const { dot, connection, type } = await linked(w);
     // The session the real adapter would hold open: its keys are written as they change, until the connection is closed.
     const binding = (await db.channels.listBindings(dot.id))[0]!;
-    const auth = await AuthStore.open(dot.id, new BindingSecrets(db, binding.id), (await import("baileys")) as unknown as BaileysAuthLib);
+    const auth = await AuthStore.open(dot.id, new BindingSecrets(db, binding.id), SESSION_LIB);
     await auth.state.keys.set({ session: { a: Buffer.from("ratchet") } });
     await auth.saveCreds();
     for (const name of ["whatsapp_creds", "whatsapp_keys_session"]) expect(await db.secrets.get(dot.id, name)).not.toBeNull();

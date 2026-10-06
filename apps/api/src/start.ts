@@ -5,7 +5,16 @@
  * with `untilStopSignal`; tests call `startServer` and close the handle
  * themselves.
  */
-import { ChannelHub, TelegramChannelType, WhatsAppChannelType, type ChannelType } from "@invisible-dots/channels";
+import { fileURLToPath } from "node:url";
+import {
+  ChannelHub,
+  TelegramChannelType,
+  WHATSAPP_ENABLE_HELP,
+  WhatsAppChannelType,
+  whatsappClientDir,
+  whatsappClientInstalled,
+  type ChannelType,
+} from "@invisible-dots/channels";
 import type { Database } from "@invisible-dots/database";
 import { errorMessage, prefixedStderrLogger, Scheduler, type ComputerDriver, type Logger, type SchedulerOptions } from "@invisible-dots/scheduler";
 import { ensureDir, ENV, hostPaths, type HostPaths } from "@invisible-dots/shared";
@@ -31,6 +40,8 @@ export interface StartServerOptions {
   scheduler?: Omit<SchedulerOptions, "db" | "driver" | "logger">;
   /** The kinds of messaging channel this server can run; default Telegram, and WhatsApp when INVISIBLE_DOTS_WHATSAPP=1. Tests pass fakes. */
   channelTypes?: readonly ChannelType[];
+  /** Where the opt-in WhatsApp client is installed; default `optional/whatsapp` of the repository. Tests point it at a folder of their own. */
+  whatsappClientDir?: string;
 }
 
 /** The logger of the `invisible-dots` process: lines on stderr prefixed with its name, debug lines when INVISIBLE_DOTS_DEBUG=1. */
@@ -58,12 +69,19 @@ export interface RunningServer {
 }
 
 /**
- * The channels a server runs when it is not told otherwise. WhatsApp is opt-in: its adapter is an unofficial
- * client that WhatsApp can answer with a ban of the linked account, so a server that was not asked for it neither
- * loads nor offers it.
+ * Where the opt-in WhatsApp client is installed, under the repository root. apps/api/src/start.ts and the command
+ * bundle apps/cli/dist/invisible-dots.mjs sit at the same depth, so the root is the same for both.
  */
-export function defaultChannelTypes(env: Record<string, string | undefined>): ChannelType[] {
-  return [new TelegramChannelType(), ...(env[ENV.WHATSAPP] === "1" ? [new WhatsAppChannelType()] : [])];
+const DEFAULT_CLIENT_DIR = whatsappClientDir(fileURLToPath(new URL("../../../", import.meta.url)));
+
+/**
+ * The channels a server runs when it is not told otherwise. WhatsApp is opt-in twice: its adapter is an unofficial
+ * client that WhatsApp can answer with a ban of the linked account, so a server that was not asked for it neither
+ * loads nor offers it; and its client library is not part of the default install (it is GPL-3.0 through libsignal),
+ * so it is installed by the person who turns WhatsApp on.
+ */
+export function defaultChannelTypes(env: Record<string, string | undefined>, clientDir: string = DEFAULT_CLIENT_DIR): ChannelType[] {
+  return [new TelegramChannelType(), ...(env[ENV.WHATSAPP] === "1" ? [new WhatsAppChannelType({ baileys: { clientDir } })] : [])];
 }
 
 /**
@@ -110,11 +128,15 @@ export async function startServer(options: StartServerOptions = {}): Promise<Run
       logger: options.logger ?? prefixedStderrLogger("scheduler", debug),
     });
     cleanup.push(() => scheduler.close());
+    const clientDir = options.whatsappClientDir ?? DEFAULT_CLIENT_DIR;
+    if (!options.channelTypes && env[ENV.WHATSAPP] === "1" && !whatsappClientInstalled(clientDir)) {
+      logger.warn(`${ENV.WHATSAPP}=1 is set but the WhatsApp client is not installed: ${WHATSAPP_ENABLE_HELP}`);
+    }
     // Next to the Scheduler, using only what it offers; registered after it, so it stops first.
     const channels = new ChannelHub({
       db,
       host: scheduler,
-      types: options.channelTypes ?? defaultChannelTypes(env),
+      types: options.channelTypes ?? defaultChannelTypes(env, clientDir),
       logger: options.logger ?? prefixedStderrLogger("channels", debug),
     });
     cleanup.push(() => channels.close());

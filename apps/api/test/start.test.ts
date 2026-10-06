@@ -5,7 +5,7 @@
  */
 import { EventEmitter } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FakeChannelType } from "@invisible-dots/channels/testing";
@@ -227,5 +227,30 @@ describe("startServer on an empty INVISIBLE_DOTS_HOME", { timeout: 120_000 }, ()
     await expect(stat(join(home, "server.lock"))).rejects.toMatchObject({ code: "ENOENT" });
     const server = await start();
     expect(server.database).toBe("pglite");
+  });
+
+  it("with INVISIBLE_DOTS_WHATSAPP=1 and no WhatsApp client installed, starts anyway and says in the log how to install it", async () => {
+    const warnings: string[] = [];
+    const logger = { ...quiet, warn: (message: string) => void warnings.push(message) };
+    const server = await start({ env: envFor(home, { INVISIBLE_DOTS_WHATSAPP: "1" }), logger, whatsappClientDir: join(home, "no-client") });
+    expect(warnings.filter((m) => m.includes("WhatsApp client is not installed"))).toHaveLength(1);
+    expect(warnings.join("\n")).toContain("npm run whatsapp:install");
+    expect(server.channels.kinds).toEqual(["telegram", "whatsapp"]);
+    const api = new InvisibleDotsClient({ baseUrl: server.url, token: server.token });
+    expect(await api.health()).toMatchObject({ status: "ok" });
+  });
+
+  it("says nothing of the WhatsApp client when WhatsApp is not asked for, or when the client is there", async () => {
+    const client = join(home, "client");
+    await mkdir(join(client, "node_modules", "baileys"), { recursive: true });
+    await writeFile(join(client, "package.json"), "{}");
+    await writeFile(join(client, "node_modules", "baileys", "package.json"), JSON.stringify({ name: "baileys", main: "index.js" }));
+    await writeFile(join(client, "node_modules", "baileys", "index.js"), "");
+    const warnings: string[] = [];
+    const logger = { ...quiet, warn: (message: string) => void warnings.push(message) };
+    const first = await start({ logger, whatsappClientDir: join(home, "no-client") });
+    await stopped(first);
+    await start({ env: envFor(home, { INVISIBLE_DOTS_WHATSAPP: "1" }), logger, whatsappClientDir: client });
+    expect(warnings.filter((m) => m.includes("WhatsApp"))).toEqual([]);
   });
 });

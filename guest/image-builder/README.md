@@ -79,9 +79,11 @@ image's SHA-256; `invisible-dots doctor` checks an image against it with
    builds there only with such a cached archive. The cache is bounded: after
    a build has its pin's archive, the two archives downloaded most recently
    before it stay and older ones are removed (`pruneGeoipArchives`). The database merges free
-   editions of third-party databases that ask to be credited: their credits
-   are in `src/geoip-notices.ts`, which each golden manifest records as
-   `notices` and `THIRD_PARTY_NOTICES.md` repeats. The
+   editions of third-party databases, each under its own data license and most
+   asking to be credited: the licenses and credits are in `src/geoip-notices.ts`,
+   which each golden manifest records as `notices` (with `notices_statement`:
+   the image is built on your machine and invisible_dots does not redistribute
+   the data) and `THIRD_PARTY_NOTICES.md` repeats. The
    browser smoke runs the same script on the same pinned archive. The only
    browser a Dot has is that server: a test refuses any other browser or browser
    library among the apt packages, the lock and the build scripts. `provision.sh`

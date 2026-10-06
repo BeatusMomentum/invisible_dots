@@ -13,8 +13,8 @@
 //           vitest suites, the output of `go test -json` for "go", and a
 //           JUnit XML report (a file ending in .xml, pytest --junitxml) for
 //           the Python engine.
-// --suite   the entry of the floors file to apply: vitest, postgres, go or
-//           pytest.
+// --suite   the entry of the floors file to apply: vitest, postgres, whatsapp,
+//           go or pytest.
 // --floors  default .github/test-floors.json. The entry is chosen by the
 //           host this runs on (linux, win32), so CI and the pre-push hook
 //           read the same numbers from the same file.
@@ -34,7 +34,7 @@ function fail(message) {
 
 const args = process.argv.slice(2);
 const reportPath = args.shift();
-const usage = "usage: test-guard.mjs <report> --suite <vitest|postgres|go|pytest> [--floors <file>]";
+const usage = "usage: test-guard.mjs <report> --suite <vitest|postgres|whatsapp|go|pytest> [--floors <file>]";
 if (!reportPath) fail(usage);
 let suite;
 let floorsPath = ".github/test-floors.json";

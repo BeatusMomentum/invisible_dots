@@ -16,6 +16,9 @@
   "scripts": {
     "typecheck": "tsc -p tsconfig.json && tsc -p apps/web/tsconfig.json",
     "test": "vitest run",
+    "whatsapp:install": "npm ci --prefix optional/whatsapp --ignore-scripts --no-audit --no-fund",
+    "typecheck:whatsapp": "tsc -p tsconfig.whatsapp.json",
+    "test:whatsapp": "vitest run --config vitest.whatsapp.config.ts",
     "build": "npm run build --workspaces --if-present"
   },
   "devDependencies": {

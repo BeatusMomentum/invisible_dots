@@ -1,7 +1,7 @@
 /**
  * The WhatsApp channel on its own, over the fake connection: who a message is from, what it is, what is never
  * answered, how the Dot's words are sent and how a connection that ends is understood. The hub's policies on
- * top of it are in hub-whatsapp.test.ts; the Baileys glue is in baileys.test.ts. Nothing here touches a
+ * top of it are in hub-whatsapp.test.ts; the Baileys glue is in baileys.test.ts and test-optin/. Nothing here touches a
  * network: WhatsApp cannot be faked, so the channel runs on `FakeWhatsAppConnector`.
  */
 import type { ChannelBindingRecord } from "@invisible-dots/database";
@@ -310,7 +310,7 @@ describe("how a connection ends", () => {
 });
 
 describe("the channel type", () => {
-  const type = new WhatsAppChannelType();
+  const type = new WhatsAppChannelType({ connector: () => new FakeWhatsAppConnector() });
 
   it("is a scanned channel with no credential a person gives, and names every secret its linked device keeps", () => {
     expect(type.kind).toBe("whatsapp");

@@ -12,7 +12,6 @@ import { isUniqueViolation } from "@invisible-dots/database";
 import type { EventLog } from "@invisible-dots/events";
 import {
   CHANNEL_KINDS,
-  ENV,
   type ApprovalRecord,
   newId,
   type ChannelKind,
@@ -31,6 +30,7 @@ import { LinkSessions } from "./link.js";
 import { hashPairingCode, newPairingCode } from "./pairing.js";
 import { RateLimiter } from "./rate.js";
 import { BindingRunner } from "./runner.js";
+import { WHATSAPP_ENABLE_HELP } from "./whatsapp-baileys/client.js";
 
 /** What the hub asks of the control plane; the Scheduler satisfies it. */
 export interface ChannelHost {
@@ -358,7 +358,7 @@ export class ChannelHub {
     if (!type) {
       const off =
         kind === "whatsapp"
-          ? `it is off: set ${ENV.WHATSAPP}=1 and restart the server to turn it on (read its risks in the architecture document first)`
+          ? `it is off: ${WHATSAPP_ENABLE_HELP} (read its risks in the architecture document first)`
           : "this server has no adapter for it";
       const known = CHANNEL_KINDS.includes(kind) ? off : `the channels are ${CHANNEL_KINDS.join(", ")}`;
       throw bad(`no "${String(kind)}" channel: ${known}`);
