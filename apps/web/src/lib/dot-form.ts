@@ -19,6 +19,16 @@ import { toYaml } from "./yaml";
 
 const GIB = 1024 ** 3;
 
+/** A size of the config ("4gb") in GiB, which is what the sliders count in. */
+export function gibOf(size: string): number {
+  return parseSize(size) / GIB;
+}
+
+/** GiB as the config writes a size. */
+export function gibSize(gib: number): string {
+  return `${gib}gb`;
+}
+
 /** The model a new Dot starts with: the one the architecture document's example uses. */
 export const DEFAULT_MODEL_ID = "z-ai/glm-5.3-flash";
 
@@ -43,8 +53,8 @@ export const IDLE_CHOICES: readonly IdleChoice[] = [
 /** The slider ranges, in whole GiB where the config has sizes ("4gb"). */
 export const FORM_BOUNDS = {
   cpu: CONFIG_BOUNDS.cpu,
-  memoryGib: { min: parseSize(CONFIG_BOUNDS.memory.min) / GIB, max: parseSize(CONFIG_BOUNDS.memory.max) / GIB },
-  diskGib: { min: parseSize(CONFIG_BOUNDS.disk.min) / GIB, max: parseSize(CONFIG_BOUNDS.disk.max) / GIB },
+  memoryGib: { min: gibOf(CONFIG_BOUNDS.memory.min), max: gibOf(CONFIG_BOUNDS.memory.max) },
+  diskGib: { min: gibOf(CONFIG_BOUNDS.disk.min), max: gibOf(CONFIG_BOUNDS.disk.max) },
   maxCostUsd: CONFIG_BOUNDS.maxCostPerTaskUsd,
 } as const;
 
@@ -72,8 +82,8 @@ export function emptyForm(): DotForm {
     modelId: DEFAULT_MODEL_ID,
     summaryModelId: "",
     cpu: CONFIG_BOUNDS.cpu.default,
-    memoryGib: parseSize(CONFIG_BOUNDS.memory.default) / GIB,
-    diskGib: parseSize(CONFIG_BOUNDS.disk.default) / GIB,
+    memoryGib: gibOf(CONFIG_BOUNDS.memory.default),
+    diskGib: gibOf(CONFIG_BOUNDS.disk.default),
     idleTimeout: CONFIG_BOUNDS.idleTimeout.default,
     permissions: presetPermissions("balanced"),
     maxCostUsd: CONFIG_BOUNDS.maxCostPerTaskUsd.default,
@@ -86,7 +96,7 @@ export function formToConfig(form: DotForm): Record<string, unknown> {
     name: form.name,
     goal: form.goal,
     model: { provider: "openrouter", id: form.modelId },
-    computer: { cpu: form.cpu, memory: `${form.memoryGib}gb`, disk: `${form.diskGib}gb`, idle_timeout: form.idleTimeout },
+    computer: { cpu: form.cpu, memory: gibSize(form.memoryGib), disk: gibSize(form.diskGib), idle_timeout: form.idleTimeout },
     permissions: { ...form.permissions },
     limits: { max_cost_per_task_usd: form.maxCostUsd },
   };
@@ -103,8 +113,8 @@ export function configToForm(config: DotConfig): DotForm {
     modelId: config.model.id,
     summaryModelId: config.models.summary ?? "",
     cpu: config.computer.cpu,
-    memoryGib: parseSize(config.computer.memory) / GIB,
-    diskGib: parseSize(config.computer.disk) / GIB,
+    memoryGib: gibOf(config.computer.memory),
+    diskGib: gibOf(config.computer.disk),
     idleTimeout: config.computer.idle_timeout,
     permissions: { ...config.permissions },
     maxCostUsd: config.limits.max_cost_per_task_usd,

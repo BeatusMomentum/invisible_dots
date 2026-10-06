@@ -32,8 +32,7 @@
   }
 
   code,
-  pre,
-  textarea.code {
+  pre {
     font-family: var(--font-code);
     font-size: 0.9em;
   }
@@ -82,30 +81,6 @@
     white-space: pre-wrap;
   }
 
-  .text-error {
-    color: var(--danger);
-  }
-
-  .text-ok {
-    color: var(--ok);
-  }
-
-  .card {
-    border: 1px solid var(--border);
-    border-radius: var(--legacy-radius);
-    padding: 1rem;
-    margin: 1rem 0;
-    background: var(--background);
-  }
-
-  .card h2:first-child {
-    margin-top: 0;
-  }
-
-  .danger-zone {
-    border-color: var(--danger);
-  }
-
   label {
     display: block;
     font-weight: 600;
@@ -118,36 +93,6 @@
     gap: 0.35rem;
     font-weight: normal;
     margin: 0;
-  }
-
-  .hint {
-    color: var(--muted-foreground);
-    font-size: 0.85rem;
-    margin: 0 0 0.35rem;
-  }
-
-  input[type="text"],
-  input[type="password"],
-  input[type="number"],
-  input[type="datetime-local"],
-  textarea {
-    width: 100%;
-    padding: 0.45rem 0.6rem;
-    border: 1px solid var(--border);
-    border-radius: var(--legacy-radius);
-    background: var(--background);
-    color: var(--foreground);
-    font: inherit;
-  }
-
-  textarea {
-    resize: vertical;
-  }
-
-  textarea.code {
-    font-family: var(--font-code);
-    line-height: 1.4;
-    tab-size: 2;
   }
 
   button {
@@ -163,12 +108,6 @@
   button.secondary {
     background: transparent;
     color: var(--primary);
-  }
-
-  button.danger {
-    background: transparent;
-    color: var(--danger);
-    border-color: var(--danger);
   }
 
   button:disabled {

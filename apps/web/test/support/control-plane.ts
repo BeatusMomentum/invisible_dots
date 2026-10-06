@@ -94,6 +94,10 @@ export class FakeControlPlane {
   updates: Array<{ config: unknown; expected_config_version?: number }> = [];
   /** Answer `PATCH /api/dots/:id` with this error instead of saving. */
   failUpdate: { status: number; error: string; message: string } | null = null;
+  /** The ids of the Dots the browser deleted (`DELETE /api/dots/:id`), in order. */
+  deleted: string[] = [];
+  /** Answer `DELETE /api/dots/:id` with this error instead of accepting it. */
+  failDelete: { status: number; error: string; message: string } | null = null;
   /** The most events one `GET .../events` page holds (the real route's is 1000). */
   eventPage = MAX_EVENT_PAGE;
   /** Answer `GET .../events` with this status instead of the log. */
@@ -301,6 +305,11 @@ export class FakeControlPlane {
         record.config_version += 1;
         this.push(record.id, "dot.updated", { name: record.name });
         return json(record);
+      }
+      if (rest === "" && method === "DELETE") {
+        if (this.failDelete) return json({ error: this.failDelete.error, message: this.failDelete.message }, this.failDelete.status);
+        this.deleted.push(record.id);
+        return json({ accepted: true }, 202);
       }
       if (rest === "") return json(record);
       if (rest === "tasks" && method === "GET") return json({ tasks: this.tasks.filter((t) => t.dot_id === record.id) });

@@ -242,7 +242,16 @@ describe("CONFIG_BOUNDS", () => {
       disk: CONFIG_BOUNDS.disk.default,
       idle_timeout: CONFIG_BOUNDS.idleTimeout.default,
     });
-    expect(config.limits.max_cost_per_task_usd).toBe(CONFIG_BOUNDS.maxCostPerTaskUsd.default);
+    expect(config.limits).toEqual({
+      max_steps_per_task: CONFIG_BOUNDS.maxStepsPerTask.default,
+      context_tokens: CONFIG_BOUNDS.contextTokens.default,
+      max_cost_per_task_usd: CONFIG_BOUNDS.maxCostPerTaskUsd.default,
+    });
+    expect(config.browser.identities).toEqual({
+      managed_by_dot: true,
+      max_identities: CONFIG_BOUNDS.maxIdentities.default,
+      max_open: CONFIG_BOUNDS.maxOpen.default,
+    });
   });
 
   it("are the range the schema accepts: both ends in, one step outside refused", () => {
@@ -262,6 +271,26 @@ describe("CONFIG_BOUNDS", () => {
     expect(safeParseDotConfig(withLimits({ max_cost_per_task_usd: maxCostPerTaskUsd.max })).ok).toBe(true);
     expect(safeParseDotConfig(withLimits({ max_cost_per_task_usd: maxCostPerTaskUsd.min / 2 })).ok).toBe(false);
     expect(safeParseDotConfig(withLimits({ max_cost_per_task_usd: maxCostPerTaskUsd.max + 1 })).ok).toBe(false);
+  });
+
+  it("are the range of the step, context, identity and open-browser numbers too", () => {
+    const { maxStepsPerTask, contextTokens, maxIdentities, maxOpen } = CONFIG_BOUNDS;
+    const withIdentities = (identities: Record<string, unknown>) => ({ ...MINIMAL, browser: { identities } });
+    for (const [field, bounds] of [["max_steps_per_task", maxStepsPerTask], ["context_tokens", contextTokens]] as const) {
+      expect(safeParseDotConfig(withLimits({ [field]: bounds.min })).ok, `${field} min`).toBe(true);
+      expect(safeParseDotConfig(withLimits({ [field]: bounds.max })).ok, `${field} max`).toBe(true);
+      expect(safeParseDotConfig(withLimits({ [field]: bounds.min - 1 })).ok, `${field} below`).toBe(false);
+      expect(safeParseDotConfig(withLimits({ [field]: bounds.max + 1 })).ok, `${field} above`).toBe(false);
+    }
+    // max_open may not exceed max_identities, so each end of max_open is tried with room to spare.
+    expect(safeParseDotConfig(withIdentities({ max_open: maxOpen.min })).ok).toBe(true);
+    expect(safeParseDotConfig(withIdentities({ max_open: maxOpen.max, max_identities: maxIdentities.max })).ok).toBe(true);
+    expect(safeParseDotConfig(withIdentities({ max_open: maxOpen.min - 1 })).ok).toBe(false);
+    expect(safeParseDotConfig(withIdentities({ max_open: maxOpen.max + 1, max_identities: maxIdentities.max })).ok).toBe(false);
+    expect(safeParseDotConfig(withIdentities({ max_identities: maxIdentities.min, max_open: 1 })).ok).toBe(true);
+    expect(safeParseDotConfig(withIdentities({ max_identities: maxIdentities.max })).ok).toBe(true);
+    expect(safeParseDotConfig(withIdentities({ max_identities: maxIdentities.min - 1 })).ok).toBe(false);
+    expect(safeParseDotConfig(withIdentities({ max_identities: maxIdentities.max + 1 })).ok).toBe(false);
   });
 });
 

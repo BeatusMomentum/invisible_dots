@@ -9,7 +9,7 @@ import { Label } from "../ui/label";
 import { Switch } from "../ui/switch";
 
 /** What memory being on or off means for the Dot: the engine offers its memory tools only while it is on (`memory.enabled`). */
-const WHAT_IT_DOES = {
+export const MEMORY_EFFECT = {
   on: "The Dot is offered the tools that search and read its notes, and its prompt names the notes it changed most recently.",
   off: "The Dot is not offered the tools that search and read its notes, and its prompt no longer names them. The notes on its disk stay, and you can still read them here.",
 } as const;
@@ -41,7 +41,7 @@ export function MemorySwitch() {
           <Label id="memory-switch-label" htmlFor="memory-switch" className="text-sm font-medium">
             {enabled === undefined ? "Memory" : enabled ? "Memory is on" : "Memory is off"}
           </Label>
-          {enabled === undefined ? null : <p className="text-sm text-muted-foreground">{enabled ? WHAT_IT_DOES.on : WHAT_IT_DOES.off}</p>}
+          {enabled === undefined ? null : <p className="text-sm text-muted-foreground">{enabled ? MEMORY_EFFECT.on : MEMORY_EFFECT.off}</p>}
         </div>
         <Switch id="memory-switch" checked={enabled ?? false} disabled={enabled === undefined || save.pending} onCheckedChange={(next) => void change(next)} />
       </div>

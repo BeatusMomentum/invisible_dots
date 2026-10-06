@@ -918,8 +918,10 @@ limits:
 ```
 
 The ranges and defaults of the numbers in that file (`computer.cpu`, `memory`,
-`disk`, the default `idle_timeout` and `limits.max_cost_per_task_usd`) are
-`CONFIG_BOUNDS` in `packages/shared`. The schema takes its numbers from it and
+`disk`, the default `idle_timeout`, `limits.max_cost_per_task_usd`,
+`limits.max_steps_per_task`, `limits.context_tokens` and
+`browser.identities.max_identities` and `max_open`) are `CONFIG_BOUNDS` in
+`packages/shared`. The schema takes its numbers from it and
 so does the web client's form, so a slider can never offer what the API refuses.
 
 `models` has one role, `summary`, and no other: the roles are what the engine
@@ -1789,6 +1791,32 @@ what `GET /api/health` reports (the control plane, its database, the OpenRouter
 key) and, below it, the host report of `GET /api/doctor` (QEMU, the accelerator,
 disk, the images), each failing row with the command that fixes it; the doctor's
 own key row is left out, so the key is said once. Submitting is `POST /api/dots`, and then the Dot's chat opens.
+
+A Dot's settings (`/dots/<id>/settings`) are the same config, edited in place:
+one draft of the whole `DotConfig`, as a form (General, Model, Permissions and
+tools, Computer, Browser, Memory, Limits) or as the same YAML, never a second
+model of it. `lib/config-fields.ts` is the one table of what can change (where
+each field lives, its words, when a change reaches the Dot) and gives what the
+page needs from it: the list of changes, the notice a save ends with, and the
+rebase below. Nothing is written until the person has seen the review, which
+lists each changed field from what it is to what it will be; the save is a
+`PATCH` conditional on the `config_version` the edit began from, so a config
+changed meanwhile (another tab, an "Always allow") is refused with 409
+`dot_changed` and never undone. When the host's config moves on under an edit
+that is under way, the edits are kept on top of the new config
+(`lib/config-draft.ts`) and the page says so; a field only the other change
+touched keeps what that change says. The permission editor has one row per
+permission of `PERMISSIONS`, with its words and risk, a three-way allow, ask or
+deny control, the default said, and the tools of the Dot's own table (`GET
+/api/dots/<id>/tools`, so a tool the engine adds shows with no change here)
+with whether the model is offered each: those are as the Dot has its config
+now, so a changed row says its tools show the change once it is saved. A
+permission set to what its default is is saved as no entry. A stopped computer
+has no table: the page says to start it, and the permissions can be set
+meanwhile. A change reaches a running Dot from its next turn (`PUT /config`);
+the computer's size (processors, memory, disk) applies the next time the
+computer starts, and a disk can grow but never shrink. The Danger zone deletes
+the Dot after its name has been typed.
 
 The Dot header's error banner gives the reason and "Open settings", and one way
 back: Reboot while the computer is up (the host reboots only a running

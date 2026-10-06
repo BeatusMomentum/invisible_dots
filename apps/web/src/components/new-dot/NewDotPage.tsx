@@ -5,14 +5,13 @@ import { useRouter } from "next/navigation";
 import { useMemo, useRef, useState, type FormEvent } from "react";
 import { api } from "../../lib/api";
 import { configIssues, emptyForm, formIssues, formToConfig, formToYaml, issueText, yamlToForm, type DotForm, type FieldId, type FormIssue } from "../../lib/dot-form";
-import { cn } from "../../lib/utils";
 import { ErrorAlert } from "../ErrorAlert";
 import { useShell } from "../shell/attention";
 import { useAction } from "../ui";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
-import { Textarea } from "../ui/textarea";
 import { BrainSection, ComputerSection, IdentitySection, type SectionProps } from "./FormSections";
+import { ConfigYamlEditor } from "../yaml-editor";
 import { PreflightPanel } from "./PreflightPanel";
 
 type Mode = "form" | "yaml";
@@ -101,7 +100,16 @@ export function NewDotPage() {
               <ComputerSection {...sections} />
             </>
           ) : (
-            <YamlEditor yaml={yaml} onChange={(text) => { setYaml(text); setRefusal(null); }} issues={issues} refusal={refusal} />
+            <ConfigYamlEditor
+              yaml={yaml}
+              onChange={(text) => {
+                setYaml(text);
+                setRefusal(null);
+              }}
+              issues={issues}
+              refusal={refusal}
+              hint="The same configuration as the form, with every option the schema has. The server validates it again when you create the Dot."
+            />
           )}
 
           {attempted && issues.length > 0 ? (
@@ -134,45 +142,5 @@ export function NewDotPage() {
         </aside>
       </div>
     </div>
-  );
-}
-
-function YamlEditor({ yaml, onChange, issues, refusal }: { yaml: string; onChange: (text: string) => void; issues: FormIssue[]; refusal: FormIssue[] | null }) {
-  return (
-    <section aria-labelledby="yaml-title" className="space-y-3 rounded-lg border bg-card p-5">
-      <div>
-        <h2 id="yaml-title" className="text-base font-semibold">
-          Configuration (YAML)
-        </h2>
-        <p id="yaml-hint" className="text-sm text-muted-foreground">
-          The same configuration as the form, with every option the schema has. The server validates it again when you create the Dot.
-        </p>
-      </div>
-      <Textarea
-        aria-labelledby="yaml-title"
-        aria-describedby="yaml-hint"
-        aria-invalid={issues.length > 0 ? true : undefined}
-        className={cn("min-h-96 font-mono text-[13px] leading-5")}
-        spellCheck={false}
-        value={yaml}
-        onChange={(event) => onChange(event.target.value)}
-      />
-      {issues.length > 0 ? (
-        <ul aria-label="Problems in the YAML" className="list-disc space-y-0.5 pl-4 text-sm text-danger">
-          {issues.map((issue, i) => (
-            <li key={i}>{issueText(issue)}</li>
-          ))}
-        </ul>
-      ) : (
-        <p className="text-sm text-ok">The configuration is valid.</p>
-      )}
-      {refusal ? (
-        <Alert>
-          <AlertCircleIcon />
-          <AlertTitle>The form cannot show this</AlertTitle>
-          <AlertDescription>{refusal.map(issueText).join(" ")}</AlertDescription>
-        </Alert>
-      ) : null}
-    </section>
   );
 }

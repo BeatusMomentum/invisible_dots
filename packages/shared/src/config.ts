@@ -108,6 +108,10 @@ export const CONFIG_BOUNDS = {
   disk: { min: "20gb", max: "1024gb", default: "40gb" },
   idleTimeout: { default: "15m" },
   maxCostPerTaskUsd: { min: 0.01, max: 100, default: 1 },
+  maxStepsPerTask: { min: 1, max: 1000, default: 60 },
+  contextTokens: { min: 4000, max: 1_000_000, default: 32_000 },
+  maxIdentities: { min: 1, max: 1000, default: 20 },
+  maxOpen: { min: 1, max: 16, default: 3 },
 } as const;
 
 export const DOT_NAME_PATTERN = /^[a-z0-9-]{1,40}$/;
@@ -222,14 +226,14 @@ export const dotConfigSchema = z
         identities: z
           .object({
             managed_by_dot: z.boolean().default(true),
-            max_identities: z.number().int().min(1).max(1000).default(20),
-            max_open: z.number().int().min(1).max(16).default(3),
+            max_identities: z.number().int().min(CONFIG_BOUNDS.maxIdentities.min).max(CONFIG_BOUNDS.maxIdentities.max).default(CONFIG_BOUNDS.maxIdentities.default),
+            max_open: z.number().int().min(CONFIG_BOUNDS.maxOpen.min).max(CONFIG_BOUNDS.maxOpen.max).default(CONFIG_BOUNDS.maxOpen.default),
           })
           .strict()
-          .default({ managed_by_dot: true, max_identities: 20, max_open: 3 }),
+          .default({ managed_by_dot: true, max_identities: CONFIG_BOUNDS.maxIdentities.default, max_open: CONFIG_BOUNDS.maxOpen.default }),
       })
       .strict()
-      .default({ identities: { managed_by_dot: true, max_identities: 20, max_open: 3 } }),
+      .default({ identities: { managed_by_dot: true, max_identities: CONFIG_BOUNDS.maxIdentities.default, max_open: CONFIG_BOUNDS.maxOpen.default } }),
     permissions: z
       .record(z.string(), permissionDecision)
       .default({})
@@ -248,9 +252,9 @@ export const dotConfigSchema = z
       .default({ enabled: true }),
     limits: z
       .object({
-        max_steps_per_task: z.number().int().min(1).max(1000).default(60),
+        max_steps_per_task: z.number().int().min(CONFIG_BOUNDS.maxStepsPerTask.min).max(CONFIG_BOUNDS.maxStepsPerTask.max).default(CONFIG_BOUNDS.maxStepsPerTask.default),
         // Prompt tokens a request may use; what is sent is kept under it (section 8.6).
-        context_tokens: z.number().int().min(4000).max(1_000_000).default(32_000),
+        context_tokens: z.number().int().min(CONFIG_BOUNDS.contextTokens.min).max(CONFIG_BOUNDS.contextTokens.max).default(CONFIG_BOUNDS.contextTokens.default),
         // USD a task, or a chat turn, may spend on the model before it stops (section 8.2).
         max_cost_per_task_usd: z
           .number()
@@ -259,7 +263,11 @@ export const dotConfigSchema = z
           .default(CONFIG_BOUNDS.maxCostPerTaskUsd.default),
       })
       .strict()
-      .default({ max_steps_per_task: 60, context_tokens: 32_000, max_cost_per_task_usd: CONFIG_BOUNDS.maxCostPerTaskUsd.default }),
+      .default({
+        max_steps_per_task: CONFIG_BOUNDS.maxStepsPerTask.default,
+        context_tokens: CONFIG_BOUNDS.contextTokens.default,
+        max_cost_per_task_usd: CONFIG_BOUNDS.maxCostPerTaskUsd.default,
+      }),
   })
   .strict()
   .superRefine((config, ctx) => {

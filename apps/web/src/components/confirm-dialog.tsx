@@ -18,6 +18,7 @@ export function ConfirmDialog({
   pendingLabel,
   keepLabel = "Keep it",
   destructive = false,
+  confirmDisabled = false,
   pending,
   error,
   errorTitle,
@@ -32,6 +33,8 @@ export function ConfirmDialog({
   pendingLabel: string;
   keepLabel?: string;
   destructive?: boolean;
+  /** The question is not answered yet (a name still to be typed): the confirm button waits. */
+  confirmDisabled?: boolean;
   pending: boolean;
   error: unknown;
   errorTitle: string;
@@ -51,7 +54,7 @@ export function ConfirmDialog({
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
             {keepLabel}
           </Button>
-          <Button type="button" variant={destructive ? "destructive" : "default"} disabled={pending} onClick={onConfirm}>
+          <Button type="button" variant={destructive ? "destructive" : "default"} disabled={pending || confirmDisabled} onClick={onConfirm}>
             {pending ? pendingLabel : confirmLabel}
           </Button>
         </DialogFooter>

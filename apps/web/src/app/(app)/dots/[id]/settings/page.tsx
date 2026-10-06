@@ -1,12 +1,8 @@
 import type { Metadata } from "next";
-import { SettingsTab } from "../../../../../components/SettingsTab";
+import { DotSettings } from "../../../../../components/dot-settings/DotSettings";
 
 export const metadata: Metadata = { title: "Settings" };
 
 export default function Page() {
-  return (
-    <div className="legacy">
-      <SettingsTab />
-    </div>
-  );
+  return <DotSettings />;
 }

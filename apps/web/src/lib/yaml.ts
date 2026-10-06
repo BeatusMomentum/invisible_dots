@@ -1,5 +1,5 @@
 /**
- * A YAML emitter for the Dot configuration, so the create form and the Settings tab can show a
+ * A YAML emitter for the Dot configuration, so the create form and a Dot's settings can show a
  * config (JSON) as editable YAML. It covers what a config holds:
  * nested objects, strings, numbers, booleans, null and arrays of those. The
  * API does the parsing and validation when the text is sent back.

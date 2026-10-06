@@ -207,7 +207,7 @@ for (const scheme of ["light", "dark"] as const) {
 
 test("a Dot's tab that is still in the old design keeps the old stylesheet", async ({ signedIn: page, harness }) => {
   const dot = await harness.createDot("tasks-legacy");
-  await page.goto(`${harness.webUrl}/dots/${dot.id}/settings`);
+  await page.goto(`${harness.webUrl}/dots/${dot.id}/timeline`);
   await expect(page.locator(".legacy")).toHaveCount(1);
 });
 
