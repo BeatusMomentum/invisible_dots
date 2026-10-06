@@ -86,6 +86,8 @@ function options(script: VmScript, extra: Partial<GoldenBuildOptions> = {}) {
     log: (line) => logs.push(line),
     now: () => new Date("2026-10-02T12:34:56Z"),
     serialPollMs: 5,
+    // A prebuilt image is looked for in the release of these inputs on GitHub; these tests build.
+    prebuilt: false,
     ...extra,
   };
   return { runner, opts };
