@@ -178,7 +178,9 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     }
   };
 
-  app.addHook("onClose", async () => {
+  // Before the server stops listening and waits for its connections: a stream only ends when it is told to, so a hook that
+  // ran after that wait (`onClose`) would wait for the person to close the tab.
+  app.addHook("preClose", async () => {
     for (const controller of streams) controller.abort();
   });
 

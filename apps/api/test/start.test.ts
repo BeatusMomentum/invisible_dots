@@ -71,6 +71,25 @@ describe("stopping on a signal", { timeout: 120_000 }, () => {
   });
 });
 
+describe("stopping while a page is open", { timeout: 120_000 }, () => {
+  it("ends the live streams a browser holds and closes: a stop does not wait for the person to close the tab", async () => {
+    const server = await start();
+    const controller = new AbortController();
+    const headers = { authorization: `Bearer ${server.token}` };
+    const stream = await fetch(`${server.url}/api/stream`, { headers, signal: controller.signal });
+    expect(stream.status).toBe(200);
+    const reading = stream.body!.getReader().read();
+
+    const closed = server.close().then(() => "closed" as const);
+    const outcome = await Promise.race([closed, new Promise<"waiting">((resolve) => setTimeout(() => resolve("waiting"), 15_000))]);
+    controller.abort();
+    expect(outcome).toBe("closed");
+    // The stream the client held ended: its read answers (the end of the body) and does not hang.
+    await expect(Promise.race([reading.then(() => "ended"), new Promise((resolve) => setTimeout(() => resolve("hung"), 2_000))])).resolves.toBe("ended");
+    running.splice(running.indexOf(server), 1);
+  });
+});
+
 async function stopped(server: RunningServer): Promise<void> {
   running.splice(running.indexOf(server), 1);
   await server.close();
