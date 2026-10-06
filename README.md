@@ -323,7 +323,7 @@ What protects you:
   holds that token. The API needs a bearer token; the web UI a session.
 - Files the host shows from a Dot come only from `/home/dot`, at most 16 MiB,
   never served as a type a browser would run.
-- The password of an identity's proxy, when it has one, is replaced in everything shown: approvals, events, logs.
+- The proxy of an identity, when it has one, is a secret and is shown nowhere: an identity says only that it has one, an approval shows it as `***`, and it is in no event or log.
 - Secrets on the host (the OpenRouter key, channel tokens, WhatsApp keys) are
   stored encrypted; see [Configuration](#configuration).
 
@@ -352,8 +352,10 @@ inherits the egress of the Dot's VM (through the VM proxy when the Dot has one,
 directly otherwise; the VM proxy is designed and not built yet, so today that
 is your own address), and its time zone, language and location follow the exit
 it actually uses. A proxy for one identity is an explicit option, set when that
-identity is created; when a VM proxy and an identity proxy are both set, the
-identity's proxy is reached through the VM's tunnel.
+identity is created, as the URL the browser library reads (`http://user:pass@host:port`
+or `socks5://host:port`); the library, not this project, judges it when the identity
+launches. When a VM proxy and an identity proxy are both set, the identity's proxy is
+reached through the VM's tunnel.
 
 Launching is explicit: a page action on an identity that is not open fails, so
 denying `browser.identity.launch` cannot be undone by navigating. At most

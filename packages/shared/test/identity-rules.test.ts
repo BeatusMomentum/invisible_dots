@@ -6,7 +6,6 @@ import {
   checkIdentityRequest,
   isValidIdentityId,
   newIdentityId,
-  redactProxy,
   slugify,
 } from "../src/index.js";
 
@@ -28,7 +27,6 @@ interface Fixture {
   name_max: number;
   id_max: number;
   check_request: CheckCase[];
-  redact_proxy: { case: string; input: string; expect: string }[];
   slugify: { case: string; input: string; expect: string; fallback?: string }[];
   identity_id: {
     valid: string[];
@@ -49,7 +47,6 @@ describe("the identity rules fixture", () => {
     expect(fixture.check_request.length).toBeGreaterThan(30);
     expect(fixture.check_request.some((c) => c.error?.code === "limit")).toBe(true);
     expect(fixture.check_request.some((c) => c.error?.code === "invalid")).toBe(true);
-    expect(fixture.redact_proxy.length).toBeGreaterThan(10);
   });
 });
 
@@ -68,12 +65,6 @@ describe("checkIdentityRequest", () => {
     }
     expect(caught).toBeInstanceOf(IdentityRequestError);
     expect({ code: (caught as IdentityRequestError).code, message: (caught as IdentityRequestError).message }).toEqual(c.error);
-  });
-});
-
-describe("redactProxy", () => {
-  it.each(fixture.redact_proxy)("$case", (c) => {
-    expect(redactProxy(c.input)).toBe(c.expect);
   });
 });
 

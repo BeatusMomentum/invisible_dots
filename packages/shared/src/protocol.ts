@@ -403,8 +403,11 @@ export interface BrowserIdentity {
   lastUsedAt: string | null;
   status: BrowserIdentityStatus;
   profilePath: string;
-  /** The identity's own proxy, password replaced. Absent for the normal case: no proxy, and the browser inherits the VM's egress. */
-  proxy?: string;
+  /**
+   * Whether the identity has a proxy of its own. Only that: the proxy is a secret (it may carry a user and a password), so
+   * nothing of it leaves the engine. False is the normal case: no proxy, and the browser inherits the VM's egress.
+   */
+  hasProxy: boolean;
 }
 
 /** `POST /browser-identities` body. */
@@ -412,7 +415,8 @@ export interface CreateBrowserIdentityRequest {
   name: string;
   /**
    * An explicit option, off by default: leave it out and the identity's browser uses the egress of the Dot's VM. When set
-   * it is `scheme://[user:password@]host:port` of an http, https, socks4 or socks5 proxy.
+   * it is the proxy URL as invisible-playwright-mcp reads it (`http://user:pass@host:port` or `socks5://host:port`), kept as
+   * written and given to the browser unchanged: the library judges it when the identity launches. It is stored as a secret.
    */
   proxy?: string;
 }

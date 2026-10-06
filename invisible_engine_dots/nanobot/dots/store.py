@@ -876,8 +876,8 @@ def take_all_tool_intents(conn: sqlite3.Connection) -> list[ToolIntent]:
 class BrowserIdentityRow:
     id: str
     name: str
-    # The proxy URL as the person gave it, password included: the browser needs it at every launch.
-    # Anything shown to a model, a person, an event or a log goes through `identity_rules.redact_proxy`.
+    # The proxy as the person gave it, password included: the browser needs it at every launch, as it is. Nothing of
+    # it is shown to a model, a person, an event or a log: they are told only that there is one.
     proxy: str | None
     created_at: int
     last_used_at: int | None

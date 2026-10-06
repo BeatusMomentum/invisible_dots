@@ -64,9 +64,3 @@ const TONES: Record<string, Tone> = {
 export function statusTone(status: string | null | undefined): Tone {
   return (status && TONES[status]) || "neutral";
 }
-
-/** Hide credentials in a proxy URL such as http://user:secret@host:8080. */
-export function maskProxy(proxy: string | null | undefined): string {
-  if (!proxy) return "";
-  return proxy.replace(/^([a-z][a-z0-9+.-]*:\/\/)[^@/]*@/i, "$1***@");
-}

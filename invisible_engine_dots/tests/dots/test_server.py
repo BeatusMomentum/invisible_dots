@@ -514,7 +514,7 @@ class TestBrowserIdentities:
         assert identity["lastUsedAt"] is None
         assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z", identity["createdAt"])
         assert identity["profilePath"].endswith(f"/{identity['id']}/profile")
-        assert "proxy" not in identity
+        assert identity["hasProxy"] is False and "proxy" not in identity
         assert (await api.call("GET", "/browser-identities")).json == {"identities": [identity]}
         assert (await api.call("GET", f"/browser-identities/{identity['id']}")).json == identity
         assert (await api.call("DELETE", f"/browser-identities/{identity['id']}")).status == 204
@@ -529,7 +529,7 @@ class TestBrowserIdentities:
         for body in ({"name": "Left out"}, {"name": "Null proxy", "proxy": None}, {"name": "Blank proxy", "proxy": "  "}):
             created = await api.call("POST", "/browser-identities", body)
             assert created.status == 201, body
-            assert "proxy" not in created.json, body
+            assert created.json["hasProxy"] is False and "proxy" not in created.json, body
 
     async def test_a_second_delete_is_not_found_and_leaves_no_event(self, make_api: Callable[..., Any]) -> None:
         api: Api = await make_api()
@@ -558,8 +558,6 @@ class TestBrowserIdentities:
             assert (answer.status, answer.json) == (400, {"error": "invalid", "message": message}), body
         blank = await api.call("POST", "/browser-identities", {"name": "   "})
         assert (blank.status, blank.json["error"]) == (400, "invalid")
-        bad_proxy = await api.call("POST", "/browser-identities", {"name": "a", "proxy": "ftp://host"})
-        assert (bad_proxy.status, bad_proxy.json["error"]) == (400, "invalid")
         assert (await api.call("POST", "/browser-identities", "{not json")).json["error"] == "invalid_json"
         assert (await api.call("POST", "/browser-identities", {"name": "one"})).status == 201
         over = await api.call("POST", "/browser-identities", {"name": "two"})
@@ -567,7 +565,7 @@ class TestBrowserIdentities:
         assert "max_identities 1" in over.json["message"]
         assert api.h.types().count("browser.identity.created") == 1
 
-    async def test_the_proxy_password_is_in_no_answer_event_or_log(self, make_api: Callable[..., Any]) -> None:
+    async def test_the_proxy_is_in_no_answer_event_or_log_and_the_answers_say_only_that_there_is_one(self, make_api: Callable[..., Any]) -> None:
         api: Api = await make_api()
         lines: list[str] = []
         sink = logger.add(lines.append, format="{message}", level="DEBUG")
@@ -578,10 +576,10 @@ class TestBrowserIdentities:
         finally:
             logger.remove(sink)
 
-        assert created.json["proxy"] == "http://user:***@proxy.test:8080"
-        assert listed.json["identities"][0]["proxy"] == fetched.json["proxy"] == created.json["proxy"]
+        assert created.json["hasProxy"] is True and "proxy" not in created.json
+        assert listed.json["identities"][0] == fetched.json == created.json
         everything = created.text + listed.text + fetched.text + json.dumps(api.h.events()) + "\n".join(lines)
-        assert "hunter2" not in everything
+        assert not any(text in everything for text in ("hunter2", "user:", "proxy.test"))
 
     async def test_the_health_counts_the_identities_and_the_open_ones(self, make_api: Callable[..., Any]) -> None:
         api: Api = await make_api()

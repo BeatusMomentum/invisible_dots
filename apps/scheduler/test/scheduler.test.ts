@@ -829,12 +829,13 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     };
 
     for (const body of [{ name: "A" }, { name: "B", proxy: null }, { name: "C", proxy: "" }] as { name: string; proxy?: string }[]) {
-      expect(await scheduler.createIdentity(dot.id, body)).not.toHaveProperty("proxy");
+      expect(await scheduler.createIdentity(dot.id, body)).toMatchObject({ hasProxy: false });
     }
     expect(requests).toEqual([{ name: "A" }, { name: "B" }, { name: "C" }]);
 
     const own = await scheduler.createIdentity(dot.id, { name: "D", proxy: "http://proxy.test:8080" });
-    expect(own.proxy).toBe("http://proxy.test:8080");
+    expect(own.hasProxy).toBe(true);
+    expect(requests.at(-1)).toEqual({ name: "D", proxy: "http://proxy.test:8080" });
     await expect(scheduler.createIdentity(dot.id, { name: "E", proxy: 8080 as never })).rejects.toMatchObject({ status: 400, code: "invalid_request" });
   });
 

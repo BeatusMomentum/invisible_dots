@@ -122,7 +122,9 @@ engine, the GeoIP file) and at a launch (the egress address, for the timezone). 
 - Firefox killed under a live server: the model's next page action is answered that the browser is gone and to
   launch the identity again, nothing is reopened (no Firefox), the identity is closed with its server ended, and
   a launch brings back the same person (the seed file is unchanged);
-- a proxy without a port is refused at create (400), and an identity with a proxy of its own, an
+- a proxy is not judged at create: one without a port, which the library cannot use, is kept as written (201, the
+  answer says only `hasProxy`), and the model's launch of it fails with the library's own refusal, which names the
+  missing port, with the password in nothing the model is sent; an identity with a proxy of its own, an
   explicit option (a small authenticating proxy
   of the smoke, `browser/proxy.py`, whose credentials come by its environment) launches: its egress
   lookup went through the proxy with the credentials. The real server saves the proxy with its password in

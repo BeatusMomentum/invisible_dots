@@ -533,14 +533,19 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     for (const body of [{ name: "Plain" }, { name: "Null", proxy: null }, { name: "Blank", proxy: "  " }]) {
       const { status, identity } = await create(body);
       expect(status, JSON.stringify(body)).toBe(201);
-      expect(identity, JSON.stringify(body)).not.toHaveProperty("proxy");
+      expect(identity, JSON.stringify(body)).toMatchObject({ hasProxy: false });
     }
     const sdk = await api.createIdentity(dot.id, { name: "Through the SDK" });
-    expect(sdk).not.toHaveProperty("proxy");
-    expect((await api.listIdentities(dot.id)).some((i) => "proxy" in i)).toBe(false);
+    expect(sdk.hasProxy).toBe(false);
+    expect((await api.listIdentities(dot.id)).some((i) => i.hasProxy || "proxy" in i)).toBe(false);
 
-    const own = await api.createIdentity(dot.id, { name: "Own exit", proxy: "socks5://proxy.test:1080" });
-    expect(own.proxy).toBe("socks5://proxy.test:1080");
+    // The proxy is a secret: it is passed on as written, and the identity says only that it has one.
+    const own = await api.createIdentity(dot.id, { name: "Own exit", proxy: "socks5://user:hunter2@proxy.test:1080" });
+    expect(own.hasProxy).toBe(true);
+    expect(own).not.toHaveProperty("proxy");
+    const listed = JSON.stringify(await api.listIdentities(dot.id));
+    expect(listed).not.toContain("hunter2");
+    expect(listed).not.toContain("proxy.test");
     expect((await create({ name: "Number", proxy: 8080 })).status).toBe(400);
   });
 

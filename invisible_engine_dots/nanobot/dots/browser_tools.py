@@ -255,7 +255,7 @@ def _identity_json(identity: BrowserIdentity) -> dict[str, Any]:
         "name": identity.name,
         "status": identity.status,
         "last_used_at": iso_from_ms(identity.last_used_at) if identity.last_used_at is not None else None,
-        "proxy": identity.proxy,
+        "has_proxy": identity.has_proxy,
     }
 
 
@@ -319,8 +319,8 @@ class BrowserIdentityCreateTool(_BrowserTool):
                 "proxy": {
                     "type": ["string", "null"],
                     "description": (
-                        "Leave this out. Only when the person gave you a proxy for this identity: its http, https, "
-                        "socks4 or socks5 URL, such as socks5://user:pass@host:1080."
+                        "Leave this out. Only when the person gave you a proxy for this identity: its URL as they gave "
+                        "it, such as http://user:pass@host:port or socks5://host:port."
                     ),
                 },
             },

@@ -412,7 +412,7 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
             ? "no browser identities\n"
             : pad([
                 ["ID", "NAME", "STATUS", "LAST USED", "PROXY"],
-                ...identities.map((i) => [i.id, i.name, i.status, i.lastUsedAt ?? "never", i.proxy ? "yes" : "-"]),
+                ...identities.map((i) => [i.id, i.name, i.status, i.lastUsedAt ?? "never", i.hasProxy ? "yes" : "-"]),
               ]),
         );
         return EXIT.ok;

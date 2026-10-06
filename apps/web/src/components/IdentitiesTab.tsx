@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { ApiError, api } from "../lib/api";
-import { formatDate, maskProxy } from "../lib/format";
+import { formatDate } from "../lib/format";
 import { useDot } from "./DotShell";
 import { useLiveRefresh } from "./events";
 import { ErrorBox, StatusBadge, useAction, useResource } from "./ui";
@@ -81,7 +81,7 @@ export function IdentitiesTab() {
                   </td>
                   <td>{formatDate(identity.createdAt)}</td>
                   <td>{identity.lastUsedAt ? formatDate(identity.lastUsedAt) : <span className="muted">never</span>}</td>
-                  <td>{identity.proxy ? <code>{maskProxy(identity.proxy)}</code> : <span className="muted">none</span>}</td>
+                  <td>{identity.hasProxy ? "yes" : <span className="muted">none</span>}</td>
                   <td>
                     <button
                       type="button"
@@ -110,7 +110,7 @@ function CreateIdentity({ dotId, onCreated }: { dotId: string; onCreated: () => 
   async function submit(event: FormEvent) {
     event.preventDefault();
     const ok = await action.run(async () => {
-      await api.createIdentity(dotId, proxy.trim() ? { name: name.trim(), proxy: proxy.trim() } : { name: name.trim() });
+      await api.createIdentity(dotId, proxy.trim() ? { name: name.trim(), proxy } : { name: name.trim() });
     });
     if (ok) {
       setName("");
@@ -132,7 +132,7 @@ function CreateIdentity({ dotId, onCreated }: { dotId: string; onCreated: () => 
             <label htmlFor="identity-proxy">Proxy (optional)</label>
             <input
               id="identity-proxy"
-              type="text"
+              type="password"
               placeholder="http://user:password@host:port"
               autoComplete="off"
               value={proxy}

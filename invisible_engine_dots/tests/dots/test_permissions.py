@@ -412,13 +412,12 @@ def test_what_a_person_types_into_a_browser_is_never_a_target() -> None:
         assert tool_target("browser_press_key", {"identity_id": ident, "key": key}) == ident, key
 
 
-def test_the_proxy_password_of_an_identity_is_redacted_in_the_arguments_an_approval_shows() -> None:
+def test_the_proxy_of_an_identity_is_masked_in_the_arguments_an_approval_shows() -> None:
     from nanobot.dots.permissions import tool_arguments
 
     shown = tool_arguments("browser_identity_create", {"name": "shop", "proxy": "http://user:hunter2@proxy.test:8080"})
 
-    assert shown == {"name": "shop", "proxy": "http://user:***@proxy.test:8080"}
-    assert "hunter2" not in str(shown)
+    assert shown == {"name": "shop", "proxy": "***"}
     # Nothing else of any call is changed, and a call without a proxy is as it was.
     assert tool_arguments("browser_identity_create", {"name": "shop"}) == {"name": "shop"}
     assert tool_arguments("exec", {"command": "ls", "timeout": 5}) == {"command": "ls", "timeout": 5}

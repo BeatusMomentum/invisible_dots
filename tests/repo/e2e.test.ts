@@ -57,7 +57,7 @@ import {
   keyFromFile,
   lastEventId,
   pngInfo,
-  proxyIsRedacted,
+  proxyIsMasked,
   ROUTE_CALLS,
   ROUTES,
   route,
@@ -365,11 +365,11 @@ describe("looking for a secret", () => {
     expect(new RegExp(selfExcludingPattern("pw-1a2b3c")).test("pw-1a2b3c")).toBe(true);
   });
 
-  it("proves a shown proxy holds no password, only its ***", () => {
-    expect(proxyIsRedacted("socks5://e2euser:***@127.0.0.1:9", "pw-1a2b")).toBe(true);
-    expect(proxyIsRedacted("socks5://e2euser:pw-1a2b@127.0.0.1:9", "pw-1a2b")).toBe(false);
-    expect(proxyIsRedacted("socks5://e2euser@127.0.0.1:9", "pw-1a2b")).toBe(false);
-    expect(proxyIsRedacted(undefined, "pw-1a2b")).toBe(false);
+  it("proves a shown proxy is masked whole: no password, no user, no host", () => {
+    expect(proxyIsMasked("***")).toBe(true);
+    expect(proxyIsMasked("socks5://e2euser:***@127.0.0.1:9")).toBe(false);
+    expect(proxyIsMasked("socks5://e2euser:pw-1a2b@127.0.0.1:9")).toBe(false);
+    expect(proxyIsMasked(undefined)).toBe(false);
   });
 });
 
