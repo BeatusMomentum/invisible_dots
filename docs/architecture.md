@@ -2387,7 +2387,7 @@ MIT). It is transport only, like every adapter.
   read what a person and the Dot write there. The CLI says so when a bot is linked.
 
 From the CLI, `invisible-dots channel add telegram --dot <dot>` (token asked for in
-a terminal or read from stdin, never from arguments), `channel list [--dot]`,
+a terminal, where what is pasted is not echoed, or read from stdin, never from arguments), `channel list [--dot]`,
 `channel pair <kind> --dot <dot>` (prints the deep link and the words to send) and
 `channel remove <kind> --dot <dot>`.
 

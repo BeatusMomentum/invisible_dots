@@ -1,6 +1,6 @@
 /** The `invisible-dots` executable: wires `run` to the real process. */
-import { createInterface } from "node:readline";
 import { commandOf, run } from "./cli.js";
+import { readSecretLine } from "./secret-input.js";
 
 async function readStdin(): Promise<string> {
   const chunks: Buffer[] = [];
@@ -8,18 +8,6 @@ async function readStdin(): Promise<string> {
   return Buffer.concat(chunks).toString("utf8");
 }
 
-/** One line from the terminal: Enter ends it on Linux and on Windows alike. */
-function readLine(): Promise<string> {
-  return new Promise((resolve) => {
-    const lines = createInterface({ input: process.stdin, terminal: false });
-    let line = "";
-    lines.once("line", (text) => {
-      line = text;
-      lines.close();
-    });
-    lines.once("close", () => resolve(line));
-  });
-}
 
 const argv = process.argv.slice(2);
 const command = commandOf(argv);
@@ -40,7 +28,7 @@ const code = await run(argv, {
   stdout: (text) => process.stdout.write(text),
   stderr: (text) => process.stderr.write(text),
   readStdin,
-  readLine,
+  readSecret: () => readSecretLine(process.stdin, process.stderr),
   stdinIsTTY: Boolean(process.stdin.isTTY),
   env: process.env,
   cwd: process.cwd(),

@@ -42,11 +42,11 @@ export interface CliIo {
   /** All of standard input, as text: for input that is piped in. */
   readStdin: () => Promise<string>;
   /**
-   * One line typed in the terminal. Enter ends it on every host; the
-   * end-of-input key differs (Ctrl-D on Linux, Ctrl-Z then Enter on
-   * Windows), so nothing a person types depends on it.
+   * One line of a secret typed in the terminal, with the echo off, so it stays out of the scrollback. Enter ends it
+   * on every host; the end-of-input key differs (Ctrl-D on Linux, Ctrl-Z then Enter on Windows), so nothing a person
+   * types depends on it. It rejects when the person cancels (Ctrl-C).
    */
-  readLine: () => Promise<string>;
+  readSecret: () => Promise<string>;
   stdinIsTTY: boolean;
   env: Record<string, string | undefined>;
   cwd: string;
@@ -240,10 +240,10 @@ function channelRows(rows: { dot: string; channel: ChannelRecord }[]): string {
   ]);
 }
 
-/** One line of a secret, from the terminal or from stdin: never from the arguments, which end up in shell history and ps. */
+/** One line of a secret, from the terminal (echo off) or from stdin: never from the arguments, which end up in shell history and ps. */
 async function secretFromInput(io: CliIo, what: { prompt: string; noun: string; command: string }): Promise<string> {
   if (io.stdinIsTTY) io.stderr(`paste the ${what.prompt}, then press Enter:\n`);
-  const value = (io.stdinIsTTY ? await io.readLine() : await io.readStdin()).trim();
+  const value = (io.stdinIsTTY ? await io.readSecret() : await io.readStdin()).trim();
   if (!value) throw new UsageError(`no ${what.noun} given; run "${what.command}" in a terminal and paste it, or pipe it in`);
   if (/\s/.test(value)) throw new UsageError(`the ${what.noun} on stdin contains whitespace; pass only the ${what.noun}`);
   return value;

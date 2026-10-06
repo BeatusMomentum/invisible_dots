@@ -170,8 +170,9 @@ node apps/cli/dist/invisible-dots.mjs message my-first-dot "List the files in yo
 node apps/cli/dist/invisible-dots.mjs logs my-first-dot
 ```
 
-`secret openrouter` asks for the key (it is never a command-line argument; the
-web UI takes it too, see below). `init` writes `dot.yaml`, the Dot's name, goal, model, resources and
+`secret openrouter` asks for the key (it is never a command-line argument, and
+what you paste at the prompt is not shown on the screen; the web UI takes it
+too, see below). `init` writes `dot.yaml`, the Dot's name, goal, model, resources and
 permissions, to edit before `create`. The first Dot takes a while to boot; the
 message waits in the queue until it is ready. `logs` prints the Dot's events
 and keeps following new ones until Ctrl+C (`--no-follow` prints and exits). It
