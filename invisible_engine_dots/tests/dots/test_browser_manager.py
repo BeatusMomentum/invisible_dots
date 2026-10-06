@@ -13,7 +13,7 @@ import asyncio
 import json
 import os
 import signal
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +79,13 @@ class Env:
 
     def event_types(self) -> list[str]:
         return [row["type"] for row in self.events()]
+
+
+async def _until(condition: Callable[[], bool], timeout_s: float = 10.0) -> None:
+    """Wait for something the manager does by itself."""
+    async with asyncio.timeout(timeout_s):
+        while not condition():
+            await asyncio.sleep(0.02)
 
 
 @pytest.fixture
@@ -332,6 +339,21 @@ async def test_what_the_server_says_of_the_proxy_reaches_the_caller_redacted(env
     assert "s3cret" not in failed.value.message
 
 
+async def test_what_a_page_tool_returns_of_the_proxy_is_redacted_in_results_and_in_errors(env: Env) -> None:
+    manager = env.manager()
+    identity = await manager.create("echo pages", "http://user:s3cret@proxy.test:8080")
+    write_control(env.mcp_home(identity.id), echo_proxy_on_pages=True)
+    await manager.launch(identity.id)
+
+    failed = await manager.call_tool(identity.id, "browser_navigate", {"url": "https://example.org/"})
+    read = await manager.call_tool(identity.id, "browser_read_text", {})
+
+    assert result_is_error(failed) and not result_is_error(read)
+    for result in (failed, read):
+        assert "http://user:***@proxy.test:8080" in result_text(result)
+        assert "s3cret" not in result_text(result)
+
+
 async def test_reports_a_command_that_cannot_be_started_without_its_arguments(env: Env) -> None:
     manager = env.manager(mcp_command=str(env.tmp_path / "no-such-mcp-binary"))
     identity = await manager.create("missing", "http://user:s3cret@proxy.test:8080")
@@ -463,24 +485,30 @@ async def test_a_process_that_exited_is_a_crash_closed_once_and_launched_again_o
     assert env.event_types().count("browser.identity.launched") == 2
 
 
-async def test_a_process_that_died_between_calls_is_found_by_the_next_call_and_by_a_close(env: Env) -> None:
-    manager = env.manager()
-    a = await manager.create("idle a")
-    b = await manager.create("idle b")
+async def test_a_process_that_dies_while_idle_closes_its_identity_at_once_and_frees_its_slot(env: Env) -> None:
+    manager = env.manager(max_open=2)
+    a, b, c = [await manager.create(name) for name in ("idle a", "idle b", "idle c")]
     await manager.launch(a.id)
     await manager.launch(b.id)
-    for identity in (a, b):
-        [start] = [entry for entry in env.record(identity.id) if entry["kind"] == "start"]
-        os.kill(start["pid"], signal.SIGKILL)
+    [start] = [entry for entry in env.record(a.id) if entry["kind"] == "start"]
 
-    with pytest.raises(BrowserIdentityError) as crashed:
+    os.kill(start["pid"], signal.SIGKILL)
+    # No call and no close: the manager finds out by itself.
+    await _until(lambda: not manager.is_open(a.id))
+
+    assert manager.open_count == 1 and manager.is_open(b.id)
+    assert env.event_types().count("browser.identity.closed") == 1
+    # The dead identity no longer holds a slot, so opening another closes nothing that lives.
+    await manager.launch(c.id)
+    assert [manager.is_open(i.id) for i in (a, b, c)] == [False, True, True]
+    with pytest.raises(BrowserIdentityError) as next_action:
         await manager.call_tool(a.id, "browser_status")
-    await manager.close(b.id)
-
-    assert crashed.value.code == "crashed"
-    assert manager.open_count == 0
+    assert next_action.value.code == "not_open"
+    await manager.close(a.id)
     closed = [event["data"]["identity_id"] for event in env.events() if event["type"] == "browser.identity.closed"]
-    assert sorted(closed) == sorted([a.id, b.id])
+    assert closed == [a.id]
+    after = manager.get(a.id)
+    assert after is not None and after.status == "available"
 
 
 async def test_reopens_the_browser_once_when_the_server_says_it_is_gone(env: Env) -> None:

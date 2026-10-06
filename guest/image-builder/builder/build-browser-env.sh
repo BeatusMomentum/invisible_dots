@@ -17,7 +17,8 @@
 # invisible-playwright of that environment, so the cached engine is the one the server's seal
 # expects; it and the GeoIP file land in ~dot/.cache/invisible-playwright. The GeoIP file is
 # the latest build of daijro/geoip-all-in-one on the day of the build: a launch checks for a
-# newer one and keeps this one when it cannot reach GitHub.
+# newer one and keeps this one when it cannot reach GitHub. It is deliberately not pinned or
+# hashed (upstream deletes old releases, so a pin would break the build; see the README).
 set -Eeuo pipefail
 
 usage="usage: build-browser-env.sh <lock> <environment directory>"

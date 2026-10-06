@@ -203,6 +203,11 @@ every other command). It is described in docs/architecture.md, section 8.8.
   URLs), where every other caller still gets text and the bytes of an image dropped;
   `MCPProvider.connect()` returns the servers that did not connect, so a caller can fail
   a launch instead of reading the log; the per-server `tool_timeout` is pinned by a test.
+  `MCPProvider(on_terminated=...)` replaces the silent reconnect: a server whose session
+  ended is reported by name and not reconnected (a restarted browser server has lost its
+  browser), both when a call finds out and, through `connect_mcp_servers(on_ended=...)` and
+  the read-stream filter, when the transport ends with no call in flight. Without
+  `on_terminated` the provider reconnects as before.
   The one server is `invisible-playwright-mcp`, started by the `BrowserManager`
   (nanobot/dots/browser.py) through `dot-agentd relay`; `main.py` no longer builds an
   `MCPProvider` of its own.

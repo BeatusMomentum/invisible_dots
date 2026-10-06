@@ -43,7 +43,14 @@ image's SHA-256; `invisible-dots doctor` checks an image against it with
    latest build of `daijro/geoip-all-in-one` on the day of the build), so a Dot's
    first launch downloads nothing; its release is recorded in the manifest as
    `geoip-database`, and a launch checks for a newer one and keeps this one when
-   GitHub cannot be reached. The browser smoke runs the same script. The only
+   GitHub cannot be reached. This one artifact is not pinned and not hashed, on
+   purpose: `daijro/geoip-all-in-one` is rebuilt weekly and keeps only its latest
+   releases, so a pinned tag answers 404 within weeks and would fail every
+   build, and invisible-playwright itself never pins it (it resolves the latest
+   tag on every launch). It is a data file for the timezone lookup, not code,
+   and it is not an input of the golden digest, so two builds from one seed can
+   carry different weeks of it; the manifest records which one each did. The
+   browser smoke runs the same script. The only
    browser a Dot has is that server: a test refuses any other browser or browser
    library among the apt packages, the lock and the build scripts. `provision.sh`
    then builds the engine's Python

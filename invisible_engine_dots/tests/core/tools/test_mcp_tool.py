@@ -157,7 +157,7 @@ def _make_wrapper(session: object, *, timeout: float = 0.1) -> MCPToolWrapper:
 async def test_mcp_provider_connect_propagates_external_cancellation(monkeypatch) -> None:
     started = asyncio.Event()
 
-    async def connect_mcp_servers(_servers: dict, _registry: ToolRegistry) -> dict:
+    async def connect_mcp_servers(_servers: dict, _registry: ToolRegistry, _on_ended: object) -> dict:
         started.set()
         await asyncio.sleep(60)
         return {}
@@ -1642,6 +1642,57 @@ async def test_a_provider_with_on_terminated_reports_a_dead_session_and_does_not
     session.call_tool.assert_awaited_once()
     assert is_tool_error_result(result)
     assert result.startswith("(MCP tool call failed: ")
+
+
+class _ReadStream:
+    """The read side of a transport: yields what it was given, then ends like a process that exited."""
+
+    def __init__(self, *messages: object) -> None:
+        self._messages = list(messages)
+
+    async def __aenter__(self) -> "_ReadStream":
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        return None
+
+    def __aiter__(self) -> "_ReadStream":
+        return self
+
+    async def __anext__(self) -> object:
+        if not self._messages:
+            raise StopAsyncIteration
+        return self._messages.pop(0)
+
+
+async def test_the_read_filter_reports_the_end_of_the_transport_once_the_messages_are_read() -> None:
+    ends: list[str] = []
+    stream = mcp_mod._filter_malformed_mcp_progress_notifications(_ReadStream("one", "two"), "srv", lambda: ends.append("end"))
+
+    seen = [message async for message in stream]
+
+    assert seen == ["one", "two"]
+    assert ends == ["end"]
+
+
+async def test_a_provider_with_on_terminated_hears_an_idle_servers_end_only_while_it_is_live() -> None:
+    ended: list[str] = []
+    provider = MCPProvider({"srv": MCPServerConfig(command="fake")}, ToolRegistry(), on_terminated=ended.append)
+    provider._connections["srv"] = SimpleNamespace(aclose=AsyncMock())  # type: ignore[assignment]
+
+    provider._transport_ended("srv")
+    provider._transport_ended("other")
+    await provider.aclose()
+    provider._transport_ended("srv")
+
+    assert ended == ["srv"]
+
+
+async def test_a_provider_without_on_terminated_ignores_the_end_of_the_transport() -> None:
+    provider = MCPProvider({"srv": MCPServerConfig(command="fake")}, ToolRegistry())
+    provider._connections["srv"] = SimpleNamespace()  # type: ignore[assignment]
+
+    provider._transport_ended("srv")
 
 
 @pytest.mark.parametrize("params, error", [

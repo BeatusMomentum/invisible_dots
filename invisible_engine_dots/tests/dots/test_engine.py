@@ -1404,7 +1404,7 @@ class TestStoppingWithBrowsersOpen:
     async def test_a_browser_that_does_not_close_does_not_hold_the_stop(
         self, make_engine: MakeEngine, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(engine_module, "_CLOSE_BROWSERS_S", 0.1)
+        monkeypatch.setattr(engine_module, "_CLOSE_BROWSERS_ON_STOP_S", 0.1)
         h = started(make_engine([]))
         hung = asyncio.Event()
 
@@ -1418,6 +1418,29 @@ class TestStoppingWithBrowsersOpen:
             await h.engine.stop()
 
         assert hung.is_set()
+
+    async def test_a_prepare_sleep_waits_for_a_slow_close_that_a_stop_would_cut(
+        self, make_engine: MakeEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Only the host's 60 s wait on a prepare-sleep, while systemd's 30 s bound a stop.
+        monkeypatch.setattr(engine_module, "_CLOSE_BROWSERS_ON_STOP_S", 0.1)
+        monkeypatch.setattr(engine_module, "_CLOSE_BROWSERS_ON_SLEEP_S", 5.0)
+        h = started(make_engine([]))
+        closed: list[str] = []
+
+        async def slow_close() -> None:
+            await asyncio.sleep(0.5)
+            closed.append("closed")
+
+        monkeypatch.setattr(h.browser, "close_all", slow_close)
+
+        await h.engine.suspend()
+        assert closed == ["closed"]
+
+        h.engine.key_received()
+        closed.clear()
+        await h.engine.stop()
+        assert closed == []
 
     async def test_a_config_applies_the_browser_limits_to_the_manager(self, make_engine: MakeEngine) -> None:
         h = started(make_engine([]))

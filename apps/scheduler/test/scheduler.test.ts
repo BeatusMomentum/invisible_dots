@@ -390,6 +390,21 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     await expect(scheduler.closeIdentity(dot.id, identity.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
   });
 
+  it("the engine's coded 502 browser answers pass through, so the UI can tell a crashed browser from a silent computer", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "failing");
+    const guest = driver.guestOf(dot.id);
+    const identity = await scheduler.createIdentity(dot.id, { name: "Shop" });
+    guest.launchIdentity(identity.id);
+
+    for (const code of ["frame_failed", "crashed", "launch_failed"] as const) {
+      guest.identityFault = code;
+      await expect(scheduler.identityFrame(dot.id, identity.id)).rejects.toMatchObject({ status: 502, code });
+    }
+    guest.identityFault = null;
+    expect([...(await scheduler.identityFrame(dot.id, identity.id)).slice(0, 2)]).toEqual([0xff, 0xd8]);
+  });
+
   it("a guest that does not answer a frame is a 502, not a pass-through", async () => {
     const { scheduler, driver } = make();
     const dot = await readyDot(scheduler, "silent");

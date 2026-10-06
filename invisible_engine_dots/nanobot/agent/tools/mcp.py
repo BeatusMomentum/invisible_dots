@@ -137,9 +137,13 @@ def _progress_params_have_token(params: Any) -> bool:
 
 
 class _MalformedProgressNotificationFilter:
-    def __init__(self, read_stream: Any, server_name: str) -> None:
+    def __init__(
+        self, read_stream: Any, server_name: str, on_end: Callable[[], None] | None = None
+    ) -> None:
         self._read_stream = read_stream
         self._server_name = server_name
+        # Called when the transport ends by itself (the process exited, the connection dropped).
+        self._on_end = on_end
         self._iterator: AsyncIterator[Any] | None = None
 
     async def __aenter__(self) -> "_MalformedProgressNotificationFilter":
@@ -160,7 +164,12 @@ class _MalformedProgressNotificationFilter:
             self._iterator = iterator
 
         while True:
-            message = await anext(iterator)
+            try:
+                message = await anext(iterator)
+            except StopAsyncIteration:
+                if self._on_end is not None:
+                    self._on_end()
+                raise
             if _is_malformed_mcp_progress_notification(message):
                 logger.debug(
                     "MCP server '{}': dropped progress notification without progressToken",
@@ -175,10 +184,12 @@ class _MalformedProgressNotificationFilter:
             await close()
 
 
-def _filter_malformed_mcp_progress_notifications(read_stream: Any, server_name: str) -> Any:
+def _filter_malformed_mcp_progress_notifications(
+    read_stream: Any, server_name: str, on_end: Callable[[], None] | None = None
+) -> Any:
     if not all(hasattr(read_stream, name) for name in ("__aenter__", "__aexit__", "__aiter__")):
         return read_stream
-    return _MalformedProgressNotificationFilter(read_stream, server_name)
+    return _MalformedProgressNotificationFilter(read_stream, server_name, on_end)
 
 
 def _sanitize_name(name: str) -> str:
@@ -907,8 +918,13 @@ class MCPPromptWrapper(_MCPWrapperBase):
 async def connect_mcp_servers(
     mcp_servers: dict[str, MCPServerConfig],
     registry: ToolRegistry,
+    on_ended: Callable[[str], None] | None = None,
 ) -> dict[str, MCPConnection]:
     """Connect to configured MCP servers and register their tools, resources, prompts.
+
+    `on_ended` is called with a server's name when its transport ends by itself, with no call in
+    flight needed to find out: its process exited or its connection dropped. It is not called for a
+    connection this module closes.
 
     Returns one connection handle per server.  Each handle keeps the task that
     entered the MCP SDK contexts alive so reconnect and shutdown can close
@@ -987,7 +1003,9 @@ async def connect_mcp_servers(
                 logger.warning("MCP server '{}': unknown transport type '{}'", name, transport_type)
                 return False
 
-            read = _filter_malformed_mcp_progress_notifications(read, name)
+            read = _filter_malformed_mcp_progress_notifications(
+                read, name, (lambda: on_ended(name)) if on_ended is not None else None
+            )
             session = await server_stack.enter_async_context(ClientSession(read, write))
             await session.initialize()
 
@@ -1204,7 +1222,8 @@ class MCPProvider:
         reconnected, the failed call repeated once. A caller that must know of the end
         itself, because the server's state is lost with its process, passes
         `on_terminated`: it is then called with the server's name, nothing is
-        reconnected, and the failed call returns its error.
+        reconnected, and the failed call returns its error. It is also called when the
+        process ends with no call in flight, so an idle server's end is reported at once.
         """
         self._servers = dict(servers)
         self._registry = registry
@@ -1235,7 +1254,7 @@ class MCPProvider:
         if not missing_servers:
             return
         try:
-            connected = await connect_mcp_servers(missing_servers, self._registry)
+            connected = await connect_mcp_servers(missing_servers, self._registry, self._transport_ended)
             if self._closing:
                 await _close_mcp_connections(connected)
                 return
@@ -1295,6 +1314,11 @@ class MCPProvider:
                 if isinstance(tool, _MCPWrapperBase):
                     tool.set_reconnect_handler(handler)
 
+    def _transport_ended(self, server_name: str) -> None:
+        """A live server's transport ended by itself: tell the caller who asked to be told."""
+        if self._on_terminated is not None and not self._closing and server_name in self._connections:
+            self._on_terminated(server_name)
+
     async def _refresh_terminated_server(
         self,
         server_name: str,
@@ -1330,6 +1354,7 @@ class MCPProvider:
             connected = await connect_mcp_servers(
                 {server_name: cfg},
                 self._registry,
+                self._transport_ended,
             )
             if self._closing:
                 await _close_mcp_connections(connected)

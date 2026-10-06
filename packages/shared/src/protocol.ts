@@ -158,7 +158,7 @@ export const AGENT_ROUTES = {
   state: "/state",
   browserIdentities: "/browser-identities",
   browserIdentity: (id: string) => `/browser-identities/${encodeURIComponent(id)}`,
-  /** `GET`: the JPEG of the identity's window, only while it is open (409 `not_open`; 503 `busy` when a call holds it). */
+  /** `GET`: the JPEG of the identity's window, only while it is open (409 `not_open`; 503 `busy` when a call holds it; 502 `frame_failed` or `crashed`). */
   browserIdentityFrame: (id: string) => `/browser-identities/${encodeURIComponent(id)}/frame`,
   /** `POST` (204): end the identity's browser, keep its profile. Closing a closed identity is not an error. */
   browserIdentityClose: (id: string) => `/browser-identities/${encodeURIComponent(id)}/close`,

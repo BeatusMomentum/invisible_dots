@@ -35,7 +35,7 @@ import base64
 import posixpath
 import re
 import sqlite3
-from collections.abc import Coroutine, Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -109,11 +109,18 @@ class BrowserIdentity:
 class _Session:
     """The MCP process of one identity that is opening, open or closing, on a registry of its own."""
 
-    def __init__(self, identity_id: str, proxy: str | None, config: MCPServerConfig) -> None:
+    def __init__(
+        self,
+        identity_id: str,
+        proxy: str | None,
+        config: MCPServerConfig,
+        on_ended: Callable[[_Session], None],
+    ) -> None:
         self.identity_id = identity_id
         self.proxy = proxy
         self.registry = ToolRegistry()
         self.provider = MCPProvider({SERVER_NAME: config}, self.registry, on_terminated=self._ended)
+        self._on_ended = on_ended
         # Taken by a call for its whole time, so calls on one identity run one at a time, and by a close.
         self.calls = asyncio.Lock()
         # Set when the MCP client reports the process gone.
@@ -122,9 +129,13 @@ class _Session:
         # What moves the session: the task that opens it, then the one that closes it. Set by the manager
         # in the step that makes the session, so it is never None for a session the manager holds.
         self.task: asyncio.Task[None] | None = None
+        # The task that closes the session once its process is gone: one for every caller that finds out.
+        self.ended: asyncio.Task[None] | None = None
 
     def _ended(self, _server: str) -> None:
+        # Called when the process ends, whether or not a call is in flight to find out.
         self.terminated = True
+        self._on_ended(self)
 
 
 def result_text(result: Any) -> str:
@@ -425,7 +436,7 @@ class BrowserManager:
                 )
         finally:
             session.calls.release()
-        text = _scrub(result_text(result), session.proxy)
+        text = result_text(result)
         if result_is_error(result):
             if _BROWSER_LOST.search(text):
                 raise self._not_open(identity_id)
@@ -542,7 +553,7 @@ class BrowserManager:
     def _reserve(self, row: BrowserIdentityRow) -> _Session:
         """Take a slot for the identity: close what must make room, and start opening it. Never awaits."""
         closes = self._make_room(self._max_open - 1)
-        session = _Session(row.id, row.proxy, self._server_config(row.id, row.proxy))
+        session = _Session(row.id, row.proxy, self._server_config(row.id, row.proxy), self._session_ended)
         self._sessions[row.id] = session
         session.task = self._spawn(self._bring_up(session, row, closes))
         return session
@@ -613,7 +624,7 @@ class BrowserManager:
         wrapper = session.registry.get(self._tool_name(tool))
         if wrapper is None:
             raise ValueError(f"the browser server has no tool {tool}")
-        return await wrapper.execute(**{**arguments, "browser": MAIN_BROWSER})
+        return _scrub_result(await wrapper.execute(**{**arguments, "browser": MAIN_BROWSER}), session.proxy)
 
     async def _open_browser(self, session: _Session) -> None:
         """`browser_open` with nothing but the browser role: the environment is the one source of the profile
@@ -628,7 +639,7 @@ class BrowserManager:
         wait = self._open_retry_initial_s
         while True:
             result = await self._request(session, "browser_open", {})
-            text = _scrub(result_text(result), session.proxy)
+            text = result_text(result)
             if session.terminated:
                 raise BrowserIdentityError(
                     "launch_failed", f'the browser process of identity "{identity_id}" exited while it was opening'
@@ -663,8 +674,26 @@ class BrowserManager:
 
         self._store.write(record)
 
+    def _session_ended(self, session: _Session) -> None:
+        """The MCP client says the process is gone: an open identity is closed now, not at the next call.
+
+        A session that is opening or closing is not touched: its launch or its close sees `terminated`.
+        """
+        if session.state == "open" and self._sessions.get(session.identity_id) is session:
+            self._end_session(session)
+
+    def _end_session(self, session: _Session) -> asyncio.Task[None]:
+        """The one task that closes a session whose process is gone, started by whoever finds out first."""
+        if session.ended is None:
+            session.ended = self._spawn(self._close_ended(session))
+        return session.ended
+
     async def _process_ended(self, session: _Session) -> None:
-        """The MCP process is gone: the identity is closed, `closed` is emitted once."""
+        """The MCP process is gone: wait until the identity is closed and `closed` is emitted."""
+        await asyncio.wait({self._end_session(session)})
+
+    async def _close_ended(self, session: _Session) -> None:
+        """Close the identity of a session whose process is gone, and emit `closed` once."""
         if not self._forget(session):
             return
         logger.warning("browser identity {}: the MCP server exited unexpectedly", session.identity_id)
@@ -718,7 +747,26 @@ class BrowserManager:
 
 
 def _scrub(text: str, proxy: str | None) -> str:
-    """An answer of the server with the proxy it may echo in its redacted form."""
+    """A text of the server with the proxy it may echo in its redacted form."""
     if proxy and proxy in text:
         return text.replace(proxy, redact_proxy(proxy))
     return text
+
+
+def _scrub_result(result: Any, proxy: str | None) -> Any:
+    """What a call of the server returned, with the proxy in its redacted form wherever it is named.
+
+    This is the one place that answers of the server enter the engine, so a tool result, an error and a
+    frame all leave it free of the password, and so does everything the caller writes to the transcript.
+    """
+    if not proxy:
+        return result
+    if isinstance(result, str):
+        scrubbed = _scrub(str(result), proxy)
+        return ToolResult(scrubbed, is_error=result.is_error) if isinstance(result, ToolResult) else scrubbed
+    return [
+        {**block, "text": _scrub(str(block.get("text", "")), proxy)}
+        if isinstance(block, Mapping) and block.get("type") == "text"
+        else block
+        for block in result
+    ]

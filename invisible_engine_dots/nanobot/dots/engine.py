@@ -42,7 +42,7 @@ from nanobot.agent.memory import Consolidator
 from nanobot.agent.tools.registry import ToolRegistry
 from nanobot.cron.types import CronJob
 from nanobot.dots import store as dots_store
-from nanobot.dots.browser import BrowserManager
+from nanobot.dots.browser import CLOSE_TIMEOUT_S, BrowserManager
 from nanobot.dots.computer import Computer
 from nanobot.dots.gate import DotsGate, close_open_calls
 from nanobot.dots.projection import EngineSettings, project
@@ -75,9 +75,12 @@ TASK_MAX_ATTEMPTS = 3
 STOP_GRACE_S = 20.0
 # After the grace, how long the cancelled turns get to end before the sleep goes on without them.
 _CANCEL_WAIT_S = 5.0
-# How long the open browsers get to close (Firefox flushes its profile) once the turns have ended, inside
-# systemd's TimeoutStopSec (architecture 8.7).
-_CLOSE_BROWSERS_S = 4.0
+# How long the open browsers get to close (Firefox flushes its profile) once the turns have ended. On a
+# stop (SIGTERM) it is what is left of systemd's TimeoutStopSec=30 after the grace (architecture 8.7). On
+# a prepare-sleep nothing but the host's 60 s waits, so a browser gets the whole of its own close timeout:
+# 20 s of grace, 5 s of cancel wait and this stay inside them.
+_CLOSE_BROWSERS_ON_STOP_S = 4.0
+_CLOSE_BROWSERS_ON_SLEEP_S = CLOSE_TIMEOUT_S
 
 RESUME_TASK_NOTE = (
     "[The previous attempt at this task was interrupted by a restart. Check what it already did "
@@ -444,10 +447,12 @@ class Engine:
             # A sleep is not a failed attempt (architecture 8.7).
             self._store.write(lambda conn: dots_store.uncount_task_attempt(conn, cut_task))
         # No turn is left to call a browser: close them while the engine still lives, so Firefox flushes.
+        # The closes are tasks of the manager, so the end of the wait cuts none of them short.
+        budget = _CLOSE_BROWSERS_ON_STOP_S if self._stopped else _CLOSE_BROWSERS_ON_SLEEP_S
         try:
-            await asyncio.wait_for(self._browser.close_all(), _CLOSE_BROWSERS_S)
+            await asyncio.wait_for(self._browser.close_all(), budget)
         except asyncio.TimeoutError:
-            logger.error("the open browsers did not close within {} s; the process ends them", _CLOSE_BROWSERS_S)
+            logger.error("the open browsers did not close within {} s; the process ends them", budget)
         self._store.checkpoint()
 
     # --- the host of a turn (TurnHost) --------------------------------------

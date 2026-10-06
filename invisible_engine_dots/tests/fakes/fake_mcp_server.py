@@ -54,6 +54,7 @@ def write_control(mcp_home: Path, **control: Any) -> None:
     download_answers: `browser_open` answers with the engine's download progress this many times first.
     fail_open: `browser_open` fails the way the real server does when Firefox does not start.
     echo_proxy: the failure of `browser_open` names the proxy it was started with, as a server may.
+    echo_proxy_on_pages: `browser_navigate` fails and `browser_read_text` answers naming that proxy too.
     lose_browser_once: the first page action after opening reports the browser gone, as after a Firefox crash.
     lose_browser_always: every page action does.
     refuse_close: `browser_close` fails.
@@ -140,11 +141,15 @@ async def _serve() -> None:
                 # Exit without answering, like a server killed in the middle of a call.
                 record({"kind": "exit", "code": 3})
                 os._exit(3)
+            if control.get("echo_proxy_on_pages"):
+                return text(f"navigation failed through {os.environ.get('STEALTHFOX_PROXY')}", error=True)
             state["url"] = str(args["url"])
             return text(f"200 {state['url']}")
         if name == "browser_snapshot":
             return text(f"title: Fake\nurl: {state['url']}\n- button \"Go\" selector: #go at: [10, 20]")
         if name == "browser_read_text":
+            if control.get("echo_proxy_on_pages"):
+                return text(f"page behind {os.environ.get('STEALTHFOX_PROXY')}")
             return text(f"text of {args.get('selector', 'body')}")
         if name == "browser_take_screenshot" or name == "browser_click_at":
             return image(PNG, "image/png")

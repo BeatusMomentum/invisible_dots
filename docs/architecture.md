@@ -1121,8 +1121,10 @@ starts it again. What it guarantees:
   without its result, which the provider would refuse on every later turn.
 - Stopping: `POST /prepare-sleep` and SIGTERM abandon a model request in
   flight and give a tool in flight up to 20 seconds to finish and commit its
-  result, then close the open browsers (at most 4 s in all), which leaves about
-  6 of systemd's `TimeoutStopSec=30` to checkpoint the database. A tool cut at
+  result, then close the open browsers: at most 4 s on SIGTERM, which leaves about
+  6 of systemd's `TimeoutStopSec=30` to checkpoint the database, and up to a
+  browser's own 30 s close on prepare-sleep, which only the host's 60 s bound (20 s
+  grace, 5 s cancel wait and 30 s stay inside it). A tool cut at
   the grace keeps its intent, and the next entry of its unit reports it as
   interrupted. Measured in the engine smoke before the browsers existed, with a
   task's `sleep 70` still running at SIGTERM and the event stream connected: the
@@ -1311,7 +1313,11 @@ state.
   lives is opened again once and the call repeated; a process that ended (the
   client reports it instead of reconnecting, because a restarted process has
   lost its browser) is a crash: the identity is closed, `browser.identity.closed`
-  is emitted once and the call fails with `crashed`. A close calls
+  is emitted once and the call fails with `crashed`. The manager hears of the end
+  when it happens, from the client's transport, so a process that dies while idle
+  is closed at once, frees its slot of `max_open`, and the next action says
+  `not_open`; a file never claims an open browser for a process that is gone. Text
+  a page tool returns, and its errors, have the proxy in its redacted form. A close calls
   `browser_close` first, so Firefox flushes its profile, then ends the process.
   Every `browser.identity.*` event commits with the row change it describes.
   The model's identity and page tools (`browser_tools.py`) and the routes of
@@ -1362,8 +1368,10 @@ state.
   seconds, in which the tool's result commits and the next iteration abandons
   the turn, and is cancelled at the deadline (its intent stays, and the next
   start reports it interrupted); the attempt of a cut task is given back; the
-  open browsers are closed (up to 4 seconds in all, with no turn left to call
-  one; a browser that does not close in time is ended with the process); the
+  open browsers are closed (up to 4 seconds in all on SIGTERM and up to 30 on
+  prepare-sleep, with no turn left to call one; a close that outlasts the wait
+  keeps running as its own task, and a browser still open when the process
+  exits is ended with it); the
   WAL is checkpointed. The API (`server.py`) answers the host's `prepare-sleep`
   to its end even when the host hangs up.
 - Removed from nanobot (everything since the import is in
@@ -1550,7 +1558,7 @@ GET    /api/dots/:id/browser-identities
 POST   /api/dots/:id/browser-identities
 GET    /api/dots/:id/browser-identities/:identityId
 DELETE /api/dots/:id/browser-identities/:identityId
-GET    /api/dots/:id/browser-identities/:identityId/frame     image/jpeg, only while the identity is open (409 not_open, 503 busy)
+GET    /api/dots/:id/browser-identities/:identityId/frame     image/jpeg, only while the identity is open (409 not_open, 503 busy, 502 frame_failed or crashed: the engine's own answers pass through)
 POST   /api/dots/:id/browser-identities/:identityId/close     204; the browser ends, the profile stays
 
 GET    /api/approvals                ?status=pending|approved|rejected|expired
