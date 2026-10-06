@@ -64,8 +64,11 @@ node apps/cli/dist/invisible-dots.mjs channel pair telegram --dot my-first-dot
 
 `channel add` asks for the bot's token and stores it encrypted; `channel pair`
 prints a link: open it in Telegram and press Start, and that chat is the Dot's
-from then on. Nobody else can talk to it. Telegram bot chats are not end-to-end
-encrypted.
+from then on. Nobody else can talk to it. When the Dot needs a permission it
+asks in that chat, with Approve and Reject buttons (the arguments shown are cut
+to 300 characters; `PATCH /api/dots/:id/channels/telegram` with
+`{"settings": {"approvals": false}}` keeps the answer in the app).
+Telegram bot chats are not end-to-end encrypted.
 
 The web client:
 

@@ -11,6 +11,7 @@ import { StreamOverflowError, type EventLog } from "@invisible-dots/events";
 import { parseMessageOrigin, type ChannelKind, type StoredEvent } from "@invisible-dots/shared";
 import { errorMessage, sleep, type Logger } from "@invisible-dots/scheduler";
 import { Backoff, type BackoffOptions } from "./backoff.js";
+import { approvalOutcomeText, approvalPromptText } from "./approval-text.js";
 import { ChannelNeedsRelinkError, ChannelSendError, type Channel, type ChannelSink, type ChannelStatusReport, type ChannelType } from "./channel.js";
 import { splitText } from "./text.js";
 
@@ -20,7 +21,7 @@ export type RunnerEvents = Pick<EventLog, "stream" | "userMessage">;
 export interface RunnerOptions {
   binding: ChannelBindingRecord;
   type: ChannelType;
-  db: Pick<Database, "channels" | "secrets">;
+  db: Pick<Database, "channels" | "secrets" | "approvals">;
   events: RunnerEvents;
   logger: Logger;
   backoff: BackoffOptions;
@@ -51,6 +52,7 @@ export class BindingRunner {
   #tasks: Promise<unknown>[] = [];
   #statusTail: Promise<unknown> = Promise.resolve();
   #inboundTail: Promise<unknown> = Promise.resolve();
+  #promptTail: Promise<unknown> = Promise.resolve();
   /** The id of the last event dealt with. */
   #handled: number;
   #written: number;
@@ -70,7 +72,7 @@ export class BindingRunner {
 
   start(): void {
     this.report({ status: "connecting" });
-    this.#tasks = [this.#supervise(), this.#outbound()];
+    this.#tasks = [this.#supervise(), this.#outbound(), this.syncPrompts()];
   }
 
   /** Stop the adapter and the event loop, and write the cursor. Resolves when both are done. */
@@ -78,6 +80,7 @@ export class BindingRunner {
     this.stopped = true;
     this.#abort.abort();
     await Promise.allSettled(this.#tasks);
+    await this.#promptTail;
     await this.#statusTail;
     await this.#flushCursor().catch(() => {});
   }
@@ -86,6 +89,32 @@ export class BindingRunner {
   serial<T>(work: () => Promise<T>): Promise<T> {
     const result = this.#inboundTail.then(work, work);
     this.#inboundTail = result.catch(() => {});
+    return result;
+  }
+
+  /**
+   * Bring the chats in line with the approvals: a prompt whose approval is settled (answered somewhere else, or
+   * its task ended) is edited to say so, and a pending approval that has no prompt in an owner's chat gets one.
+   * Run at start, and again when something changes who is asked (a person paired, approvals switched on). Never
+   * rejects; sending waits for the adapter to be up.
+   */
+  syncPrompts(): Promise<void> {
+    return this.#prompts(async () => {
+      const prompted = new Set((await this.#o.db.channels.prompts(this.bindingId)).map((p) => p.approval_id));
+      for (const approvalId of prompted) if ((await this.#settle(approvalId)) === null) return;
+      for (const approval of await this.#o.db.approvals.list({ status: "pending", dotId: this.dotId })) {
+        if ((await this.#ask(approval.id)) === null) return;
+      }
+    }).then(
+      () => undefined,
+      (error) => this.#o.logger.warn("could not bring the approval prompts up to date", { binding: this.bindingId, error: errorMessage(error) }),
+    );
+  }
+
+  /** Run `work` after the approval prompt work that came before it: sends and edits never overlap, so a prompt is sent once and edited after it was sent. */
+  #prompts<T>(work: () => Promise<T>): Promise<T> {
+    const result = this.#promptTail.then(work, work);
+    this.#promptTail = result.catch(() => {});
     return result;
   }
 
@@ -197,6 +226,10 @@ export class BindingRunner {
             : `Task failed: ${String(event.data.error ?? "").trim() || "unknown error"}`;
         return this.#toOwners(text);
       }
+      case "approval.requested":
+        return this.#prompts(() => this.#ask(String(event.data.approval_id)));
+      case "approval.resolved":
+        return this.#prompts(() => this.#settle(String(event.data.approval_id)));
       case "agent.state":
         if (event.data.state === "THINKING" && this.activeChat !== null) {
           const chat = this.activeChat;
@@ -240,6 +273,55 @@ export class BindingRunner {
     return sent;
   }
 
+  // Approvals
+
+  /**
+   * Ask every owner's chat to answer the approval, when approvals are asked in chats and it is still pending. A
+   * chat that already has the prompt is not asked again. True when something was sent, null when stopped half way.
+   */
+  async #ask(approvalId: string): Promise<boolean | null> {
+    const binding = await this.#o.db.channels.bindingById(this.bindingId);
+    if (!binding?.settings.approvals) return false;
+    const approval = await this.#o.db.approvals.get(approvalId);
+    if (!approval || approval.status !== "pending") return false;
+    const text = approvalPromptText(approval);
+    const peers = await this.#o.db.channels.peers(this.bindingId);
+    let sent = false;
+    for (const chat of new Set(peers.filter((p) => p.role === "owner").map((p) => p.chat_id))) {
+      const asked = await this.#o.db.channels.prompts(this.bindingId, approvalId);
+      if (asked.some((p) => p.chat_id === chat)) continue;
+      const ref = await this.#retrying((channel) => channel.sendApproval(chat, { approvalId, text }));
+      if (ref === null) return null;
+      if (ref === false) continue;
+      await this.#o.db.channels.addPrompt(this.bindingId, approvalId, chat, ref);
+      sent = true;
+    }
+    return sent;
+  }
+
+  /**
+   * Edit the prompts of an approval that is no longer pending to say how it ended, and forget them. It does not
+   * matter where the answer came from. True when a prompt was edited, null when stopped half way.
+   */
+  async #settle(approvalId: string): Promise<boolean | null> {
+    const prompts = await this.#o.db.channels.prompts(this.bindingId, approvalId);
+    if (prompts.length === 0) return false;
+    const approval = await this.#o.db.approvals.get(approvalId);
+    if (!approval || approval.status === "pending") return false;
+    const text = approvalOutcomeText(approval);
+    let edited = false;
+    for (const prompt of prompts) {
+      const done = await this.#retrying(async (channel) => {
+        await channel.editApproval(prompt.chat_id, prompt.ref, text);
+        return true;
+      });
+      if (done === null) return null;
+      edited ||= done;
+      await this.#o.db.channels.deletePrompt(this.bindingId, approvalId, prompt.chat_id);
+    }
+    return edited;
+  }
+
   // Sending
 
   /** Send `text` in as many messages as the channel needs. True when sent, false when dropped for good, null when stopped. */
@@ -264,13 +346,23 @@ export class BindingRunner {
   }
 
   async #sendWithRetry(chatId: string, text: string): Promise<boolean | null> {
+    return this.#retrying(async (channel) => {
+      await channel.sendText(chatId, text);
+      return true;
+    });
+  }
+
+  /**
+   * Do something with the adapter until it works: its value when it did, false when the channel refuses for good
+   * (the message is dropped), null when the runner stops first. A failure that may pass is retried with backoff.
+   */
+  async #retrying<T>(operation: (channel: Channel) => Promise<T>): Promise<T | false | null> {
     const backoff = new Backoff(this.#o.backoff);
     while (!this.#signal.aborted) {
       try {
-        const channel = this.channel;
-        if (!channel) throw new Error("the channel is not connected");
-        await channel.sendText(chatId, text);
-        return true;
+        const channel = this.channel ?? (await this.#awaitChannel());
+        if (!channel) return null;
+        return await operation(channel);
       } catch (error) {
         const reason = await this.scrub(errorMessage(error));
         if (error instanceof ChannelSendError && !error.options.retryable) {

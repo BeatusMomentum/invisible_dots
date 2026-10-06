@@ -1359,7 +1359,7 @@ taken while holding a row lock another event writer waits for.
 
 Tables: `dots`, `computers`, `tasks`, `task_runs`, `events`, `approvals`,
 `inbound_events`, `secrets`, `channel_bindings`, `channel_peers`,
-`channel_pairings`, `channel_inbound`, `schema_migrations`. Migrations are plain
+`channel_pairings`, `channel_inbound`, `channel_prompts`, `schema_migrations`. Migrations are plain
 SQL files applied in order at start.
 
 - `dots(id text pk, name text unique, config jsonb, status text, created_at, updated_at)`
@@ -1375,6 +1375,7 @@ SQL files applied in order at start.
 - `channel_peers(binding_id fk cascade, peer_id, chat_id, role 'owner'|'user', label, created_at, pk(binding_id, peer_id))`: the people allowed to talk through the binding, by the channel's stable id, with the chat they paired from
 - `channel_pairings(binding_id fk cascade, code_hash, expires_at, consumed_at, pk(binding_id, code_hash))`: one-time pairing codes, stored hashed
 - `channel_inbound(binding_id fk cascade, external_id, message_id, created_at, pk(binding_id, external_id))`: the channel messages already handed to the Dot, by the channel's own id, so a redelivery is dropped; only idempotency lives here, where a message came from is in its `user.message` event (section 5.4). An index on `events` by `(dot_id, data->>'message_id')` for `user.message` lets an answer find the message it answers
+- `channel_prompts(binding_id fk cascade, approval_id fk approvals cascade, chat_id, ref, created_at, pk(binding_id, approval_id, chat_id))`: the approval prompts a channel sent, one message per chat; `ref` is the channel's handle for the message (a Telegram message id), what an edit needs. A row is deleted once its prompt was edited to the outcome
 
 Secrets are encrypted with AES-256-GCM under `master.key`. The OpenRouter key
 is looked up as `(<dot_id>, openrouter_api_key)` first, then
@@ -1573,10 +1574,10 @@ type names one, and the Dot has no tool that sends a message anywhere.
 the Scheduler, started after `scheduler.start()` and closed before it. It runs in
 the server process because the database is single-process (section 9.1) and the
 credentials live in it. It uses only what the Scheduler offers: `sendMessage`
-(with an origin), `requireDot` and the event log.
+(with an origin), `resolveApproval`, `requireDot` and the event log.
 
 An adapter (`Channel`) is transport only: `run(sink, signal)` connects and
-delivers until aborted, `sendText`, optionally `typing`. A `ChannelType` makes the
+delivers until aborted, `sendText`, `sendApproval` and `editApproval`, optionally `typing`. A `ChannelType` makes the
 adapter for a binding and names the secrets a binding of its kind keeps. The hub
 owns every policy:
 
@@ -1608,6 +1609,27 @@ owns every policy:
   a crash between a send and the cursor write sends that message again. A send
   that fails is retried with backoff (a channel's `retry_after` is honoured); one
   the channel refuses for good (the person blocked the bot) is dropped.
+- **Approvals.** When the Dot asks (`approval.requested`) and the binding's
+  `approvals` setting is on, every owner's chat gets a prompt: the tool, its
+  permission, the reason and the arguments, each cut to 300 characters (the
+  arguments can hold private data, and a chat is read by a third party), with an
+  Approve and a Reject button. Only a paired owner, in their private chat, can
+  answer; the button's id proves nothing, so the hub also checks that the
+  approval belongs to the binding's own Dot and that approvals are still asked
+  in chats. The answer is `Scheduler.resolveApproval`, the one way an approval
+  is answered, so a second press, or a press after the web answered, is the
+  scheduler's 409 and the person is told it was answered already. The person
+  always gets a short notice for the press. Every answer, whoever gave it,
+  arrives as `approval.resolved` and edits the prompts to the outcome with the
+  buttons taken away; `channel_prompts` remembers where each prompt is. The
+  prompts are brought up to date when the channel starts, when a person pairs
+  and when `approvals` is switched on: a prompt whose approval was settled
+  meanwhile (answered elsewhere, or its task ended: "No longer needed") is
+  edited, and a pending approval with no prompt in an owner's chat is sent one.
+  Delivery is at least once like every send: a crash between sending a prompt and
+  recording it sends it again. An approval over a chat is as strong as the
+  person's Telegram account; switching `approvals` off keeps the answer in the
+  app.
 - **Failure.** An adapter that fails is started again after an exponential backoff
   (1 s up to 60 s, with jitter) on a fresh instance; `ChannelNeedsRelinkError`
   (a revoked token, a logged-out device) stops it until the person relinks.
@@ -1636,7 +1658,7 @@ MIT). It is transport only, like every adapter.
   NAT and polling needs only outbound HTTPS. Telegram keeps an update that was
   not confirmed for 24 hours: a PC that is off for longer loses what was sent
   meanwhile. A webhook the bot had is deleted on connect (the bot is the Dot's
-  own). Only `message` updates are asked for.
+  own). Only `message` and `callback_query` updates are asked for.
 - **An update is confirmed to Telegram** (the `offset` of the next poll) only after
   the hub dealt with it. When the hub could not record a message the adapter
   fails, the hub starts it again, and Telegram offers the update once more; the
@@ -1647,6 +1669,15 @@ MIT). It is transport only, like every adapter.
   link `https://t.me/<bot>?start=<code>` sends exactly that. A bare `/start` and
   everything a stranger sends get no answer. Only private chats are served.
   Authorization is the sender's numeric user id, never a username.
+- **Approval buttons.** `callback_data` is `ap1:y:<approval id>` or
+  `ap1:n:<approval id>` (47 bytes for `appr_<uuid>`): versioned, checked to fit
+  Telegram's 64 bytes when the prompt is made (an id that does not fit is
+  refused for good) and again when parsed, and parsed strictly, so data from
+  another version or a forged shape is answered "This button is out of date"
+  and goes no further. A press is confirmed to Telegram only after the hub dealt
+  with it, like a message. The press is always answered (`answerCallbackQuery`)
+  with the hub's notice, best effort: Telegram refuses an answer that is too
+  old. An edit of a prompt that is gone or already says the same counts as done.
 - **Messages.** Plain text, no formatting; a long answer is split at 4000
   characters. A message without text (a photo, a voice note) is answered "not
   supported yet" to a paired person and dropped. Typing shows while the Dot

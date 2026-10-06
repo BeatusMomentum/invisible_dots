@@ -12,6 +12,7 @@ import { isUniqueViolation } from "@invisible-dots/database";
 import type { EventLog } from "@invisible-dots/events";
 import {
   CHANNEL_KINDS,
+  type ApprovalRecord,
   newId,
   type ChannelKind,
   type ChannelPairingAnswer,
@@ -22,7 +23,7 @@ import {
 } from "@invisible-dots/shared";
 import { ControlPlaneError, errorMessage, notFound, silentLogger, systemClock, type Clock, type Logger } from "@invisible-dots/scheduler";
 import { DEFAULT_BACKOFF, type BackoffOptions } from "./backoff.js";
-import { ChannelCredentialsError, type ChannelSink, type ChannelStatusReport, type ChannelType, type InboundChat, type PairingAttempt } from "./channel.js";
+import { ChannelCredentialsError, type ApprovalAction, type ChannelSink, type ChannelStatusReport, type ChannelType, type InboundChat, type PairingAttempt } from "./channel.js";
 import { hashPairingCode, newPairingCode } from "./pairing.js";
 import { RateLimiter } from "./rate.js";
 import { BindingRunner } from "./runner.js";
@@ -30,12 +31,13 @@ import { BindingRunner } from "./runner.js";
 /** What the hub asks of the control plane; the Scheduler satisfies it. */
 export interface ChannelHost {
   sendMessage(idOrName: string, text: string, origin?: MessageOrigin): Promise<MessageAnswer>;
+  resolveApproval(id: string, decision: "approve" | "reject", note?: string): Promise<ApprovalRecord>;
   requireDot(idOrName: string): Promise<{ id: string; name: string }>;
   events: Pick<EventLog, "stream" | "userMessage" | "tail" | "appendHost">;
 }
 
 /** What the hub stores through. */
-export type ChannelStore = Pick<Database, "channels" | "secrets" | "transaction">;
+export type ChannelStore = Pick<Database, "channels" | "secrets" | "approvals" | "transaction">;
 
 export interface ChannelLimits {
   /** Messages a person can send at once before being slowed down. Default 10. */
@@ -218,6 +220,8 @@ export class ChannelHub {
   async setSettings(dotIdOrName: string, kind: ChannelKind, patch: unknown): Promise<ChannelRecord> {
     const binding = await this.#binding(dotIdOrName, kind);
     const updated = await this.#o.db.channels.setSettings(binding.id, applySettings(binding.settings, patch));
+    // Switched on: what is waiting for an answer is asked now, not only what comes next.
+    if (updated?.settings.approvals && !binding.settings.approvals) void this.#runners.get(binding.id)?.syncPrompts();
     return this.#record(updated ?? binding, await this.#o.db.channels.peers(binding.id));
   }
 
@@ -359,6 +363,7 @@ export class ChannelHub {
       inbound: (message) => this.#inbound(runner, message),
       pairing: (attempt) => this.#pairing(runner, attempt),
       status: (report) => runner.report(report),
+      approval: (action) => this.#approval(runner, action),
     };
   }
 
@@ -441,7 +446,32 @@ export class ChannelHub {
       .catch((error) => this.#log.warn("could not log a pairing", { binding: runner.bindingId, error: errorMessage(error) }));
     const dot = await this.#o.host.requireDot(runner.dotId).catch(() => null);
     await this.#tell(runner, attempt.chatId, `Paired. What you write here now goes to ${dot?.name ?? "your Dot"}, and its answers come back here.`);
+    // Whatever waits for an answer is asked of the new owner too.
+    void runner.syncPrompts();
     return true;
+  }
+
+  /**
+   * A person pressed Approve or Reject. Only a paired owner, in their private chat, while approvals are asked in
+   * chats, and only for an approval of this binding's own Dot: the id comes from the button, which anyone could
+   * have forged, so it proves nothing. The answer is the person's notice; the prompt itself is edited when the
+   * `approval.resolved` event comes, whoever answered.
+   */
+  async #approval(runner: BindingRunner, action: ApprovalAction): Promise<string> {
+    if (runner.stopped) throw new Error("the channel is stopped");
+    const peer = action.direct ? await this.#o.db.channels.peer(runner.bindingId, action.peerId) : null;
+    if (!peer || peer.role !== "owner" || peer.chat_id !== action.chatId) return "You are not allowed to answer this.";
+    const binding = await this.#o.db.channels.bindingById(runner.bindingId);
+    if (!binding?.settings.approvals) return "Approvals are not answered in this chat. Open the app to answer.";
+    const approval = await this.#o.db.approvals.get(action.approvalId);
+    if (!approval || approval.dot_id !== runner.dotId) return "That request does not exist.";
+    try {
+      await this.#o.host.resolveApproval(approval.id, action.decision);
+    } catch (error) {
+      if (error instanceof ControlPlaneError && error.code === "already_resolved") return "It was answered already.";
+      throw error;
+    }
+    return action.decision === "approve" ? "Approved." : "Rejected.";
   }
 
   /** A message of the hub's own to a chat; best effort, because nothing depends on it arriving. */

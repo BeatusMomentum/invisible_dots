@@ -9,6 +9,7 @@ import {
   ChannelNeedsRelinkError,
   ChannelSendError,
   TelegramChannelType,
+  type ApprovalAction,
   type ChannelSink,
   type ChannelStatusReport,
   type InboundChat,
@@ -31,8 +32,8 @@ afterEach(async () => {
   for (const stop of stops.splice(0)) await stop();
 });
 
-function recorder(inbound?: (m: InboundChat) => Promise<void>) {
-  const seen = { inbound: [] as InboundChat[], pairing: [] as PairingAttempt[], status: [] as ChannelStatusReport[] };
+function recorder(inbound?: (m: InboundChat) => Promise<void>, approval: (a: ApprovalAction) => Promise<string> = async () => "Approved.") {
+  const seen = { inbound: [] as InboundChat[], pairing: [] as PairingAttempt[], status: [] as ChannelStatusReport[], approvals: [] as ApprovalAction[] };
   const sink: ChannelSink = {
     inbound: async (m) => {
       await inbound?.(m);
@@ -43,6 +44,11 @@ function recorder(inbound?: (m: InboundChat) => Promise<void>) {
       return true;
     },
     status: (r) => seen.status.push(r),
+    approval: async (a) => {
+      const notice = await approval(a);
+      seen.approvals.push(a);
+      return notice;
+    },
   };
   return { seen, sink };
 }
@@ -262,6 +268,101 @@ describe("Telegram adapter", { timeout: 30_000 }, () => {
     expect(api.sent(TOKEN, 78)).toEqual([]);
     await channel.sendText("78", "after all");
     expect(api.sent(TOKEN, 78)).toEqual([{ chat_id: "78", text: "after all" }]);
+  });
+
+  it("sends an approval prompt with Approve and Reject buttons, and edits it to the outcome with the buttons gone", async () => {
+    fresh();
+    const { channel } = await running(recorder().sink);
+    const ref = await channel.sendApproval("77", { approvalId: "appr_11111111-2222-3333-4444-555555555555", text: "The Dot asks to use exec" });
+    const [prompt] = api.prompts(TOKEN, 77);
+    expect(String(prompt!.message_id)).toBe(ref);
+    expect(prompt!.text).toBe("The Dot asks to use exec");
+    expect(prompt!.buttons).toEqual([
+      { text: "Approve", data: "ap1:y:appr_11111111-2222-3333-4444-555555555555" },
+      { text: "Reject", data: "ap1:n:appr_11111111-2222-3333-4444-555555555555" },
+    ]);
+    expect(api.sent(TOKEN)).toEqual([]);
+
+    await channel.editApproval("77", ref, "The Dot asks to use exec\n\nApproved.");
+    expect(api.prompts(TOKEN, 77)[0]).toMatchObject({ text: "The Dot asks to use exec\n\nApproved.", buttons: [], edits: 1 });
+  });
+
+  it("counts an edit with nothing to do as done, and a blocked chat as final", async () => {
+    fresh();
+    const { channel } = await running(recorder().sink);
+    const ref = await channel.sendApproval("77", { approvalId: "appr_x", text: "ask" });
+    await channel.editApproval("77", ref, "ask\n\nRejected.");
+    // Edited twice to the same words (a crash between the edit and the record): Telegram says "not modified".
+    await channel.editApproval("77", ref, "ask\n\nRejected.");
+    // The person deleted the chat message, or it is not ours.
+    await channel.editApproval("77", "99999", "ask\n\nRejected.");
+    expect(api.prompts(TOKEN, 77)[0]!.edits).toBe(1);
+
+    api.blockChat(TOKEN, 78);
+    const blocked = await channel.sendApproval("78", { approvalId: "appr_y", text: "ask" }).catch((e: Error) => e);
+    expect((blocked as ChannelSendError).options).toEqual({ retryable: false });
+    api.failNext(TOKEN, "editMessageText", { error_code: 429, description: "x", retry_after: 2 });
+    const limited = await channel.editApproval("77", ref, "ask\n\nApproved.").catch((e: Error) => e);
+    expect((limited as ChannelSendError).options).toEqual({ retryable: true, retryAfterMs: 2000 });
+  });
+
+  it("refuses an approval id that does not fit a button, for good, and sends nothing", async () => {
+    fresh();
+    const { channel } = await running(recorder().sink);
+    const refused = await channel.sendApproval("77", { approvalId: `appr_${"x".repeat(60)}`, text: "ask" }).catch((e: Error) => e);
+    expect(refused).toBeInstanceOf(ChannelSendError);
+    expect((refused as ChannelSendError).options).toEqual({ retryable: false });
+    expect(api.prompts(TOKEN)).toEqual([]);
+  });
+
+  it("hands a button press over with who pressed and where, and shows the person the hub's notice", async () => {
+    fresh();
+    const { sink, seen } = recorder(undefined, async (a) => (a.decision === "approve" ? "Approved." : "Rejected."));
+    const { channel } = await running(sink);
+    await waitFor(() => api.polling(TOKEN), "polling");
+    const ref = await channel.sendApproval("77", { approvalId: "appr_a", text: "ask" });
+    const { queryId } = api.press(TOKEN, Number(ref), "ap1:n:appr_a", { id: 77, first_name: "Ann" });
+    await waitFor(() => seen.approvals.length === 1, "the press");
+    expect(seen.approvals[0]).toEqual({ approvalId: "appr_a", decision: "reject", peerId: "77", chatId: "77", direct: true });
+    await waitFor(() => api.answers(TOKEN).length === 1, "the notice");
+    expect(api.answers(TOKEN)).toEqual([{ query_id: queryId, text: "Rejected." }]);
+  });
+
+  it("does not hand over a press whose data this version did not make, and says the button is out of date", async () => {
+    fresh();
+    const { sink, seen } = recorder();
+    const { channel } = await running(sink);
+    await waitFor(() => api.polling(TOKEN), "polling");
+    const ref = Number(await channel.sendApproval("77", { approvalId: "appr_a", text: "ask" }));
+    const forged = ["ap2:y:appr_a", "ap1:y:", "ap1:x:appr_a", "ap1:y:appr_a:extra", "ap1:y:appr a", `ap1:y:appr_${"a".repeat(80)}`, "y:appr_a", ""];
+    for (const data of forged) api.press(TOKEN, ref, data, { id: 77 });
+    await waitFor(() => api.answers(TOKEN).length === forged.length, "an answer to each");
+    expect(seen.approvals).toEqual([]);
+    expect(api.answers(TOKEN).every((a) => a.text === "This button is out of date.")).toBe(true);
+  });
+
+  it("goes on when Telegram refuses the notice (the press is too old), and offers a press again when the hub could not take it", async () => {
+    fresh();
+    let attempts = 0;
+    const { sink, seen } = recorder(undefined, async () => {
+      if (++attempts === 1) throw new Error("the database is down");
+      return "Approved.";
+    });
+    const first = await running(sink);
+    await waitFor(() => api.polling(TOKEN), "polling");
+    const ref = Number(await first.channel.sendApproval("77", { approvalId: "appr_a", text: "ask" }));
+    const { updateId } = api.press(TOKEN, ref, "ap1:y:appr_a", { id: 77 });
+    // The hub failed: the adapter fails (the hub would start it again), and Telegram still holds the press.
+    expect(await first.done).toMatchObject({ ok: false });
+    expect(api.unconfirmed(TOKEN)).toContain(updateId);
+
+    api.failNext(TOKEN, "answerCallbackQuery", { error_code: 400, description: "query is too old" });
+    const second = await running(sink);
+    await waitFor(() => seen.approvals.length === 1, "the press, offered again");
+    await waitFor(() => api.polls(TOKEN) > 2, "the next poll");
+    expect(api.unconfirmed(TOKEN)).toEqual([]);
+    expect(api.answers(TOKEN)).toEqual([]);
+    second.abort.abort();
   });
 
   it("refuses to make a channel for a Dot with no token", async () => {

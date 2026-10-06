@@ -1,6 +1,7 @@
 /**
  * A Bot API server for tests: a real HTTP server on a local port that speaks the part of the Telegram Bot
- * API the adapter uses (`getMe`, `getUpdates`, `deleteWebhook`, `sendMessage`, `sendChatAction`), with
+ * API the adapter uses (`getMe`, `getUpdates`, `deleteWebhook`, `sendMessage` with an inline keyboard,
+ * `editMessageText`, `answerCallbackQuery`, `sendChatAction`; a person's button press is a `callback_query` update), with
  * Telegram's observable behaviour where the adapter depends on it: a long poll that waits for an update,
  * an offset that confirms what came before it, a 409 for a second poller (Telegram ends the older poll),
  * a 409 while a webhook is set, a 401 for an unknown or revoked token, a 429 with `retry_after`, a 403 for
@@ -24,7 +25,24 @@ export interface FakeAnswer {
 
 interface FakeUpdate {
   update_id: number;
-  message: Record<string, unknown>;
+  message?: Record<string, unknown>;
+  callback_query?: Record<string, unknown>;
+}
+
+/** A button of an inline keyboard. */
+export interface FakeButton {
+  text: string;
+  data: string;
+}
+
+/** A message with an inline keyboard, as it stands now (an edit changes it). */
+export interface FakePrompt {
+  message_id: number;
+  chat_id: string;
+  text: string;
+  buttons: FakeButton[];
+  /** How many times it was edited. */
+  edits: number;
 }
 
 interface Poll {
@@ -48,6 +66,12 @@ interface FakeBot {
   poll: Poll | null;
   webhook: string | null;
   sent: { chat_id: string; text: string }[];
+  /** Messages sent with an inline keyboard (an approval prompt), by message id. */
+  prompts: Map<number, FakePrompt>;
+  /** Callback queries made and not yet answered. */
+  queries: Set<string>;
+  /** What was shown to the people who pressed a button, in order. */
+  answers: { query_id: string; text: string }[];
   actions: { chat_id: string; action: string }[];
   /** How many `getUpdates` calls arrived. */
   polls: number;
@@ -109,6 +133,9 @@ export class FakeBotApi {
       poll: null,
       webhook: null,
       sent: [],
+      prompts: new Map(),
+      queries: new Set(),
+      answers: [],
       actions: [],
       polls: 0,
       confirmedOffset: null,
@@ -145,6 +172,32 @@ export class FakeBotApi {
     return this.#deliver(token, from, undefined, { photo: [{ file_id: "photo-1", file_unique_id: "p1", width: 1, height: 1 }], ...(caption !== undefined && { caption }) });
   }
 
+  /**
+   * A person presses a button of a prompt the bot sent. `data` is what the button carries (a test may forge it);
+   * the press is made in the chat of the prompt, by `from`, who defaults to the person whose private chat it is.
+   * Returns the update id and the callback query id.
+   */
+  press(token: string, messageId: number, data: string, from?: FakePerson): { updateId: number; queryId: string } {
+    const bot = this.#bot(token);
+    const prompt = bot.prompts.get(messageId);
+    if (!prompt) throw new Error(`the fake bot has no prompt ${messageId}`);
+    const person = from ?? { id: Number(prompt.chat_id), first_name: "Person" };
+    const queryId = `q${this.#messageIds++}`;
+    bot.queries.add(queryId);
+    const update: FakeUpdate = {
+      update_id: bot.nextUpdateId++,
+      callback_query: {
+        id: queryId,
+        from: { is_bot: false, first_name: "Person", ...person },
+        message: { message_id: messageId, date: Math.floor(Date.now() / 1000), chat: { id: Number(prompt.chat_id), type: "private" }, text: prompt.text },
+        chat_instance: "fake",
+        data,
+      },
+    };
+    this.#enqueue(bot, update);
+    return { updateId: update.update_id, queryId };
+  }
+
   /** Telegram offers an update again, as it does when the bot died before it confirmed it. */
   redeliver(token: string, updateId: number): void {
     const bot = this.#bot(token);
@@ -160,10 +213,22 @@ export class FakeBotApi {
     return this.#bot(token).sent.filter((m) => chatId === undefined || m.chat_id === String(chatId));
   }
 
+  /** The prompts the bot sent (messages with Approve and Reject buttons), oldest first, as they read now. */
+  prompts(token: string, chatId?: number | string): FakePrompt[] {
+    return [...this.#bot(token).prompts.values()].filter((p) => chatId === undefined || p.chat_id === String(chatId));
+  }
+
+  /** What the bot showed to the people who pressed a button, in order. */
+  answers(token: string): { query_id: string; text: string }[] {
+    return [...this.#bot(token).answers];
+  }
+
   /** Forget what was sent so far, to look at only what comes next. */
   clearSent(token: string): void {
     const bot = this.#bot(token);
     bot.sent.length = 0;
+    bot.prompts.clear();
+    bot.answers.length = 0;
     bot.actions.length = 0;
   }
 
@@ -209,10 +274,14 @@ export class FakeBotApi {
         ...content,
       },
     };
+    this.#enqueue(bot, update);
+    return update.update_id;
+  }
+
+  #enqueue(bot: FakeBot, update: FakeUpdate): void {
     bot.history.push(update);
     bot.queue.push(update);
     if (bot.poll) this.#endPoll(bot, bot.queue.slice(0, bot.poll.limit));
-    return update.update_id;
   }
 
   #endPoll(bot: FakeBot, result: FakeUpdate[] | FakeAnswer): void {
@@ -263,8 +332,33 @@ export class FakeBotApi {
         const text = body.text;
         if (typeof text !== "string" || text === "") return fail(res, { error_code: 400, description: "Bad Request: message text is empty" });
         if (text.length > 4096) return fail(res, { error_code: 400, description: "Bad Request: message is too long" });
-        bot.sent.push({ chat_id: chatId, text });
-        return reply(res, 200, { ok: true, result: { message_id: this.#messageIds++, date: Math.floor(Date.now() / 1000), chat: { id: Number(chatId), type: "private" }, text } });
+        const messageId = this.#messageIds++;
+        const keyboard = keyboardOf(body.reply_markup);
+        if (keyboard === "invalid") return fail(res, { error_code: 400, description: "Bad Request: reply markup is invalid" });
+        if (keyboard.length > 0) bot.prompts.set(messageId, { message_id: messageId, chat_id: chatId, text, buttons: keyboard, edits: 0 });
+        else bot.sent.push({ chat_id: chatId, text });
+        return reply(res, 200, { ok: true, result: { message_id: messageId, date: Math.floor(Date.now() / 1000), chat: { id: Number(chatId), type: "private" }, text } });
+      }
+      case "editMessageText": {
+        const prompt = bot.prompts.get(Number(body.message_id));
+        if (!prompt || prompt.chat_id !== String(body.chat_id)) return fail(res, { error_code: 400, description: "Bad Request: message to edit not found" });
+        const text = body.text;
+        if (typeof text !== "string" || text === "") return fail(res, { error_code: 400, description: "Bad Request: message text is empty" });
+        const keyboard = keyboardOf(body.reply_markup);
+        if (keyboard === "invalid") return fail(res, { error_code: 400, description: "Bad Request: reply markup is invalid" });
+        if (text === prompt.text && keyboard.length === prompt.buttons.length) {
+          return fail(res, { error_code: 400, description: "Bad Request: message is not modified: specified new message content and reply markup are exactly the same as a current content and reply markup of the message" });
+        }
+        prompt.text = text;
+        prompt.buttons = keyboard;
+        prompt.edits++;
+        return reply(res, 200, { ok: true, result: { message_id: prompt.message_id, chat: { id: Number(prompt.chat_id), type: "private" }, text } });
+      }
+      case "answerCallbackQuery": {
+        const id = String(body.callback_query_id);
+        if (!bot.queries.delete(id)) return fail(res, { error_code: 400, description: "Bad Request: query is too old and response timeout expired or query ID is invalid" });
+        bot.answers.push({ query_id: id, text: typeof body.text === "string" ? body.text : "" });
+        return reply(res, 200, { ok: true, result: true });
       }
       case "sendChatAction":
         bot.actions.push({ chat_id: String(body.chat_id), action: String(body.action) });
@@ -297,6 +391,24 @@ export class FakeBotApi {
       }
     });
   }
+}
+
+/** The buttons of an `inline_keyboard` reply markup, flattened; "invalid" when it is not one. No markup is no buttons. */
+function keyboardOf(markup: unknown): FakeButton[] | "invalid" {
+  if (markup === undefined) return [];
+  const rows = (markup as { inline_keyboard?: unknown } | null)?.inline_keyboard;
+  if (!Array.isArray(rows)) return "invalid";
+  const buttons: FakeButton[] = [];
+  for (const row of rows) {
+    if (!Array.isArray(row)) return "invalid";
+    for (const button of row as { text?: unknown; callback_data?: unknown }[]) {
+      if (typeof button.text !== "string" || typeof button.callback_data !== "string") return "invalid";
+      // Telegram refuses callback data over 64 bytes.
+      if (Buffer.byteLength(button.callback_data) > 64) return "invalid";
+      buttons.push({ text: button.text, data: button.callback_data });
+    }
+  }
+  return buttons;
 }
 
 function reply(res: ServerResponse, status: number, body: unknown): void {

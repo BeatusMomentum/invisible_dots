@@ -1,6 +1,6 @@
 /**
- * Messaging channels (migration 0004): a Dot's bindings to a channel kind, the people paired to them,
- * one-time pairing codes and the record of inbound messages already handled. The rules (who may talk,
+ * Messaging channels (migrations 0004 and 0005): a Dot's bindings to a channel kind, the people paired to them,
+ * one-time pairing codes, the record of inbound messages already handled and the approval prompts sent. The rules (who may talk,
  * what a reply is routed to) belong to the channel hub; this file only stores and reads.
  */
 import type { ChannelKind, ChannelSettings, ChannelStatus } from "@invisible-dots/shared";
@@ -57,6 +57,27 @@ export interface ChannelPeerRow {
 }
 
 function toPeer(row: PeerRow): ChannelPeerRow {
+  return { ...row, created_at: isoRequired(row.created_at) };
+}
+
+interface PromptRow {
+  binding_id: string;
+  approval_id: string;
+  chat_id: string;
+  ref: string;
+  created_at: Date;
+}
+
+/** An approval prompt a channel sent: `ref` is the channel's handle for the message, what an edit needs. */
+export interface ChannelPromptRow {
+  binding_id: string;
+  approval_id: string;
+  chat_id: string;
+  ref: string;
+  created_at: string;
+}
+
+function toPrompt(row: PromptRow): ChannelPromptRow {
   return { ...row, created_at: isoRequired(row.created_at) };
 }
 
@@ -220,5 +241,28 @@ export class ChannelsRepository {
   async pruneInbound(before: Date): Promise<number> {
     const { rowCount } = await this.q.query("DELETE FROM channel_inbound WHERE created_at < $1", [before]);
     return rowCount ?? 0;
+  }
+
+  // Approval prompts
+
+  /** Record that the approval was sent to the chat as the message `ref`; sending it again to the same chat keeps the first. */
+  async addPrompt(bindingId: string, approvalId: string, chatId: string, ref: string): Promise<void> {
+    await this.q.query(
+      "INSERT INTO channel_prompts (binding_id, approval_id, chat_id, ref) VALUES ($1, $2, $3, $4) ON CONFLICT (binding_id, approval_id, chat_id) DO NOTHING",
+      [bindingId, approvalId, chatId, ref],
+    );
+  }
+
+  /** The prompts of the binding, for one approval or (when `approvalId` is omitted) for all, oldest first. */
+  async prompts(bindingId: string, approvalId?: string): Promise<ChannelPromptRow[]> {
+    const { rows } = await this.q.query<PromptRow>(
+      "SELECT * FROM channel_prompts WHERE binding_id = $1 AND ($2::text IS NULL OR approval_id = $2) ORDER BY created_at, approval_id, chat_id",
+      [bindingId, approvalId ?? null],
+    );
+    return rows.map(toPrompt);
+  }
+
+  async deletePrompt(bindingId: string, approvalId: string, chatId: string): Promise<void> {
+    await this.q.query("DELETE FROM channel_prompts WHERE binding_id = $1 AND approval_id = $2 AND chat_id = $3", [bindingId, approvalId, chatId]);
   }
 }

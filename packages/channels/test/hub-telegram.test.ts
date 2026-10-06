@@ -352,6 +352,62 @@ describe.each(testAdapters())("the hub with the real Telegram adapter (%s)", { t
     expect(Buffer.from(stored.rows[0]!.value_enc).includes(Buffer.from("SECRET-TOKEN"))).toBe(false);
   });
 
+  it("asks for an approval with Approve and Reject buttons, takes the owner's press to the guest, and edits the prompt once", async () => {
+    const w = await world();
+    const { lines, logger } = logs();
+    const { dot } = await linked(w, TOKEN, "dot_helper_bot", { logger });
+    const id = dot.guest.requestApproval(undefined, "exec");
+    await waitFor(() => bots.prompts(TOKEN, 10).length === 1, "the prompt");
+    const [prompt] = bots.prompts(TOKEN, 10);
+    expect(prompt!.text).toContain("The Dot asks to use exec");
+    expect(prompt!.buttons.map((b) => b.text)).toEqual(["Approve", "Reject"]);
+    expect(prompt!.buttons.every((b) => Buffer.byteLength(b.data) <= 64 && b.data.endsWith(id))).toBe(true);
+
+    // The prompt is edited later and loses its buttons: keep what they carried.
+    const [approve, reject] = prompt!.buttons.map((b) => b.data) as [string, string];
+    const message = prompt!.message_id;
+    const { queryId } = bots.press(TOKEN, message, approve);
+    await waitFor(() => bots.answers(TOKEN).length === 1, "the notice");
+    expect(bots.answers(TOKEN)).toEqual([{ query_id: queryId, text: "Approved." }]);
+    expect((await db.approvals.get(id))?.status).toBe("approved");
+    await waitFor(() => dot.guest.inbound.some((e) => e.type === "approval.received"), "the decision at the guest");
+    expect(dot.guest.inbound.filter((e) => e.type === "approval.received")).toHaveLength(1);
+    await waitFor(() => bots.prompts(TOKEN, 10)[0]!.edits === 1, "the prompt edited");
+    expect(bots.prompts(TOKEN, 10)[0]).toMatchObject({ buttons: [] });
+    expect(bots.prompts(TOKEN, 10)[0]!.text.endsWith("\n\nApproved.")).toBe(true);
+
+    // A second press, on a client that still shows the buttons, is the second click of the scheduler's 409.
+    bots.press(TOKEN, message, reject);
+    await waitFor(() => bots.answers(TOKEN).length === 2, "the second notice");
+    expect(bots.answers(TOKEN)[1]!.text).toBe("It was answered already.");
+    await quiet();
+    expect(dot.guest.inbound.filter((e) => e.type === "approval.received")).toHaveLength(1);
+    expect(bots.prompts(TOKEN, 10)[0]!.edits).toBe(1);
+    expect(lines.join("\n") + JSON.stringify(bots.prompts(TOKEN))).not.toContain("SECRET-TOKEN-VALUE");
+  });
+
+  it("does not resolve for a press by someone else, a forged id or a button of another version", async () => {
+    const w = await world();
+    const { dot } = await linked(w);
+    const id = dot.guest.requestApproval(undefined, "exec");
+    await waitFor(() => bots.prompts(TOKEN, 10).length === 1, "the prompt");
+    const message = bots.prompts(TOKEN, 10)[0]!.message_id;
+    const other = await w.dot();
+    const otherId = other.guest.requestApproval(undefined, "exec");
+    await waitFor(async () => (await db.approvals.get(otherId)) !== null, "the other approval");
+
+    bots.press(TOKEN, message, `ap1:y:${id}`, { id: 66, first_name: "Eve" });
+    bots.press(TOKEN, message, `ap1:y:${otherId}`, ANN);
+    bots.press(TOKEN, message, `ap9:y:${id}`, ANN);
+    await waitFor(() => bots.answers(TOKEN).length === 3, "a notice for each");
+    expect(bots.answers(TOKEN).map((a) => a.text)).toEqual(["You are not allowed to answer this.", "That request does not exist.", "This button is out of date."]);
+    await quiet();
+    expect((await db.approvals.get(id))?.status).toBe("pending");
+    expect((await db.approvals.get(otherId))?.status).toBe("pending");
+    expect(dot.guest.inbound.filter((e) => e.type === "approval.received")).toEqual([]);
+    expect(other.guest.inbound.filter((e) => e.type === "approval.received")).toEqual([]);
+  });
+
   it("stops polling and wipes the token and the people when the channel is unlinked or the Dot is deleted", async () => {
     const w = await world();
     const { hub, dot } = await linked(w);

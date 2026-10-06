@@ -5,7 +5,8 @@
  */
 import type { Database } from "@invisible-dots/database";
 import { Scheduler } from "@invisible-dots/scheduler";
-import { FakeDriver, ManualClock, waitUntilSettledReady } from "@invisible-dots/scheduler/testing";
+import { FakeDriver, ManualClock, waitFor, waitUntilSettledReady } from "@invisible-dots/scheduler/testing";
+import { expect } from "vitest";
 import { ChannelHub, type ChannelHubOptions, type ChannelType } from "../src/index.js";
 import { FakeChannelType } from "../src/testing.js";
 
@@ -55,3 +56,17 @@ export function makeWorlds(db: Database) {
 }
 
 export type World = Awaited<ReturnType<ReturnType<typeof makeWorlds>["world"]>>;
+
+/** A Dot with a fake channel linked (kind telegram) and the given people paired as owners (peer id = chat id). */
+export async function linkedFake(w: World, people: string[] = ["10"], options: Partial<ChannelHubOptions> = {}, type?: FakeChannelType) {
+  const { hub, type: made } = await w.hub(type, options);
+  const dot = await w.dot();
+  await hub.add(dot.id, "telegram");
+  const channel = await waitFor(() => made.channels.at(-1)?.sink && made.channels.at(-1), "the channel to run");
+  for (const person of people) {
+    const { code } = await hub.pair(dot.id, "telegram");
+    expect(await channel.pair(code, person, person, `Person ${person}`)).toBe(true);
+  }
+  channel.sent.length = 0;
+  return { hub, type: made, dot, channel };
+}

@@ -119,4 +119,49 @@ describe.each(testAdapters())("channel repository on %s", { timeout: SETUP_TIMEO
     expect(await db.channels.bindingById(second.id)).toBeNull();
     expect(await db.channels.peers(second.id)).toEqual([]);
   });
+
+  it("keeps the approval prompts a binding sent: one per chat, found by approval or all, deleted one by one", async () => {
+    const { dot, record } = await binding("chan-prompts");
+    const first = newId("appr");
+    const second = newId("appr");
+    for (const id of [first, second]) {
+      await db.approvals.insertRequested(dot.id, { approval_id: id, tool: "exec", permission: "browser.identity.delete", arguments: {}, reason: "r" });
+    }
+    await db.channels.addPrompt(record.id, first, "10", "m1");
+    await db.channels.addPrompt(record.id, first, "20", "m2");
+    await db.channels.addPrompt(record.id, second, "10", "m3");
+    // Sending the same approval to the same chat again keeps the first message.
+    await db.channels.addPrompt(record.id, first, "10", "m-again");
+
+    expect((await db.channels.prompts(record.id, first)).map((p) => [p.chat_id, p.ref])).toEqual([
+      ["10", "m1"],
+      ["20", "m2"],
+    ]);
+    expect((await db.channels.prompts(record.id)).map((p) => p.approval_id).sort()).toEqual([first, first, second].sort());
+    expect(await db.channels.prompts(record.id, "appr_other")).toEqual([]);
+
+    await db.channels.deletePrompt(record.id, first, "10");
+    expect((await db.channels.prompts(record.id, first)).map((p) => p.chat_id)).toEqual(["20"]);
+    await db.channels.deletePrompt(record.id, first, "10");
+    expect(await db.channels.prompts(record.id)).toHaveLength(2);
+  });
+
+  it("deletes the prompts with their binding, and with the Dot whose approval they ask about", async () => {
+    const one = await binding("chan-prompts-binding");
+    const asked = newId("appr");
+    await db.approvals.insertRequested(one.dot.id, { approval_id: asked, tool: "exec", permission: "browser.identity.delete", arguments: {}, reason: "r" });
+    await db.channels.addPrompt(one.record.id, asked, "10", "m1");
+    await db.channels.deleteBinding(one.record.id);
+    const left = await db.query<{ n: number }>("SELECT count(*)::int AS n FROM channel_prompts WHERE approval_id = $1", [asked]);
+    expect(left.rows[0]!.n).toBe(0);
+    expect(await db.approvals.get(asked)).not.toBeNull();
+
+    const two = await binding("chan-prompts-dot");
+    const other = newId("appr");
+    await db.approvals.insertRequested(two.dot.id, { approval_id: other, tool: "exec", permission: "browser.identity.delete", arguments: {}, reason: "r" });
+    await db.channels.addPrompt(two.record.id, other, "10", "m1");
+    await db.dots.delete(two.dot.id);
+    const gone = await db.query<{ n: number }>("SELECT count(*)::int AS n FROM channel_prompts WHERE approval_id = $1", [other]);
+    expect(gone.rows[0]!.n).toBe(0);
+  });
 });

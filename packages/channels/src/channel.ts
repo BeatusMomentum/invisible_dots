@@ -34,6 +34,24 @@ export interface PairingAttempt {
   label?: string;
 }
 
+/** A person pressed Approve or Reject on an approval prompt. */
+export interface ApprovalAction {
+  approvalId: string;
+  decision: "approve" | "reject";
+  /** The channel's stable id for the person who pressed it. */
+  peerId: string;
+  /** The chat the prompt is in. */
+  chatId: string;
+  /** A private chat with the bot; anything else is refused, as for a message. */
+  direct: boolean;
+}
+
+/** What an approval prompt says. The adapter adds whatever lets the person answer (buttons). */
+export interface ApprovalPrompt {
+  approvalId: string;
+  text: string;
+}
+
 /** Where the connection stands, as the adapter reports it. `account` is the channel's public name for the account (a bot's username). */
 export interface ChannelStatusReport {
   status: ChannelStatus;
@@ -53,6 +71,13 @@ export interface ChannelSink {
   /** Resolves true when the code paired the sender, false when it is wrong, expired or used (the adapter says nothing to a stranger). */
   pairing(attempt: PairingAttempt): Promise<boolean>;
   status(report: ChannelStatusReport): void;
+  /**
+   * A person answered an approval prompt. Resolves with a short notice for the person (what happened, or why
+   * nothing did): the adapter shows it and, as with `inbound`, commits its offset only after this resolved.
+   * It never rejects for a person's mistake; it rejects when the hub could not do the work, so the adapter
+   * keeps the press and offers it again.
+   */
+  approval(action: ApprovalAction): Promise<string>;
 }
 
 export interface ChannelCapabilities {
@@ -76,6 +101,13 @@ export interface Channel {
   sendText(chatId: string, text: string): Promise<void>;
   /** Show that the Dot is working on an answer; best effort, a failure is ignored. */
   typing?(chatId: string): Promise<void>;
+  /**
+   * Ask the person to approve or reject; resolves with the handle (`ref`) of the sent message, which `editApproval`
+   * needs. Answers come through `ChannelSink.approval`. Failures: see `ChannelSendError`.
+   */
+  sendApproval(chatId: string, prompt: ApprovalPrompt): Promise<string>;
+  /** Replace the prompt with `text` and take its means of answering away. A prompt that is gone counts as edited. */
+  editApproval(chatId: string, ref: string, text: string): Promise<void>;
 }
 
 /** A send that failed. A plain `Error` counts as retryable (a network failure); only this class can say it is not. */

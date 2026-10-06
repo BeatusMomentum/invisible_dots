@@ -5,13 +5,16 @@
  */
 import type { ChannelBindingRecord, SecretsRepository } from "@invisible-dots/database";
 import type { ChannelKind } from "@invisible-dots/shared";
-import type { Channel, ChannelCapabilities, ChannelSink, ChannelType, InboundChat } from "./channel.js";
+import type { ApprovalPrompt, Channel, ChannelCapabilities, ChannelSink, ChannelType, InboundChat } from "./channel.js";
 
 export * from "./telegram/fake-bot-api.js";
 
 export class FakeChannel implements Channel {
   readonly sent: { chatId: string; text: string }[] = [];
   readonly typings: string[] = [];
+  /** The approval prompts sent, in order; `ref` is what `editApproval` was given. */
+  readonly prompts: { chatId: string; ref: string; approvalId: string; text: string }[] = [];
+  readonly edits: { chatId: string; ref: string; text: string }[] = [];
   /** The sink while `run` is running; null before and after. */
   sink: ChannelSink | null = null;
   #crash: ((error: Error) => void) | null = null;
@@ -50,6 +53,26 @@ export class FakeChannel implements Channel {
 
   async typing(chatId: string): Promise<void> {
     this.typings.push(chatId);
+  }
+
+  async sendApproval(chatId: string, prompt: ApprovalPrompt): Promise<string> {
+    const failure = this.type.sendFailures.shift();
+    if (failure) throw failure;
+    const ref = `prompt-${this.prompts.length + 1}`;
+    this.prompts.push({ chatId, ref, approvalId: prompt.approvalId, text: prompt.text });
+    return ref;
+  }
+
+  async editApproval(chatId: string, ref: string, text: string): Promise<void> {
+    const failure = this.type.sendFailures.shift();
+    if (failure) throw failure;
+    this.edits.push({ chatId, ref, text });
+  }
+
+  /** A person presses Approve or Reject on a prompt; resolves with the notice they are shown. */
+  press(approvalId: string, decision: "approve" | "reject", peerId = "1", chatId = peerId, direct = true): Promise<string> {
+    if (!this.sink) throw new Error("the fake channel is not running");
+    return this.sink.approval({ approvalId, decision, peerId, chatId, direct });
   }
 
   /** A message arrives from a private chat (peer and chat "1", a new channel id each time) unless `message` says otherwise. */

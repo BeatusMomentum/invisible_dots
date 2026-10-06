@@ -1,0 +1,89 @@
+import type { ApprovalRecord } from "@invisible-dots/shared";
+import { describe, expect, it } from "vitest";
+import { ARGUMENTS_MAX, approvalOutcomeText, approvalPromptText } from "../src/approval-text.js";
+import { CALLBACK_DATA_MAX_BYTES, encodeApprovalCallback, parseApprovalCallback } from "../src/telegram/callback.js";
+
+const ID = "appr_11111111-2222-3333-4444-555555555555";
+
+function approval(overrides: Partial<ApprovalRecord> = {}): ApprovalRecord {
+  return {
+    id: ID,
+    dot_id: "dot_1",
+    task_id: null,
+    tool: "exec",
+    permission: "exec.run",
+    arguments: { command: "ls -la" },
+    reason: "the tool needs approval",
+    status: "pending",
+    note: null,
+    created_at: "2026-10-06T10:00:00.000Z",
+    resolved_at: null,
+    ...overrides,
+  };
+}
+
+describe("the data of an approval button", () => {
+  it("carries the decision and the id, versioned, within the 64 bytes Telegram allows", () => {
+    expect(encodeApprovalCallback("approve", ID)).toBe(`ap1:y:${ID}`);
+    expect(encodeApprovalCallback("reject", ID)).toBe(`ap1:n:${ID}`);
+    expect(Buffer.byteLength(encodeApprovalCallback("approve", ID))).toBeLessThanOrEqual(CALLBACK_DATA_MAX_BYTES);
+  });
+
+  it("parses what it made, in both directions", () => {
+    expect(parseApprovalCallback(encodeApprovalCallback("approve", ID))).toEqual({ decision: "approve", approvalId: ID });
+    expect(parseApprovalCallback(encodeApprovalCallback("reject", ID))).toEqual({ decision: "reject", approvalId: ID });
+  });
+
+  it("refuses to make data for an id that does not fit, whatever its length is made of", () => {
+    const fits = "x".repeat(CALLBACK_DATA_MAX_BYTES - "ap1:y:".length);
+    expect(() => encodeApprovalCallback("approve", fits)).not.toThrow();
+    expect(() => encodeApprovalCallback("approve", `${fits}x`)).toThrow(/cannot be carried/);
+    expect(() => encodeApprovalCallback("approve", "")).toThrow(/cannot be carried/);
+    expect(() => encodeApprovalCallback("approve", "a:b")).toThrow(/cannot be carried/);
+    expect(() => encodeApprovalCallback("approve", "a b")).toThrow(/cannot be carried/);
+    // Two bytes per character: the check is on bytes, not on characters.
+    expect(() => encodeApprovalCallback("approve", "é".repeat(30))).toThrow(/cannot be carried/);
+  });
+
+  it("parses nothing it did not make: another version, another shape, too long, empty", () => {
+    for (const data of ["ap2:y:a", "ap1:y:", "ap1::a", "ap1:x:a", "ap1:y:a:b", "ap1:y:a b", "ap1:y:a\n", "AP1:y:a", " ap1:y:a", "y:a", "", `ap1:y:${"x".repeat(CALLBACK_DATA_MAX_BYTES)}`]) {
+      expect(parseApprovalCallback(data), JSON.stringify(data)).toBeNull();
+    }
+    expect(parseApprovalCallback(undefined)).toBeNull();
+  });
+});
+
+describe("what an approval prompt says", () => {
+  it("names the tool, the permission, the reason and the arguments", () => {
+    expect(approvalPromptText(approval())).toBe(
+      ['The Dot asks to use exec (permission exec.run).', "Reason: the tool needs approval", 'Arguments: {"command":"ls -la"}'].join("\n"),
+    );
+  });
+
+  it("cuts the arguments and the reason to the limit, and shows that they were cut", () => {
+    const text = approvalPromptText(approval({ arguments: { command: "x".repeat(2000) }, reason: "r".repeat(2000) }));
+    const [, reason, args] = text.split("\n") as [string, string, string];
+    expect(reason.slice("Reason: ".length)).toHaveLength(ARGUMENTS_MAX);
+    expect(args.slice("Arguments: ".length)).toHaveLength(ARGUMENTS_MAX);
+    expect(reason.endsWith("...")).toBe(true);
+    expect(args.endsWith("...")).toBe(true);
+    expect(text).not.toContain("x".repeat(ARGUMENTS_MAX));
+    expect(text.length).toBeLessThan(800);
+  });
+
+  it("keeps a prompt on one line per fact: line breaks and runs of spaces in the arguments collapse", () => {
+    const text = approvalPromptText(approval({ arguments: { command: "a\n\n   b" }, reason: "line one\nline two" }));
+    expect(text.split("\n")).toEqual(["The Dot asks to use exec (permission exec.run).", "Reason: line one line two", 'Arguments: {"command":"a\\n\\n b"}']);
+  });
+
+  it("leaves out what is empty", () => {
+    expect(approvalPromptText(approval({ arguments: {}, reason: "" }))).toBe("The Dot asks to use exec (permission exec.run).");
+  });
+
+  it("says how an approval ended below the question it asked", () => {
+    const question = approvalPromptText(approval());
+    expect(approvalOutcomeText(approval({ status: "approved" }))).toBe(`${question}\n\nApproved.`);
+    expect(approvalOutcomeText(approval({ status: "rejected" }))).toBe(`${question}\n\nRejected.`);
+    expect(approvalOutcomeText(approval({ status: "expired" }))).toBe(`${question}\n\nNo longer needed: the task ended before anyone answered.`);
+  });
+});

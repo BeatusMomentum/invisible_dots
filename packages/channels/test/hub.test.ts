@@ -3,9 +3,9 @@ import { createTestDatabase, testAdapters, type TestDatabase } from "@invisible-
 import { ManualClock, waitFor } from "@invisible-dots/scheduler/testing";
 import type { ChannelKind, StoredEvent } from "@invisible-dots/shared";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { ChannelNeedsRelinkError, ChannelSendError, type ChannelHubOptions } from "../src/index.js";
+import { ChannelNeedsRelinkError, ChannelSendError } from "../src/index.js";
 import { FakeChannelType } from "../src/testing.js";
-import { makeWorlds, quiet, type World } from "./world.js";
+import { linkedFake, makeWorlds, quiet, type World } from "./world.js";
 
 const TOKEN = "123456:SECRET-TOKEN-VALUE";
 
@@ -32,20 +32,6 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
     await t?.drop();
   });
 
-  /** A Dot with a Telegram-like channel linked and the given people paired (peer id = chat id). */
-  async function linked(w: World, people: string[] = ["10"], options: Partial<ChannelHubOptions> = {}, type?: FakeChannelType) {
-    const { hub, type: made } = await w.hub(type, options);
-    const dot = await w.dot();
-    await hub.add(dot.id, "telegram");
-    const channel = await waitFor(() => made.channels.at(-1)?.sink && made.channels.at(-1), "the channel to run");
-    for (const person of people) {
-      const { code } = await hub.pair(dot.id, "telegram");
-      expect(await channel.pair(code, person, person, `Person ${person}`)).toBe(true);
-    }
-    channel.sent.length = 0;
-    return { hub, type: made, dot, channel };
-  }
-
   const userMessages = (dotId: string) => db.events.list({ dotId, types: ["user.message"] });
   const eventsOf = async (dotId: string, type: string): Promise<StoredEvent[]> => db.events.list({ dotId, types: [type] });
 
@@ -53,7 +39,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
   it("carries a paired person's message to the Dot as plain text and the answer back to that chat only", async () => {
     const w = await world();
-    const { hub, dot, channel } = await linked(w, ["10", "20"]);
+    const { hub, dot, channel } = await linkedFake(w, ["10", "20"]);
     await channel.receive({ text: "hello", peerId: "10", chatId: "10" });
 
     expect(dot.guest.inbound.at(-1)).toMatchObject({ type: "user.message", data: { text: "hello" } });
@@ -72,7 +58,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
   it("does not mirror an answer to a message sent from the web", async () => {
     const w = await world();
-    const { dot, channel } = await linked(w);
+    const { dot, channel } = await linkedFake(w);
     await w.scheduler.sendMessage(dot.id, "from the web");
     await waitFor(async () => (await w.scheduler.conversation(dot.id)).some((m) => m.role === "assistant"), "the answer in the log");
     await channel.receive({ text: "from the chat", peerId: "10", chatId: "10" });
@@ -83,7 +69,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
   it("sends an answer that answers nothing, such as an automation's, to every owner", async () => {
     const w = await world();
-    const { dot, channel } = await linked(w, ["10", "20"]);
+    const { dot, channel } = await linkedFake(w, ["10", "20"]);
     dot.guest.emit("message.assistant", { text: "daily report" });
     await waitFor(() => channel.sent.length >= 2, "both owners");
     expect(channel.sent.map((m) => [m.chatId, m.text])).toEqual([
@@ -94,7 +80,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
   it("sends task results to the owners unless notify_tasks is off", async () => {
     const w = await world();
-    const { hub, dot, channel } = await linked(w);
+    const { hub, dot, channel } = await linkedFake(w);
     dot.guest.emit("task.completed", { task_id: "task_1", summary: "all done" });
     dot.guest.emit("task.failed", { task_id: "task_2", error: "it broke" });
     await waitFor(() => channel.sent.length >= 2, "both results");
@@ -109,7 +95,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
   it("shows typing in the chat that asked while the Dot thinks, not after the answer", async () => {
     const w = await world();
-    const { dot, channel } = await linked(w);
+    const { dot, channel } = await linkedFake(w);
     dot.guest.onInbound = () => {};
     await channel.receive({ text: "think about it", peerId: "10", chatId: "10" });
     const asked = dot.guest.inbound.at(-1)!;
@@ -127,7 +113,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
     const w = await world();
     const type = new FakeChannelType();
     type.capabilities = { maxText: 30, typing: false };
-    const { dot, channel } = await linked(w, ["10"], {}, type);
+    const { dot, channel } = await linkedFake(w, ["10"], {}, type);
     const text = Array.from({ length: 20 }, (_, i) => `sentence ${i}.`).join(" ");
     dot.guest.emit("message.assistant", { text });
     await waitFor(() => channel.texts().join(" ").length >= text.length, "every piece");
@@ -154,7 +140,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
   it("drops everything from a stranger before any write, and from a chat that is not private", async () => {
     const w = await world();
-    const { dot, channel } = await linked(w, ["10"]);
+    const { dot, channel } = await linkedFake(w, ["10"]);
     const before = {
       events: (await db.events.list({ dotId: dot.id })).length,
       inbound: (await db.query<{ n: number }>("SELECT count(*)::int AS n FROM channel_inbound")).rows[0]!.n,
@@ -193,7 +179,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
   it("refuses a code after ten minutes, and pairing again updates the person instead of adding one", async () => {
     const w = await world();
-    const { hub, dot, channel } = await linked(w, []);
+    const { hub, dot, channel } = await linkedFake(w, []);
     const { code } = await hub.pair(dot.id, "telegram");
     w.clock.advance(600_001);
     expect(await channel.pair(code, "10")).toBe(false);
@@ -209,7 +195,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
   it("stops talking to a person who is revoked, and drops what they write", async () => {
     const w = await world();
-    const { hub, dot, channel } = await linked(w, ["10", "20"]);
+    const { hub, dot, channel } = await linkedFake(w, ["10", "20"]);
     await hub.removePeer(dot.id, "telegram", "10");
     await expect(hub.removePeer(dot.id, "telegram", "10")).rejects.toMatchObject({ status: 404 });
     const before = (await userMessages(dot.id)).length;
@@ -222,7 +208,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
   it("slows a person who writes too fast, tells them once, and takes messages again later", async () => {
     const w = await world();
-    const { dot, channel } = await linked(w, ["10"], { limits: { burst: 3, perMinute: 60 } });
+    const { dot, channel } = await linkedFake(w, ["10"], { limits: { burst: 3, perMinute: 60 } });
     for (let i = 0; i < 6; i++) await channel.receive({ text: `m${i}`, peerId: "10", chatId: "10" });
     expect((await userMessages(dot.id)).length).toBe(3);
     await waitFor(() => channel.texts().some((t) => t.startsWith("You are sending messages too fast")), "the notice");
@@ -234,7 +220,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
   it("refuses a message over the length limit with a notice", async () => {
     const w = await world();
-    const { dot, channel } = await linked(w, ["10"], { limits: { maxChars: 20 } });
+    const { dot, channel } = await linkedFake(w, ["10"], { limits: { maxChars: 20 } });
     await channel.receive({ text: "x".repeat(21), peerId: "10", chatId: "10" });
     expect((await userMessages(dot.id)).length).toBe(0);
     expect(channel.texts()).toEqual(["That message is too long: the limit is 20 characters."]);
@@ -246,7 +232,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
   it("recognises a redelivered message by its channel id, also after a restart", async () => {
     const w = await world();
-    const { dot, channel } = await linked(w);
+    const { dot, channel } = await linkedFake(w);
     await channel.receive({ externalId: "u-1", text: "once", peerId: "10", chatId: "10" });
     await channel.receive({ externalId: "u-1", text: "once", peerId: "10", chatId: "10" });
     expect((await userMessages(dot.id)).length).toBe(1);
@@ -260,7 +246,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
   it("resumes from its cursor after a restart: no reply lost, none sent twice", async () => {
     const w = await world();
-    const first = await linked(w, ["10"]);
+    const first = await linkedFake(w, ["10"]);
     first.dot.guest.onInbound = () => {};
     await first.channel.receive({ text: "q1", peerId: "10", chatId: "10" });
     const asked = first.dot.guest.inbound.at(-1)!;
@@ -286,7 +272,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
   it("refuses a message that arrives after the hub stopped", async () => {
     const w = await world();
-    const { hub, channel } = await linked(w);
+    const { hub, channel } = await linkedFake(w);
     const sink = channel.sink!;
     await hub.close();
     await expect(sink.inbound({ externalId: "late", peerId: "10", chatId: "10", text: "hi", direct: true })).rejects.toThrow(/stopped/);
@@ -346,7 +332,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
   it("sends again after a failure that may pass, and drops a message the channel refuses for good", async () => {
     const w = await world();
-    const { dot, channel, type } = await linked(w);
+    const { dot, channel, type } = await linkedFake(w);
     type.sendFailures.push(new Error("network down"), new ChannelSendError("rate limited", { retryable: true, retryAfterMs: 5 }));
     dot.guest.emit("message.assistant", { text: "first" });
     await waitFor(() => channel.texts().includes("first"), "the retried message");
@@ -406,7 +392,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
   it("changes one setting and keeps the others", async () => {
     const w = await world();
-    const { hub, dot } = await linked(w, []);
+    const { hub, dot } = await linkedFake(w, []);
     expect((await hub.setSettings(dot.id, "telegram", { approvals: false })).settings).toEqual({ approvals: false, notify_tasks: true });
     expect((await hub.setSettings(dot.id, "telegram", { notify_tasks: false })).settings).toEqual({ approvals: false, notify_tasks: false });
     expect((await hub.list(dot.id))[0]!.settings).toEqual({ approvals: false, notify_tasks: false });
@@ -414,7 +400,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
   it("pauses a channel without losing its people, and a paused channel stays stopped across a restart", async () => {
     const w = await world();
-    const { hub, dot, channel, type } = await linked(w, ["10"]);
+    const { hub, dot, channel, type } = await linkedFake(w, ["10"]);
     expect((await hub.setEnabled(dot.id, "telegram", false)).enabled).toBe(false);
     expect(channel.sink).toBeNull();
 
@@ -432,7 +418,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
   it("stops the channel and deletes everything when the Dot is deleted", async () => {
     const w = await world();
-    const { hub, dot, channel, type } = await linked(w, ["10"]);
+    const { hub, dot, channel, type } = await linkedFake(w, ["10"]);
     await hub.close();
     await w.hub(type);
     const running = await waitFor(() => type.channels.at(-1)?.sink && type.channels.at(-1), "the channel");
@@ -466,7 +452,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
   it("forgets handled messages older than the retention at start", async () => {
     const w = await world();
-    const { dot, channel, hub } = await linked(w);
+    const { dot, channel, hub } = await linkedFake(w);
     await channel.receive({ externalId: "old-1", text: "old", peerId: "10", chatId: "10" });
     const binding = (await db.channels.binding(dot.id, "telegram"))!;
     expect(await db.channels.inboundMessageId(binding.id, "old-1")).not.toBeNull();

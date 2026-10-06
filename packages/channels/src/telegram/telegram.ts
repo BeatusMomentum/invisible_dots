@@ -1,6 +1,7 @@
 /**
  * Telegram through the Bot API, with grammY as the client. Transport only (see `Channel`): it polls for
- * messages, turns them into `InboundChat`, and sends text. Who may talk, retries and backoff belong to the hub.
+ * messages and button presses, turns them into `InboundChat` and `ApprovalAction`, and sends text and approval
+ * prompts (a message with Approve and Reject buttons). Who may talk, retries and backoff belong to the hub.
  *
  * - Long polling: the control plane listens on a local address behind NAT, and polling needs only outbound
  *   HTTPS. Telegram keeps an unconfirmed update for at most 24 hours, so a PC that is off longer loses messages.
@@ -12,17 +13,19 @@
  *   in words only.
  */
 import { Api, GrammyError, HttpError } from "grammy";
-import type { Message, Update } from "grammy/types";
+import type { CallbackQuery, Message, Update } from "grammy/types";
 import type { ChannelBindingRecord, SecretsRepository } from "@invisible-dots/database";
 import {
   ChannelCredentialsError,
   ChannelNeedsRelinkError,
   ChannelSendError,
+  type ApprovalPrompt,
   type Channel,
   type ChannelCapabilities,
   type ChannelSink,
   type ChannelType,
 } from "../channel.js";
+import { encodeApprovalCallback, parseApprovalCallback } from "./callback.js";
 
 export const TELEGRAM_TOKEN_SECRET = "telegram_bot_token";
 
@@ -43,6 +46,9 @@ const REFUSED_TOKEN =
 
 /** The Telegram error codes after which sending the same message again cannot work. */
 const FINAL_SEND_CODES = new Set([400, 403, 404]);
+
+/** What Telegram says when an edit has nothing to do: the prompt is gone, or already reads as the edit says. The prompt is as good as edited. */
+const EDIT_NOTHING_TO_DO = /message is not modified|message to edit not found|message can't be edited/i;
 
 /**
  * grammY's Node typings name the `AbortSignal` of the abort-controller package; at run time its fetch takes
@@ -97,7 +103,7 @@ class TelegramChannel implements Channel {
     let offset: number | undefined;
     while (!signal.aborted) {
       const updates = await this.#guard("getUpdates", () =>
-        this.#api.getUpdates({ offset, timeout: this.#pollSeconds, limit: 100, allowed_updates: ["message"] }, forGrammy(signal)),
+        this.#api.getUpdates({ offset, timeout: this.#pollSeconds, limit: 100, allowed_updates: ["message", "callback_query"] }, forGrammy(signal)),
       );
       for (const update of updates) {
         if (signal.aborted) return;
@@ -111,7 +117,7 @@ class TelegramChannel implements Channel {
     try {
       await this.#api.sendMessage(chatId, text);
     } catch (error) {
-      throw this.#sendError(error);
+      throw this.#sendError(error, "sendMessage");
     }
   }
 
@@ -119,7 +125,38 @@ class TelegramChannel implements Channel {
     await this.#api.sendChatAction(chatId, "typing");
   }
 
+  async sendApproval(chatId: string, prompt: ApprovalPrompt): Promise<string> {
+    let keyboard;
+    try {
+      keyboard = [
+        [
+          { text: "Approve", callback_data: encodeApprovalCallback("approve", prompt.approvalId) },
+          { text: "Reject", callback_data: encodeApprovalCallback("reject", prompt.approvalId) },
+        ],
+      ];
+    } catch (error) {
+      // Sending again cannot make the id fit.
+      throw new ChannelSendError(error instanceof Error ? error.message : String(error), { retryable: false });
+    }
+    try {
+      const sent = await this.#api.sendMessage(chatId, prompt.text, { reply_markup: { inline_keyboard: keyboard } });
+      return String(sent.message_id);
+    } catch (error) {
+      throw this.#sendError(error, "sendMessage");
+    }
+  }
+
+  async editApproval(chatId: string, ref: string, text: string): Promise<void> {
+    try {
+      await this.#api.editMessageText(chatId, Number(ref), text, { reply_markup: { inline_keyboard: [] } });
+    } catch (error) {
+      if (error instanceof GrammyError && EDIT_NOTHING_TO_DO.test(error.description)) return;
+      throw this.#sendError(error, "editMessageText");
+    }
+  }
+
   async #handle(update: Update, sink: ChannelSink): Promise<void> {
+    if (update.callback_query) return this.#press(update.callback_query, sink);
     const message = update.message;
     if (!message?.from || message.from.is_bot) return;
     const peerId = String(message.from.id);
@@ -149,6 +186,30 @@ class TelegramChannel implements Channel {
     });
   }
 
+  /** A button of an approval prompt was pressed. Every press is answered, so the button stops spinning. */
+  async #press(query: CallbackQuery, sink: ChannelSink): Promise<void> {
+    if (query.from.is_bot) return;
+    const parsed = parseApprovalCallback(query.data);
+    if (!parsed) {
+      await this.#answer(query.id, "This button is out of date.");
+      return;
+    }
+    const chat = query.message?.chat;
+    const notice = await sink.approval({
+      approvalId: parsed.approvalId,
+      decision: parsed.decision,
+      peerId: String(query.from.id),
+      chatId: chat === undefined ? "" : String(chat.id),
+      direct: chat?.type === "private",
+    });
+    await this.#answer(query.id, notice);
+  }
+
+  /** Show the person a short notice. It is best effort: Telegram refuses an answer that is too old, and nothing depends on it. */
+  async #answer(queryId: string, text: string): Promise<void> {
+    await this.#api.answerCallbackQuery(queryId, { text }).catch(() => {});
+  }
+
   /** Run a Bot API call; a failure becomes what the hub understands, with no URL or token in its words. */
   async #guard<T>(method: string, call: () => Promise<T>): Promise<T> {
     try {
@@ -164,8 +225,8 @@ class TelegramChannel implements Channel {
     }
   }
 
-  #sendError(error: unknown): Error {
-    const reason = describe(error, "sendMessage", this.#token);
+  #sendError(error: unknown, method: string): Error {
+    const reason = describe(error, method, this.#token);
     if (error instanceof GrammyError) {
       const retryAfter = error.parameters.retry_after;
       if (error.error_code === 429) return new ChannelSendError(reason, { retryable: true, retryAfterMs: (retryAfter ?? 1) * 1000 });
