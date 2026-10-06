@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  CHANNEL_CHANGES,
   CHANNEL_KINDS,
   CHANNEL_STATUSES,
   HOST_EVENT_TYPES,
@@ -41,7 +42,10 @@ describe("event type lists", () => {
   });
 
   it("lists the channel host events and what they carry", () => {
-    expect(HOST_EVENT_TYPES.slice(-2)).toEqual(["channel.status", "channel.peer.paired"]);
+    expect(HOST_EVENT_TYPES.slice(-3)).toEqual(["channel.status", "channel.peer.paired", "channel.changed"]);
+    expect(isHostEventType("channel.changed")).toBe(true);
+    expect(isInboundEventType("channel.changed")).toBe(false);
+    expect(CHANNEL_CHANGES).toEqual(["paused", "resumed", "removed"]);
     expect(isHostEventType("channel.status")).toBe(true);
     expect(isHostEventType("channel.peer.paired")).toBe(true);
     // A channel event is the host's own: the guest can never report one.

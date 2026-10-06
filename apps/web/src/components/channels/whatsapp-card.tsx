@@ -8,9 +8,14 @@ import { ChannelCard } from "./channel-card";
 import { LinkedChannel } from "./linked-channel";
 import { QrConnect } from "./qr-connect";
 
-/** Whether the number is linked and running its course: a link in progress, or one that has to be done again, goes through the scan instead. */
+/**
+ * Whether a phone is linked to the number: the host keeps the account of a linked device and clears it when a new link
+ * starts, so a record with an account is linked whatever its connection says (a restart, a resume or a credential refresh
+ * report `connecting` again, and an error or a pause does not take the link away). Only a login the host says has to be
+ * redone goes through the scan again, as does a link still in progress (no account yet).
+ */
 function isLinked(record: ChannelRecord | undefined): record is ChannelRecord {
-  return record !== undefined && (record.status === "connected" || (record.status === "error" && record.account !== null) || (!record.enabled && record.account !== null));
+  return record !== undefined && record.status !== "needs_relink" && (record.status === "connected" || record.account !== null);
 }
 
 /**

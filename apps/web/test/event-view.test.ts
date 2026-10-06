@@ -121,6 +121,8 @@ describe("viewEvent", () => {
     expect(
       viewEvent(event(16, "channel.peer.paired", { kind: "telegram", peer_id: "4242", label: "Ada" }, "host")),
     ).toMatchObject({ title: "Person paired", detail: "Ada on telegram", tone: "ok" });
+    expect(viewEvent(event(17, "channel.changed", { kind: "telegram", change: "paused" }, "host"))).toMatchObject({ title: "Channel paused", detail: "telegram", tone: "neutral", family: "channels" });
+    expect(viewEvent(event(18, "channel.changed", { kind: "whatsapp", change: "removed" }, "host"))).toMatchObject({ title: "Channel removed", detail: "whatsapp", tone: "warn" });
   });
 
   it("falls back to the raw data for an unknown type and tolerates missing fields", () => {

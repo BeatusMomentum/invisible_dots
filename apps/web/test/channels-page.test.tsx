@@ -257,6 +257,28 @@ describe("a Telegram channel that is connected", () => {
     expect(plane.channelActions.at(-1)).toBe('PATCH telegram {"enabled":true}');
   });
 
+  it("stops marking the Dot, its Channels tab and the title once the channel that needed linking is paused or disconnected", async () => {
+    document.title = "Channels - invisible_dots";
+    Object.assign(plane.channels.d1![0]!, { status: "needs_relink", status_detail: "revoked" });
+    await renderChannels();
+    const card = await telegram();
+    const tab = () => screen.queryByRole("img", { name: "needs linking again" });
+    expect(tab()).not.toBeNull();
+    await waitFor(() => expect(document.title).toBe("(1) Channels - invisible_dots"));
+    const user = userEvent.setup();
+
+    await user.click(within(card).getByRole("button", { name: "Pause" }));
+    await waitFor(() => expect(tab()).toBeNull());
+    await waitFor(() => expect(document.title).toBe("Channels - invisible_dots"));
+    await user.click(within(card).getByRole("button", { name: "Resume" }));
+    await waitFor(() => expect(tab()).not.toBeNull());
+
+    await user.click(within(card).getByRole("button", { name: "Disconnect" }));
+    await user.click(within(await screen.findByRole("dialog", { name: "Disconnect Telegram?" })).getByRole("button", { name: "Disconnect" }));
+    await waitFor(() => expect(tab()).toBeNull());
+    await waitFor(() => expect(document.title).toBe("Channels - invisible_dots"));
+  });
+
   it("disconnects only after saying that the token and the people go, and then asks for a token again", async () => {
     await renderChannels();
     const card = await telegram();
@@ -414,6 +436,57 @@ describe("linking WhatsApp", () => {
     expect(plane.channelActions).toEqual(["POST whatsapp link", "DELETE whatsapp"]);
     expect(plane.channels.d1!.some((c) => c.kind === "whatsapp")).toBe(false);
     expect(within(card).queryByRole("img", { name: "QR code to link WhatsApp" })).toBeNull();
+  });
+
+  it("keeps the people paired, and deletes nothing, when a link started with Link again is cancelled", async () => {
+    const ann = { peer_id: "42", role: "owner" as const, label: "Ann", created_at: "2026-01-03T00:00:00Z" };
+    plane.channels.d1!.push(channelRecord("whatsapp", { status: "needs_relink", status_detail: "WhatsApp unlinked this device.", peers: [ann] }));
+    await renderChannels();
+    const card = await whatsapp();
+    const user = userEvent.setup();
+    await user.click(within(card).getByRole("button", { name: "Link again" }));
+    await waitFor(() => expect(plane.linkOpen("d1")).toBe(true));
+    // The host has started the new link: the old account is cleared, the people stay.
+    act(() => plane.push("d1", "channel.status", { kind: "whatsapp", status: "connecting" }));
+    act(() => plane.linkFrame("d1", { state: "code", code: "2@again" }));
+    await within(card).findByRole("img", { name: "QR code to link WhatsApp" });
+    await user.click(within(card).getByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(plane.channelActions).toEqual(["POST whatsapp link", 'PATCH whatsapp {"enabled":false}']));
+    expect(plane.channels.d1!.find((c) => c.kind === "whatsapp")?.peers).toEqual([ann]);
+    expect(await within(card).findByText("Paused")).toBeTruthy();
+    expect(within(card).queryByRole("img", { name: "QR code to link WhatsApp" })).toBeNull();
+  });
+
+  it("shows a linked number that is connecting again (a server start, a resume) as linked, with nothing to cancel", async () => {
+    plane.channels.d1!.push(channelRecord("whatsapp", { status: "connecting", account: "15550001111", peers: [{ peer_id: "42", role: "owner", label: "Ann", created_at: "2026-01-03T00:00:00Z" }] }));
+    await renderChannels();
+    const card = await whatsapp();
+    expect(await within(card).findByRole("button", { name: "Unlink" })).toBeTruthy();
+    expect(within(card).getByText("Connecting")).toBeTruthy();
+    expect(within(card).getByText("Ann", { selector: "p" })).toBeTruthy();
+    expect(within(card).queryByRole("button", { name: "Cancel" })).toBeNull();
+    expect(within(card).queryByText("Read this before you link a number")).toBeNull();
+    expect(within(card).queryByText(/Starting WhatsApp/)).toBeNull();
+    expect(plane.linkOpen("d1")).toBe(false);
+    expect(plane.channelActions).toEqual([]);
+  });
+
+  it("keeps a linked number linked through Pause and Resume, even while it connects again", async () => {
+    plane.channels.d1!.push(channelRecord("whatsapp"));
+    await renderChannels();
+    const card = await whatsapp();
+    const user = userEvent.setup();
+    await user.click(within(card).getByRole("button", { name: "Pause" }));
+    expect(await within(card).findByText("Paused")).toBeTruthy();
+    expect(within(card).queryByText("Read this before you link a number")).toBeNull();
+    // The runner starts again on Resume and reports `connecting` before it is connected.
+    plane.channels.d1!.find((c) => c.kind === "whatsapp")!.status = "connecting";
+    await user.click(within(card).getByRole("button", { name: "Resume" }));
+    expect(await within(card).findByText("Connecting")).toBeTruthy();
+    expect(within(card).getByRole("button", { name: "Pause" })).toBeTruthy();
+    expect(within(card).queryByRole("button", { name: "Cancel" })).toBeNull();
+    expect(plane.linkOpen("d1")).toBe(false);
+    expect(plane.channelActions).toEqual(['PATCH whatsapp {"enabled":false}', 'PATCH whatsapp {"enabled":true}']);
   });
 
   it("follows a link that was already going on when the page opened, without a click", async () => {

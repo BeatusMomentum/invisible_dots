@@ -59,6 +59,7 @@ export const HOST_EVENT_TYPES = [
   "approval.resolved",
   "channel.status",
   "channel.peer.paired",
+  "channel.changed",
 ] as const;
 export type HostEventType = (typeof HOST_EVENT_TYPES)[number];
 
@@ -82,6 +83,10 @@ export type ChannelKind = (typeof CHANNEL_KINDS)[number];
 /** Where a channel's connection stands; `needs_relink` is a login the person has to redo. */
 export const CHANNEL_STATUSES = ["connecting", "connected", "needs_relink", "error"] as const;
 export type ChannelStatus = (typeof CHANNEL_STATUSES)[number];
+
+/** What the person did to a channel that its status does not say: paused it, resumed it, or removed it with its credentials and people. */
+export const CHANNEL_CHANGES = ["paused", "resumed", "removed"] as const;
+export type ChannelChange = (typeof CHANNEL_CHANGES)[number];
 
 /**
  * Where a user message came from when it did not come from the web, the CLI or the SDK: the channel
@@ -218,6 +223,8 @@ export interface HostEventDataMap {
   "channel.status": { kind: ChannelKind; status: ChannelStatus; detail?: string };
   /** A person was paired to the Dot's channel; `peer_id` is the channel's own id for them. */
   "channel.peer.paired": { kind: ChannelKind; peer_id: string; label: string };
+  /** The person paused, resumed or removed a channel (a removed one has no status left to report): every view of the channel follows it. */
+  "channel.changed": { kind: ChannelKind; change: ChannelChange };
 }
 
 export type InboundEvent<T extends InboundEventType = InboundEventType> = {

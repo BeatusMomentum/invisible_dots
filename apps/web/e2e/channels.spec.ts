@@ -166,6 +166,32 @@ test.describe("a channel that has to be linked again", () => {
     await expect(page.getByLabel("Telegram needs linking again")).toHaveCount(0);
     await expect(page.getByRole("link", { name: /^Inbox/ }).getByLabel(/need you/)).toHaveCount(0);
   });
+
+  for (const how of ["pauses it", "disconnects it"] as const) {
+    test(`the marks go as soon as the person ${how}, without a reload`, async ({ signedInFresh: page, fresh: harness }) => {
+      const dot = await harness.createDot("channels-relink");
+      const token = makeBot(harness, how === "pauses it" ? 700005 : 700006, how === "pauses it" ? "e2e_pause_bot" : "e2e_remove_bot");
+      await harness.api.putTelegramChannel(dot.id, token);
+      await page.goto(`${harness.webUrl}/dots/${dot.id}/channels`);
+      await expect(telegram(page).getByText("Connected")).toBeVisible();
+      harness.bots.revoke(token);
+      await expect(telegram(page).getByText("Telegram needs a new token")).toBeVisible();
+      await expect(channelsTab(page).getByLabel("needs linking again")).toBeVisible();
+      await expect(page.getByRole("link", { name: /^Inbox/ }).getByLabel("1 need you")).toBeVisible();
+
+      if (how === "pauses it") {
+        await telegram(page).getByRole("button", { name: "Pause" }).click();
+        await expect(telegram(page).getByText("Paused")).toBeVisible();
+      } else {
+        await telegram(page).getByRole("button", { name: "Disconnect" }).click();
+        await page.getByRole("dialog", { name: "Disconnect Telegram?" }).getByRole("button", { name: "Disconnect" }).click();
+        await expect(telegram(page).getByText("Not connected")).toBeVisible();
+      }
+      await expect(channelsTab(page).getByLabel("needs linking again")).toHaveCount(0);
+      await expect(page.getByRole("navigation", { name: "Dots" }).getByLabel("Telegram needs linking again")).toHaveCount(0);
+      await expect(page.getByRole("link", { name: /^Inbox/ }).getByLabel(/need you/)).toHaveCount(0);
+    });
+  }
 });
 
 test("WhatsApp is linked by scanning the codes the host makes, then pairs a person and carries their messages", async ({ signedIn: page, harness }) => {

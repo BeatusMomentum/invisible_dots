@@ -1,4 +1,4 @@
-// Derived from nanobot webui/src/components/settings/channels/ChannelQrConnectFlow.tsx at 9dc0aba, MIT; changed: the flow reads the host's stream of frames instead of polling a session (its states are the pure reducer in lib/channel-link.ts), the code is drawn as an SVG from the QR modules instead of a canvas data URL, there is no i18n and no client provider, and cancelling unlinks the channel the start created.
+// Derived from nanobot webui/src/components/settings/channels/ChannelQrConnectFlow.tsx at 9dc0aba, MIT; changed: the flow reads the host's stream of frames instead of polling a session (its states are the pure reducer in lib/channel-link.ts), the code is drawn as an SVG from the QR modules instead of a canvas data URL, there is no i18n and no client provider, and cancelling removes the channel the start created, or only pauses one that holds people.
 "use client";
 
 import type { ChannelRecord } from "@invisible-dots/shared/browser";
@@ -108,9 +108,13 @@ export function QrConnect({ dotId, record, onChanged }: { dotId: string; record:
     void watch();
   }
 
+  // What a link attempt must not take with it: a number linked before (Link again) and the people paired to it.
+  const holdsSomething = record !== undefined && (record.account !== null || record.peers.length > 0);
+
   async function giveUp() {
     watcher.current?.abort();
-    const ok = await cancel.run(() => api.removeChannel(dotId, "whatsapp"));
+    // The channel this page's own start made is removed; one that holds people is only stopped (paused), never deleted without asking.
+    const ok = await cancel.run(() => (holdsSomething ? api.patchChannel(dotId, "whatsapp", { enabled: false }) : api.removeChannel(dotId, "whatsapp")));
     if (ok) dispatch({ type: "reset" });
     onChanged();
   }

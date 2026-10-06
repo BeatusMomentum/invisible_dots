@@ -796,8 +796,10 @@ The control plane adds its own: `dot.created`, `dot.updated`, `dot.deleted`,
 `task.created`, `task.cancelled`, `approval.resolved`, and the two of a messaging
 channel: `channel.status {kind, status, detail?}` (`kind` is `telegram` or
 `whatsapp`; `status` is `connecting`, `connected`, `needs_relink` or `error`,
-and `detail` never holds a credential) and `channel.peer.paired {kind, peer_id,
-label}`. A channel lives in the control plane only: the Dot never sees one, so
+and `detail` never holds a credential), `channel.peer.paired {kind, peer_id,
+label}` and `channel.changed {kind, change}` (`change` is `paused`, `resumed`
+or `removed`: what the person did, which no status says, so that every view of
+the channel follows it). A channel lives in the control plane only: the Dot never sees one, so
 no inbound or outbound type names it.
 
 The message a person sends is logged as a `user.message` host event
@@ -1899,7 +1901,7 @@ newest page again and keeps the older rows it reaches (when more was answered in
 between than a page holds, the older rows are dropped and read again on request).
 A channel that needs the person (its login was refused: a revoked Telegram token, a WhatsApp device removed on the phone; one the person paused does not count) is a
 card under "Channels to link again" with what the host says and a link to the Channels page, counts in the Inbox's number, the title and the favicon, and marks
-the Dot in the rail and its Channels tab. The shell reads each Dot's `GET /api/dots/:id/channels` for it and again on `channel.status`; a Dot whose channels
+the Dot in the rail and its Channels tab. The shell reads each Dot's `GET /api/dots/:id/channels` for it and again on `channel.status` and `channel.changed` (the host announces a pause, a resume and a removal, which no status says, so the marks follow them without a reload); a Dot whose channels
 cannot be read is counted and said, not hidden.
 
 The Computer page (`/dots/<id>/computer`) has four views, named in the address
@@ -1981,7 +1983,10 @@ run), each saved as it is flipped, a Pause and a Disconnect that says the token 
 the field to replace it, the people staying paired. WhatsApp first says that the client is unofficial and can get the number banned, then links by scanning:
 the page follows `GET .../whatsapp/qr` (the frames of `ChannelLinkFrame`, reduced to one view by `lib/channel-link.ts`), draws each code itself as an SVG
 from the QR modules (`qrcode`, dark on light in either theme), and ends linked with the number, or failed with the host's reason and "Link again"; a link
-already going on when the page opens is followed, and Cancel removes the channel the start made. The page follows `channel.status` and
+already going on when the page opens is followed. A number counts as linked when the host holds its account, not by the word `connecting` (a server start,
+a Resume or a credential refresh report it again for a number that stays linked): only a login the host says has to be redone, or a link with no account yet,
+goes through the scan. Cancel removes the channel the page's own start made, and only pauses one that holds a linked number or people (Link again on a
+number that needed it), so nothing is deleted without the question that Unlink asks. The page follows `channel.status`, `channel.changed` and
 `channel.peer.paired` live. The browser tests run the real Telegram and WhatsApp adapters against the hub's own fakes (`FakeBotApi`, `FakeWhatsAppConnector`).
 
 The Activity page (`/dots/<id>/activity`; the old `/timeline` address redirects

@@ -400,6 +400,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
     const { code } = await hub.pair(dot.id, "telegram");
     await channel.pair(code, "10");
     await hub.remove(dot.id, "telegram");
+    expect((await eventsOf(dot.id, "channel.changed")).map((e) => e.data)).toEqual([{ kind: "telegram", change: "removed" }]);
     expect(channel.sink).toBeNull();
     expect(await db.secrets.get(dot.id, "telegram_bot_token")).toBeNull();
     expect(await hub.list(dot.id)).toEqual([]);
@@ -441,6 +442,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
     const { hub, dot, channel, type } = await linkedFake(w, ["10"]);
     expect((await hub.setEnabled(dot.id, "telegram", false)).enabled).toBe(false);
     expect(channel.sink).toBeNull();
+    expect((await eventsOf(dot.id, "channel.changed")).map((e) => e.data)).toEqual([{ kind: "telegram", change: "paused" }]);
 
     const second = await w.hub();
     await quiet();
@@ -448,6 +450,7 @@ describe.each(testAdapters())("channel hub, with the real Scheduler and a fake g
 
     const resumed = await second.hub.setEnabled(dot.id, "telegram", true);
     expect(resumed.peers.map((p) => p.peer_id)).toEqual(["10"]);
+    expect((await eventsOf(dot.id, "channel.changed")).map((e) => e.data.change)).toEqual(["paused", "resumed"]);
     const channel2 = await waitFor(() => second.type.channels.at(-1)?.sink && second.type.channels.at(-1), "the channel again");
     dot.guest.emit("message.assistant", { text: "back" });
     await waitFor(() => channel2.texts("10").includes("back"), "a message to the person still paired");

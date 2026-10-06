@@ -14,7 +14,7 @@ import { TelegramCard } from "./telegram-card";
 import { WhatsAppCard } from "./whatsapp-card";
 
 /** What changes what the page shows: a connection, a person paired. Their own saves reload it too. */
-const CHANNEL_EVENTS = ["channel.status", "channel.peer.paired"];
+const CHANNEL_EVENTS = ["channel.status", "channel.peer.paired", "channel.changed"];
 
 /** A channel that is linked but that this server was started without: nothing to do with it from here but know why. */
 function Unavailable({ kind, record }: { kind: ChannelKind; record: ChannelRecord }) {

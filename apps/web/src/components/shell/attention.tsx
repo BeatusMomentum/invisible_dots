@@ -18,7 +18,7 @@ import { useResource, type Resource } from "../ui";
 const DOT_EVENTS = ["dot.created", "dot.updated", "dot.deleted", "computer.state", "computer.started", "computer.stopped"];
 const APPROVAL_EVENTS = ["approval.requested", "approval.resolved", "task.cancelled", "task.completed", "task.failed"];
 const FAILED_TASK_EVENTS = ["task.failed"];
-const CHANNEL_EVENTS = ["channel.status"];
+const CHANNEL_EVENTS = ["channel.status", "channel.changed"];
 const HEALTH_INTERVAL_MS = 30_000;
 
 interface ShellData {

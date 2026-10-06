@@ -15,6 +15,7 @@ import {
   ENV,
   type ApprovalRecord,
   newId,
+  type ChannelChange,
   type ChannelKind,
   type ChannelLinkFrame,
   type ChannelPairingAnswer,
@@ -307,6 +308,7 @@ export class ChannelHub {
     // Whoever still watches the link is told it is over.
     this.#links.publish(binding.id, { state: "failed", detail: "The channel was removed." });
     this.#links.forget(binding.id);
+    await this.#changed(binding, "removed");
   }
 
   async setSettings(dotIdOrName: string, kind: ChannelKind, patch: unknown): Promise<ChannelRecord> {
@@ -327,7 +329,15 @@ export class ChannelHub {
     } else {
       await this.#stop(binding.id);
     }
+    if (updated.enabled !== binding.enabled) await this.#changed(updated, enabled ? "resumed" : "paused");
     return this.#record(updated, await this.#o.db.channels.peers(binding.id));
+  }
+
+  /** Tell every view of the channel what the person did to it. The change is made already, so a failure to log it must not undo or hide it. */
+  async #changed(binding: ChannelBindingRecord, change: ChannelChange): Promise<void> {
+    await this.#o.host.events
+      .appendHost(binding.dot_id, "channel.changed", { kind: binding.kind, change })
+      .catch((error) => this.#log.warn("could not log a channel change", { binding: binding.id, change, error: errorMessage(error) }));
   }
 
   /** A one-time code that pairs a person's chat to the Dot, valid for ten minutes and stored hashed. */

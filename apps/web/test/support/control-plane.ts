@@ -524,17 +524,24 @@ export class FakeControlPlane {
         if (sub === "link" && method === "POST") {
           const next = found ?? channelRecord(kind, { status: "connecting", account: null });
           if (!found) list.push(next);
-          Object.assign(next, { status: "connecting", status_detail: null });
+          // As the host does: a new link clears the account of the old one and keeps the people paired.
+          Object.assign(next, { status: "connecting", status_detail: null, account: null });
           return json(next, 202);
         }
         if (!found) return json({ error: "not_found", message: `Dot has no ${kind} channel` }, 404);
         if (sub === "" && method === "PATCH") {
           if (body.settings) Object.assign(found.settings, body.settings);
-          if (typeof body.enabled === "boolean") found.enabled = body.enabled;
+          if (typeof body.enabled === "boolean") {
+            const changed = found.enabled !== body.enabled;
+            found.enabled = body.enabled;
+            // The host announces what the person did to a channel, which no status says.
+            if (changed) this.push(record.id, "channel.changed", { kind, change: body.enabled ? "resumed" : "paused" });
+          }
           return json(found);
         }
         if (sub === "" && method === "DELETE") {
           this.channels[record.id] = list.filter((c) => c !== found);
+          this.push(record.id, "channel.changed", { kind, change: "removed" });
           return new Response(null, { status: 204 });
         }
         if (sub === "pairing" && method === "POST") {
