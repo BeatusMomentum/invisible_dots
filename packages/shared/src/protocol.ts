@@ -5,7 +5,6 @@
  * is in paths.ts, which needs node:path and so stays out of the web client.
  */
 import type { DotRuntimeConfig } from "./config.js";
-import type { ApprovalRequestedData } from "./events.js";
 import type { AgentState } from "./states.js";
 
 /**
@@ -281,14 +280,15 @@ export interface PostEventAnswer {
   accepted: true;
 }
 
-/** A tool call parked until the user approves or rejects it. */
-export type PendingApproval = ApprovalRequestedData;
-
-/** `GET /state`. */
+/**
+ * `GET /state`. `pending_approval` is the id of the oldest tool call parked until the host's decision (the same
+ * id as `ApprovalRequestedData.approval_id` and the host's approval row), never the approval itself: the host
+ * holds the rest, and the engine's answer is the one place that says which approval the engine waits on.
+ */
 export interface AgentStateAnswer {
   state: AgentState;
   current_task_id: string | null;
-  pending_approval: PendingApproval | null;
+  pending_approval: string | null;
 }
 
 export const BROWSER_IDENTITY_STATUSES = ["available", "open", "archived"] as const;

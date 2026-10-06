@@ -99,6 +99,14 @@ export const TOOLS = {
 } as const;
 export type ToolName = keyof typeof TOOLS;
 
+/**
+ * What the engine shows as the target of a call on a browser identity: `<identity id>: <detail>`
+ * (nanobot/dots/targets.py `_on_identity`). tests/repo/e2e.test.ts keeps it equal to the engine's.
+ */
+export function identityTarget(identityId: string, detail: string): string {
+  return `${identityId}: ${detail}`;
+}
+
 /** The event types the run reads (packages/shared events.ts). */
 export const EVENTS = [
   "agent.started",
@@ -128,6 +136,16 @@ export interface Dot {
   status: string;
   error: string | null;
   computer_state: string | null;
+}
+/**
+ * `GET /v1/agent/state` as the engine answers it and `AgentStateAnswer` of packages/shared declares it:
+ * `pending_approval` is the id of the oldest approval the engine waits on, not the approval.
+ * tests/repo/e2e.test.ts keeps this equal to the shared type.
+ */
+export interface AgentStateAnswer {
+  state: string;
+  current_task_id: string | null;
+  pending_approval: string | null;
 }
 export interface Computer {
   state: string;

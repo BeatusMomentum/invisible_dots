@@ -639,7 +639,7 @@ command detached into another session outlives it.
 | `PUT /config` | `DotRuntimeConfig` (section 7) | `204`, validated, persisted in the engine's database (`dots_kv`) and projected onto the engine's settings in process (section 8.8); a config that does not validate is `400 invalid_config` |
 | `POST /events` | `InboundEvent` | `202 { accepted: true }` |
 | `GET /events/stream` | `?after=<seq>` | `text/event-stream`, one SSE message per outbound event, `id: <seq>` |
-| `GET /state` | | `{ state, current_task_id, pending_approval }` |
+| `GET /state` | | `{ state, current_task_id, pending_approval }`; `pending_approval` is the id of the oldest approval the engine waits on, or `null` |
 | `GET /browser-identities` | | `{ identities: BrowserIdentity[] }`, oldest first, the proxy with its password replaced |
 | `POST /browser-identities` | `{ name, proxy? }` | `201 BrowserIdentity`; `400 invalid` (name or proxy), `409 limit` (`max_identities`) |
 | `GET /browser-identities/:id` | | `BrowserIdentity`; `404 not_found` |

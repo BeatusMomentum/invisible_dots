@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { deflateSync } from "node:zlib";
 import { USAGE } from "@invisible-dots/cli";
 import {
+  type AgentStateAnswer as SharedAgentStateAnswer,
   HOST_EVENT_TYPES,
   OUTBOUND_EVENT_TYPES,
   PERMISSIONS,
@@ -48,6 +49,7 @@ import {
   filesUnder,
   guestProof,
   identityEvents,
+  identityTarget,
   isSpend,
   jpegSize,
   journalCleanHash,
@@ -69,6 +71,7 @@ import {
   toolOk,
   utcStamp,
   waitFor,
+  type AgentStateAnswer,
   type Clock,
   type StoredEvent,
 } from "../e2e/lib.ts";
@@ -147,6 +150,16 @@ describe("the e2e run's contract with the product", () => {
     }
   });
 
+  it("reads the events a host route causes only by waiting for them: the guest's events reach the host's log through the pump", () => {
+    const run = read("tests/e2e/run.ts");
+    // A read of the log right after a route, asserted at once, races the pump (an event of a task that has ended is
+    // already there: the pump delivers in order, and the task's end is one of its events).
+    expect(run).not.toMatch(/assert\(identityEvents\(await events\(dotId\), "browser\.identity\.closed"/);
+    expect(run).not.toMatch(/assert\(closedAt && deletedAt/);
+    expect(run).toContain('waitFor("browser.identity.closed for the host\'s close", TIMEOUTS.pump');
+    expect(run).toContain('waitFor("browser.identity.deleted for the host\'s delete", TIMEOUTS.pump');
+  });
+
   it("reads only event types the host knows", () => {
     const known = new Set<string>([...OUTBOUND_EVENT_TYPES, ...HOST_EVENT_TYPES]);
     for (const type of EVENTS) expect(known.has(type), type).toBe(true);
@@ -187,6 +200,24 @@ describe("the e2e run's contract with the product", () => {
     expect(resolvePermission(toRuntimeConfig(plain), "files.write")).toBe("allow");
     // The default of the identity delete is the one the run's approval step overrides to be explicit.
     expect(resolvePermission(toRuntimeConfig(plain), "browser.identity.delete")).toBe("ask");
+  });
+
+  it("reads GET /v1/agent/state in the shape packages/shared declares, the engine's pending approval being its id", () => {
+    // Compile time: what the shared package declares must be assignable to what the run reads (typecheck fails otherwise).
+    const shared: SharedAgentStateAnswer = { state: "WAITING_APPROVAL", current_task_id: "t1", pending_approval: "appr_1" };
+    const asRead: AgentStateAnswer = shared;
+    expect(asRead.pending_approval).toBe("appr_1");
+    // The engine's side: the answer holds the id of the oldest pending approval (tests/dots/test_server.py runs it).
+    expect(read("invisible_engine_dots/nanobot/dots/engine.py")).toContain("pending_approval=pending[0].approval_id if pending else None");
+    expect(read("invisible_engine_dots/nanobot/dots/server.py")).toContain('"pending_approval": answer.pending_approval');
+  });
+
+  it("expects the target of a call on an identity as the engine writes it: the identity's id, a colon, the detail", () => {
+    expect(identityTarget("research-a1b2c3", "https://example.com")).toBe("research-a1b2c3: https://example.com");
+    const targets = read("invisible_engine_dots/nanobot/dots/targets.py");
+    expect(targets).toContain('return f"{identity}: {detail}" if detail else identity');
+    const navigate = targets.slice(targets.indexOf("def browser_navigate_target"));
+    expect(navigate.slice(0, navigate.indexOf("\n\n\n"))).toContain("return _on_identity(params, ");
   });
 
   it("reads the Dot's token from a real seed.iso, and the proof it checks is the product's", async () => {

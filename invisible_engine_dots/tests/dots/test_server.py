@@ -703,6 +703,29 @@ class TestStateAndTheRest:
             "pending_approval": None,
         }
 
+    async def test_the_state_names_the_oldest_pending_approval_by_its_id(self, make_api: Callable[..., Any]) -> None:
+        api: Api = await make_api()
+        ids = [
+            api.h.store.write(
+                lambda conn, n=n: s.request_approval(
+                    conn,
+                    session_key=s.CHAT_SESSION_KEY,
+                    task_id=None,
+                    tool_call_id=f"call-{n}",
+                    tool="exec",
+                    permission="computer.exec",
+                    arguments={"command": "make clean"},
+                    now_ms=1000 * n,
+                )
+            )[0].approval_id
+            for n in (1, 2)
+        ]
+
+        answer = (await api.call("GET", "/state")).json
+
+        # The id of the oldest one, a bare string: the shape of AgentStateAnswer in packages/shared.
+        assert answer["pending_approval"] == ids[0]
+
     async def test_the_identity_routes_name_what_they_cannot_find_and_the_methods_they_refuse(
         self, make_api: Callable[..., Any]
     ) -> None:

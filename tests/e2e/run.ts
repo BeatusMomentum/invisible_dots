@@ -47,6 +47,7 @@ import {
   filesUnder,
   guestProof,
   identityEvents,
+  identityTarget,
   isSpend,
   jpegSize,
   journalCleanHash,
@@ -65,6 +66,7 @@ import {
   toolOk,
   utcStamp,
   waitFor as waitForWith,
+  type AgentStateAnswer,
   type Approval,
   type CheckResult,
   type Computer,
@@ -106,6 +108,8 @@ const TIMEOUTS = {
   delete: 3 * MINUTE,
   /** A killed VM is noticed, recorded and started again by the control plane, and its engine comes up. */
   recover: 10 * MINUTE,
+  /** A guest event reaches the host's log through the scheduler's pump, a moment after the route that caused it has answered. */
+  pump: 30_000,
 };
 
 /** What every OpenRouter key starts with; the journal checks search the guest for it. */
@@ -436,10 +440,10 @@ async function guestExec(dotId: string, command: string): Promise<{ exit_code: n
 }
 
 /** The engine's own state, through dot-agentd's proxy to its socket (`GET /v1/agent/state`). */
-async function agentState(dotId: string): Promise<{ state: string; pending_approval: { approval_id: string } | null }> {
+async function agentState(dotId: string): Promise<AgentStateAnswer> {
   const response = await guestRequest(dotId, "GET", "/v1/agent/state");
   assert(response.ok, `GET /v1/agent/state: ${response.status}`);
-  return (await response.json()) as { state: string; pending_approval: { approval_id: string } | null };
+  return (await response.json()) as AgentStateAnswer;
 }
 
 /** What a file of the guest holds, without its trailing newlines (whether a model ends a file with one is not what is tested). */
@@ -786,7 +790,7 @@ async function main(): Promise<void> {
       assert(event.data.permission === permission && event.data.decision === "allow", `${tool} ran under ${String(event.data.permission)}/${String(event.data.decision)}, not ${permission}/allow`);
     }
     assert(launched[0]!.id < call("browser_navigate").id, "the page was opened before the identity was launched");
-    assert(String(call("browser_navigate").data.target ?? "").startsWith("https://example.com"), `browser_navigate's target is ${JSON.stringify(call("browser_navigate").data.target)}`);
+    assert(String(call("browser_navigate").data.target ?? "").startsWith(identityTarget(research.id, "https://example.com")), `browser_navigate's target is ${JSON.stringify(call("browser_navigate").data.target)}, not one that starts with ${JSON.stringify(identityTarget(research.id, "https://example.com"))}`);
     const writes = toolCalls(all, task.id, "write_file").filter((e) => e.data.ok === true).map((e) => String(e.data.target));
     assert(writes.includes(`${WORKSPACE}/heading.txt`) && writes.includes(`/home/dot/memory/${MEMORY_NOTE}`), `write_file targets: ${JSON.stringify(writes)}`);
 
@@ -849,7 +853,7 @@ async function main(): Promise<void> {
     assert(approval.permission === "files.write", `the approval is for ${approval.permission}`);
     assert(approval.arguments.path === `${WORKSPACE}/approval.txt`, `the approval shows ${JSON.stringify(approval.arguments)}`);
     assert(taskEvents(await events(dotId), task.id).some((e) => e.type === "approval.requested"), "no approval.requested event");
-    assert((await agentState(dotId)).pending_approval?.approval_id === approval.id, "the engine does not hold the approval the host lists");
+    assert((await agentState(dotId)).pending_approval === approval.id, "the engine does not hold the approval the host lists");
     const missing = await guestExec(dotId, `test ! -e ${WORKSPACE}/approval.txt && echo missing`);
     assert(missing.stdout.trim() === "missing", "the file exists while its write waits for approval");
     await approve(approval.id);
@@ -908,7 +912,12 @@ async function main(): Promise<void> {
     const closeAt = lastEventId(afterLru);
     await api("POST", route(ROUTES.closeIdentity, { id: dotId, identityId: beta.id }));
     assert((await identities(dotId)).find((i) => i.id === beta.id)?.status === "available", "beta is not available after POST close");
-    assert(identityEvents(await events(dotId), "browser.identity.closed", beta.id, closeAt).length === 1, "no browser.identity.closed for the host's close");
+    // The event reaches the host through the pump, after the route has answered.
+    await waitFor("browser.identity.closed for the host's close", TIMEOUTS.pump, async () => {
+      const closed = identityEvents(await events(dotId), "browser.identity.closed", beta.id, closeAt);
+      assert(closed.length <= 1, `${closed.length} browser.identity.closed for the host's close`);
+      return closed.length === 1 ? true : undefined;
+    }, 1000);
     const noFrame = await refusal("GET", route(ROUTES.frame, { id: dotId, identityId: beta.id }));
     assert(noFrame.status === 409 && noFrame.error === "not_open", `the frame of a closed identity answered ${noFrame.status} ${noFrame.error}`);
     await api("POST", route(ROUTES.closeIdentity, { id: dotId, identityId: beta.id }));
@@ -916,10 +925,14 @@ async function main(): Promise<void> {
     // The host deletes an identity that is open: its browser ends, its directory goes.
     const deleteAt = lastEventId(await events(dotId));
     await api("DELETE", route(ROUTES.identity, { id: dotId, identityId: alpha.id }));
-    const afterDelete = await events(dotId);
-    const closedAt = identityEvents(afterDelete, "browser.identity.closed", alpha.id, deleteAt)[0];
-    const deletedAt = identityEvents(afterDelete, "browser.identity.deleted", alpha.id, deleteAt)[0];
-    assert(closedAt && deletedAt && closedAt.id < deletedAt.id, "an open identity's delete must close it first, then report deleted");
+    // The events reach the host through the pump, in order, after the route has answered: once deleted is there, closed is too.
+    const { closedAt, deletedAt } = await waitFor("browser.identity.deleted for the host's delete", TIMEOUTS.pump, async () => {
+      const afterDelete = await events(dotId);
+      const deleted = identityEvents(afterDelete, "browser.identity.deleted", alpha.id, deleteAt)[0];
+      if (!deleted) return undefined;
+      return { closedAt: identityEvents(afterDelete, "browser.identity.closed", alpha.id, deleteAt)[0], deletedAt: deleted };
+    }, 1000);
+    assert(closedAt && closedAt.id < deletedAt.id, "an open identity's delete must close it first, then report deleted");
     assert((await refusal("GET", route(ROUTES.identity, { id: dotId, identityId: alpha.id }))).status === 404, "a deleted identity is still found");
     const gone = await guestExec(dotId, `test ! -e ${BROWSERS}/${alpha.id} && echo gone`);
     assert(gone.stdout.trim() === "gone", `${BROWSERS}/${alpha.id} is still in the guest`);
@@ -1053,7 +1066,7 @@ async function main(): Promise<void> {
       const answer = await agentState(dotId);
       return answer.pending_approval ? answer : undefined;
     }, 2000);
-    assert(engine.pending_approval!.approval_id === approval.id, `after the restart the engine waits on ${engine.pending_approval!.approval_id}, not ${approval.id}`);
+    assert(engine.pending_approval === approval.id, `after the restart the engine waits on ${engine.pending_approval}, not ${approval.id}`);
     const pending = (await api<{ approvals: Approval[] }>("GET", route(ROUTES.approvals, {}, { status: "pending" }))).approvals;
     assert(pending.some((a) => a.id === approval.id), "the host no longer lists the approval as pending");
     assert((await api<Task>("GET", route(ROUTES.task, { id: task.id }))).status === "WAITING_APPROVAL", "the task is not waiting for its approval after the restart");
