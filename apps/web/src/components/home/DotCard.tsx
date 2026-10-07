@@ -30,7 +30,8 @@ export function DotCard({ dot }: { dot: Dot }) {
   const model = dot.config?.model?.id;
 
   return (
-    <article aria-labelledby={`dot-${dot.id}-name`} className="grid gap-x-6 gap-y-2 px-4 py-4 md:grid-cols-[minmax(12rem,16rem)_1fr_auto] md:items-center">
+    // One column that may shrink on a phone: an implicit column is as wide as the longest name, and the name's truncate never cuts.
+    <article aria-labelledby={`dot-${dot.id}-name`} className="grid grid-cols-1 gap-x-6 gap-y-2 px-4 py-4 md:grid-cols-[minmax(12rem,16rem)_1fr_auto] md:items-center">
       <div className="flex items-center gap-3">
         <DotAvatar id={dot.id} name={dot.name} ring={ring} size="sm" />
         <div className="min-w-0 flex-1 space-y-1">
