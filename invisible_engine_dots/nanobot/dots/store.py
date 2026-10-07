@@ -1047,9 +1047,10 @@ def get_approval_by_tool_call(conn: sqlite3.Connection, session_key: str, tool_c
 
 
 def list_approvals(conn: sqlite3.Connection, status: ApprovalStatus) -> list[Approval]:
-    """Approvals in one status, oldest first."""
+    """Approvals in one status, oldest first: by time, then in the order they were inserted (an id is random, so
+    within one millisecond it would not say which came first)."""
     rows = conn.execute(
-        f"SELECT {_APPROVAL_COLUMNS} FROM dots_approvals WHERE status = ? ORDER BY created_at, approval_id",
+        f"SELECT {_APPROVAL_COLUMNS} FROM dots_approvals WHERE status = ? ORDER BY created_at, rowid",
         (status,),
     ).fetchall()
     return [_approval(row) for row in rows]
@@ -1061,7 +1062,7 @@ def open_approval_for_session(conn: sqlite3.Connection, session_key: str) -> App
         f"""
         SELECT {_APPROVAL_COLUMNS} FROM dots_approvals
         WHERE session_key = ? AND status IN ({_OPEN_APPROVAL_STATUSES})
-        ORDER BY created_at, approval_id LIMIT 1
+        ORDER BY created_at, rowid LIMIT 1
         """,
         (session_key,),
     ).fetchone()
