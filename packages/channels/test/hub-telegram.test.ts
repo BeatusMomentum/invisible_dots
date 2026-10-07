@@ -262,11 +262,22 @@ describe.each(testAdapters())("the hub with the real Telegram adapter (%s)", { t
     const { hub } = await w.hub(telegram());
     const dot = await w.dot();
     await hub.add(dot.id, "telegram", { credentials: { telegram_bot_token: TOKEN } });
-    await waitFor(async () => (await hub.list(dot.id))[0]!.status === "error", "the error status", 15_000);
-    const failedAt = Date.now();
-    await waitFor(async () => (await hub.list(dot.id))[0]!.status === "connected", "connected again", 15_000);
+    // Read from the log, where every change of status is recorded: polling the status itself can miss an error that
+    // lasts only the second Telegram asked for, when a loaded machine makes one read longer than that.
+    const changes = async () =>
+      (await db.events.list({ dotId: dot.id, types: ["channel.status"] })).map((e) => ({ status: e.data.status, at: Date.parse(e.created_at) }));
+    const [failed, back] = await waitFor(
+      async () => {
+        const seen = await changes();
+        const failed = seen.find((change) => change.status === "error");
+        const back = failed && seen.find((change) => change.status === "connected" && change.at >= failed.at);
+        return failed && back ? ([failed, back] as const) : undefined;
+      },
+      "the error and the reconnection in the log",
+      15_000,
+    );
     // The backoff of these tests is a few milliseconds: only the 429's own wait can make this long.
-    expect(Date.now() - failedAt).toBeGreaterThanOrEqual(800);
+    expect(back.at - failed.at).toBeGreaterThanOrEqual(800);
   });
 
   it("waits out a 429 when sending and delivers the answer once", async () => {

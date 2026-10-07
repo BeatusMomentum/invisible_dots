@@ -183,7 +183,9 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     const guest = driver.guestOf(dot.id);
     const one = await api.createTask(dot.id, { description: "one" });
     const two = await api.createTask(dot.id, { description: "two" });
-    await waitFor(async () => (await api.getTask(two.id)).status === "COMPLETED", "second task done");
+    // Two whole tasks, one after the other: 0.6 s on PGlite, 2.2 s on a PostgreSQL reached across WSL, past the
+    // default 5 s when that machine is loaded. The wait bounds liveness only.
+    await waitFor(async () => (await api.getTask(two.id)).status === "COMPLETED", "second task done", 15_000);
     const call = { tool: "exec", permission: "exec.run", decision: "allow", ok: true, duration_ms: 5 } as const;
     guest.emit("tool.called", { task_id: one.id, ...call, target: "ls" });
     guest.emit("tool.called", { ...call, target: "date" });
