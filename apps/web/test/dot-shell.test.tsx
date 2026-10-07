@@ -56,7 +56,7 @@ describe("the Dot header", () => {
     expect(screen.queryByRole("button", { name: /Show the whole goal/ })).toBeNull();
   });
 
-  it("says the Dot cannot be loaded when the control plane has no such Dot", async () => {
+  it("says the Dot does not exist when the control plane has no such Dot, with the way Home and nothing of a Dot's page", async () => {
     plane.dots = [];
     render(
       <EventStreamProvider>
@@ -67,7 +67,11 @@ describe("the Dot header", () => {
         </AttentionProvider>
       </EventStreamProvider>,
     );
-    expect((await screen.findByRole("alert")).textContent).toContain("Could not load this Dot");
+    expect(await screen.findByRole("heading", { name: "This Dot does not exist" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Go to Home" }).getAttribute("href")).toBe("/");
+    expect(screen.queryByText("body")).toBeNull();
+    expect(screen.queryByRole("navigation", { name: "Dot sections" })).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("shows what the Dot is doing from the agent's events, and only this Dot's", async () => {

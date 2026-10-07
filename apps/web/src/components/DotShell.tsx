@@ -1,12 +1,14 @@
 "use client";
 
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createContext, useContext, useEffect, type ReactNode } from "react";
-import { api } from "../lib/api";
+import { api, ApiError } from "../lib/api";
 import type { Dot } from "../lib/types";
 import { DotHeader } from "./dot/DotHeader";
 import { DotTabs } from "./dot/DotTabs";
 import { useLiveRefresh } from "./events";
+import { buttonVariants } from "./ui/button";
 import { useResource, type Resource } from "./ui";
 
 interface DotContextValue {
@@ -44,6 +46,21 @@ export function DotShell({ dotId, children }: { dotId: string; children: ReactNo
     const address = /^\/dots\/[^/]+/.exec(pathname);
     if (address) router.replace(`/dots/${encodeURIComponent(canonical)}${pathname.slice(address[0].length)}${window.location.search}${window.location.hash}`);
   }, [canonical, pathname, router]);
+
+  // A Dot the control plane does not have (deleted, or never this host's): no header, tabs or composer for it.
+  if (dot.error instanceof ApiError && dot.error.status === 404) {
+    return (
+      <div className="flex flex-1 items-center justify-center">
+        <div className="max-w-sm space-y-3 text-center">
+          <h1 className="text-xl font-semibold tracking-tight">This Dot does not exist</h1>
+          <p className="text-sm text-muted-foreground">It may have been deleted, or the link names a Dot this host never had.</p>
+          <Link href="/" className={buttonVariants()}>
+            Go to Home
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <DotContext.Provider value={{ dotId, dot }}>
