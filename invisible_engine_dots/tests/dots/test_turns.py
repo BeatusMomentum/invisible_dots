@@ -205,6 +205,23 @@ class TestATaskTurn:
         assert [kind for kind, _ in h.events()] == ["tool.called", "tool.called"]
         assert h.messages(session)[-1]["role"] == "assistant"
 
+    async def test_a_window_too_small_for_the_request_fails_the_turn_in_words_and_asks_nothing(
+        self, make_harness: MakeHarness
+    ) -> None:
+        # 4000 is in the schema's range, yet less than the answer's room and the safety buffer: nothing fits.
+        limits = {"max_steps_per_task": 60, "context_tokens": 4000, "max_cost_per_task_usd": 1}
+        h = make_harness([says("never")], limits=limits)
+
+        outcome = await h.run(chat_unit())
+
+        assert outcome.kind == "failed"
+        assert outcome.reason is not None
+        assert outcome.reason.startswith("the request needs ")
+        assert "and limits.context_tokens (4000) leaves " in outcome.reason
+        assert outcome.reason.endswith("raise Context tokens in the Dot's settings")
+        assert "via tiktoken" not in outcome.reason
+        assert h.provider.requests == []
+
 
 class TestCommitPoints:
     async def test_every_step_of_a_tool_call_is_committed_before_the_next_starts(

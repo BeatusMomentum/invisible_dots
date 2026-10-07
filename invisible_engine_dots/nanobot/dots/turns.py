@@ -28,6 +28,7 @@ from typing import Any, Literal, Protocol
 from loguru import logger
 
 from nanobot.agent.context import ContextBuilder, TranscriptInput
+from nanobot.agent.context_governance import ContextWindowExceededError
 from nanobot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
 from nanobot.agent.memory import Consolidator
 from nanobot.agent.runner import AgentRunner, AgentRunResult, AgentRunSpec
@@ -255,6 +256,13 @@ class TurnRunner:
             return TurnOutcome("abandoned")
         except CostCapReached as exc:
             return TurnOutcome.failed(str(exc))
+        except ContextWindowExceededError as exc:
+            # Said in words, with what to change: the error's own text ("6371/0 via tiktoken") reached the chat as it was.
+            return TurnOutcome.failed(
+                f"the request needs {exc.estimated_tokens} tokens and limits.context_tokens "
+                f"({settings.context_window_tokens}) leaves {exc.input_budget} for it once the room for the answer is "
+                "kept; raise Context tokens in the Dot's settings"
+            )
         except asyncio.CancelledError:
             raise
         except Exception as exc:
