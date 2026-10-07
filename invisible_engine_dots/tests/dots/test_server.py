@@ -451,6 +451,25 @@ class TestTheStream:
             assert (await asyncio.wait_for(reader, 10)).startswith(b"id: ")
             api.server.close_streams()
 
+    async def test_a_stream_asked_on_a_kept_connection_once_the_stop_began_is_refused_and_close_ends_at_once(
+        self, make_api: Callable[..., Any]
+    ) -> None:
+        # dot-agentd reaches the socket through kept-alive connections: one opened before the stop outlives
+        # stop_accepting, and the host asks for its next stream on it as soon as close_streams ended the last one.
+        # Taken, that stream is one close_streams never saw, and the runner's cleanup waits for it (60 s).
+        api: Api = await make_api()
+        last = api.h.engine.read_outbox_after(0, 100)[-1]["seq"]
+        async with api.session.get(BASE + "/health") as kept:
+            await kept.read()
+
+        await api.server.stop_accepting()
+        api.server.close_streams()
+
+        async with api.session.get(BASE + f"/events/stream?after={last}") as response:
+            assert response.status == 503
+            assert (await response.json())["error"] == "shutting_down"
+        await asyncio.wait_for(api.server.close(), 5)
+
     async def test_a_read_that_fails_after_the_headers_ends_the_stream_without_a_second_response(
         self, make_api: Callable[..., Any]
     ) -> None:
