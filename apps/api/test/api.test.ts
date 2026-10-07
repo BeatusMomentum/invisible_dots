@@ -36,6 +36,9 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
   beforeAll(async () => {
     t = await createTestDatabase(kind);
     db = t.db;
+    // A Dot reaches READY only with a key to push (lifecycle #push): every test that readies one needs it, so it is
+    // stored here and not by whichever test happened to run first.
+    await db.secrets.put("global", "openrouter_api_key", "sk-or-test");
     driver = new FakeDriver();
     clock = new ManualClock();
     scheduler = new Scheduler({
@@ -85,7 +88,6 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
   });
 
   it("health, unknown routes and malformed bodies answer {error, message}", async () => {
-    await db.secrets.put("global", "openrouter_api_key", "sk-or-test");
     expect(await api.health()).toEqual({ status: "ok", database: "ok", version: API_VERSION, openrouter_configured: true, ...hostFacts(kind) });
     const missing = await fetch(`${base}/api/nope`, { headers: { authorization: `Bearer ${TOKEN}` } });
     expect(missing.status).toBe(404);
