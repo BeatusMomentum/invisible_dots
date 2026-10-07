@@ -725,6 +725,26 @@ class TestApprovals:
         assert first.approval_id != second.approval_id
         assert [a.tool_call_id for a in dot_store.read(lambda c: s.list_approvals(c, "pending"))] == ["call-1", "call-2"]
 
+    def test_approvals_asked_in_one_millisecond_keep_the_order_they_were_asked_in(self, dot_store: DotStore) -> None:
+        # An approval's id is random: within one millisecond it says nothing about which came first.
+        calls = [f"call-{n}" for n in range(10)]
+        for call in calls:
+            dot_store.write(
+                lambda c, call=call: s.request_approval(
+                    c,
+                    session_key="chat",
+                    task_id=None,
+                    tool_call_id=call,
+                    tool="exec",
+                    permission="computer.exec",
+                    arguments={"command": call},
+                    now_ms=1000,
+                )
+            )
+        assert [a.tool_call_id for a in dot_store.read(lambda c: s.list_approvals(c, "pending"))] == calls
+        oldest = dot_store.read(lambda c: s.open_approval_for_session(c, "chat"))
+        assert oldest is not None and oldest.tool_call_id == "call-0"
+
     def test_advances_only_from_the_status_it_is_in(self, dot_store: DotStore) -> None:
         approval, _ = self.request(dot_store)
         aid = approval.approval_id
