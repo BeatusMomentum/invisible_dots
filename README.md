@@ -5,11 +5,6 @@
 </picture>
 <h3>Open-source, self-hosted alternative to OpenAI Dots, Meta Muse, Grok Bot, Manus Cue and Claude Cowork.</h3>
 
-<a href="https://github.com/feder-cr/invisible_dots/actions/workflows/tests.yml"><img alt="tests" src="https://github.com/feder-cr/invisible_dots/actions/workflows/tests.yml/badge.svg"></a>
-<a href="LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
-<img alt="status: alpha" src="https://img.shields.io/badge/status-alpha-orange">
-<img alt="hosts: Linux and Windows" src="https://img.shields.io/badge/hosts-Linux%20%7C%20Windows-lightgrey">
-
 <p><a href="#quickstart"><b>Quickstart</b></a> · <a href="docs/guide.md"><b>Guide</b></a> · <a href="docs/architecture.md"><b>Architecture</b></a> · <a href="docs/guide.md#security-model-and-known-limits"><b>Security</b></a> · <a href="docs/guide.md#privacy"><b>Privacy</b></a></p>
 </div>
 
@@ -117,6 +112,13 @@ jurisdiction. A Dot acts with your accounts and from your connection: respect th
 their robots.txt.
 
 ---
+
+<p align="center">
+  <a href="https://github.com/feder-cr/invisible_dots/actions/workflows/tests.yml"><img alt="tests" src="https://github.com/feder-cr/invisible_dots/actions/workflows/tests.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  <img alt="status: alpha" src="https://img.shields.io/badge/status-alpha-orange">
+  <img alt="hosts: Linux and Windows" src="https://img.shields.io/badge/hosts-Linux%20%7C%20Windows-lightgrey">
+</p>
 
 <p align="center">
   Built by <a href="https://it.linkedin.com/in/federico-elia-5199951b6">Federico Elia</a>
