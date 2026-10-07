@@ -85,6 +85,8 @@ class PageTool:
 # What browser_navigate may open. The server passes the URL to the page unchecked, so file:///home/dot/... would
 # put any file the dot user can read into browser_read_text, whatever files.read says, and about:, view-source:,
 # data: and javascript: reach browser internals and run script. Each permission decides only its own action.
+# The refusal below holds the rule and the schema has no `pattern`: a provider that decodes under the schema takes a
+# pattern as the whole value, and this prefix as a whole value is "https://", which the model was then made to send.
 _WEB_URL = r"^https?://"
 
 
@@ -126,7 +128,7 @@ PAGE_TOOLS: Mapping[str, PageTool] = {
             "browser_navigate",
             "Load a URL in the browser of an identity and wait for the page to start loading." + _OPEN_FIRST,
             "browser_navigate",
-            {"url": _string("The full http or https URL, with its scheme (https://...).", maxLength=4096, pattern=_WEB_URL)},
+            {"url": _string("The full http or https URL, with its scheme (https://...).", maxLength=4096)},
             ("url",),
             _taken("url"),
             refusal=_only_web_urls,

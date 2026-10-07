@@ -455,8 +455,10 @@ async def test_navigate_refuses_every_url_that_is_not_http_or_https_and_the_serv
 
     assert said(result) == "browser_navigate opens only http:// and https:// URLs"
     assert env.page_calls(identity_id) == []
+    # The refusal holds the rule, not the schema: a provider that decodes under a pattern takes it as the whole
+    # value, and "^https?://" left the model nothing to send but "https://".
     schema = env.registry.get("browser_navigate").parameters["properties"]["url"]
-    assert schema["pattern"] == "^https?://"
+    assert "pattern" not in schema
 
 
 async def test_navigate_still_opens_http_and_https_urls(env: Env) -> None:
