@@ -100,7 +100,7 @@ sudo apt-get install -y qemu-system-x86 qemu-utils   # or: invisible-dots setup
 sudo usermod -aG kvm "$USER"                          # then log in again
 # Node 24 from https://nodejs.org, Go 1.25 or newer from https://go.dev
 
-git clone https://github.com/feder-cr/dots && cd dots
+git clone https://github.com/feder-cr/invisible_dots && cd invisible_dots
 npm ci
 npm run build --workspace @invisible-dots/cli
 npm run build --workspace @invisible-dots/web        # skip with E2E_WEB=0

@@ -22,7 +22,7 @@ import { writeManifest, type GoldenManifest } from "./manifest.js";
 import { checkVersion } from "./versions.js";
 
 /** Where the releases of the repository are downloaded from. */
-export const PREBUILT_RELEASES = "https://github.com/feder-cr/dots/releases/download";
+export const PREBUILT_RELEASES = "https://github.com/feder-cr/invisible_dots/releases/download";
 
 /** The tag of the release that holds the golden image of these inputs. */
 export function prebuiltTag(digest: string): string {
