@@ -24,7 +24,9 @@ export function InboxView({ query }: { query: InboxQuery }) {
   ];
 
   return (
-    <div className="mx-auto max-w-3xl space-y-5">
+    // w-full: the main is a flex column, where auto margins stop the stretch, and without a width a long file in a card
+    // would size the page past the screen and push the answers off it on a phone.
+    <div className="mx-auto w-full max-w-3xl space-y-5">
       <div className="space-y-1">
         <h1 className="text-xl font-semibold tracking-tight">Inbox</h1>
         <p className="text-sm text-muted-foreground">What your Dots are waiting on you for, across all of them.</p>
