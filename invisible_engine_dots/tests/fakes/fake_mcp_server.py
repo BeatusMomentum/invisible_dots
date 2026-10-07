@@ -60,6 +60,8 @@ def write_control(mcp_home: Path, **control: Any) -> None:
     overlay_says_gone: `browser_click` fails the way a blocked click does, with a diagnosis of the covering element
         whose text is the sentence of a lost browser: a page controls that text, and the browser is not lost.
     refuse_close: `browser_close` fails.
+    slow_close_s: `browser_close` answers after this many seconds, as Firefox flushing a profile on a loaded machine.
+    slow_exit_s: once its input closes, the process takes this many seconds more to end.
     fail_watch: `browser_watch` fails the way the real server does when the browser has no page.
     watch_png: `browser_watch` answers with a PNG, which the frame route's contract (a JPEG) does not take.
 
@@ -209,12 +211,16 @@ async def _serve() -> None:
         record({"kind": "call", "name": name, "args": arguments})
         if str(arguments.get("url", "")).startswith("slow://"):
             await asyncio.sleep(0.3)
+        if name == "browser_close" and control.get("slow_close_s"):
+            await asyncio.sleep(float(control["slow_close_s"]))
         result = call(name, arguments)
         record({"kind": "done", "name": name})
         return result
 
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())
+    if control.get("slow_exit_s"):
+        await asyncio.sleep(float(control["slow_exit_s"]))
     record({"kind": "exit", "code": 0})
 
 

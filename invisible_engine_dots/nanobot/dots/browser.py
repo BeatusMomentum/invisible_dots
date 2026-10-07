@@ -248,6 +248,8 @@ class BrowserManager:
         self._sessions: dict[str, _Session] = {}
         # Identities being deleted: they are gone for every caller from the moment the delete starts.
         self._deleting: set[str] = set()
+        # Sessions dropped by a close that has not recorded `closed` yet: it does once their process has ended.
+        self._unrecorded: set[_Session] = set()
         # Orders `create`, whose count check and insert are apart by the directory it makes.
         self._create_lock = asyncio.Lock()
 
@@ -394,6 +396,22 @@ class BrowserManager:
         tasks = [self._begin_close(session) for session in list(self._sessions.values())]
         if tasks:
             await asyncio.wait(tasks)
+
+    def closed_by_exit(self) -> None:
+        """The engine stops before these identities finished closing, and its exit ends their processes: each is
+        recorded closed now, while the store still takes the event, and a close that ends later records nothing.
+        A session still opening was never open: it is only dropped."""
+        for session in list(self._sessions.values()):
+            if self._forget(session) and session.state != "opening":
+                self._unrecorded.add(session)
+        for session in list(self._unrecorded):
+            self._record_closed(session)
+
+    def _record_closed(self, session: _Session) -> None:
+        """Emit `closed` for a session a close dropped, once, whoever gets there first."""
+        if session in self._unrecorded:
+            self._unrecorded.discard(session)
+            self._emit_closed(session.identity_id)
 
     async def call_tool(self, identity_id: str, tool: str, arguments: Mapping[str, Any] | None = None) -> Any:
         """Call a tool of the identity's MCP server, with `browser: "main"` added to its arguments.
@@ -751,9 +769,10 @@ class BrowserManager:
         """Close the identity of a session that cannot be used any more, and emit `closed` once."""
         if not self._forget(session):
             return
+        self._unrecorded.add(session)
         logger.warning("browser identity {}: {}", session.identity_id, why)
         await session.provider.aclose()
-        self._emit_closed(session.identity_id)
+        self._record_closed(session)
 
     async def _shut_down(self, session: _Session, opening: asyncio.Task[None] | None) -> None:
         """Close a session: `browser_close` first, so Firefox flushes its profile, then the process.
@@ -794,9 +813,10 @@ class BrowserManager:
                 )
             if not self._forget(session):
                 return
+            self._unrecorded.add(session)
             try:
                 await session.provider.aclose()
             finally:
-                self._emit_closed(identity_id)
+                self._record_closed(session)
             logger.info("browser identity {} closed", identity_id)
 
