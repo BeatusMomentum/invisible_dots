@@ -62,8 +62,8 @@ check "no sudoers file names dotengine (the old engine's rule is gone with the c
 # A rule nft refused stopped install.sh (set -e) before the tunnel started: the Dot went out directly with its proxy
 # set. install.sh's own generator runs here on a config that has a proxy, read from a copy of its path.
 vmproxy_rules_ok() {
-  local out=/tmp/vmproxy-check
-  rm -rf "$out"; mkdir -p "$out"
+  local out
+  out=$(mktemp -d)
   printf '{"dotId":"dot_smoke","token":"t","proxy":"socks5://user:p%%40ss@10.0.2.2:1080"}' > /tmp/vmproxy-config.json
   sed -n "/<<'PY'\$/,/^PY\$/p" "$TREE/guest/image-builder/runtime/install.sh" | sed '1d;$d' \
     | sed 's#/etc/invisible-dots/config.json#/tmp/vmproxy-config.json#' > /tmp/vmproxy-gen.py
