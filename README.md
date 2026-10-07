@@ -4,7 +4,7 @@
 <p>AI agents that each own a computer on your PC, with a desktop, a shell, files, memory and skills that stay,<br>
 and browse on a stealth Firefox undetected by anti-bots. Any model on OpenRouter. You decide what each one may do.</p>
 
-<a href="https://github.com/feder-cr/dots/actions/workflows/tests.yml"><img alt="tests" src="https://github.com/feder-cr/dots/actions/workflows/tests.yml/badge.svg"></a>
+<a href="https://github.com/feder-cr/invisible_dots/actions/workflows/tests.yml"><img alt="tests" src="https://github.com/feder-cr/invisible_dots/actions/workflows/tests.yml/badge.svg"></a>
 <a href="LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
 <img alt="status: alpha" src="https://img.shields.io/badge/status-alpha-orange">
 <img alt="hosts: Linux and Windows" src="https://img.shields.io/badge/hosts-Linux%20%7C%20Windows-lightgrey">
@@ -31,7 +31,7 @@ You need Node 24+, Go 1.25+, Git and hardware virtualization (x86-64), plus an O
 
 ```powershell
 winget install -e --id OpenJS.NodeJS.LTS; winget install -e --id GoLang.Go; winget install -e --id Git.Git
-git clone https://github.com/feder-cr/dots; cd dots
+git clone https://github.com/feder-cr/invisible_dots; cd invisible_dots
 npm ci; npm run build --workspace @invisible-dots/cli
 node apps/cli/dist/invisible-dots.mjs setup --all
 node apps/cli/dist/invisible-dots.mjs server
@@ -41,7 +41,7 @@ node apps/cli/dist/invisible-dots.mjs server
 
 ```bash
 curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash - && sudo apt-get install -y nodejs git && sudo snap install go --classic
-git clone https://github.com/feder-cr/dots && cd dots
+git clone https://github.com/feder-cr/invisible_dots && cd invisible_dots
 npm ci && npm run build --workspace @invisible-dots/cli
 node apps/cli/dist/invisible-dots.mjs setup --all
 node apps/cli/dist/invisible-dots.mjs server
@@ -86,41 +86,6 @@ Anything that needs a computer and a person's judgement, for as long as it takes
 | The browser | Chromium, often over CDP | Whatever the sandbox ships | Firefox patched in C++, one identity per profile |
 | Risky actions | Your code decides | Your code decides | Allow, ask or deny per permission, answered from the Inbox or a chat |
 | What you write | Code | Code | A message or a task |
-
-## How it works
-
-```mermaid
-flowchart LR
-  UI["Web UI · CLI · Telegram"] --> API["invisible-dots server<br/>API, scheduler, database"]
-  API -->|"start, stop, wake"| VM
-  subgraph VM["One QEMU VM per Dot"]
-    ENG["Engine<br/>(a nanobot fork)"] --> BR["Firefox identities<br/>over MCP"]
-    ENG --> SH["Shell and files<br/>as the user dot"]
-  end
-  ENG -->|"model requests"| OR["OpenRouter"]
-  BR --> WEB["The web"]
-```
-
-One server process on your PC runs the API, the queue, the approvals and one VM per Dot. Inside each VM the engine
-reasons with your model, runs commands as an unprivileged user and drives its browsers on the VM's desktop. The full
-picture: [docs/architecture.md](docs/architecture.md).
-
-## Security and privacy
-
-- Your OpenRouter key is never written to a Dot's disk or image: it is pushed after every start and held in memory.
-- A Dot's commands run as a user that cannot reach the engine, approve its own calls or become root; the one thing
-  it may do as root is `sudo dot-install` an Ubuntu package.
-- A Dot's computer cannot reach the web UI, and the API refuses it without the token.
-- There is no server of ours and no telemetry: the Dots, their data and the database stay on your PC.
-
-What protects you and where the limits are: [security model and known limits](docs/guide.md#security-model-and-known-limits),
-[privacy](docs/guide.md#privacy).
-
-> [!NOTE]
-> **Alpha.** Nothing is packaged yet: you build it from this repository, and the one thing published is the golden
-> image CI builds from its pinned inputs. The real-VM acceptance run passes its 15 steps on Linux with KVM; Windows
-> runs the same code on the Windows Hypervisor Platform. What is not done yet:
-> [status](docs/guide.md#status-and-what-is-not-done-yet).
 
 ## Documentation
 
