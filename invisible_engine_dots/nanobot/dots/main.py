@@ -36,6 +36,7 @@ from nanobot.dots.provider import OpenRouterProviders
 from nanobot.dots.secrets import KeyHolder
 from nanobot.dots.server import AgentServer
 from nanobot.dots.store import DotStore, StoreOwnedError
+from nanobot.utils.token_encoding import warmup_token_encoding
 
 DEFAULT_AGENT_SOCKET = "/run/invisible-dots-agent/agent.sock"
 # The user every command of the model runs as (dot-agentd's `--run-as`): the one the API socket refuses.
@@ -123,6 +124,10 @@ def configure_logging() -> int:
 
 async def serve(environment: Environment, stop: asyncio.Event) -> None:
     """Run the engine and its API until `stop` is set, then shut down in order."""
+    # The tokenizer's table loads now, from the image's cache, while the host pushes the config and the key. Loaded on
+    # the first count instead, that count (the first turn after every start, so after every wake) would be one token
+    # per byte, about four times the truth, and a long thread would fail as over its budget.
+    warmup_token_encoding()
     refused_uids = refused_peer_uids(environment.model_user)
     state_dir = Path(environment.state_dir)
     store = DotStore.open(state_dir / "engine.sqlite")

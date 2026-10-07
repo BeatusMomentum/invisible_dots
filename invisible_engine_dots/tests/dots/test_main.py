@@ -388,6 +388,17 @@ class TestTheEngineServed:
         assert (state / "engine.sqlite").exists()
         assert "sk-or-served" not in b"".join(p.read_bytes() for p in state.rglob("*") if p.is_file()).decode("latin-1")
 
+    async def test_the_tokenizer_is_loading_before_the_first_turn(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # No turn has run: only the start can have begun the load, so the first count of a turn is the tokenizer's.
+        from nanobot.utils import token_encoding
+
+        monkeypatch.setattr(token_encoding, "_warmup_thread", None)
+        monkeypatch.setattr(token_encoding, "_encoding", None)
+        async with serving():
+            assert token_encoding._warmup_thread is not None
+            token_encoding._warmup_thread.join(30)
+            assert token_encoding.get_token_encoding() is not None
+
     async def test_the_cron_service_keeps_its_jobs_in_the_state_directory(self, served: Served) -> None:
         jobs = Path(served.environment.state_dir) / "cron" / "jobs.json"
         for _ in range(100):
