@@ -57,6 +57,16 @@ test("the computer pill stops and starts the computer", async ({ page, harness }
   await expect(page.getByRole("button", { name: /^Computer: Running/ })).toBeVisible();
 });
 
+test("an address with nothing behind it says so in the app's look, with the way back to Home", async ({ page, harness }) => {
+  const response = await page.goto(`${harness.webUrl}/no-such-page-here`);
+  expect(response?.status()).toBe(404);
+  await expect(page.getByRole("heading", { name: "There is nothing at this address" })).toBeVisible();
+  // The app's own font, not the framework's default page.
+  expect(await page.evaluate(() => getComputedStyle(document.querySelector("h1")!).fontFamily)).toMatch(/Geist/);
+  await page.getByRole("link", { name: "Go to Home" }).click();
+  await expect(page).toHaveURL(`${harness.webUrl}/`);
+});
+
 test("the theme follows the system, can be chosen, and is applied before the page is drawn", async ({ page, harness }) => {
   await page.emulateMedia({ colorScheme: "dark" });
   await page.goto(`${harness.webUrl}/`);
