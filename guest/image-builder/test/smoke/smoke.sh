@@ -70,7 +70,7 @@ vmproxy_rules_ok() {
   python3 /tmp/vmproxy-gen.py "$out" && [ -s "$out/allow.nft" ] && [ -s "$out/hev.yml" ] && nft -c -f "$out/allow.nft"
 }
 check "the VM proxy's firewall that install.sh writes for a proxy is a ruleset nft accepts" "vmproxy_rules_ok"
-check "dotengine is in no group but its own and dot""[ \"\$(id -nG dotengine | tr ' ' '\n' | sort | tr '\n' ' ')\" = 'dot dotengine ' ]"
+check "dotengine is in no group but its own and dot" "[ \"\$(id -nG dotengine | tr ' ' '\n' | sort | tr '\n' ' ')\" = 'dot dotengine ' ]"
 write_host_token
 check "the token file is dot-agentd's own (dotagentd, 0600): neither the engine nor dot, the user of the model's commands, can read it" "[ \"\$(stat -c '%U:%G %a' /etc/invisible-dots/config.json)\" = 'dotagentd:dotagentd 600' ] && ! su -s /bin/bash dotengine -c 'cat /etc/invisible-dots/config.json' >/dev/null 2>&1 && ! su -s /bin/bash dot -c 'cat /etc/invisible-dots/config.json' >/dev/null 2>&1"
 check "dotagentd is in no group but its own, and dot is in neither of the two groups that reach a socket" "[ \"\$(id -nG dotagentd)\" = dotagentd ] && ! id -nG dot | tr ' ' '\n' | grep -qx -e dotagentd -e dotengine"
