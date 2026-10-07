@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseListen } from "@invisible-dots/api";
 import type { HostPaths } from "@invisible-dots/shared";
 import { serve, type ServeDeps } from "../src/serve.js";
@@ -70,15 +70,15 @@ function harness(over: { webStart?: (options: WebServerOptions) => Promise<WebSe
   return { run, log, lines, signals, webOptions, release: () => stopped?.() };
 }
 
-const tick = () => new Promise((resolve) => setTimeout(resolve, 20));
+/** Waits until the check holds: serve starts its parts asynchronously, and a fixed wait loses that race on a loaded machine. */
+const until = (check: () => void) => vi.waitFor(check, { timeout: 5_000, interval: 5 });
 
 describe("serve", () => {
   it("starts the control plane, then the web client on the default address pointed at it, and stops them in the other order", async () => {
     await buildWeb();
     const h = harness();
     const running = h.run({ web: true });
-    await tick();
-    expect(h.log).toEqual(["server start env=given", "web start"]);
+    await until(() => expect(h.log).toEqual(["server start env=given", "web start"]));
     expect(h.webOptions[0]).toMatchObject({ listen: { host: "127.0.0.2", port: 3000 }, apiUrl: "http://127.0.0.1:8787" });
     expect(h.webOptions[0]!.build.missing).toBeUndefined();
     expect(h.lines).toContain("info API token in /home/x/.invisible-dots/config/api.token; stop with Ctrl+C (Dots keep running)");
@@ -92,8 +92,7 @@ describe("serve", () => {
     await buildWeb();
     const h = harness();
     const running = h.run({ web: true, env: { INVISIBLE_DOTS_WEB_LISTEN: "127.0.0.1:3100" } });
-    await tick();
-    expect(h.webOptions[0]!.listen).toEqual({ host: "127.0.0.1", port: 3100 });
+    await until(() => expect(h.webOptions[0]?.listen).toEqual({ host: "127.0.0.1", port: 3100 }));
     h.signals.emit("SIGINT");
     await running;
   });
@@ -123,7 +122,8 @@ describe("serve", () => {
     await buildWeb();
     const h = harness();
     const running = h.run({ web: false, env: { INVISIBLE_DOTS_WEB_LISTEN: "garbage" } });
-    await tick();
+    // Running: it waits for the stop signal.
+    await until(() => expect(h.signals.listenerCount("SIGINT")).toBe(1));
     h.signals.emit("SIGINT");
     await running;
     expect(h.log).toEqual(["server start env=given", "server close"]);
@@ -136,8 +136,7 @@ describe("serve", () => {
       },
     });
     const running = h.run({ web: true });
-    await tick();
-    expect(h.lines).toContain("warn web client not started: http://127.0.0.1:3000 is already in use; the control plane keeps running");
+    await until(() => expect(h.lines).toContain("warn web client not started: http://127.0.0.1:3000 is already in use; the control plane keeps running"));
     expect(h.log).toEqual(["server start env=given"]);
     h.signals.emit("SIGINT");
     await running;
@@ -146,9 +145,11 @@ describe("serve", () => {
 
   it("closes the control plane on Ctrl+C while the web client is still starting, and ends that start", async () => {
     let aborted = false;
+    let starting = false;
     const h = harness({
       webStart: (options) =>
         new Promise((_resolve, reject) => {
+          starting = true;
           options.signal!.addEventListener("abort", () => {
             aborted = true;
             reject(new Error("stopped while the web client was starting"));
@@ -157,7 +158,7 @@ describe("serve", () => {
     });
     await buildWeb();
     const running = h.run({ web: true });
-    await tick();
+    await until(() => expect(starting).toBe(true));
     h.signals.emit("SIGINT");
     await running;
     expect(aborted).toBe(true);
@@ -169,7 +170,7 @@ describe("serve", () => {
   it("names the missing build in the web start it hands over, so the warning carries the fix", async () => {
     const h = harness();
     const running = h.run({ web: true });
-    await tick();
+    await until(() => expect(h.webOptions).toHaveLength(1));
     expect(h.webOptions[0]!.build.missing).toBe(h.webOptions[0]!.build.entry);
     h.signals.emit("SIGINT");
     await running;
