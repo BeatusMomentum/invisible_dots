@@ -20,6 +20,7 @@ tar -C "$src" \
   --exclude=./node_modules --exclude='./*/node_modules' --exclude='./*/*/node_modules' \
   --exclude=.next --exclude=./tmp --exclude=.git \
   --exclude=./apps/cli/dist --exclude=./invisible_engine_dots/.venv \
+  --exclude=./apps/web/test-results --exclude=./apps/web/playwright-report.xml \
   -cf - . | tar -C "$dest" -xf -
 
 cd "$dest"

@@ -141,6 +141,8 @@ test("a focused control keeps an outline under forced colors, where box shadows 
   await expect(page.getByRole("heading", { name: "Create a Dot" })).toBeVisible();
   const forced = await focused();
   expect(forced.outlineStyle).toBe("solid");
-  expect(forced.outlineWidth).toBe("2px");
+  // The button's transition-all eases its outline in from the default width (medium, 3px) over 150 ms: it is read
+  // once settled, or a loaded machine reads it on the way.
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.activeElement!).outlineWidth)).toBe("2px");
   expect(forced.outlineColor).not.toMatch(/rgba\(0, 0, 0, 0\)|transparent/);
 });
