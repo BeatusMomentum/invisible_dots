@@ -16,6 +16,7 @@ import type {
   OutboundEvent,
   RefusedEvent,
   SystemAnswer,
+  SkillListAnswer,
   ToolListAnswer,
   VmState,
 } from "@invisible-dots/shared";
@@ -43,6 +44,7 @@ export interface GuestApi {
   /** End the identity's browser and keep its profile; closing a closed identity is not an error. */
   closeBrowserIdentity(id: string): Promise<void>;
   listTools(): Promise<ToolListAnswer>;
+  listSkills(): Promise<SkillListAnswer>;
   prepareSleep(timeoutMs?: number): Promise<void>;
   screenshot(): Promise<Uint8Array>;
   /** The bytes of a file; a file larger than `maxBytes` is refused with status 413 and code `FILE_TOO_LARGE`. */

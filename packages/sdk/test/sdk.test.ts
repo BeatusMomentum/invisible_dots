@@ -75,6 +75,23 @@ describe("InvisibleDotsClient", () => {
     expect(seen).toEqual(["GET /api/dots/a%20b/tools"]);
   });
 
+  it("the skill method uses the route the API serves, the name encoded, and unwraps the answer", async () => {
+    const seen: string[] = [];
+    const skill = { name: "shop-login", description: "Log in.", source: "dot", path: "/home/dot/skills/shop-login/SKILL.md", content: "x" };
+    const client = new InvisibleDotsClient({
+      baseUrl: "http://api.test",
+      token: "t",
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        seen.push(`${request.method} ${new URL(request.url).pathname}`);
+        return new Response(JSON.stringify({ skills: [skill] }));
+      },
+    });
+
+    expect(await client.listSkills("a b")).toEqual([skill]);
+    expect(seen).toEqual(["GET /api/dots/a%20b/skills"]);
+  });
+
   it("events and file methods send the query the API routes expect, with names and paths encoded", async () => {
     const seen: string[] = [];
     const client = new InvisibleDotsClient({

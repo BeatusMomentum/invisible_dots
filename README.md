@@ -270,10 +270,13 @@ History lists the answered ones.
 - **Tasks**: what is running (with its latest progress line and its cost), what
   is scheduled and queued, and the history. Create a task, cancel one after a
   question, and open one for its result and its story.
-- **Computer**: Screen, Browser, Files and Usage. Browser lists the Dot's
-  browser identities and shows the window of an open one. Files is a read-only
-  walk through `/home/dot`. Usage shows what the computer was given and what it
-  uses, the model spend today and in total, and Start, Reboot and Stop.
+- **Computer**: Screen, Files and Usage. Screen is the Dot's desktop, where an
+  open browser is a window. Files is a read-only walk through `/home/dot`. Usage
+  shows what the computer was given and what it uses, the model spend today and
+  in total, and Start, Reboot and Stop.
+- **Skills**: how the Dot does a kind of task, read only: the built-in ones (the
+  first says how to use its browser) and the ones it writes itself in
+  `/home/dot/skills` as it learns, as Claude Code does.
 - **Channels**: Telegram and WhatsApp, below.
 - **Activity**: the whole event log as readable lines, filtered by kind,
   searchable, and exportable as JSON Lines.
@@ -283,10 +286,9 @@ History lists the answered ones.
   shows each permission's risk and which tools it covers. Deleting the Dot asks
   you to type its name.
 
-**Watching the computer.** The desktop and each open browser are shown as
-pictures that the control plane reads from the guest every few seconds while the
-page is in view, with a LIVE badge, a warning when a picture is more than 15
-seconds old, and a mark on the browser the Dot is using right now. It is a view
+**Watching the computer.** The desktop is shown as pictures that the control
+plane reads from the guest every few seconds while the page is in view, with a
+LIVE badge and a warning when a picture is more than 15 seconds old. It is a view
 and not a remote desktop: it says "The Dot has control", because nothing you do
 in it reaches the computer.
 

@@ -236,6 +236,7 @@ export const AGENT_ROUTES = {
   /** `POST` (204): end the identity's browser, keep its profile. Closing a closed identity is not an error. */
   browserIdentityClose: (id: string) => `/browser-identities/${encodeURIComponent(id)}/close`,
   tools: "/tools",
+  skills: "/skills",
   prepareSleep: "/prepare-sleep",
 } as const;
 
@@ -463,6 +464,32 @@ export type ToolInfo = z.infer<typeof toolInfoSchema>;
 /** `GET /tools`, in the engine's table order, which groups the tools by permission. */
 export interface ToolListAnswer {
   tools: ToolInfo[];
+}
+
+/** Where a skill comes from: it ships with invisible_dots, or the Dot wrote it under /home/dot/skills. */
+export const SKILL_SOURCES = ["builtin", "dot"] as const;
+
+/**
+ * One skill of the Dot, as `GET /skills` shows it (the engine owns the list: nanobot/dots/skills.py): how it does a
+ * kind of task, a SKILL.md whose frontmatter names it and says when it applies. One of the Dot's own replaces a
+ * built-in one of the same name.
+ */
+export const skillSchema = z
+  .object({
+    name: z.string(),
+    description: z.string(),
+    source: z.enum(SKILL_SOURCES),
+    /** The SKILL.md on the Dot's computer. */
+    path: z.string(),
+    /** The whole file, frontmatter included. */
+    content: z.string(),
+  })
+  .strict();
+export type Skill = z.infer<typeof skillSchema>;
+
+/** `GET /skills`, by name. */
+export interface SkillListAnswer {
+  skills: Skill[];
 }
 
 /** Every error body, on the host API and in the guest (section 9.6). */

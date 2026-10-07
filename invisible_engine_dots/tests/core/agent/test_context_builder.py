@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from nanobot.agent.context import ContextBuilder, TranscriptInput
+from nanobot.dots.skills import Skill
 
 NOW = datetime(2026, 10, 5, 14, 30, tzinfo=timezone.utc)
 DOT = 'You are the Dot "fare-watch". Your goal:\nWatch fares.'
@@ -37,7 +38,8 @@ def test_the_system_prompt_is_the_dot_the_tool_contract_and_its_computer() -> No
 def test_nothing_of_the_upstream_assistants_identity_or_platform_is_left() -> None:
     prompt = builder().build_system_prompt()
 
-    for leftover in ("nanobot", "Windows", "POSIX", "channel", "SOUL", "AGENTS", "HEARTBEAT", "skills"):
+    # Skills are the Dot's own now (nanobot/dots/skills.py), not upstream's bundled ones.
+    for leftover in ("nanobot", "Windows", "POSIX", "channel", "SOUL", "AGENTS", "HEARTBEAT", "clawhub"):
         assert leftover not in prompt
 
 
@@ -54,6 +56,19 @@ def test_the_memory_section_names_the_notes_it_was_given() -> None:
     prompt = builder(("b.md", "a.md")).build_system_prompt()
 
     assert "Most recently changed notes: b.md, a.md." in prompt
+
+
+def test_the_skills_section_names_each_skill_with_its_description_and_file_and_says_how_to_write_one() -> None:
+    skills = (
+        Skill("invisible-playwright", "Use the browser.", "/opt/engine/skills/invisible-playwright/SKILL.md", "builtin", ""),
+        Skill("shop-login", "Log in to the shop.", "/home/dot/skills/shop-login/SKILL.md", "dot", ""),
+    )
+    prompt = ContextBuilder(DOT, workspace="/home/dot/workspace", memory_dir="/home/dot/memory", memory_notes=(), now=NOW, skills=skills).build_system_prompt()
+
+    assert "- invisible-playwright: Use the browser. (/opt/engine/skills/invisible-playwright/SKILL.md)" in prompt
+    assert "- shop-login: Log in to the shop. (/home/dot/skills/shop-login/SKILL.md)" in prompt
+    assert "read its file with read_file" in prompt
+    assert "/home/dot/skills/<name>/SKILL.md" in prompt
 
 
 def test_a_session_summary_is_added_and_a_nothing_summary_is_not() -> None:

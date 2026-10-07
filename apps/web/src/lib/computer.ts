@@ -1,5 +1,5 @@
 /** What the Computer page shows: allocated resources from the config, live usage from the VM when it runs. */
-import { COMPUTER_STOPPED, computerIsUp, FRAME_ERROR_CODES } from "@invisible-dots/shared/browser";
+import { COMPUTER_STOPPED, computerIsUp } from "@invisible-dots/shared/browser";
 import { ApiError } from "./api";
 import { relativeTime } from "./time";
 import type { Computer, DotConfig, SystemAnswer, VmState } from "./types";
@@ -26,21 +26,10 @@ export function isComputerStopped(error: unknown): boolean {
   return error instanceof ApiError && error.status === 409 && error.code === COMPUTER_STOPPED;
 }
 
-export interface FrameProblem {
-  /** What to tell the person. */
-  text: string;
-  /** The identity is not open any more: the list should be read again and the view go back to the screen. */
-  closed: boolean;
-}
-
-/** What a failed read of a picture (the desktop, or an identity's window) means for the person. */
-export function frameProblem(error: unknown): FrameProblem {
-  if (error instanceof ApiError) {
-    if (error.code === FRAME_ERROR_CODES.notOpen) return { text: "This browser was closed.", closed: true };
-    if (error.code === FRAME_ERROR_CODES.busy) return { text: "The Dot is using this browser right now. The picture comes back when it is done.", closed: false };
-    if (error.code === COMPUTER_STOPPED) return { text: "The computer is not running.", closed: false };
-  }
-  return { text: error instanceof Error ? error.message : String(error), closed: false };
+/** What a failed read of the desktop's picture means for the person. */
+export function frameProblem(error: unknown): string {
+  if (error instanceof ApiError && error.code === COMPUTER_STOPPED) return "The computer is not running.";
+  return error instanceof Error ? error.message : String(error);
 }
 
 export interface Usage {

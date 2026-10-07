@@ -736,6 +736,7 @@ command detached into another session outlives it.
 | `GET /browser-identities/:id/frame` | | `200 image/jpeg` (`Cache-Control: no-store`), one frame of the identity's window, taken with the server's `browser_watch`; `404 not_found`; `409 not_open` when the identity is closed; `503 busy` when a call of the Dot held the identity for longer than 5 seconds; `502 frame_failed` (the server has no page to show, or sent a frame that is not a JPEG: the engine is the one owner of that rule, the host passes the bytes on as `image/jpeg`) or `crashed` |
 | `POST /browser-identities/:id/close` | | `204` after the identity's browser is closed through `browser_close` and its server has ended; the profile stays. Closing a closed identity is a `204` too; `404 not_found` |
 | `GET /tools` | | `{ tools: [{ name, permission, offered, description }] }`: the engine's tool table (section 8.8) in its order; `offered` is whether the model is offered the tool now (its permission is not `deny`, and a tool that creates or deletes a browser identity needs the Dot to manage its identities; before the first config, none); `description` is the one in the tool's schema |
+| `GET /skills` | | `{ skills: [{ name, description, source, path, content }] }`: the Dot's skills (section 8.6) by name, the built-in ones and its own (`source` is `builtin` or `dot`), each with the whole of its SKILL.md |
 | `POST /prepare-sleep` | | `204` after the state is flushed and browser sessions are closed; the agent then starts no new work. A model request in flight is abandoned; a tool in flight gets up to 20 seconds to finish and record its result, then is aborted (section 8.7). A `POST /secrets` (the READY procedure of a VM whose stop failed, so no shutdown followed) lifts that, and so does a new inbound event |
 
 The identity routes and the model's identity tools are one code path, the
@@ -1300,6 +1301,21 @@ are cut with a marker.
   not answering) leaves the names out of that prompt and the turn goes on.
 - Workspace memory: `/home/dot/workspace` and `/home/dot/memory`, reached
   through the file tools.
+- Skills: how the Dot does a kind of task, one folder each with a SKILL.md, the
+  Agent Skills layout Claude Code and upstream nanobot read (a frontmatter whose
+  `name` is the folder's and whose `description` says in one line when it applies,
+  then the steps). Built-in ones ship with the engine, beside its package
+  (`invisible_engine_dots/skills/`, on the runtime disk at
+  `/opt/invisible-dots/engine/skills/`); the first, `invisible-playwright`, says how
+  to use the browser: identities, the order a page cannot tell from a person
+  (a selector, then coordinates, then a screenshot), and when to say a task is
+  impossible. The Dot writes its own under `/home/dot/skills/<name>/SKILL.md` with
+  the file tools as it learns, and one of its own replaces a built-in one of the
+  same name. The system prompt names every skill with its description and the path
+  of its file, read again each turn (`nanobot/dots/skills.py`), and says to read the
+  file before a task it covers and how to write one: only the names and the
+  descriptions are in every request. A file that does not parse is left out and
+  logged. `GET /skills` (section 5.3) shows the same list to the host.
 
 ### 8.7 Crash recovery
 
@@ -1889,6 +1905,7 @@ GET    /api/dots/:id/events          ?after=<id>&before=<id>&limit=&types=<a,b>&
 GET    /api/dots/:id/files/list      ?path=   { path, entries: [{ name, type, size, mtime }] }: a directory under /home/dot (home when omitted)
 GET    /api/dots/:id/files           ?path=   the bytes of a file under /home/dot, at most 16 MiB (413 `file_too_large`)
 GET    /api/dots/:id/tools           { tools: [{ name, permission, offered, description }] }: the engine's tool table and what the model is offered now; needs the computer running
+GET    /api/dots/:id/skills          { skills: [{ name, description, source, path, content }] }: the Dot's skills (section 8.6); needs the computer running
 GET    /api/dots/:id/usage           ?since=<ISO 8601 timestamp>   { dot_id, since, spent_usd }
 GET    /api/stream                   SSE: every event, ?dot_id= to filter
 PUT    /api/secrets/openrouter       body: { value, dot_id? }
@@ -1939,10 +1956,10 @@ no task. Migration `0006_events_task.sql` adds the expression index the task
 filter reads. A type name no event has (`tool.calls`) is a 400, so a typo does not
 look like a quiet Dot.
 
-`GET /api/dots/:id/tools` passes through to the engine's route of section 5.3: the
-tool table is the engine's, and the control plane keeps no copy of it. It needs the
-computer running (`409 computer_stopped`), and the engine's own refusals pass
-through with their code and status.
+`GET /api/dots/:id/tools` and `GET /api/dots/:id/skills` pass through to the engine's
+routes of section 5.3: the tool table and the skills are the engine's, and the control
+plane keeps no copy of either. They need the computer running (`409 computer_stopped`),
+and the engine's own refusals pass through with their code and status.
 
 `GET /api/dots/:id/files/list` and `GET /api/dots/:id/files` read the Dot's
 computer through dot-agentd's `GET /v1/files/list` and `GET /v1/files`, and
@@ -2125,7 +2142,7 @@ text, Enter sends and Shift+Enter adds a line, and an unsent draft is kept per D
 in this browser. The computer panel is always beside the thread (from 1024 px; a
 strip above it below that), and both reach the bottom of the window: the page column
 is as tall as the window, a Dot's header and tabs stay and the tab's body fills the
-rest. The panel shows the desktop and each open browser as
+rest. The panel shows the desktop, an open browser being a window on it, as
 the pictures the host reads from the guest every few seconds while the page is
 visible, with a LIVE badge, a warning when a frame is more than 15 s old, and the
 words "The Dot has control", because nothing the person does there reaches the
@@ -2169,34 +2186,14 @@ card under "Channels to link again" with what the host says and a link to the Ch
 the Dot in the rail and its Channels tab. The shell reads each Dot's `GET /api/dots/:id/channels` for it and again on `channel.status` and `channel.changed` (the host announces a pause, a resume and a removal, which no status says, so the marks follow them without a reload); a Dot whose channels
 cannot be read is counted and said, not hidden.
 
-The Computer page (`/dots/<id>/computer`) has four views, named in the address
-(`?view=screen|browser|files|usage`, Screen when it says nothing; the old
-`/dots/<id>/identities` redirects to `?view=browser`). The first three read the
-guest and need the computer running: when it is not, they say why and offer
-Start, and a route's own 409 `computer_stopped` gets the same answer. Screen is
-the desktop as the chat's panel shows it (one `FrameView` draws both), with
-"The Dot has control". Browser lists the Dot's identities, open ones first
-(`GET /browser-identities`, read again on each `browser.identity.*` event, so a
-card is never refreshed by a second route): the state in words (Closed is the
-engine's `available`), the last use, whether it has a proxy of its own (`hasProxy`; the proxy itself never leaves the guest),
-the window of an open one (`.../frame`, every 2 s while the page is in view)
-under a bar with the page the Dot last sent it to, and a mark "The Dot is using
-this now". Both come from the log, not from the identity routes, which know
-neither: the `target` of a `tool.called` of a browser tool starts with the
-identity's id (`<id>` or `<id>: <detail>`, the detail of `browser_navigate` being
-its URL as a command's URLs are shown), and a mark lasts 20 s after the call
-(`lib/browser-activity.ts`; the newest 500 events of the browser tools' calls and
-of `browser.identity.launched|closed` are read once while a browser is open,
-newest first and filtered by `types` and `tools` in the database, so the Dot's
-other calls never cross the wire, then followed live and kept to the newest 500;
-a long run of calls to one browser can push another's last navigation out of that
-window, and that browser then shows no page). The page is the last successful navigation after the browser's
-last `launched` or `closed`; a page reached by a link is not known. The person
-creates (a name and an optional proxy in a password field, checked by `checkIdentityRequest`, the
-engine's own rule), closes (`POST .../close`, the profile stays, asked first when
-the Dot is working in it) and deletes (asked first, saying that the profile goes)
-browsers; the engine enforces `max_identities` and `max_open` for them as it does
-for the Dot's tools, and the page states them. Files is a read-only walk through
+The Computer page (`/dots/<id>/computer`) has three views, named in the address
+(`?view=screen|files|usage`, Screen when it says nothing, and so for an address of the
+Browser view that was). Screen and Files read the guest and need the computer running:
+when it is not, they say why and offer Start, and a route's own 409 `computer_stopped`
+gets the same answer. Screen is the desktop as the chat's panel shows it (one
+`FrameView` draws both), with "The Dot has control"; the Dot's browsers have no view of
+their own, an open one is a window of that desktop, and the Dot makes, opens and closes
+them with its tools. Files is a read-only walk through
 `/home/dot` (`GET /files/list`, `GET /files`): the folder and the open file are in
 the address, a text file is shown as text and an image as a picture, and
 everything else, and any file over 1 MiB (text) or 8 MiB (image), is a download
@@ -2212,6 +2209,14 @@ Stop always asks and says that the automations do not run while the computer is 
 off: "Paused: you stopped this computer" when the person's stop paused them, otherwise when
 the next one is due (and that a computer asleep starts shortly before), or that none is due;
 it follows `computer.*` events and `automation.next_run`.
+
+The Skills page (`/dots/<id>/skills`, a tab between Computer and Activity) lists the
+Dot's skills (`GET /skills`, section 8.6), read only: each with its name, its
+description and whether it is built in or written by the Dot, and the open one (in the
+address, `?skill=<name>`) shown as Markdown by the chat's renderer, its frontmatter left
+out and its path above it. It reads the Dot's computer, so a computer that is not
+running is said with Start, and the list is read again when a turn ends, which may have
+written a skill.
 
 The Channels page (`/dots/<id>/channels`) is one card per channel the server runs (`available` in `GET /api/dots/:id/channels`): Telegram always,
 WhatsApp only when the server was started with `INVISIBLE_DOTS_WHATSAPP=1`. Telegram not connected asks for the bot's token (a password field, sent once over

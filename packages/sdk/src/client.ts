@@ -10,6 +10,8 @@ import {
   type ListOrder,
   type StoredEvent,
   type ToolInfo,
+  type Skill,
+  type SkillListAnswer,
   type ToolListAnswer,
 } from "@invisible-dots/shared/browser";
 import type {
@@ -405,11 +407,16 @@ export class InvisibleDotsClient {
     ).events;
   }
 
-  // The tools of the Dot's engine: the computer must be running (409 computer_stopped)
+  // The tools and the skills of the Dot's engine: the computer must be running (409 computer_stopped)
 
   /** The Dot's tools, each with the permission it exercises and whether the model is offered it now. */
   async listTools(idOrName: string): Promise<ToolInfo[]> {
     return (await this.#json<ToolListAnswer>("GET", `/api/dots/${enc(idOrName)}/tools`)).tools;
+  }
+
+  /** The Dot's skills, the built-in ones and its own, each with its whole file. */
+  async listSkills(idOrName: string): Promise<Skill[]> {
+    return (await this.#json<SkillListAnswer>("GET", `/api/dots/${enc(idOrName)}/skills`)).skills;
   }
 
   // Files of the Dot's computer: read-only, under /home/dot, and the computer must be running (409 computer_stopped)

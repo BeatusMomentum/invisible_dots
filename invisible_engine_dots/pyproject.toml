@@ -56,6 +56,7 @@ allow-direct-references = true
 include = [
     "nanobot/**/*.py",
     "nanobot/templates/**/*.md",
+    "skills/*/SKILL.md",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -67,6 +68,7 @@ packages = ["nanobot"]
 [tool.hatch.build.targets.sdist]
 include = [
     "nanobot/",
+    "skills/",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
     "UPSTREAM.md",

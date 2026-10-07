@@ -1,5 +1,5 @@
-"""What the engine answers to `GET /tools`, and the data of every outbound event it writes, pinned in a file the host
-checks.
+"""What the engine answers to `GET /tools` and `GET /skills`, and the data of every outbound event it writes, pinned in
+a file the host checks.
 
 The host describes these answers with schemas in `packages/shared/src/protocol.ts` (`toolInfoSchema`). The engine is Python and cannot import them, so this test writes what the engine really answers into
 `wire_shapes.json`, and `apps/scheduler/test/engine-shapes.test.ts` parses that file with the schemas and runs the
@@ -33,6 +33,7 @@ from fakes.scripted_provider import ScriptEntry, call, calls, says
 from nanobot.cron.types import MAX_RUN_AT_MS
 from nanobot.dots import store as dots_store
 from nanobot.dots.permissions import TOOL_PERMISSIONS, offered_tools, tool_table
+from nanobot.dots.skills import builtin_skills
 from nanobot.dots.protocol import OUTBOUND_EVENT_TYPES
 from nanobot.providers.base import LLMResponse
 
@@ -153,6 +154,11 @@ def _shapes(outbound_events: list[dict[str, Any]]) -> dict[str, Any]:
         "limits": {"max_run_at_ms": MAX_RUN_AT_MS},
         "outbound_events": outbound_events,
         "tool_offering": cases,
+        # What `GET /skills` answers for a Dot that wrote none of its own (Engine.skills), the path made stable.
+        "skills": [
+            {"name": s.name, "description": s.description, "source": s.source, "path": f"/engine/skills/{s.name}/SKILL.md", "content": s.content}
+            for s in builtin_skills()
+        ],
     }
 
 

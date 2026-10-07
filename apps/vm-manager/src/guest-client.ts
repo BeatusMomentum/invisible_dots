@@ -38,6 +38,7 @@ import {
   type ProofAnswer,
   type RefusedEvent,
   type SystemAnswer,
+  type SkillListAnswer,
   type ToolListAnswer,
 } from "@invisible-dots/shared";
 import { GuestRequestError } from "./errors.js";
@@ -358,6 +359,11 @@ export class GuestClient {
   /** The Dot's tools and whether the model is offered each now. */
   listTools(): Promise<ToolListAnswer> {
     return this.json({ path: this.agentPath(AGENT_ROUTES.tools) });
+  }
+
+  /** The Dot's skills, the built-in ones and its own, each with its whole file. */
+  listSkills(): Promise<SkillListAnswer> {
+    return this.json({ path: this.agentPath(AGENT_ROUTES.skills) });
   }
 
   /** Flushes state and closes browser sessions; can take a while with several browsers open. */

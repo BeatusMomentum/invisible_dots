@@ -29,6 +29,8 @@ async function writeEngineTree(root: string): Promise<void> {
     "nanobot/README.md": "not a template: left out\n",
     "nanobot/data.json": "{}\n",
     "nanobot/__pycache__/main.cpython-312.pyc": "bytecode",
+    "skills/web-forms/SKILL.md": "---\nname: web-forms\ndescription: Fill a form.\n---\n",
+    "skills/web-forms/notes.txt": "beside the skill: left out\n",
     "tests/test_main.py": "def test(): ...\n",
     "pyproject.toml": "[project]\n",
     LICENSE: "MIT\n",
@@ -103,6 +105,7 @@ describe("buildRuntimeIso", () => {
         "engine/nanobot/__init__.py",
         "engine/nanobot/dots/main.py",
         "engine/nanobot/templates/agent/tool_contract.md",
+        "engine/skills/web-forms/SKILL.md",
         "install.sh",
         ...GUEST_UNITS.map((unit) => `units/${unit}`),
       ].sort(),
@@ -171,6 +174,7 @@ describe("buildRuntimeIso", () => {
       "engine/nanobot/dots/main.py",
       "engine/nanobot/agent/tools/shell.py",
       "engine/nanobot/templates/agent/tool_contract.md",
+      "engine/skills/invisible-playwright/SKILL.md",
     ]) {
       expect(staged).toContain(path);
     }

@@ -159,11 +159,13 @@ describe("GuestClient", () => {
     expect(seen.every((s) => s.auth === `Bearer ${TOKEN}`)).toBe(true);
   });
 
-  it("calls the tool route with the bearer token", async () => {
+  it("calls the tool and skill routes with the bearer token", async () => {
     const { port, seen } = await serve((req, res) => {
       switch (`${req.method} ${req.url}`) {
         case "GET /v1/agent/tools":
           return json(res, 200, { tools: [{ name: "exec", permission: "computer.exec", offered: true, description: "Run." }] });
+        case "GET /v1/agent/skills":
+          return json(res, 200, { skills: [{ name: "shop-login", description: "Log in.", source: "dot", path: "/home/dot/skills/shop-login/SKILL.md", content: "x" }] });
         default:
           return json(res, 404, { error: "not_found", message: req.url });
       }
@@ -171,7 +173,8 @@ describe("GuestClient", () => {
     const client = new GuestClient(port, TOKEN);
 
     expect((await client.listTools()).tools.map((tool) => tool.name)).toEqual(["exec"]);
-    expect(seen.map((s) => s.auth)).toEqual([`Bearer ${TOKEN}`]);
+    expect((await client.listSkills()).skills.map((skill) => skill.name)).toEqual(["shop-login"]);
+    expect(seen.map((s) => s.auth)).toEqual([`Bearer ${TOKEN}`, `Bearer ${TOKEN}`]);
   });
 
   it("passes the guest's outside_home refusal of a file path on", async () => {

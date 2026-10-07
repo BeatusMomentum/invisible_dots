@@ -15,13 +15,14 @@ describe("the address of the Computer page", () => {
 
   it("keeps the folder and the file for the Files view alone", () => {
     expect(parseComputerQuery({ view: "files", path: "/home/dot/memory", file: "fares.md" })).toEqual({ view: "files", path: "/home/dot/memory", file: "fares.md" });
-    expect(parseComputerQuery({ view: "browser", path: "/home/dot/memory", file: "fares.md" })).toEqual({ view: "browser", path: null, file: null });
+    expect(parseComputerQuery({ view: "usage", path: "/home/dot/memory", file: "fares.md" })).toEqual({ view: "usage", path: null, file: null });
+    // The Browser view is gone: an old address of it opens the screen, where an open browser is a window.
+    expect(parseComputerQuery({ view: "browser" }).view).toBe("screen");
   });
 
   it("writes the shortest address that says the same, with the Dot's name or id encoded", () => {
     expect(computerHref("d1")).toBe("/dots/d1/computer");
     expect(computerHref("d1", { view: "screen" })).toBe("/dots/d1/computer");
-    expect(computerHref("d1", { view: "browser" })).toBe("/dots/d1/computer?view=browser");
     expect(computerHref("my dot", { view: "usage" })).toBe("/dots/my%20dot/computer?view=usage");
     expect(computerHref("d1", { view: "files" })).toBe("/dots/d1/computer?view=files");
     expect(computerHref("d1", { view: "files", path: "/home/dot/a b", file: "c&d.txt" })).toBe("/dots/d1/computer?view=files&path=%2Fhome%2Fdot%2Fa+b&file=c%26d.txt");

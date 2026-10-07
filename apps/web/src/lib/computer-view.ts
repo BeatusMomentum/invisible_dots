@@ -1,13 +1,12 @@
 /**
  * The address of the Computer page and what it says. The address holds everything (`computer?view=files&path=/home/dot/memory&file=fares.md`),
- * so a link into a folder, a reload and the back button all land where the person was, and the old Browser
- * identities address has somewhere to redirect to.
+ * so a link into a folder, a reload and the back button all land where the person was.
  */
 
-export const COMPUTER_VIEWS = ["screen", "browser", "files", "usage"] as const;
+export const COMPUTER_VIEWS = ["screen", "files", "usage"] as const;
 export type ComputerSection = (typeof COMPUTER_VIEWS)[number];
 
-export const COMPUTER_VIEW_LABELS: Record<ComputerSection, string> = { screen: "Screen", browser: "Browser", files: "Files", usage: "Usage" };
+export const COMPUTER_VIEW_LABELS: Record<ComputerSection, string> = { screen: "Screen", files: "Files", usage: "Usage" };
 
 export interface ComputerQuery {
   view: ComputerSection;

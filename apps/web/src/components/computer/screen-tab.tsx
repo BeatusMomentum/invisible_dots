@@ -15,7 +15,7 @@ export function ScreenTab({ dotId }: { dotId: string }) {
         </h2>
         <p className="text-xs text-muted-foreground">The Dot has control. You are watching.</p>
       </div>
-      <FrameView dotId={dotId} source={{ kind: "screen" }} />
+      <FrameView dotId={dotId} />
     </section>
   );
 }

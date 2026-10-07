@@ -42,6 +42,7 @@ from nanobot.dots.gate import close_open_calls
 from nanobot.dots.images import TurnImages, bind_turn_images, reset_turn_images
 from nanobot.dots.permissions import tool_starts_terminal, tool_target
 from nanobot.dots.projection import EngineSettings
+from nanobot.dots.skills import all_skills
 from nanobot.dots.provider import OpenRouterProviders
 from nanobot.dots.secrets import KeyHolder
 from nanobot.dots.spend import CostCapReached, TurnSpend
@@ -300,6 +301,7 @@ class TurnRunner:
             memory_dir=MEMORY_DIR,
             memory_notes=await self._recent_notes(),
             now=datetime.now().astimezone(),
+            skills=await all_skills(self._computer),
         )
 
         async def commit(payload: dict[str, Any]) -> None:

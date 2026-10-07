@@ -5,19 +5,19 @@ import { COMPUTER_VIEW_LABELS, COMPUTER_VIEWS, computerHref, type ComputerQuery 
 import { useDot } from "../DotShell";
 import { Skeleton } from "../ui/skeleton";
 import { ViewTabs } from "../view-tabs";
-import { BrowserTab } from "./browser-tab";
 import { ComputerOff } from "./computer-off";
 import { FilesTab } from "./files-tab";
 import { ScreenTab } from "./screen-tab";
 import { UsageTab } from "./usage-tab";
 
 /** What each view says when the computer is not running; Usage reads while it is off, so it has none. */
-const NEEDS_THE_COMPUTER = { screen: "Start the computer to see its screen", browser: "Start the computer to see its browsers", files: "Start the computer to see its files", usage: null } as const;
+const NEEDS_THE_COMPUTER = { screen: "Start the computer to see its screen", files: "Start the computer to see its files", usage: null } as const;
 
 /**
- * The Computer page (S9): the Dot's screen, its browsers, its files and what the computer uses. The view is in the
- * address (`?view=`), so each is a link of its own. The first three need the computer running and say so when it is
- * not; the page follows the computer starting and stopping by itself.
+ * The Computer page (S9): the Dot's screen, its files and what the computer uses. The view is in the address
+ * (`?view=`), so each is a link of its own. The screen and the files need the computer running and say so when it
+ * is not; the page follows the computer starting and stopping by itself. The Dot's browsers have no view of their
+ * own: an open one is a window of the desktop, on the screen.
  */
 export function ComputerView({ query }: { query: ComputerQuery }) {
   const { dotId, dot } = useDot();
@@ -40,8 +40,6 @@ function Body({ query, dotId, state }: { query: ComputerQuery; dotId: string; st
   switch (query.view) {
     case "screen":
       return <ScreenTab dotId={dotId} />;
-    case "browser":
-      return <BrowserTab />;
     case "files":
       return <FilesTab dotId={dotId} query={query} />;
   }

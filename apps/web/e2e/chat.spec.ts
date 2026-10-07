@@ -143,7 +143,7 @@ test("an approval the Dot asks for in the chat is a card where it was asked, the
   expect((await harness.api.listApprovals("approved")).map((a) => a.dot_id)).toEqual([dot.id]);
 });
 
-test("the computer panel shows the desktop and each open browser, and follows a browser being opened and closed", async ({ page, harness }) => {
+test("the computer panel shows the desktop, where a browser the Dot opens is a window, and nothing else to pick", async ({ page, harness }) => {
   const dot = await harness.createDot("chat-panel");
   const guest = harness.driver.guestOf(dot.id);
   await page.setViewportSize({ width: 1400, height: 900 });
@@ -156,26 +156,13 @@ test("the computer panel shows the desktop and each open browser, and follows a 
   // The thread is still beside it, and the person can still write.
   await expect(page.getByRole("textbox", { name: "Message" })).toBeVisible();
 
-  // A browser opens: it is offered, and picking it reads its frame.
+  // A browser the Dot opens is a window of that desktop: the panel offers nothing else to watch.
   const identity = await harness.api.createIdentity(dot.id, { name: "shopping" });
-  await expect(panel.getByRole("button", { name: "Browser: shopping" })).toHaveCount(0);
   guest.launchIdentity(identity.id);
-  await panel.getByRole("button", { name: "Browser: shopping" }).click();
-  await expect(panel.getByRole("img", { name: /current picture of the browser "shopping"/ })).toHaveAttribute("src", /^blob:/);
-  await expect(panel.getByRole("button", { name: "Browser: shopping" })).toHaveAttribute("aria-pressed", "true");
-
-  // A call of the Dot holds the browser: the picture stays and the panel says why.
-  guest.identityBusy = true;
-  await panel.getByRole("button", { name: "Refresh" }).click();
-  await expect(panel.getByText(/using this browser right now/)).toBeVisible();
-  await expect(panel.getByRole("img", { name: /browser "shopping"/ })).toBeVisible();
-  guest.identityBusy = false;
-
-  // The browser closes: the panel goes back to the desktop and stops offering it.
-  await harness.api.closeIdentity(dot.id, identity.id);
-  await expect(panel.getByRole("button", { name: "Browser: shopping" })).toHaveCount(0);
+  await expect.poll(async () => (await harness.api.listIdentities(dot.id))[0]?.status).toBe("open");
+  await expect(panel.getByRole("group", { name: "What to watch" })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: /^Browser:/ })).toHaveCount(0);
   await expect(panel.getByRole("img", { name: /current picture of the desktop/ })).toBeVisible();
-  await expect(panel.getByRole("button", { name: "Desktop" })).toHaveAttribute("aria-pressed", "true");
 
   // The thread and the computer are side by side, and both reach the bottom of the window (the page's own padding
   // below them, no more): the page does not scroll, and nothing is left empty under them.

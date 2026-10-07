@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { MAX_HOST_FILE_BYTES, type BrowserIdentity } from "@invisible-dots/shared/browser";
+import { MAX_HOST_FILE_BYTES } from "@invisible-dots/shared/browser";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { toast } from "sonner";
@@ -9,7 +9,6 @@ import { DotShell } from "../src/components/DotShell";
 import { DotEventScope, EventStreamProvider } from "../src/components/events";
 import { AttentionProvider } from "../src/components/shell/attention";
 import { Toaster } from "../src/components/ui/sonner";
-import { BROWSER_ACTIVITY_EVENT_TYPES, BROWSER_ACTIVITY_TOOLS, BROWSER_ACTIVITY_WINDOW } from "../src/lib/browser-activity";
 import { parseComputerQuery } from "../src/lib/computer-view";
 import { stubMatchMedia, stubObjectUrls } from "./support/browser";
 import { dotRecord, FakeControlPlane } from "./support/control-plane";
@@ -36,10 +35,6 @@ afterEach(() => {
 
 const requested = (pattern: RegExp) => plane.requests.filter((r) => pattern.test(r));
 
-function identity(id: string, name: string, status: BrowserIdentity["status"], change: Partial<BrowserIdentity> = {}): BrowserIdentity {
-  return { id, name, status, createdAt: "2026-01-01T00:00:00Z", lastUsedAt: null, profilePath: `/home/dot/browsers/${id}`, hasProxy: false, ...change };
-}
-
 /** The Computer page as the Dot's layout puts it: inside the Dot's shell, with the view the address names. */
 async function renderComputer(params: Record<string, string> = {}) {
   render(
@@ -61,24 +56,22 @@ async function renderComputer(params: Record<string, string> = {}) {
 const secondsAgo = (seconds: number) => new Date(Date.now() - seconds * 1000).toISOString();
 
 describe("the views of the Computer page", () => {
-  it("links each view to its own address and marks the open one", async () => {
-    await renderComputer({ view: "browser" });
+  it("links each view to its own address and marks the open one: the browsers have no view, an open one is a window of the screen", async () => {
+    await renderComputer({ view: "files" });
     const nav = within(screen.getByRole("navigation", { name: "Computer views" }));
     expect(nav.getAllByRole("link").map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
       ["Screen", "/dots/d1/computer"],
-      ["Browser", "/dots/d1/computer?view=browser"],
       ["Files", "/dots/d1/computer?view=files"],
       ["Usage", "/dots/d1/computer?view=usage"],
     ]);
-    expect(nav.getByRole("link", { name: "Browser" }).getAttribute("aria-current")).toBe("page");
+    expect(nav.getByRole("link", { name: "Files" }).getAttribute("aria-current")).toBe("page");
     expect(nav.getByRole("link", { name: "Screen" }).getAttribute("aria-current")).toBeNull();
   });
 
-  it("asks nothing of a stopped computer for the screen, the browsers or the files, and offers to start it", async () => {
+  it("asks nothing of a stopped computer for the screen or the files, and offers to start it", async () => {
     plane.dots = [dotRecord("d1", { name: "fares", computer_state: "STOPPED" })];
     for (const [view, what] of [
       ["screen", "Start the computer to see its screen"],
-      ["browser", "Start the computer to see its browsers"],
       ["files", "Start the computer to see its files"],
     ] as const) {
       await renderComputer({ view });
@@ -100,9 +93,9 @@ describe("the views of the Computer page", () => {
   });
 
   it("explains a stopped computer from the answer of a route too, when the page had not heard yet", async () => {
-    plane.failIdentities = { status: 409, error: "computer_stopped", message: "the computer is STOPPED" };
-    await renderComputer({ view: "browser" });
-    expect((await screen.findByRole("status")).textContent).toContain("Start the computer to see its browsers");
+    plane.failFiles = { status: 409, error: "computer_stopped", message: "the computer is STOPPED" };
+    await renderComputer({ view: "files" });
+    expect((await screen.findByRole("status")).textContent).toContain("Start the computer to see its files");
   });
 });
 
@@ -114,197 +107,6 @@ describe("the screen", () => {
     expect(screen.getByText("The Dot has control. You are watching.")).toBeTruthy();
     expect(screen.getByText("LIVE")).toBeTruthy();
     expect(requested(/GET \/api\/dots\/d1\/computer\/screenshot$/).length).toBeGreaterThanOrEqual(1);
-  });
-});
-
-describe("the browsers", () => {
-  it("lists them open first, with the state in words, whether it has a proxy (never the proxy itself) and the time of last use", async () => {
-    plane.identities = [
-      identity("closed-1", "Closed one", "available", { hasProxy: true, lastUsedAt: secondsAgo(3 * 3600) }),
-      identity("open-1", "Open one", "open", { lastUsedAt: secondsAgo(120) }),
-    ];
-    await renderComputer({ view: "browser" });
-    const cards = (await screen.findAllByRole("article")).map((card) => card.getAttribute("aria-label"));
-    expect(cards).toEqual(["Open one", "Closed one"]);
-
-    const open = screen.getByRole("article", { name: "Open one" });
-    expect(within(open).getByText("Open")).toBeTruthy();
-    expect(within(open).getByText("2m ago")).toBeTruthy();
-    expect(within(open).getByText("none")).toBeTruthy();
-
-    const closed = screen.getByRole("article", { name: "Closed one" });
-    expect(within(closed).getByText("Closed")).toBeTruthy();
-    expect(within(closed).getByText("3h ago")).toBeTruthy();
-    // The control plane replaces the password before it answers; whatever reached the page, it is replaced again by the
-    // same rule (the shared package's, the engine's own), which keeps the user.
-    expect(within(closed).getByText("yes")).toBeTruthy();
-  });
-
-  it("explains the limits, and the empty case", async () => {
-    plane.dots = [dotRecord("d1", { name: "fares", config: { goal: "g", browser: { identities: { managed_by_dot: true, max_identities: 4, max_open: 2 } } } as never })];
-    await renderComputer({ view: "browser" });
-    expect(await screen.findByText("No browsers yet")).toBeTruthy();
-    expect(screen.getByText(/The Dot makes one when it needs to browse/)).toBeTruthy();
-    cleanup();
-
-    plane.identities = [identity("a", "A", "open"), identity("b", "B", "available")];
-    plane.dots = [dotRecord("d1", { name: "fares", config: { goal: "g", browser: { identities: { managed_by_dot: false, max_identities: 4, max_open: 2 } } } as never })];
-    await renderComputer({ view: "browser" });
-    expect((await screen.findByLabelText("Limits")).textContent).toContain("2 of 4 browsers, 1 of 2 open at once");
-    expect(screen.getByText(/The Dot cannot create or delete browsers itself/)).toBeTruthy();
-  });
-
-  it("shows the window of the first open browser at once, and another when it is picked", async () => {
-    plane.identities = [identity("a", "Alpha", "open"), identity("b", "Bravo", "open")];
-    await renderComputer({ view: "browser" });
-    expect(await screen.findByRole("img", { name: /browser "Alpha"/ })).toBeTruthy();
-    expect(requested(/GET \/api\/dots\/d1\/browser-identities\/a\/frame$/).length).toBeGreaterThanOrEqual(1);
-    expect(within(screen.getByRole("article", { name: "Alpha" })).queryByRole("button", { name: /^Watch/ })).toBeNull();
-
-    await userEvent.click(within(screen.getByRole("article", { name: "Bravo" })).getByRole("button", { name: /^Watch/ }));
-    expect(await screen.findByRole("img", { name: /browser "Bravo"/ })).toBeTruthy();
-    expect(requested(/GET \/api\/dots\/d1\/browser-identities\/b\/frame$/).length).toBeGreaterThanOrEqual(1);
-  });
-
-  it("shows the page the Dot last opened in the window's bar, from the log, and none when it opened none", async () => {
-    plane.identities = [identity("a", "Alpha", "open")];
-    await renderComputer({ view: "browser" });
-    const stage = await screen.findByRole("region", { name: "Window of Alpha" });
-    expect(within(stage).getByText("The Dot has not opened a page in this browser yet")).toBeTruthy();
-    cleanup();
-
-    plane.store("d1", "tool.called", { tool: "browser_navigate", permission: "browser.navigate", decision: "allow", ok: true, duration_ms: 90, target: "a: https://example.com/fares" }, secondsAgo(600));
-    plane.requests.length = 0;
-    plane.eventQueries.length = 0;
-    await renderComputer({ view: "browser" });
-    const next = await screen.findByRole("region", { name: "Window of Alpha" });
-    await waitFor(() => expect(within(next).getByLabelText("Page the Dot last opened").textContent).toBe("https://example.com/fares"));
-    expect(plane.eventQueries).toHaveLength(1);
-  });
-
-  it("reads only the newest window of the browser calls in one request, however long the log of the Dot's other tools is", async () => {
-    plane.identities = [identity("a", "Alpha", "open")];
-    plane.store("d1", "tool.called", { tool: "browser_navigate", permission: "browser.navigate", decision: "allow", ok: true, duration_ms: 90, target: "a: https://example.com/fares" }, secondsAgo(600));
-    // Two and a half pages of the Dot's other calls, all newer than its page: none of them may cross the wire.
-    for (let i = 0; i < 2500; i++) plane.store("d1", "tool.called", { tool: i % 2 === 0 ? "exec" : "read_file", permission: "computer.exec", decision: "allow", ok: true, duration_ms: 1, target: "ls" }, secondsAgo(500));
-    plane.store("d1", "tool.called", { tool: "browser_click", permission: "browser.act", decision: "allow", ok: true, duration_ms: 40, target: "a: #buy" }, secondsAgo(400));
-    await renderComputer({ view: "browser" });
-    const stage = await screen.findByRole("region", { name: "Window of Alpha" });
-    await waitFor(() => expect(within(stage).getByLabelText("Page the Dot last opened").textContent).toBe("https://example.com/fares"));
-    expect(plane.eventQueries).toEqual([
-      { after: 0, limit: BROWSER_ACTIVITY_WINDOW, types: [...BROWSER_ACTIVITY_EVENT_TYPES], tools: [...BROWSER_ACTIVITY_TOOLS], taskId: null, order: "desc" },
-    ]);
-  });
-
-  it("marks the browser the Dot is using now when a call arrives, and the mark follows only that browser", async () => {
-    plane.identities = [identity("a", "Alpha", "open"), identity("b", "Bravo", "open")];
-    await renderComputer({ view: "browser" });
-    await screen.findByRole("article", { name: "Alpha" });
-    expect(screen.queryByText("The Dot is using this now")).toBeNull();
-
-    await act(async () => plane.push("d1", "tool.called", { tool: "browser_click", permission: "browser.act", decision: "allow", ok: true, duration_ms: 40, target: "b: #buy" }));
-    await waitFor(() => expect(within(screen.getByRole("article", { name: "Bravo" })).getByText("The Dot is using this now")).toBeTruthy());
-    expect(within(screen.getByRole("article", { name: "Alpha" })).queryByText("The Dot is using this now")).toBeNull();
-  });
-
-  it("does not read the log when no browser is open", async () => {
-    plane.identities = [identity("a", "Alpha", "available")];
-    await renderComputer({ view: "browser" });
-    await screen.findByRole("article", { name: "Alpha" });
-    expect(screen.getByText(/No browser is open/)).toBeTruthy();
-    expect(plane.eventQueries).toEqual([]);
-  });
-
-  it("closes an open browser at once, and says so; the list follows the control plane", async () => {
-    plane.identities = [identity("a", "Alpha", "open")];
-    await renderComputer({ view: "browser" });
-    const card = await screen.findByRole("article", { name: "Alpha" });
-    await userEvent.click(within(card).getByRole("button", { name: /^Close/ }));
-    await waitFor(() => expect(plane.closedIdentities).toEqual(["a"]));
-    expect(await screen.findByText("Closed Alpha.")).toBeTruthy();
-    await waitFor(() => expect(within(screen.getByRole("article", { name: "Alpha" })).getByText("Closed")).toBeTruthy());
-    expect(screen.queryByRole("region", { name: "Window of Alpha" })).toBeNull();
-  });
-
-  it("asks before closing a browser the Dot is working in", async () => {
-    plane.identities = [identity("a", "Alpha", "open")];
-    plane.store("d1", "tool.called", { tool: "browser_click", permission: "browser.act", decision: "allow", ok: true, duration_ms: 40, target: "a: #buy" }, secondsAgo(2));
-    await renderComputer({ view: "browser" });
-    const card = await screen.findByRole("article", { name: "Alpha" });
-    await waitFor(() => expect(within(card).getByText("The Dot is using this now")).toBeTruthy());
-    await userEvent.click(within(card).getByRole("button", { name: /^Close/ }));
-    const dialog = await screen.findByRole("dialog", { name: "Close Alpha?" });
-    expect(plane.closedIdentities).toEqual([]);
-    await userEvent.click(within(dialog).getByRole("button", { name: "Keep it" }));
-    expect(plane.closedIdentities).toEqual([]);
-
-    await userEvent.click(within(card).getByRole("button", { name: /^Close/ }));
-    await userEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: "Close browser" }));
-    await waitFor(() => expect(plane.closedIdentities).toEqual(["a"]));
-  });
-
-  it("deletes a browser only after the person confirms, and keeps the question open with the reason when it fails", async () => {
-    plane.identities = [identity("a", "Alpha", "available")];
-    await renderComputer({ view: "browser" });
-    const card = await screen.findByRole("article", { name: "Alpha" });
-    await userEvent.click(within(card).getByRole("button", { name: /^Delete/ }));
-    const dialog = await screen.findByRole("dialog", { name: "Delete Alpha?" });
-    expect(dialog.textContent).toContain("cannot be undone");
-    expect(plane.deletedIdentities).toEqual([]);
-
-    plane.failIdentityAction = { status: 502, error: "delete_failed", message: "the profile is in use" };
-    await userEvent.click(within(dialog).getByRole("button", { name: "Delete identity" }));
-    expect((await within(dialog).findByRole("alert")).textContent).toContain("the profile is in use");
-    expect(screen.getByRole("dialog", { name: "Delete Alpha?" })).toBeTruthy();
-
-    plane.failIdentityAction = null;
-    await userEvent.click(within(dialog).getByRole("button", { name: "Delete identity" }));
-    await waitFor(() => expect(plane.deletedIdentities).toEqual(["a"]));
-    await waitFor(() => expect(screen.queryByRole("article", { name: "Alpha" })).toBeNull());
-    expect(await screen.findByText("No browsers yet")).toBeTruthy();
-  });
-
-  it("creates a browser from a name and a proxy, and lists it closed", async () => {
-    await renderComputer({ view: "browser" });
-    await userEvent.click(await screen.findByRole("button", { name: "New browser" }));
-    const dialog = await screen.findByRole("dialog", { name: "New browser" });
-    await userEvent.type(within(dialog).getByRole("textbox", { name: "Name" }), "Shopping");
-    // A proxy URL may hold a password: the field does not show what is typed.
-    expect(within(dialog).getByLabelText(/^Proxy/).getAttribute("type")).toBe("password");
-    await userEvent.type(within(dialog).getByLabelText(/^Proxy/), "socks5://user:pw@proxy.example:1080");
-    await userEvent.click(within(dialog).getByRole("button", { name: "Create browser" }));
-    await waitFor(() => expect(plane.createdIdentities).toEqual([{ name: "Shopping", proxy: "socks5://user:pw@proxy.example:1080" }]));
-    const card = await screen.findByRole("article", { name: "Shopping" });
-    expect(within(card).getByText("Closed")).toBeTruthy();
-    expect(screen.queryByRole("dialog")).toBeNull();
-  });
-
-  it("refuses a missing name before asking the control plane, in the engine's words (a proxy is judged by the browser library)", async () => {
-    await renderComputer({ view: "browser" });
-    await userEvent.click(await screen.findByRole("button", { name: "New browser" }));
-    const dialog = await screen.findByRole("dialog", { name: "New browser" });
-    await userEvent.click(within(dialog).getByRole("button", { name: "Create browser" }));
-    expect((await within(dialog).findByRole("alert")).textContent).toBe("an identity needs a non-empty name");
-    expect(plane.createdIdentities).toEqual([]);
-  });
-
-  it("shows the limit the control plane reports when it refuses a browser", async () => {
-    plane.failIdentityAction = { status: 409, error: "limit", message: "this Dot already has 20 browser identities" };
-    await renderComputer({ view: "browser" });
-    await userEvent.click(await screen.findByRole("button", { name: "New browser" }));
-    const dialog = await screen.findByRole("dialog", { name: "New browser" });
-    await userEvent.type(within(dialog).getByRole("textbox", { name: "Name" }), "Shopping");
-    await userEvent.click(within(dialog).getByRole("button", { name: "Create browser" }));
-    expect((await within(dialog).findByText("The browser was not created")).closest("[role=alert]")?.textContent).toContain("already has 20 browser identities");
-  });
-
-  it("follows browsers opened and closed by the Dot without a reload", async () => {
-    plane.identities = [identity("a", "Alpha", "available")];
-    await renderComputer({ view: "browser" });
-    expect(await screen.findByText(/No browser is open/)).toBeTruthy();
-    plane.identities = [identity("a", "Alpha", "open")];
-    await act(async () => plane.push("d1", "browser.identity.launched", { identity_id: "a", name: "Alpha" }));
-    expect(await screen.findByRole("region", { name: "Window of Alpha" })).toBeTruthy();
   });
 });
 

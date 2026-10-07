@@ -10,6 +10,7 @@ export const DOT_TABS = [
   { slug: "chat", label: "Chat" },
   { slug: "tasks", label: "Tasks" },
   { slug: "computer", label: "Computer" },
+  { slug: "skills", label: "Skills" },
   { slug: "activity", label: "Activity" },
   { slug: "channels", label: "Channels" },
   { slug: "settings", label: "Settings" },

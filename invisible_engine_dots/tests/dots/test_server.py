@@ -832,6 +832,28 @@ class TestStateAndTheRest:
         post = await api.call("POST", "/browser-identities/x")
         assert (post.status, post.json["message"]) == (405, "POST is not allowed here; use GET or DELETE")
 
+    async def test_lists_the_skills_the_built_in_ones_and_the_dots_own_each_with_its_whole_file(
+        self, make_api: Callable[..., Any]
+    ) -> None:
+        api: Api = await make_api()
+        own = api.h.tmp_path / "home" / "dot" / "skills" / "shop-login" / "SKILL.md"
+        own.parent.mkdir(parents=True)
+        own.write_text("---\nname: shop-login\ndescription: Log in to the shop.\n---\nClick Sign in.\n", encoding="utf-8")
+
+        answer = await api.call("GET", "/skills")
+
+        rows = {row["name"]: row for row in answer.json["skills"]}
+        assert answer.status == 200 and {"invisible-playwright", "shop-login"} <= set(rows)
+        assert rows["shop-login"] == {
+            "name": "shop-login",
+            "description": "Log in to the shop.",
+            "source": "dot",
+            "path": "/home/dot/skills/shop-login/SKILL.md",
+            "content": "---\nname: shop-login\ndescription: Log in to the shop.\n---\nClick Sign in.\n",
+        }
+        assert rows["invisible-playwright"]["source"] == "builtin"
+        assert (await api.call("POST", "/skills")).status == 405
+
     async def test_lists_the_tools_with_the_permission_each_exercises_and_whether_the_model_is_offered_it(
         self, make_api: Callable[..., Any]
     ) -> None:

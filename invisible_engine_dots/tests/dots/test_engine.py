@@ -844,7 +844,8 @@ class TestConfig:
         self, make_engine: MakeEngine, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         def four_characters_a_token(provider: Any, model: str, messages: list[dict[str, Any]], tools: Any) -> Any:
-            return sum(len(json.dumps(message)) for message in messages) // 4, "test"
+            # The thread the test sizes, not the engine's own prompt, which grows with what it teaches the model.
+            return sum(len(json.dumps(message)) for message in messages if message.get("role") != "system") // 4, "test"
 
         for module in ("nanobot.agent.context_governance", "nanobot.agent.memory"):
             monkeypatch.setattr(f"{module}.estimate_prompt_tokens_chain", four_characters_a_token)
@@ -859,8 +860,8 @@ class TestConfig:
             old: list[dict[str, Any]] = []
             for index in range(11):
                 old += [
-                    {"role": "user", "content": f"question {index} " + "x" * 680},
-                    {"role": "assistant", "content": f"answer {index} " + "y" * 680},
+                    {"role": "user", "content": f"question {index} " + "x" * 700},
+                    {"role": "assistant", "content": f"answer {index} " + "y" * 700},
                 ]
             h.store.write(lambda conn: s.append_messages(conn, CHAT, old, final_index=None))
 

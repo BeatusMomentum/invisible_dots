@@ -3,7 +3,7 @@
  * sends, answered from memory, and `/api/stream` as a live SSE body the test pushes events into. `install()` puts
  * it behind the global `fetch`, which is where the web client's SDK looks.
  */
-import { COMPUTER_STOPPED, CONVERSATION_LIST_LIMIT, TASK_LIST_LIMIT, computerIsUp, MAX_EVENT_PAGE, type ApprovalRecord, type BrowserIdentity, type ChannelKind, type ChannelLinkFrame, type ChannelRecord, type ChannelSettings, type ComputerAnswer, type DoctorCheck, type DotConfig, type DotSummary, type StoredEvent, type SystemAnswer, type ToolInfo } from "@invisible-dots/shared/browser";
+import { COMPUTER_STOPPED, CONVERSATION_LIST_LIMIT, TASK_LIST_LIMIT, computerIsUp, MAX_EVENT_PAGE, type ApprovalRecord, type BrowserIdentity, type ChannelKind, type ChannelLinkFrame, type ChannelRecord, type ChannelSettings, type ComputerAnswer, type DoctorCheck, type DotConfig, type DotSummary, type Skill, type StoredEvent, type SystemAnswer, type ToolInfo } from "@invisible-dots/shared/browser";
 import type { TaskRecord } from "@invisible-dots/sdk";
 import { vi } from "vitest";
 
@@ -99,6 +99,16 @@ export class FakeControlPlane {
   answers: Array<{ id: string; decision: "approve" | "reject"; body: { note?: string; always?: true } }> = [];
   /** Answer approval answers with this error instead of recording them. */
   failAnswer: { status: number; error: string; message: string } | null = null;
+  /** The skills `GET /api/dots/:id/skills` answers with; null answers 409 computer_stopped, as a stopped computer does. */
+  skills: Skill[] | null = [
+    {
+      name: "invisible-playwright",
+      description: "Use the Dot's browser for any task on a website.",
+      source: "builtin",
+      path: "/opt/invisible-dots/engine/skills/invisible-playwright/SKILL.md",
+      content: "---\nname: invisible-playwright\ndescription: Use the Dot's browser for any task on a website.\n---\n\n# The browser\n\nOpen an **identity** first.\n",
+    },
+  ];
   /** The tool table `GET /api/dots/:id/tools` answers with; null answers 409 computer_stopped, as a stopped computer does. */
   tools: ToolInfo[] | null = [
     { name: "exec", permission: "computer.exec", offered: true, description: "Run a shell command." },
@@ -566,6 +576,7 @@ export class FakeControlPlane {
           return new Response(null, { status: 204 });
         }
       }
+      if (rest === "skills") return this.skills === null ? json({ error: "computer_stopped", message: "the computer is STOPPED" }, 409) : json({ skills: this.skills });
       if (rest === "tools") return this.tools === null ? json({ error: "computer_stopped", message: "the computer is STOPPED" }, 409) : json({ tools: this.tools });
       if (rest === "usage") return json({ dot_id: record.id, since: searchParams.get("since"), spent_usd: searchParams.get("since") ? this.spentUsd : this.spentTotalUsd });
       if (rest === "computer") {

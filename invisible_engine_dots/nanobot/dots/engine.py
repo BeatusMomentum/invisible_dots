@@ -59,6 +59,7 @@ from nanobot.dots.protocol import (
 )
 from nanobot.dots.provider import OpenRouterProviders
 from nanobot.dots.secrets import KeyHolder
+from nanobot.dots.skills import all_skills
 from nanobot.dots.store import (
     AUTOMATION_FIRED,
     CHAT_SESSION_KEY,
@@ -175,6 +176,7 @@ class Engine:
         stop_grace_s: float = STOP_GRACE_S,
     ) -> None:
         self._store = store
+        self._computer = computer
         self._browser = browser
         self._registry = base_registry
         self._key_holder = key_holder
@@ -255,6 +257,13 @@ class Engine:
         """The Dot's tools and whether the model is offered each now (none before a config arrived)."""
         offered = self._settings.offered_tools if self._settings else ()
         return tool_table(self._registry, offered)
+
+    async def skills(self) -> list[dict[str, Any]]:
+        """The Dot's skills as `GET /skills` shows them: its own and the built-in ones, each with its whole file."""
+        return [
+            {"name": s.name, "description": s.description, "source": s.source, "path": s.path, "content": s.content}
+            for s in await all_skills(self._computer)
+        ]
 
     def read_outbox_after(self, after: int, limit: int) -> list[dict[str, Any]]:
         return self._store.read(lambda conn: dots_store.read_outbox_after(conn, after, limit))

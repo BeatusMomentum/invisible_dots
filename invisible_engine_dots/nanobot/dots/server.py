@@ -372,6 +372,10 @@ class AgentServer:
             _allow(method, "GET")
             return _json_response(200, {"tools": engine.tool_table()})
 
+        if path == AGENT_ROUTES["skills"]:
+            _allow(method, "GET")
+            return _json_response(200, {"skills": await engine.skills()})
+
         if path == AGENT_ROUTES["prepare_sleep"]:
             _allow(method, "POST")
             logger.info("preparing to sleep")

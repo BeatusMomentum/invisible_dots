@@ -1,5 +1,4 @@
 // @vitest-environment jsdom
-import type { BrowserIdentity } from "@invisible-dots/shared/browser";
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -29,10 +28,6 @@ afterEach(() => {
 
 const requested = (pattern: RegExp) => plane.requests.filter((r) => pattern.test(r));
 
-function identity(id: string, name: string, status: BrowserIdentity["status"]): BrowserIdentity {
-  return { id, name, status, createdAt: "2026-01-01T00:00:00Z", lastUsedAt: null, profilePath: `/home/dot/.browser/${id}`, hasProxy: false };
-}
-
 async function renderPanel(computerState: string | null = "RUNNING") {
   const view = render(
     <EventStreamProvider>
@@ -46,12 +41,10 @@ async function renderPanel(computerState: string | null = "RUNNING") {
 }
 
 describe("what a failed picture means", () => {
-  it("is a closed browser, a busy one, a stopped computer, or the message itself", () => {
-    expect(frameProblem(new ApiError(409, "not_open", "x"))).toMatchObject({ closed: true, text: "This browser was closed." });
-    expect(frameProblem(new ApiError(503, "busy", "x"))).toMatchObject({ closed: false, text: expect.stringContaining("using this browser right now") });
-    expect(frameProblem(new ApiError(409, "computer_stopped", "x"))).toMatchObject({ closed: false, text: "The computer is not running." });
-    expect(frameProblem(new ApiError(502, "frame_failed", "the browser did not answer"))).toEqual({ closed: false, text: "the browser did not answer" });
-    expect(frameProblem(new Error("offline"))).toEqual({ closed: false, text: "offline" });
+  it("is a stopped computer, or the message itself", () => {
+    expect(frameProblem(new ApiError(409, "computer_stopped", "x"))).toBe("The computer is not running.");
+    expect(frameProblem(new ApiError(502, "guest_unreachable", "the guest did not answer"))).toBe("the guest did not answer");
+    expect(frameProblem(new Error("offline"))).toBe("offline");
   });
 });
 
@@ -134,51 +127,12 @@ describe("the computer panel", () => {
     expect(await screen.findByRole("img", { name: /current picture of the desktop/ })).toBeTruthy();
   });
 
-  it("offers each open browser, and not the closed ones, and shows the one picked", async () => {
-    plane.identities = [identity("shop-1", "shopping", "open"), identity("res-1", "research", "available")];
+  it("shows the desktop only: an open browser is a window of it, and the panel asks nothing of the browsers", async () => {
+    plane.identities = [{ id: "shop-1", name: "shopping", status: "open", createdAt: "2026-01-01T00:00:00Z", lastUsedAt: null, profilePath: "/home/dot/browsers/shop-1", hasProxy: false }];
     await renderPanel();
-    const group = await screen.findByRole("group", { name: "What to watch" });
-    await waitFor(() => expect(within(group).getByRole("button", { name: "Browser: shopping" })).toBeTruthy());
-    expect(within(group).queryByRole("button", { name: "Browser: research" })).toBeNull();
-    expect(within(group).getByRole("button", { name: "Desktop" }).getAttribute("aria-pressed")).toBe("true");
-
-    await userEvent.click(within(group).getByRole("button", { name: "Browser: shopping" }));
-    expect(await screen.findByRole("img", { name: /current picture of the browser "shopping"/ })).toBeTruthy();
-    expect(within(group).getByRole("button", { name: "Browser: shopping" }).getAttribute("aria-pressed")).toBe("true");
-    expect(requested(/GET \/api\/dots\/d1\/browser-identities\/shop-1\/frame$/).length).toBeGreaterThan(0);
-  });
-
-  it("goes back to the desktop when the browser it shows is closed, and tells nothing false meanwhile", async () => {
-    plane.identities = [identity("shop-1", "shopping", "open")];
-    await renderPanel();
-    await userEvent.click(await screen.findByRole("button", { name: "Browser: shopping" }));
-    await screen.findByRole("img", { name: /browser "shopping"/ });
-
-    plane.identities = [identity("shop-1", "shopping", "available")];
-    act(() => plane.push("d1", "browser.identity.closed", { identity_id: "shop-1", name: "shopping" }));
-    expect(await screen.findByRole("img", { name: /current picture of the desktop/ })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Browser: shopping" })).toBeNull();
-    expect(screen.getByRole("button", { name: "Desktop" }).getAttribute("aria-pressed")).toBe("true");
-  });
-
-  it("keeps the last picture and says why when a call of the Dot holds the browser", async () => {
-    plane.identities = [identity("shop-1", "shopping", "open")];
-    await renderPanel();
-    await userEvent.click(await screen.findByRole("button", { name: "Browser: shopping" }));
-    await screen.findByRole("img", { name: /browser "shopping"/ });
-    plane.failPicture = { status: 503, error: "busy", message: "busy" };
-    await userEvent.click(screen.getByRole("button", { name: "Refresh" }));
-    expect(await screen.findByText(/using this browser right now/)).toBeTruthy();
-    expect(screen.getByRole("img", { name: /browser "shopping"/ })).toBeTruthy();
-    expect(screen.queryByText("LIVE")).toBeNull();
-  });
-
-  it("lists browsers again when one opens", async () => {
-    await renderPanel();
-    await screen.findByRole("img", { name: /desktop/ });
+    await screen.findByRole("img", { name: /current picture of the desktop/ });
+    expect(screen.queryByRole("group", { name: "What to watch" })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Browser:/ })).toBeNull();
-    plane.identities = [identity("shop-1", "shopping", "open")];
-    act(() => plane.push("d1", "browser.identity.launched", { identity_id: "shop-1", name: "shopping" }));
-    expect(await screen.findByRole("button", { name: "Browser: shopping" })).toBeTruthy();
+    expect(requested(/browser-identities/)).toEqual([]);
   });
 });

@@ -47,6 +47,7 @@ import {
   type MessageOrigin,
   type StoredEvent,
   type SystemAnswer,
+  type Skill,
   type ToolInfo,
 } from "@invisible-dots/shared";
 import { Dispatcher } from "./dispatcher.js";
@@ -647,12 +648,18 @@ export class Scheduler {
     await this.#guestCall(dotId, "close a browser identity", () => guest.closeBrowserIdentity(identityId));
   }
 
-  // The tools: the Dot's engine keeps its table, read through the computer
+  // The tools and the skills: the Dot's engine keeps both, read through the computer
 
   /** The Dot's tools, each with the permission it exercises and whether the model is offered it now. */
   async listTools(idOrName: string): Promise<ToolInfo[]> {
     const { dotId, guest } = await this.#runningGuest(idOrName);
     return (await this.#guestCall(dotId, "list tools", () => guest.listTools())).tools;
+  }
+
+  /** The Dot's skills, the built-in ones and its own, each with its whole file. */
+  async listSkills(idOrName: string): Promise<Skill[]> {
+    const { dotId, guest } = await this.#runningGuest(idOrName);
+    return (await this.#guestCall(dotId, "list skills", () => guest.listSkills())).skills;
   }
 
   // Approvals

@@ -36,6 +36,7 @@ import {
   type ChannelKind,
   type DoctorCheck,
   type ListOrder,
+  type SkillListAnswer,
   type ToolListAnswer,
 } from "@invisible-dots/shared";
 import { doctorAnswer } from "@invisible-dots/vm-manager";
@@ -322,11 +323,16 @@ export function buildServer(options: ServerOptions): FastifyInstance {
     return reply.code(204).send();
   });
 
-  // The tools (its table) are the engine's, so they need the computer running
+  // The tools (its table) and the skills are the engine's, so they need the computer running
 
   app.get<{ Params: Params }>(
     "/api/dots/:id/tools",
     async (request): Promise<ToolListAnswer> => ({ tools: await scheduler.listTools(request.params.id) }),
+  );
+
+  app.get<{ Params: Params }>(
+    "/api/dots/:id/skills",
+    async (request): Promise<SkillListAnswer> => ({ skills: await scheduler.listSkills(request.params.id) }),
   );
 
   // Channels (the hub never returns a credential, and no route here echoes one)

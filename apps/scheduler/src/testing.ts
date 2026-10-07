@@ -37,6 +37,8 @@ import {
   type RefusedEvent,
   type SystemAnswer,
   type ToolInfo,
+  type Skill,
+  type SkillListAnswer,
   type ToolListAnswer,
   type VmState,
 } from "@invisible-dots/shared";
@@ -175,6 +177,16 @@ export class FakeGuest implements GuestApi {
     { name: "cron", permission: "automations", description: "Schedule reminders and recurring tasks." },
     { name: "browser_identity_list", permission: "browser.identity.list", description: "List the browser identities." },
     { name: "browser_identity_create", permission: "browser.identity.create", description: "Create a browser identity." },
+  ];
+  /** The skills the fake's engine shows: one built-in by default, as the real one ships; a test adds the Dot's own. */
+  skills: Skill[] = [
+    {
+      name: "invisible-playwright",
+      description: "Use the Dot's browser for any task on a website.",
+      source: "builtin",
+      path: "/opt/invisible-dots/engine/skills/invisible-playwright/SKILL.md",
+      content: "---\nname: invisible-playwright\ndescription: Use the Dot's browser for any task on a website.\n---\n\n# The browser\n",
+    },
   ];
   readonly calls: string[] = [];
   pendingApproval: { approval_id: string; task_id?: string } | null = null;
@@ -510,6 +522,11 @@ export class FakeGuest implements GuestApi {
       (permissions[tool.permission] === "allow" || permissions[tool.permission] === "ask") &&
       (managed || tool.name !== "browser_identity_create");
     return { tools: this.tools.map((tool) => ({ ...tool, offered: offered(tool) })) };
+  }
+
+  async listSkills(): Promise<SkillListAnswer> {
+    this.#reachable("listSkills");
+    return { skills: [...this.skills] };
   }
 
   /** Put a file in the guest's file system (the Dot wrote it). */

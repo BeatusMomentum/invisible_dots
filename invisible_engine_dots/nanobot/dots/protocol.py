@@ -26,6 +26,7 @@ AGENT_ROUTES = {
     "state": "/state",
     "browser_identities": "/browser-identities",
     "tools": "/tools",
+    "skills": "/skills",
     "prepare_sleep": "/prepare-sleep",
 }
 

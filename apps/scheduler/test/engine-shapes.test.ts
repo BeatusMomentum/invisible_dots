@@ -14,6 +14,7 @@ import {
   parseDotConfig,
   parseOutboundEvent,
   PERMISSIONS,
+  skillSchema,
   toolInfoSchema,
   toRuntimeConfig,
   type DotRuntimeConfig,
@@ -30,7 +31,7 @@ interface OfferingCase {
 
 const shapes = JSON.parse(
   readFileSync(fileURLToPath(new URL("../../../invisible_engine_dots/tests/dots/wire_shapes.json", import.meta.url)), "utf8"),
-) as { limits: { max_run_at_ms: number }; outbound_events: { type: string; data: Record<string, unknown> }[]; tool_offering: OfferingCase[] };
+) as { limits: { max_run_at_ms: number }; outbound_events: { type: string; data: Record<string, unknown> }[]; tool_offering: OfferingCase[]; skills: unknown[] };
 
 const baseConfig = toRuntimeConfig(parseDotConfig("name: shapes\ngoal: check\nmodel:\n  provider: openrouter\n  id: test/model\n"));
 
@@ -100,6 +101,15 @@ describe("what the engine answers, as the host describes it", () => {
     expect(guest.outbox.map((event) => ({ type: event.type, data: event.data }))).toEqual([written[0]]);
     guest.removeAutomation(row.id);
     expect(guest.outbox.map((event) => ({ type: event.type, data: event.data }))).toEqual(written);
+  });
+
+  it("every skill the engine shows parses with the skill schema, and a key it lacks or has extra is refused", () => {
+    expect(shapes.skills.map((row) => (row as { name: string }).name)).toContain("invisible-playwright");
+    for (const row of shapes.skills) expect(skillSchema.safeParse(row).error?.issues, JSON.stringify(row)).toBeUndefined();
+    const first = shapes.skills[0] as Record<string, unknown>;
+    const { content: _content, ...missing } = first;
+    expect(skillSchema.safeParse(missing).success).toBe(false);
+    expect(skillSchema.safeParse({ ...first, renamed_key: 1 }).success).toBe(false);
   });
 
   it("every tool row the engine shows parses with the tool schema, in the order of its table, under a permission the host knows", () => {

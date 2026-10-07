@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
 
+from nanobot.dots.skills import DOT_SKILLS_DIR, Skill
 from nanobot.session.summary import SessionSummary
 from nanobot.utils.prompt_templates import render_template
 
@@ -30,15 +31,18 @@ class ContextBuilder:
         memory_dir: str,
         memory_notes: Sequence[str],
         now: datetime,
+        skills: Sequence[Skill] = (),
     ) -> None:
         """`dot_prompt` says whose Dot this is and what it is for (projection.py).
 
-        `memory_notes` are the names of the most recently changed notes in `memory_dir`.
+        `memory_notes` are the names of the most recently changed notes in `memory_dir`; `skills` are the Dot's
+        skills (nanobot/dots/skills.py), named in the prompt with their descriptions and paths.
         """
         self.dot_prompt = dot_prompt
         self.workspace = workspace
         self.memory_dir = memory_dir
         self.memory_notes = memory_notes
+        self.skills = skills
         self.now = now
 
     def build_system_prompt(self, *, session_summary: SessionSummary | None = None) -> str:
@@ -51,6 +55,8 @@ class ContextBuilder:
                 workspace=self.workspace,
                 memory_dir=self.memory_dir,
                 memory_notes=list(self.memory_notes),
+                skills=list(self.skills),
+                dot_skills_dir=DOT_SKILLS_DIR,
                 now=self.now.strftime("%Y-%m-%d %H:%M %Z").strip(),
             ),
         ]

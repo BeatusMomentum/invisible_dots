@@ -378,9 +378,22 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
     await api.stopComputer(dot.id);
     await scheduler.settle();
     await expect(api.listTools(dot.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(api.listSkills(dot.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
     await api.startComputer(dot.id);
     await waitFor(async () => (await api.computer(dot.id)).ready, "started again");
     await expect(api.listTools("no-such-dot")).rejects.toMatchObject({ status: 404 });
+    await expect(api.listSkills("no-such-dot")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("the skills are the engine's, the built-in ones and the Dot's own, each with its whole file", async () => {
+    const dot = await readyDot("skilled");
+    const guest = driver.guestOf(dot.id);
+    const own = { name: "shop-login", description: "Log in to the shop.", source: "dot" as const, path: "/home/dot/skills/shop-login/SKILL.md", content: "---\nname: shop-login\n---\n" };
+    guest.skills = [...guest.skills, own];
+    const skills = await api.listSkills(dot.id);
+    expect(skills.map((s) => [s.name, s.source])).toEqual([["invisible-playwright", "builtin"], ["shop-login", "dot"]]);
+    expect(skills[1]).toEqual(own);
+    expect((await fetch(`${base}/api/dots/${dot.id}/skills`)).status).toBe(401);
   });
 
   it("the stream filters by Dot and replays after an id without duplicates", async () => {

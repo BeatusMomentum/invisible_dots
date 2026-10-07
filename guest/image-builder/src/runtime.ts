@@ -9,6 +9,7 @@
  *   /bin/dot-desktop             ExecStart of dot-desktop.service
  *   /bin/dot-install             the package installer dot may run with sudo
  *   /engine/nanobot/...          the engine's source: its .py files and templates
+ *   /engine/skills/<name>/SKILL.md   the built-in skills the prompt names and the Dot reads
  *   /engine/LICENSE, /engine/UPSTREAM.md   the engine's license and where it was forked from
  *   /units/*.service             the guest systemd units
  *
@@ -153,7 +154,23 @@ async function engineSourcePaths(root: string, relative: string, out: string[]):
   }
 }
 
-/** The engine's files at `engine/` on the disk: its package, its license and where it was forked from. */
+/** The built-in skills: `skills/<name>/SKILL.md`, one file each (the wheel's include list says the same). */
+async function skillPaths(root: string): Promise<string[]> {
+  const entries = await readdir(join(root, "skills"), { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return [];
+    throw error;
+  });
+  const paths: string[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) throw new Error(`${join(root, "skills", entry.name)} is not a skill's folder; skills/ holds one folder per skill`);
+    const file = await stat(join(root, "skills", entry.name, "SKILL.md")).catch(() => undefined);
+    if (!file?.isFile()) throw new Error(`the skill ${join(root, "skills", entry.name)} has no SKILL.md`);
+    paths.push(`skills/${entry.name}/SKILL.md`);
+  }
+  return paths.sort();
+}
+
+/** The engine's files at `engine/` on the disk: its package, its built-in skills, its license and where it was forked from. */
 async function engineFiles(engineRoot: string): Promise<StagedFile[]> {
   const paths: string[] = [];
   await engineSourcePaths(engineRoot, "nanobot", paths).catch((error: NodeJS.ErrnoException) => {
@@ -161,6 +178,7 @@ async function engineFiles(engineRoot: string): Promise<StagedFile[]> {
     throw error;
   });
   if (!paths.includes("nanobot/__init__.py")) throw new Error(`${engineRoot} is not the engine's source: it has no nanobot/__init__.py`);
+  paths.push(...(await skillPaths(engineRoot)));
   const files: StagedFile[] = [];
   for (const path of paths) files.push(await stageFile(`engine/${path}`, join(engineRoot, path)));
   files.push(await stageFile("engine/LICENSE", join(engineRoot, "LICENSE")));

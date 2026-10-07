@@ -46,7 +46,8 @@ def outgrow_the_window(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
     """A chat thread too long for its budget, with a message waiting: the turn's first request is the summary."""
 
     def four_characters_a_token(provider: Any, model: str, messages: list[dict[str, Any]], tools: Any) -> Any:
-        return sum(len(json.dumps(message)) for message in messages) // 4, "test"
+        # The thread the test sizes, not the engine's own prompt, which grows with what it teaches the model.
+        return sum(len(json.dumps(message)) for message in messages if message.get("role") != "system") // 4, "test"
 
     for module in ("nanobot.agent.context_governance", "nanobot.agent.memory"):
         monkeypatch.setattr(f"{module}.estimate_prompt_tokens_chain", four_characters_a_token)
@@ -282,7 +283,8 @@ class TestCommitPoints:
         self, make_harness: MakeHarness, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         def four_characters_a_token(provider: Any, model: str, messages: list[dict[str, Any]], tools: Any) -> Any:
-            return sum(len(json.dumps(message)) for message in messages) // 4, "test"
+            # The thread the test sizes, not the engine's own prompt, which grows with what it teaches the model.
+            return sum(len(json.dumps(message)) for message in messages if message.get("role") != "system") // 4, "test"
 
         for module in ("nanobot.agent.context_governance", "nanobot.agent.memory"):
             monkeypatch.setattr(f"{module}.estimate_prompt_tokens_chain", four_characters_a_token)
@@ -374,7 +376,8 @@ class TestCommitPoints:
         self, make_harness: MakeHarness, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         def four_characters_a_token(provider: Any, model: str, messages: list[dict[str, Any]], tools: Any) -> Any:
-            return sum(len(json.dumps(message)) for message in messages) // 4, "test"
+            # The thread the test sizes, not the engine's own prompt, which grows with what it teaches the model.
+            return sum(len(json.dumps(message)) for message in messages if message.get("role") != "system") // 4, "test"
 
         for module in ("nanobot.agent.context_governance", "nanobot.agent.memory"):
             monkeypatch.setattr(f"{module}.estimate_prompt_tokens_chain", four_characters_a_token)
@@ -770,7 +773,8 @@ class TestWhatIsNeverSent:
         assert METADATA_KEY in json.dumps(h.messages())
         # ...and in none of the requests, which also carry none of the engine's keys.
         sent = json.dumps(h.provider.requests)
-        assert METADATA_KEY not in sent and INBOUND_ID not in sent and "is_error" not in sent
+        # As keys (`"_dots"`): the prompt names paths, and a path may hold the same letters.
+        assert all(f'"{key}"' not in sent for key in (METADATA_KEY, INBOUND_ID, "is_error"))
         assert all(set(m) <= {"role", "content", "tool_calls", "tool_call_id", "name"} for r in h.provider.requests for m in r["messages"])
 
     async def test_the_provider_is_asked_for_with_the_key_and_the_models_of_the_config(
@@ -1018,7 +1022,8 @@ class TestTheCostCap:
         self, make_harness: MakeHarness, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         def four_characters_a_token(provider: Any, model: str, messages: list[dict[str, Any]], tools: Any) -> Any:
-            return sum(len(json.dumps(message)) for message in messages) // 4, "test"
+            # The thread the test sizes, not the engine's own prompt, which grows with what it teaches the model.
+            return sum(len(json.dumps(message)) for message in messages if message.get("role") != "system") // 4, "test"
 
         for module in ("nanobot.agent.context_governance", "nanobot.agent.memory"):
             monkeypatch.setattr(f"{module}.estimate_prompt_tokens_chain", four_characters_a_token)

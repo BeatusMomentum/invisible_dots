@@ -1167,6 +1167,7 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     await scheduler.settle();
 
     await expect(scheduler.listTools(dot.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
+    await expect(scheduler.listSkills(dot.id)).rejects.toMatchObject({ status: 409, code: "computer_stopped" });
   });
 
   it("delete removes the Dot's own OpenRouter key and keeps the global one", async () => {
