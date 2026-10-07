@@ -1,0 +1,374 @@
+/**
+ * The Dot configuration of architecture section 7: one zod schema, used by the
+ * API when a Dot is created or patched and by the guest when `PUT /config`
+ * arrives.
+ *
+ * Sizes and durations stay strings in the parsed config ("4gb", "15m") so that
+ * a parsed config is itself a valid input: it is stored as jsonb, sent back to
+ * clients and re-parsed on PATCH. Use `computerResources()` for numbers.
+ */
+import { parse as parseYaml } from "yaml";
+import { z } from "zod";
+import { isPermission, PERMISSIONS, type Permission } from "./tools.js";
+
+const KIB = 1024;
+const MIB = KIB * 1024;
+const GIB = MIB * 1024;
+const TIB = GIB * 1024;
+
+const SIZE_UNITS: Record<string, number> = {
+  b: 1,
+  k: KIB,
+  kb: KIB,
+  kib: KIB,
+  m: MIB,
+  mb: MIB,
+  mib: MIB,
+  g: GIB,
+  gb: GIB,
+  gib: GIB,
+  t: TIB,
+  tb: TIB,
+  tib: TIB,
+};
+
+/**
+ * Parse a size such as "4gb", "512mb" or "1.5 GiB" into bytes. Units are
+ * binary (1gb = 1024^3 bytes): the values end up as QEMU `-m` MiB and
+ * qemu-img sizes, which are binary too. A bare number is refused because
+ * "4096" is ambiguous between bytes and MiB.
+ */
+export function parseSize(value: string): number {
+  const match = /^\s*(\d+(?:\.\d+)?)\s*([a-z]+)\s*$/i.exec(value);
+  if (!match) {
+    throw new Error(`invalid size "${value}": expected a number followed by a unit, e.g. "4gb" or "512mb"`);
+  }
+  const unit = SIZE_UNITS[match[2]!.toLowerCase()];
+  if (unit === undefined) {
+    throw new Error(`invalid size "${value}": unknown unit "${match[2]}" (use b, kb, mb, gb or tb)`);
+  }
+  return Math.round(Number(match[1]) * unit);
+}
+
+/** Bytes to whole MiB, rounded down. */
+export function bytesToMiB(bytes: number): number {
+  return Math.floor(bytes / MIB);
+}
+
+/** Parse a size and return whole MiB, rounded down. */
+export function parseSizeMiB(value: string): number {
+  return bytesToMiB(parseSize(value));
+}
+
+const DURATION_UNITS: Record<string, number> = {
+  ms: 1,
+  s: 1000,
+  m: 60_000,
+  h: 3_600_000,
+  d: 86_400_000,
+};
+
+/**
+ * Parse a duration such as "15m", "90s", "2h" or "1h30m" into milliseconds.
+ * "0" (or the number 0) means never and returns null.
+ */
+export function parseDuration(value: string | number): number | null {
+  if (value === 0 || (typeof value === "string" && /^\s*0+\s*$/.test(value))) return null;
+  if (typeof value === "number") {
+    throw new Error(`invalid duration ${value}: a non-zero duration needs a unit, e.g. "15m"`);
+  }
+  const text = value.trim().toLowerCase();
+  const part = /(\d+(?:\.\d+)?)(ms|s|m|h|d)/y;
+  let total = 0;
+  let index = 0;
+  while (index < text.length) {
+    part.lastIndex = index;
+    const match = part.exec(text);
+    if (!match) {
+      throw new Error(`invalid duration "${value}": expected e.g. "15m", "90s", "2h", "1h30m" or "0" for never`);
+    }
+    total += Number(match[1]) * DURATION_UNITS[match[2]!]!;
+    index = part.lastIndex;
+  }
+  if (text.length === 0) {
+    throw new Error(`invalid duration "${value}": empty`);
+  }
+  const ms = Math.round(total);
+  // "0s" is a zero written with a unit; treat it like "0" rather than as "sleep at once".
+  return ms === 0 ? null : ms;
+}
+
+/**
+ * The range of each number a Dot's config bounds, and the value used when it is left out. The schema below takes
+ * them from here, and so does the web client's form, so a slider can never offer what the API would refuse.
+ */
+export const CONFIG_BOUNDS = {
+  cpu: { min: 1, max: 16, default: 2 },
+  memory: { min: "2gb", max: "64gb", default: "4gb" },
+  disk: { min: "20gb", max: "1024gb", default: "40gb" },
+  idleTimeout: { default: "15m" },
+  maxCostPerTaskUsd: { min: 0.01, max: 100, default: 1 },
+  maxStepsPerTask: { min: 1, max: 1000, default: 60 },
+  contextTokens: { min: 4000, max: 1_000_000, default: 32_000 },
+} as const;
+
+export const DOT_NAME_PATTERN = /^[a-z0-9-]{1,40}$/;
+
+export function isValidDotName(name: string): boolean {
+  return DOT_NAME_PATTERN.test(name);
+}
+
+function sizeField(label: string, min: string, max: string, fallback: string) {
+  const minBytes = parseSize(min);
+  const maxBytes = parseSize(max);
+  return z
+    .string()
+    .default(fallback)
+    .superRefine((value, ctx) => {
+      let bytes: number;
+      try {
+        bytes = parseSize(value);
+      } catch (error) {
+        ctx.addIssue({ code: "custom", message: (error as Error).message });
+        return;
+      }
+      if (bytes < minBytes || bytes > maxBytes) {
+        ctx.addIssue({ code: "custom", message: `${label} must be between ${min} and ${max}, got "${value}"` });
+      }
+    })
+    .transform((value) => value.trim().toLowerCase());
+}
+
+const durationField = z
+  .union([z.string(), z.number()])
+  .default(CONFIG_BOUNDS.idleTimeout.default)
+  .superRefine((value, ctx) => {
+    try {
+      parseDuration(value);
+    } catch (error) {
+      ctx.addIssue({ code: "custom", message: (error as Error).message });
+    }
+  })
+  // YAML reads `idle_timeout: 0` as a number; keep the field a string either way.
+  .transform((value) => String(value).trim().toLowerCase());
+
+const modelId = z
+  .string()
+  .min(1, "model id must not be empty")
+  .regex(/^\S+$/, "model id must not contain whitespace");
+
+/**
+ * The roles a Dot's `models` map may name: the jobs the engine can give to a model other than `model.id`. The
+ * list is closed because a role the engine never asks for would be a setting that does nothing. `summary` is the
+ * model that writes the summary when the conversation outgrows `limits.context_tokens`. The engine keeps a copy
+ * in nanobot/dots/protocol.py, kept equal by tests/repo/vendored-nanobot.test.ts.
+ */
+export const MODEL_ROLES = ["summary"] as const;
+export type ModelRole = (typeof MODEL_ROLES)[number];
+
+export function isModelRole(name: string): name is ModelRole {
+  return (MODEL_ROLES as readonly string[]).includes(name);
+}
+
+const permissionDecision = z.enum(["allow", "ask", "deny"]);
+export type PermissionDecision = z.infer<typeof permissionDecision>;
+
+export const dotConfigSchema = z
+  .object({
+    name: z
+      .string()
+      .regex(DOT_NAME_PATTERN, "name must be 1 to 40 characters of lowercase letters, digits and '-'"),
+    instructions: z.string().optional(),
+    model: z
+      .object({
+        provider: z.literal("openrouter", { error: 'model.provider must be "openrouter"' }),
+        id: modelId,
+      })
+      .strict(),
+    models: z
+      .record(z.string(), modelId)
+      .default({})
+      .superRefine((models, ctx) => {
+        for (const role of Object.keys(models)) {
+          if (!isModelRole(role)) {
+            ctx.addIssue({
+              code: "custom",
+              path: [role],
+              message: `unknown model role "${role}" (the roles are: ${MODEL_ROLES.join(", ")})`,
+            });
+          }
+        }
+      }),
+    computer: z
+      .object({
+        cpu: z
+          .number()
+          .int("computer.cpu must be an integer")
+          .min(CONFIG_BOUNDS.cpu.min)
+          .max(CONFIG_BOUNDS.cpu.max)
+          .default(CONFIG_BOUNDS.cpu.default),
+        memory: sizeField("computer.memory", CONFIG_BOUNDS.memory.min, CONFIG_BOUNDS.memory.max, CONFIG_BOUNDS.memory.default),
+        disk: sizeField("computer.disk", CONFIG_BOUNDS.disk.min, CONFIG_BOUNDS.disk.max, CONFIG_BOUNDS.disk.default),
+        idle_timeout: durationField,
+      })
+      .strict()
+      .default({
+        cpu: CONFIG_BOUNDS.cpu.default,
+        memory: CONFIG_BOUNDS.memory.default,
+        disk: CONFIG_BOUNDS.disk.default,
+        idle_timeout: CONFIG_BOUNDS.idleTimeout.default,
+      }),
+    permissions: z
+      .record(z.string(), permissionDecision)
+      .default({})
+      .superRefine((perms, ctx) => {
+        // A typo such as "computer.exe: deny" would otherwise be silently ignored
+        // and leave the real permission at its default.
+        for (const key of Object.keys(perms)) {
+          if (!isPermission(key)) {
+            ctx.addIssue({ code: "custom", path: [key], message: `unknown permission "${key}"` });
+          }
+        }
+      }),
+    limits: z
+      .object({
+        max_steps_per_task: z.number().int().min(CONFIG_BOUNDS.maxStepsPerTask.min).max(CONFIG_BOUNDS.maxStepsPerTask.max).default(CONFIG_BOUNDS.maxStepsPerTask.default),
+        // Prompt tokens a request may use; what is sent is kept under it (section 8.6).
+        context_tokens: z.number().int().min(CONFIG_BOUNDS.contextTokens.min).max(CONFIG_BOUNDS.contextTokens.max).default(CONFIG_BOUNDS.contextTokens.default),
+        // USD a task, or a chat turn, may spend on the model before it stops (section 8.2).
+        max_cost_per_task_usd: z
+          .number()
+          .min(CONFIG_BOUNDS.maxCostPerTaskUsd.min)
+          .max(CONFIG_BOUNDS.maxCostPerTaskUsd.max)
+          .default(CONFIG_BOUNDS.maxCostPerTaskUsd.default),
+      })
+      .strict()
+      .default({
+        max_steps_per_task: CONFIG_BOUNDS.maxStepsPerTask.default,
+        context_tokens: CONFIG_BOUNDS.contextTokens.default,
+        max_cost_per_task_usd: CONFIG_BOUNDS.maxCostPerTaskUsd.default,
+      }),
+  })
+  .strict();
+
+export type DotConfig = z.output<typeof dotConfigSchema>;
+export type DotConfigInput = z.input<typeof dotConfigSchema>;
+/** What `PUT /config` sends to the guest: the config minus `computer` (section 7). */
+export type DotRuntimeConfig = Omit<DotConfig, "computer">;
+
+export class DotConfigError extends Error {
+  readonly issues: { path: string; message: string }[];
+
+  constructor(issues: { path: string; message: string }[]) {
+    super(`invalid Dot configuration: ${issues.map((i) => (i.path ? `${i.path}: ${i.message}` : i.message)).join("; ")}`);
+    this.name = "DotConfigError";
+    this.issues = issues;
+  }
+}
+
+function loadInput(input: unknown): unknown {
+  if (typeof input !== "string") return input;
+  try {
+    return parseYaml(input);
+  } catch (error) {
+    throw new DotConfigError([{ path: "", message: `not valid YAML: ${(error as Error).message}` }]);
+  }
+}
+
+/** Parse YAML text or an already-decoded object into a DotConfig with every default applied. */
+export function parseDotConfig(input: unknown): DotConfig {
+  const result = dotConfigSchema.safeParse(loadInput(input));
+  if (!result.success) {
+    throw new DotConfigError(
+      result.error.issues.map((issue) => ({ path: issue.path.map(String).join("."), message: issue.message })),
+    );
+  }
+  return result.data;
+}
+
+/** Like `parseDotConfig`, without throwing. */
+export function safeParseDotConfig(
+  input: unknown,
+): { ok: true; config: DotConfig } | { ok: false; error: DotConfigError } {
+  try {
+    return { ok: true, config: parseDotConfig(input) };
+  } catch (error) {
+    if (error instanceof DotConfigError) return { ok: false, error };
+    throw error;
+  }
+}
+
+/**
+ * Validate a runtime config as the guest receives it. The guest has no
+ * `computer` section to check, so the full schema is applied with the
+ * defaults in its place and then removed again.
+ */
+export function parseRuntimeConfig(input: unknown): DotRuntimeConfig {
+  const value = loadInput(input);
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new DotConfigError([{ path: "", message: "runtime config must be an object" }]);
+  }
+  if ("computer" in value) {
+    throw new DotConfigError([{ path: "computer", message: "a runtime config has no computer section" }]);
+  }
+  return toRuntimeConfig(parseDotConfig(value));
+}
+
+/**
+ * What the guest is given (`PUT /config`): the Dot config without its
+ * computer section, with `permissions` resolved for every permission the
+ * registry knows. The defaults live here and nowhere else; the engine in the
+ * guest applies the map as it comes and denies a permission it does not
+ * find in it.
+ */
+export function toRuntimeConfig(config: DotConfig): DotRuntimeConfig {
+  const { computer: _computer, ...runtime } = config;
+  const permissions = Object.fromEntries(PERMISSIONS.map((permission) => [permission, resolvePermission(config, permission)]));
+  return { ...runtime, permissions };
+}
+
+export interface ComputerResources {
+  cpus: number;
+  memoryBytes: number;
+  memoryMiB: number;
+  diskBytes: number;
+  /** Milliseconds of inactivity before the Dot sleeps; null means never. */
+  idleTimeoutMs: number | null;
+}
+
+export function computerResources(config: Pick<DotConfig, "computer">): ComputerResources {
+  const memoryBytes = parseSize(config.computer.memory);
+  return {
+    cpus: config.computer.cpu,
+    memoryBytes,
+    memoryMiB: bytesToMiB(memoryBytes),
+    diskBytes: parseSize(config.computer.disk),
+    idleTimeoutMs: parseDuration(config.computer.idle_timeout),
+  };
+}
+
+/**
+ * The decision for one permission (section 7). An explicit entry in the
+ * config wins. Otherwise everything under computer.*, files.*, browser.* and
+ * browser.* is allowed, except browser.identity.delete, which asks; the
+ * automations permission asks too, because an automation keeps working after
+ * the turn. A permission the registry does not know is denied whatever the
+ * config says.
+ */
+export function resolvePermission(
+  config: Pick<DotRuntimeConfig, "permissions">,
+  permission: string,
+): PermissionDecision {
+  if (!isPermission(permission)) return "deny";
+  const explicit = config.permissions[permission];
+  if (explicit !== undefined) return explicit;
+  return defaultPermission(permission);
+}
+
+const ASK_BY_DEFAULT: ReadonlySet<Permission> = new Set<Permission>(["browser.identity.delete", "automations"]);
+const ALLOWED_NAMESPACES: ReadonlySet<string> = new Set(["computer", "files", "browser"]);
+
+function defaultPermission(permission: Permission): PermissionDecision {
+  if (ASK_BY_DEFAULT.has(permission)) return "ask";
+  return ALLOWED_NAMESPACES.has(permission.split(".")[0] ?? "") ? "allow" : "deny";
+}

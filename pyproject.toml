@@ -1,67 +1,26 @@
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+# Configuration only: nothing in this repository is a Python package. The
+# pre-push hook and CI run the English and claims gates of the pinned
+# invisible-core (.github/gates-requirements.txt), and those gates read their
+# settings from this file.
 
-[project]
-name = "dots"
-version = "0.1.0"
-description = "Open-source dots for the web: an agent with its own browser, one that does not get blocked."
-readme = "README.md"
-requires-python = ">=3.11"
-license = "MIT"
-license-files = ["LICENSE"]
-authors = [{ name = "feder-cr", email = "85809106+feder-cr@users.noreply.github.com" }]
-keywords = ["dots", "browser-agent", "web-agent", "ai-agent", "anti-detect", "firefox", "openrouter"]
-classifiers = [
-    "Operating System :: Microsoft :: Windows",
-    "Operating System :: POSIX :: Linux",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-]
-dependencies = [
-    # ⛔ THE WHOLE PRODUCT IS THIS LINE. `dots` is invisible-playwright-mcp's
-    # interface under another name: the loop, the browser and the page all
-    # come from there, and nothing here re-implements any of it. An EXACT pin
-    # and not a floor, because `cli.py` calls into that package's command
-    # group, which is not a published API: a new release is taken on purpose,
-    # with `tests/test_entry.py` run against it, never picked up by a resolver.
-    "invisible-playwright-mcp==0.70.2",
-]
-
-[project.urls]
-Homepage = "https://github.com/feder-cr/dots"
-Repository = "https://github.com/feder-cr/dots"
-"Use it from your assistant" = "https://github.com/feder-cr/invisible_playwright_mcp"
-
-[project.scripts]
-dots = "dots.cli:main"
-
-[project.optional-dependencies]
-dev = ["pytest>=7"]
-
-[tool.pytest.ini_options]
-markers = [
-    "unit: pure logic - no I/O, no network, no subprocess, no browser",
-    "integration: runs the real command in a subprocess - no network, no browser",
-]
-addopts = "--strict-markers"
-pythonpath = ["src"]
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/dots"]
-
-# Which pre-push gates this repository wants: `.githooks/pre-push` hands over
-# to invisible_core.hooks, which arrives here through the pinned package.
-# `pin` is off because this repository pins invisible-playwright-mcp, not the
-# core, and there are no release tags because nothing is published to an index:
-# the name `dots` on PyPI belongs to an unrelated project.
+# Which gates `.githooks/pre-push` hands over to invisible_core.hooks. The
+# suites of this repository (vitest and go test) run in the hook itself before
+# that, so the core's pytest gate is off; `pin` is off because nothing here
+# pins invisible-core in a package manifest, and there are no release tags
+# because nothing is published to an index.
 [tool.invisible.hooks]
-pytest = true
+pytest = false
 pin = false
 english = true
 identity = true
 release_tags = []
 
+# The gate's own default list, then every kind of file this repository writes
+# prose in. `.mjs` is listed on its own because the gate matches by suffix and
+# "build.mjs" does not end in ".js".
 [tool.invisible.english]
+extensions = [
+    ".py", ".md", ".toml", ".cfg", ".yml", ".yaml", ".js", ".css", ".html",
+    ".ts", ".tsx", ".mts", ".cts", ".mjs", ".go", ".sh", ".sql", ".service", "Dockerfile",
+]
 excluded = []

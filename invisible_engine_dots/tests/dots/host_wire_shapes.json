@@ -1,0 +1,117 @@
+{
+  "runtime_configs": [
+    {
+      "name": "shapes-min",
+      "config": {
+        "name": "shapes-min",
+        "model": {
+          "id": "test/model",
+          "provider": "openrouter"
+        },
+        "limits": {
+          "context_tokens": 32000,
+          "max_steps_per_task": 60,
+          "max_cost_per_task_usd": 1
+        },
+        "models": {},
+        "permissions": {
+          "computer.exec": "allow",
+          "computer.screenshot": "allow",
+          "files.read": "allow",
+          "files.write": "allow",
+          "browser.identity.list": "allow",
+          "browser.identity.create": "allow",
+          "browser.identity.delete": "ask",
+          "browser.identity.launch": "allow",
+          "browser.identity.close": "allow",
+          "browser.navigate": "allow",
+          "browser.read": "allow",
+          "browser.act": "allow",
+          "automations": "ask"
+        }
+      }
+    },
+    {
+      "name": "shapes-full",
+      "config": {
+        "name": "shapes-full",
+        "model": {
+          "id": "test/model",
+          "provider": "openrouter"
+        },
+        "limits": {
+          "context_tokens": 64000,
+          "max_steps_per_task": 30,
+          "max_cost_per_task_usd": 2.5
+        },
+        "models": {
+          "summary": "test/small"
+        },
+        "permissions": {
+          "computer.exec": "deny",
+          "computer.screenshot": "allow",
+          "files.read": "allow",
+          "files.write": "ask",
+          "browser.identity.list": "allow",
+          "browser.identity.create": "allow",
+          "browser.identity.delete": "ask",
+          "browser.identity.launch": "allow",
+          "browser.identity.close": "allow",
+          "browser.navigate": "allow",
+          "browser.read": "allow",
+          "browser.act": "allow",
+          "automations": "ask"
+        },
+        "instructions": "Answer in one line."
+      }
+    }
+  ],
+  "inbound_events": [
+    {
+      "type": "user.message",
+      "data": {
+        "text": "what is the cheapest fare to Lisbon?"
+      }
+    },
+    {
+      "type": "task.created",
+      "data": {
+        "task_id": "task-1",
+        "priority": 5,
+        "description": "compare the fares"
+      }
+    },
+    {
+      "type": "system.event",
+      "data": {
+        "data": {
+          "task_id": "task-1"
+        },
+        "name": "task.cancelled"
+      }
+    },
+    {
+      "type": "task.created",
+      "data": {
+        "task_id": "task-2",
+        "priority": 0,
+        "description": "a task with the default priority"
+      }
+    },
+    {
+      "type": "approval.received",
+      "data": {
+        "note": "go on",
+        "decision": "approve",
+        "approval_id": "approval-1"
+      }
+    },
+    {
+      "type": "approval.received",
+      "data": {
+        "decision": "reject",
+        "approval_id": "approval-2"
+      }
+    }
+  ]
+}
