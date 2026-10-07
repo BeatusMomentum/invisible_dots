@@ -113,6 +113,18 @@ describe("create", () => {
     expect(third.instanceId).not.toBe(first.instanceId);
   });
 
+  it("gives a seed that goes back to an earlier content an id cloud-init has not seen, so its config.json is written again", async () => {
+    // A VM proxy set and then cleared: the third seed has the first one's content. With the content's id alone it
+    // got the first boot's id again, cloud-init skipped write_files, and the Dot kept the proxy it no longer had.
+    const ids = [];
+    for (const proxy of [undefined, "socks5://10.0.2.2:1081", undefined, "socks5://10.0.2.2:1081", undefined]) {
+      ids.push((await manager.create({ ...spec, ...(proxy ? { proxy } : {}) })).instanceId);
+    }
+    expect(new Set(ids).size).toBe(ids.length);
+    // The same seed again is still the same id: a restart re-runs nothing.
+    expect((await manager.create(spec)).instanceId).toBe(ids[4]);
+  });
+
   it("refuses missing images, bad ids and relative image paths", async () => {
     await expect(manager.create({ ...spec, goldenImage: join(root, "nope.qcow2") })).rejects.toThrow(/golden image .* does not exist.*image build/);
     await expect(manager.create({ ...spec, dotId: "../etc" })).rejects.toBeInstanceOf(VmManagerError);

@@ -62,18 +62,29 @@ export interface SeedFiles {
   userData: string;
   metaData: string;
   instanceId: string;
+  /** The digest of the rendered content, which the next seed is compared with. */
+  digest: string;
+}
+
+/** The seed written last for a Dot: its content's digest and its instance-id (seed-instance.json beside seed.iso). */
+export interface PreviousSeed {
+  digest: string;
+  instanceId: string;
 }
 
 /**
  * Render the seed of one Dot.
  *
  * cloud-init runs its per-instance modules (users, write_files, mounts...)
- * once per instance-id. The id is therefore derived from the rendered
- * user-data: a seed with a new token or new templates gets a new id, so the
- * new config.json is written on the next boot, while rewriting an identical
- * seed (a retried create, a restart) keeps the id and re-runs nothing.
+ * once per instance-id it has not run them for. Rewriting the seed the last
+ * one was (a retried create, a restart) keeps that seed's id and re-runs
+ * nothing. A seed that differs from the last one (a new token, a VM proxy set
+ * or cleared, new templates) gets an id cloud-init has never seen: one derived
+ * from the content alone would come back with the content (a proxy cleared
+ * gives the first boot's seed again, whose modules ran long ago), and the old
+ * config.json would stay. So a changed seed's id also covers the id before it.
  */
-export function renderSeed(templates: SeedTemplates, dotId: string, token: string, proxy?: string): SeedFiles {
+export function renderSeed(templates: SeedTemplates, dotId: string, token: string, proxy?: string, previous?: PreviousSeed): SeedFiles {
   const bootConfig: GuestBootConfig = { dotId, token, ...(proxy ? { proxy } : {}) };
   const hostname = guestHostname(dotId);
   const userData = renderTemplate(
@@ -87,9 +98,14 @@ export function renderSeed(templates: SeedTemplates, dotId: string, token: strin
   );
   // The digest also covers the meta-data template, so changing it re-runs cloud-init as well.
   const digest = createHash("sha256").update(userData).update("\0").update(templates.metaData).update("\0").update(hostname).digest("hex");
-  const instanceId = `iid-${dotId}-${digest.slice(0, 16)}`;
+  const instanceId =
+    previous === undefined
+      ? `iid-${dotId}-${digest.slice(0, 16)}`
+      : previous.digest === digest
+        ? previous.instanceId
+        : `iid-${dotId}-${digest.slice(0, 16)}-${createHash("sha256").update(previous.instanceId).digest("hex").slice(0, 8)}`;
   const metaData = renderTemplate(templates.metaData, { instanceId, hostname }, yamlScalar);
-  return { userData, metaData, instanceId };
+  return { userData, metaData, instanceId, digest };
 }
 
 /** Read the two cloud-init templates from a `virtualization/` directory. */

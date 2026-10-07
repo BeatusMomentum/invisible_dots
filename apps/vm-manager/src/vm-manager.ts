@@ -15,7 +15,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { access, appendFile, mkdir, open, readFile, rm, writeFile } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import {
   allowlistedEnvironment,
   computerResources,
@@ -53,7 +53,7 @@ import {
   type ProcessControl,
   type ProcessExit,
 } from "./runner.js";
-import { DEFAULT_VIRTUALIZATION_DIR, loadSeedTemplates, renderSeed, writeSeedIso, type SeedTemplates } from "./seed.js";
+import { DEFAULT_VIRTUALIZATION_DIR, loadSeedTemplates, renderSeed, writeSeedIso, type PreviousSeed, type SeedTemplates } from "./seed.js";
 
 /** Everything the vm-manager needs to know about one Dot's computer. */
 export interface VmSpec {
@@ -230,6 +230,17 @@ export interface ProcessFile {
   host_uptime_s?: number;
 }
 
+/** seed-instance.json, or undefined for one this code did not write: the next seed then takes the content's own id. */
+function parsePreviousSeed(text: string): PreviousSeed | undefined {
+  try {
+    const value = JSON.parse(text) as Partial<PreviousSeed>;
+    if (typeof value.digest === "string" && typeof value.instanceId === "string") return { digest: value.digest, instanceId: value.instanceId };
+  } catch {
+    // Not JSON: as if there were none.
+  }
+  return undefined;
+}
+
 function parseProcessFile(text: string): ProcessFile | undefined {
   try {
     const value = JSON.parse(text) as Partial<ProcessFile>;
@@ -395,9 +406,15 @@ export class VmManager {
   }
 
   private async writeSeed(spec: VmSpec): Promise<string> {
-    const seed = renderSeed(await this.loadTemplates(), spec.dotId, spec.token, spec.proxy);
+    // The seed written last decides the id of this one (renderSeed): the same content keeps it, any other gets a new one.
+    const record = join(this.paths.vmDir(spec.dotId), "seed-instance.json");
+    const previous = await readFile(record, "utf8").then(parsePreviousSeed, () => undefined);
+    const seed = renderSeed(await this.loadTemplates(), spec.dotId, spec.token, spec.proxy, previous);
     // Replaces a seed.iso a QEMU killed a moment ago may still hold open (Windows).
     await retryWhileInUse(() => writeSeedIso(this.paths.seedPath(spec.dotId), seed));
+    const temporary = `${record}.tmp`;
+    await writeFile(temporary, `${JSON.stringify({ digest: seed.digest, instanceId: seed.instanceId })}\n`, { mode: 0o600 });
+    await replaceFile(temporary, record);
     return seed.instanceId;
   }
 
