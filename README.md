@@ -142,7 +142,7 @@ you can still run any of them alone:
 |---|---|---|
 | 1. The guest daemon | Builds `dot-agentd`, the program that runs inside every Dot's VM, for Linux whatever your host is. It stops here, before changing anything, when Go is missing, and prints the command that installs it. | `go -C guest/dot-agentd build -trimpath -o bin/dot-agentd ./cmd/dot-agentd` with `CGO_ENABLED=0 GOOS=linux GOARCH=amd64` |
 | 2. QEMU and its accelerator | Checks the host and fixes only what is missing. On **Windows** it enables the Windows Hypervisor Platform and installs QEMU in one elevated step (one UAC prompt). On **Linux** it installs QEMU with `sudo apt-get` (sudo asks for your password). | `invisible-dots setup` |
-| 3. The web client | Builds it, with Next.js's anonymous telemetry turned off, unless it is built already. | `npm run build --workspace @invisible-dots/web` |
+| 3. The web client | Builds it, unless it is built already. | `npm run build --workspace @invisible-dots/web` |
 | 4. The guest images | Builds the runtime disk (the daemon and the engine), and downloads the golden image (Ubuntu 24.04, the desktop, the browser) that CI built for exactly these inputs, or builds it here when none is published (a changed pin, a fork, no network). A second run with unchanged inputs does nothing. | `invisible-dots image build` (`--no-download` always builds) |
 
 Two things can stop it on purpose, and both end with the same advice: run the
@@ -729,10 +729,10 @@ it, and to whom:
 - **The web UI** loads nothing from other sites: its pages, scripts and styles
   come from the server on your PC, its fonts (Geist) included. A link you
   press (to @BotFather, to an OpenRouter page) opens that site.
-- **Next.js** may send its anonymous build telemetry when the web client is
-  built. `setup --all` turns it off for its build; set
-  `NEXT_TELEMETRY_DISABLED=1` yourself when you run
-  `npm run build --workspace @invisible-dots/web` by hand.
+- **No telemetry of invisible_dots.** Nothing of its own reports on how you use
+  it: Next.js's build telemetry is off in the web client's own config, so no
+  way of building it sends any, and the Dots' Ubuntu has no crash reporter and
+  no pollinate. The browser layer's launch counter, above, is that library's.
 
 Your Dots' disks, memory and conversations stay in the data directory and
 inside their VMs.

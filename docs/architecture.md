@@ -2726,8 +2726,9 @@ command is also how a run that stopped is continued. In order:
 3. **The web client**, unless `locateWebBuild()` finds it complete: node runs
    `apps/web/scripts/build.mjs` (the script `npm run build --workspace
    @invisible-dots/web` runs; node starts it directly because npm is a `.cmd`
-   file on Windows and the CLI never starts a program through a shell) with
-   `NEXT_TELEMETRY_DISABLED=1`, its output on the person's terminal.
+   file on Windows and the CLI never starts a program through a shell), its output
+   on the person's terminal. Next's telemetry is off in `apps/web/next.config.ts`
+   itself, so this build and any other send none.
 4. **The guest images**, `image build` as it is (the runtime disk first, then
    the golden image).
 

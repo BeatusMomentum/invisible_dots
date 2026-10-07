@@ -76,7 +76,7 @@ describe("the web client build", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0]!.command).toBe("/usr/bin/node");
     expect(calls[0]!.args).toEqual([webBuildScript(REPO)]);
-    expect(calls[0]!.options.env).toMatchObject({ PATH: "/usr/bin", NEXT_TELEMETRY_DISABLED: "1" });
+    expect(calls[0]!.options.env).toMatchObject({ PATH: "/usr/bin" });
     expect(calls[0]!.options.inheritStdio).toBe(true);
   });
 

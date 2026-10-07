@@ -40,10 +40,12 @@ apt-get "${apt_wait[@]}" -o Dpkg::Options::=--force-unsafe-io install -y --no-in
 
 step "removing what a Dot never uses"
 # Services of the cloud image that would run in every Dot for nothing: snaps, automatic upgrades (apt in the
-# background of each Dot), crash reports, the LXD stubs, Ubuntu Pro, release upgrades and an SSH server nobody
-# logs into. Purged one by one without --auto-remove, so nothing else goes with them.
+# background of each Dot), crash reports, the LXD stubs, Ubuntu Pro, release upgrades, an SSH server nobody logs
+# into, and pollinate, which at the first boot of every machine (so of every Dot) tells Canonical's entropy server
+# the system's version, its cloud and its processor. Nothing in a Dot reports on it. Purged one by one without
+# --auto-remove, so nothing else goes with them.
 for package in snapd unattended-upgrades apport apport-core-dump-handler lxd-installer lxd-agent-loader \
-  ubuntu-pro-client ubuntu-release-upgrader-core openssh-server; do
+  ubuntu-pro-client ubuntu-release-upgrader-core openssh-server pollinate; do
   if dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q "install ok installed"; then
     apt-get "${apt_wait[@]}" purge -y "$package"
   fi

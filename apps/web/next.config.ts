@@ -2,6 +2,11 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { NextConfig } from "next";
 
+// invisible_dots sends no telemetry, and nothing turns it on. Next's build and dev server create their telemetry
+// after they load this file and read this variable first, ahead of any setting the person's own Next has stored, so
+// every way of building the web client (setup, npm run build, next dev) sends nothing.
+process.env.NEXT_TELEMETRY_DISABLED = "1";
+
 // The npm workspace root: dependencies are hoisted there, and the shared
 // package is linked from there as TypeScript source.
 const workspaceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../..");

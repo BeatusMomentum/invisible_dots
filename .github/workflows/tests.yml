@@ -248,16 +248,12 @@ jobs:
           cache: npm
       - run: npm ci --no-audit --no-fund
       - name: next build
-        env:
-          NEXT_TELEMETRY_DISABLED: "1"
         run: npm run build --workspace @invisible-dots/web
       - name: install the browser the tests drive
         run: npx playwright install --with-deps chromium
       # Each worker starts the real control plane (over a fake VM layer) and the built web client; see
       # apps/web/e2e/harness.ts. The JUnit report lands in apps/web/playwright-report.xml.
       - name: browser tests
-        env:
-          NEXT_TELEMETRY_DISABLED: "1"
         run: npm run test:e2e --workspace @invisible-dots/web
       # Playwright exits 0 when a spec file stopped being collected or a test skipped itself, so what ran is
       # counted against the same floors file.

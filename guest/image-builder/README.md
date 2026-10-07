@@ -35,7 +35,8 @@ image's SHA-256; `invisible-dots doctor` checks an image against it with
    apt packages (Xvfb, a minimal XFCE, the browser's libraries, ImageMagick
    for dot-agentd's screenshots), uv, then removes the cloud image's services a
    Dot never uses (snapd, unattended-upgrades, apport, the LXD stubs, Ubuntu Pro,
-   the release upgrader, the SSH server), then builds the Dot's browser with
+   the release upgrader, the SSH server, pollinate, which would tell Canonical of
+   every new Dot), then builds the Dot's browser with
    `build-browser-env.sh <lock> ~dot/.local/share/invisible-dots/mcp`, as user
    `dot`: a virtual environment filled with
    `uv pip install --require-hashes -r mcp-requirements.lock`, its

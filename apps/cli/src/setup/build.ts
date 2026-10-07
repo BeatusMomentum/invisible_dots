@@ -16,7 +16,7 @@ export interface StepResult {
 
 export interface BuildDeps {
   run: Runner;
-  /** The environment the builds start from; the Go build adds its own variables, the web build turns Next's telemetry off. */
+  /** The environment the builds start from; the Go build adds its own variables. */
   env: Record<string, string | undefined>;
   repoRoot: string;
   /** The program that runs the web build script: the node running this command. */
@@ -70,7 +70,7 @@ export async function buildWeb(deps: BuildDeps): Promise<StepResult> {
   if (await deps.webBuilt()) return { ok: true, lines: [`already built; after an update, build it again with: ${WEB_BUILD_COMMAND}`] };
   // The output is the person's to see: a Next build takes minutes and prints its progress.
   const answer = await deps.run(deps.node, [webBuildScript(deps.repoRoot)], {
-    env: { ...deps.env, NEXT_TELEMETRY_DISABLED: "1" },
+    env: deps.env,
     inheritStdio: true,
     timeoutMs: WEB_TIMEOUT_MS,
   });
