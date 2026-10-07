@@ -13,7 +13,7 @@ invisible to anti-bots. Any model on OpenRouter. You decide what each one may do
 </div>
 
 <p align="center">
-  <img alt="A real Dot at work: asked in its chat to open github.com/trending and the day's top repository, it opens Firefox on its own computer, which the Computer tab shows live, reads the trending list and the repository's page, and answers in the chat with what the repository does and its stars." src="docs/images/hero.gif" width="100%">
+  <img alt="An animation of what a Dot does: asked once in its chat to send GitHub Trending's top 3 to Telegram every morning at 8:00, it works on a computer of its own, asks before it adds the daily automation, and then sends the list every day." src="docs/images/hero.gif" width="100%">
 </p>
 
 A **Dot** is a persistent AI agent with a QEMU virtual machine of its own, on your own PC. Its disk, files, memory,
