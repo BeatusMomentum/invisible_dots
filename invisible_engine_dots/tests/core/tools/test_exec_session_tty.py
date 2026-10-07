@@ -36,12 +36,22 @@ def _session_id(output: str) -> str:
 COLORED = "import sys; sys.stdout.write('\\x1b[1;32mname?\\x1b[0m\\r\\n10%\\r50%\\r100%\\r\\n'); sys.stdin.readline()"
 
 
+async def _colored_output(tool: ExecTool, manager: ExecSessionManager, *, tty: bool) -> str:
+    """What the model reads of COLORED, which writes once and then waits on its input. On a loaded machine the
+    interpreter can take longer than the first yield to start; the model then reads the session, as here."""
+    first = await tool.execute(command=_python_command(COLORED), tty=tty, yield_time_ms=500)
+    if "100%" in first:
+        return first
+    session = ExecSessionTool(manager=manager)
+    return await session.execute(session_id=_session_id(first), wait_for="100%", timeout_ms=10_000)
+
+
 def test_a_tty_session_shows_the_text_of_the_screen(tmp_path: Path) -> None:
     async def run() -> str:
         manager = ExecSessionManager()
         tool = ExecTool(LocalComputer(tmp_path), timeout=10, session_manager=manager)
         try:
-            return await tool.execute(command=_python_command(COLORED), tty=True, yield_time_ms=500)
+            return await _colored_output(tool, manager, tty=True)
         finally:
             await manager.close_all()
 
@@ -58,7 +68,7 @@ def test_a_session_without_a_tty_keeps_the_raw_stream(tmp_path: Path) -> None:
         manager = ExecSessionManager()
         tool = ExecTool(LocalComputer(tmp_path), timeout=10, session_manager=manager)
         try:
-            return await tool.execute(command=_python_command(COLORED), yield_time_ms=500)
+            return await _colored_output(tool, manager, tty=False)
         finally:
             await manager.close_all()
 
