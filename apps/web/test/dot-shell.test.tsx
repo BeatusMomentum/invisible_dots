@@ -74,6 +74,17 @@ describe("the Dot header", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  it("says the Dot does not exist once its delete finishes, on a page that was open on it", async () => {
+    plane.dots = [dotRecord("d1", { name: "fares" })];
+    await renderDot();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("fares");
+    // The delete ends after its request (the computer stops first): the record goes, then dot.deleted.
+    plane.dots = [];
+    act(() => plane.push("d1", "dot.deleted", { name: "fares" }));
+    expect(await screen.findByRole("heading", { name: "This Dot does not exist" })).toBeTruthy();
+    expect(screen.queryByText("the tab body")).toBeNull();
+  });
+
   it("shows what the Dot is doing from the agent's events, and only this Dot's", async () => {
     plane.dots = [dotRecord("d1"), dotRecord("d2")];
     await renderDot();

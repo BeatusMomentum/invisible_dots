@@ -24,7 +24,9 @@ export function useDot(): DotContextValue {
   return value;
 }
 
-const HEADER_EVENTS = ["dot.updated", "computer.state", "computer.started", "computer.stopped", "agent.state"];
+// dot.deleted too: a delete finishes after the request (its computer stops first), and the page open on the Dot then
+// says it does not exist instead of staying on "Deleting".
+const HEADER_EVENTS = ["dot.updated", "dot.deleted", "computer.state", "computer.started", "computer.stopped", "agent.state"];
 
 /**
  * The page of one Dot: its header (S4), the tab bar, and the tab's body, which fills the rest of the window and
