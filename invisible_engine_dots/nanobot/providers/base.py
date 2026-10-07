@@ -681,6 +681,9 @@ class LLMProvider(ABC):
             body = message if isinstance(message, str) and message.strip() else json.dumps(body, ensure_ascii=False)
         body_text = body if isinstance(body, str) else str(body) if body is not None else ""
         body_text = body_text.strip()
+        if body_text and getattr(exc, "status_code", None) == 401:
+            # OpenRouter says "User not found." of a wrong or revoked key: the person has to read that it is the key.
+            return f"Error: the API key was refused (401): {body_text[:_ERROR_BODY_LIMIT]}"
         if body_text:
             return f"Error: {body_text[:_ERROR_BODY_LIMIT]}"
         detail = str(exc).strip() or type(exc).__name__

@@ -42,6 +42,16 @@ def test_a_parsed_body_without_a_message_is_shown_as_json() -> None:
     assert text == 'Error: {"code": 400, "detail": "nope"}'
 
 
+def test_a_refused_key_says_it_is_the_key() -> None:
+    request = httpx.Request("POST", "https://example.com/v1/chat/completions")
+    # What OpenRouter answered for a wrong key, seen through the web client as "Error: User not found.".
+    refused = openai.AuthenticationError(
+        "Error code: 401", response=httpx.Response(401, request=request), body={"message": "User not found.", "code": 401}
+    )
+
+    assert provider().failure_text(refused) == "Error: the API key was refused (401): User not found."
+
+
 def test_a_text_body_is_kept_as_it_is() -> None:
     text = provider().failure_text(bad_request("upstream said no"))
 
