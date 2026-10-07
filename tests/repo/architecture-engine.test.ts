@@ -18,7 +18,7 @@ function read(path: string): string {
   return readFileSync(join(repo, path), "utf8").replace(/\r\n/g, "\n");
 }
 
-const DOCS = ["docs/architecture.md", "README.md", "THIRD_PARTY_NOTICES.md", "guest/image-builder/README.md"];
+const DOCS = ["docs/architecture.md", "README.md", "docs/guide.md", "THIRD_PARTY_NOTICES.md", "guest/image-builder/README.md"];
 
 /** The section of the architecture document that starts at `heading`, up to the next heading of the same level. */
 function section(text: string, heading: string): string {

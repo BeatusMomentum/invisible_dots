@@ -96,8 +96,8 @@ describe("the WhatsApp client is installed by one command, from its own pinned l
     expect(whatsappClientDir("/repo")).toBe(join("/repo", ...CLIENT_FOLDER.split("/")));
   });
 
-  it("is the command the README, the architecture document and the notices tell a person to run", () => {
-    for (const path of ["README.md", "docs/architecture.md", "THIRD_PARTY_NOTICES.md"]) expect(read(path), path).toContain("npm run whatsapp:install");
+  it("is the command the guide, the architecture document and the notices tell a person to run", () => {
+    for (const path of ["docs/guide.md", "docs/architecture.md", "THIRD_PARTY_NOTICES.md"]) expect(read(path), path).toContain("npm run whatsapp:install");
   });
 
   it("has its types checked and its tests run by commands of their own, which the default ones leave out", () => {

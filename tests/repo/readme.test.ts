@@ -1,5 +1,6 @@
 /**
- * What the README states as facts must stay the facts of the code. The prose gates cannot tell that a command was
+ * What the guide (docs/guide.md, the long form of the README) states as facts must stay the facts of the code.
+ * The README itself is short and points into the guide; its links are checked here too. The prose gates cannot tell that a command was
  * renamed, a default moved or a section was retitled, so the statements that name something the code owns are
  * compared with it here: the links into the architecture and within the page, the commands of the table and their
  * flags, the environment variables, and the numbers (defaults, limits, lead times) the text gives.
@@ -16,6 +17,7 @@ import { PRESET_IDS, PRESETS } from "../../apps/web/src/lib/permission-presets.j
 const repo = resolve(fileURLToPath(new URL(".", import.meta.url)), "../..");
 const read = (path: string): string => readFileSync(join(repo, path), "utf8").replace(/\r\n/g, "\n");
 const readme = read("README.md");
+const guide = read("docs/guide.md");
 const architecture = read("docs/architecture.md");
 
 /** GitHub's anchor of a heading: lower case, punctuation dropped, spaces to hyphens. */
@@ -39,29 +41,40 @@ function anchorsOf(markdown: string): Set<string> {
 }
 
 describe("the README's links", () => {
+  it("to files of the repository name files that exist, and those into the guide land on a heading of it", () => {
+    const links = [...readme.matchAll(/(?:\]\(|(?:href|src|srcset)=")(?!https?:|#)([^)"#\s]+)(?:#([\w-]+))?/g)];
+    expect(links.length).toBeGreaterThan(3);
+    for (const [, path, anchor] of links) {
+      expect(() => readFileSync(join(repo, path!)), path).not.toThrow();
+      if (anchor && path === "docs/guide.md") expect(anchorsOf(guide).has(anchor), `docs/guide.md has no heading for #${anchor}`).toBe(true);
+    }
+  });
+});
+
+describe("the guide's links", () => {
   it("into docs/architecture.md land on a heading that exists", () => {
     const anchors = anchorsOf(architecture);
-    const links = [...readme.matchAll(/docs\/architecture\.md#([\w-]+)/g)].map((match) => match[1]!);
+    const links = [...guide.matchAll(/\(architecture\.md#([\w-]+)/g)].map((match) => match[1]!);
     expect(links.length).toBeGreaterThan(10);
     for (const link of links) expect(anchors.has(link), `docs/architecture.md has no heading for #${link}`).toBe(true);
   });
 
   it("within the page land on a heading that exists", () => {
-    const anchors = anchorsOf(readme);
-    const links = [...readme.matchAll(/\]\(#([\w-]+)\)|href="#([\w-]+)"/g)].map((match) => (match[1] ?? match[2])!);
+    const anchors = anchorsOf(guide);
+    const links = [...guide.matchAll(/\]\(#([\w-]+)\)|href="#([\w-]+)"/g)].map((match) => (match[1] ?? match[2])!);
     expect(links.length).toBeGreaterThan(10);
-    for (const link of links) expect(anchors.has(link), `README.md has no heading for #${link}`).toBe(true);
+    for (const link of links) expect(anchors.has(link), `docs/guide.md has no heading for #${link}`).toBe(true);
   });
 
   it("to files of the repository name files that exist", () => {
-    const paths = [...readme.matchAll(/\]\((?!https?:|#)([^)#\s]+)(?:#[^)\s]*)?\)/g)].map((match) => match[1]!);
+    const paths = [...guide.matchAll(/\]\((?!https?:|#)([^)#\s]+)(?:#[^)\s]*)?\)/g)].map((match) => match[1]!);
     expect(paths.length).toBeGreaterThan(5);
-    for (const path of paths) expect(() => readFileSync(join(repo, path)), path).not.toThrow();
+    for (const path of paths) expect(() => readFileSync(join(repo, "docs", path)), path).not.toThrow();
   });
 });
 
-describe("the README's table of commands", () => {
-  const rows = readme
+describe("the guide's table of commands", () => {
+  const rows = guide
     .split("\n")
     .filter((line) => /^\| `invisible-dots /.test(line))
     .map((line) => /^\| `([^`]+)`/.exec(line)![1]!);
@@ -80,8 +93,8 @@ describe("the README's table of commands", () => {
   });
 });
 
-describe("the README's environment variables", () => {
-  const table = readme.slice(readme.indexOf("<summary>The environment variables the host reads</summary>"));
+describe("the guide's environment variables", () => {
+  const table = guide.slice(guide.indexOf("<summary>The environment variables the host reads</summary>"));
   const listed = [...table.matchAll(/^\| `([A-Z_]+)` \|/gm)].map((match) => match[1]!);
 
   it("are every one the host reads from its environment, except the one it sets for its own child", () => {
@@ -103,19 +116,19 @@ describe("the README's environment variables", () => {
   });
 });
 
-describe("the README's account of the web UI", () => {
+describe("the guide's account of the web UI", () => {
   it("gives each permission preset of the Create a Dot page with the words the page uses", () => {
     for (const id of PRESET_IDS) {
       const { label, description } = PRESETS[id];
-      expect(readme, id).toContain(`| ${label} | ${description} |`);
+      expect(guide, id).toContain(`| ${label} | ${description} |`);
     }
   });
 });
 
-describe("the numbers the README gives", () => {
+describe("the numbers the guide gives", () => {
   const config = parseDotConfig("name: a\nmodel: { provider: openrouter, id: x/y }\n");
   // The text with its line breaks and quote marks folded into spaces, so a reflow of a paragraph breaks nothing.
-  const flat = readme.replace(/\s*\n(?:> ?)?\s*/g, " ");
+  const flat = guide.replace(/\s*\n(?:> ?)?\s*/g, " ");
 
   it("are the defaults of the configuration", () => {
     expect(config.computer.idle_timeout).toBe("15m");
