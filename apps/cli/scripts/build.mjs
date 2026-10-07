@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 import { copyDatabaseRuntimeFiles } from "../../../packages/database/scripts/runtime-files.mjs";
+import { BUNDLE_OPTIONS } from "./bundle-options.mjs";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const dist = join(root, "dist");
@@ -15,22 +16,9 @@ rmSync(dist, { recursive: true, force: true });
 mkdirSync(dist, { recursive: true });
 
 await build({
+  ...BUNDLE_OPTIONS,
   entryPoints: [join(root, "src", "main.ts")],
   outfile: join(dist, "invisible-dots.mjs"),
-  bundle: true,
-  platform: "node",
-  format: "esm",
-  target: "node24",
-  sourcemap: true,
-  // pg loads its optional native binding with require(); it is never installed here.
-  // The opt-in WhatsApp client (Baileys, which depends on libsignal, GPL-3.0) is not in the bundle either: the adapter
-  // loads it at run time from optional/whatsapp/ by path (packages/channels/src/whatsapp-baileys/client.ts), so no
-  // import of it is in the bundle's graph, and a bundle that held it would be a GPL work.
-  external: ["pg-native"],
-  banner: {
-    // CommonJS dependencies inside an ESM bundle still call require().
-    js: "#!/usr/bin/env node\nimport { createRequire as __createRequire } from 'node:module';\nconst require = __createRequire(import.meta.url);",
-  },
   logLevel: "info",
 });
 
