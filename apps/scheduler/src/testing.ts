@@ -825,9 +825,10 @@ export async function waitUntilSettledReady(
   dotId: string,
   what: string,
 ): Promise<void> {
-  await waitFor(async () => (await scheduler.db.dots.get(dotId))?.status === "READY" && !scheduler.lifecycle.isBusy(dotId), `${what} READY`);
+  // A Dot's creation is dozens of queries: against a Postgres across WSL on a loaded host that has taken over 5 s.
+  await waitFor(async () => (await scheduler.db.dots.get(dotId))?.status === "READY" && !scheduler.lifecycle.isBusy(dotId), `${what} READY`, 15_000);
   const lastSeq = driver.guestOf(dotId).outbox.at(-1)?.seq ?? 0;
-  await waitFor(async () => ((await scheduler.db.computers.get(dotId))?.event_cursor ?? 0) >= lastSeq, `${what}'s guest events stored`);
+  await waitFor(async () => ((await scheduler.db.computers.get(dotId))?.event_cursor ?? 0) >= lastSeq, `${what}'s guest events stored`, 15_000);
   await scheduler.settle();
 }
 
