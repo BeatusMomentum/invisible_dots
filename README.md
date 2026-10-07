@@ -3,8 +3,6 @@
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/hero-dark.gif">
   <img alt="invisible_dots, an open-source, self-hosted alternative to OpenAI Dots, Meta Muse, Grok Bot, Manus Cue and Claude Cowork. An animation of what a Dot does: asked once in its chat to send GitHub Trending's top 3 to Telegram every morning at 8:00, it works on a computer of its own, asks before it adds the daily automation, and then sends the list every day." src="docs/images/hero-light.gif" width="100%">
 </picture>
-
-<p><a href="#quickstart"><b>Quickstart</b></a> · <a href="docs/guide.md"><b>Guide</b></a> · <a href="docs/architecture.md"><b>Architecture</b></a> · <a href="docs/guide.md#security-model-and-known-limits"><b>Security</b></a> · <a href="docs/guide.md#privacy"><b>Privacy</b></a></p>
 </div>
 
 A **Dot** is a persistent AI agent with a QEMU virtual machine of its own, on your own PC. Its disk, files, memory,
