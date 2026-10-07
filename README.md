@@ -1,8 +1,9 @@
 <div align="center">
-<h1>invisible_dots</h1>
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/images/banner-dark.png">
+  <img src="docs/images/banner-light.png" alt="invisible_dots" width="720">
+</picture>
 <h3>Open-source, self-hosted alternative to OpenAI Dots, Meta Muse, Grok Bot, Manus Cue and Claude Cowork.</h3>
-<p>A virtual machine on your PC with a desktop, a shell, files, memory and skills that stay,<br>
-invisible to anti-bots. Any model on OpenRouter. You decide what each one may do.</p>
 
 <a href="https://github.com/feder-cr/invisible_dots/actions/workflows/tests.yml"><img alt="tests" src="https://github.com/feder-cr/invisible_dots/actions/workflows/tests.yml/badge.svg"></a>
 <a href="LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
