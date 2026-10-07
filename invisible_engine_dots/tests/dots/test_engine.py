@@ -14,6 +14,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+from fakes.browser_manager import mcp_home
 from fakes.dot_config import ALLOW_ALL, runtime_config_body
 from fakes.engine_harness import (
     EngineHarness,
@@ -23,6 +24,7 @@ from fakes.engine_harness import (
     task_created,
     user_message,
 )
+from fakes.fake_mcp_server import write_control
 from fakes.scripted_provider import Gate, call, calls, says
 
 from nanobot.agent.transcript_metadata import METADATA_KEY
@@ -1462,6 +1464,42 @@ class TestStoppingWithBrowsersOpen:
         assert h.browser.open_count == 0
         assert h.events_of("browser.identity.closed") == [{"identity_id": identity.id, "name": "open one"}]
         assert h.browser.get(identity.id) is not None
+
+    async def test_a_browser_still_closing_when_the_stop_ends_is_recorded_closed_while_the_store_takes_it(
+        self, make_engine: MakeEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # On a loaded machine Firefox can take longer to flush than the stop gives it. The engine then ends, and
+        # its exit ends the browser: the identity is closed now, not by a close that would finish after the store.
+        monkeypatch.setattr(engine_module, "_CLOSE_BROWSERS_ON_STOP_S", 0.2)
+        h = started(make_engine([]))
+        identity = await h.browser.create("slow one")
+        write_control(mcp_home(h.tmp_path, identity.id), slow_close_s=1.0)
+        await h.browser.launch(identity.id)
+
+        await h.engine.stop()
+
+        assert h.events_of("browser.identity.closed") == [{"identity_id": identity.id, "name": "slow one"}]
+        assert h.browser.open_count == 0
+        # The close that was cut short ends later and records nothing more.
+        await asyncio.sleep(1.5)
+        assert len(h.events_of("browser.identity.closed")) == 1
+
+    async def test_a_server_still_ending_when_the_stop_ends_has_its_identity_recorded_closed(
+        self, make_engine: MakeEngine, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # browser_close answered, the session was dropped, and its process is slow to end: the close is past the
+        # point where the stop finds it among the open ones, and records `closed` only once the process is gone.
+        monkeypatch.setattr(engine_module, "_CLOSE_BROWSERS_ON_STOP_S", 0.3)
+        h = started(make_engine([]))
+        identity = await h.browser.create("slow exit")
+        write_control(mcp_home(h.tmp_path, identity.id), slow_exit_s=1.5)
+        await h.browser.launch(identity.id)
+
+        await h.engine.stop()
+
+        assert h.events_of("browser.identity.closed") == [{"identity_id": identity.id, "name": "slow exit"}]
+        await asyncio.sleep(2.5)
+        assert len(h.events_of("browser.identity.closed")) == 1
 
     async def test_a_browser_that_does_not_close_does_not_hold_the_stop(
         self, make_engine: MakeEngine, monkeypatch: pytest.MonkeyPatch

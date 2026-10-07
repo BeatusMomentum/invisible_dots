@@ -467,6 +467,9 @@ class Engine:
             await asyncio.wait_for(self._browser.close_all(), budget)
         except asyncio.TimeoutError:
             logger.error("the open browsers did not close within {} s; the process ends them", budget)
+            if self._stopped:
+                # The store closes before these closes end: record them now, as what the exit makes them.
+                self._browser.closed_by_exit()
         self._store.checkpoint()
 
     # --- the host of a turn (TurnHost) --------------------------------------
