@@ -40,8 +40,15 @@ ENV PATH=/opt/node/bin:$PATH
 # reached through the group the device has on the machine running docker
 # (docker run --group-add), the same as `usermod -aG kvm` on a real host.
 # /data and /work are created here so the named volumes mounted on them start
-# owned by this user.
-RUN useradd --create-home --shell /bin/bash dots \
+# owned by this user. It has the uid and gid of the person building the image
+# (--build-arg, README), so the key file mounted from their home reads as it
+# does for them, mode 0600 included; the image's own ubuntu user (1000) goes
+# to free that uid.
+ARG HOST_UID=1000
+ARG HOST_GID=1000
+RUN userdel --remove ubuntu \
+ && groupadd --gid "$HOST_GID" dots \
+ && useradd --create-home --shell /bin/bash --uid "$HOST_UID" --gid dots dots \
  && mkdir -p /data /work \
  && chown dots:dots /data /work
 USER dots

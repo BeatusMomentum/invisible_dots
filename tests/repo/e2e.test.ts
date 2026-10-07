@@ -36,7 +36,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   CLI_COMMANDS,
   CLI_FLAGS,
-  cookieOf,
   DOCTOR_CHECKS,
   dotName,
   dotTokenFromSeed,
@@ -138,7 +137,7 @@ describe("the e2e run's contract with the product", () => {
     expect(tools.length).toBeGreaterThan(10);
     for (const tool of tools) expect(Object.keys(TOOLS), `run.ts names the tool ${tool}`).toContain(tool);
     // A dotted name in quotes is an event type or a permission, unless it is one of the few hosts and files the run writes.
-    const other = new Set(["example.com", "heading.txt", "approval.txt", "approval-counter.txt", "exec-marker.txt", "api.token", "qemu.json", "seed.iso", "serial.log", "disk.qcow2", "screenshot.png", "frame.jpg", "summary.json", "summary.txt", "events.txt", "server.log", "image-build.log", "cli.log", "dot.yaml"]);
+    const other = new Set(["example.com", "title.txt", "approval.txt", "approval-counter.txt", "exec-marker.txt", "api.token", "qemu.json", "seed.iso", "serial.log", "disk.qcow2", "screenshot.png", "frame.jpg", "summary.json", "summary.txt", "events.txt", "server.log", "image-build.log", "cli.log", "dot.yaml"]);
     const dotted = [...run.matchAll(/"([a-z]+(?:\.[a-z]+)+)"/g)].map((m) => m[1]!).filter((name) => !other.has(name));
     expect(dotted.length).toBeGreaterThan(10);
     for (const name of new Set(dotted)) {
@@ -247,12 +246,6 @@ describe("routes and names", () => {
     expect(stamp).toBe("20261006T101542Z");
     expect(dotName("e2e-", stamp)).toBe("e2e-1006-101542");
     expect(dotName("e2e-", stamp)).toMatch(/^[a-z0-9-]{1,40}$/);
-  });
-
-  it("takes the session cookie out of a set-cookie header", () => {
-    expect(cookieOf("idots_session=abc123; Path=/; HttpOnly; SameSite=Strict", "idots_session")).toBe("idots_session=abc123");
-    expect(cookieOf("other=1; Path=/, idots_session=zz9; Path=/", "idots_session")).toBe("idots_session=zz9");
-    expect(() => cookieOf(null, "idots_session")).toThrow(Failure);
   });
 });
 

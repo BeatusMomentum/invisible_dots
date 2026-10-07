@@ -34,7 +34,6 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   assert,
-  cookieOf,
   describeTools,
   DOCTOR_CHECKS,
   dotName,
@@ -86,7 +85,7 @@ const LOG_DIR = resolve(process.env.E2E_LOG_DIR?.trim() || join(REPO, "tmp", "e2
 const CLI = resolve(process.env.E2E_CLI?.trim() || join(REPO, "apps", "cli", "dist", "invisible-dots.mjs"));
 const KEY_FILE = process.env.E2E_OPENROUTER_KEY_FILE?.trim();
 const API_URL = (process.env.INVISIBLE_DOTS_URL?.trim() || "http://127.0.0.1:8787").replace(/\/+$/, "");
-const WEB_URL = `http://${process.env.INVISIBLE_DOTS_WEB_LISTEN?.trim() || "127.0.0.1:3000"}`;
+const WEB_URL = `http://${process.env.INVISIBLE_DOTS_WEB_LISTEN?.trim() || "127.0.0.2:3000"}`;
 /** E2E_WEB=0 runs the server without the web client (`server --no-web`) and skips what needs it. */
 const WEB = process.env.E2E_WEB?.trim() !== "0";
 /** A paid model: step e requires the spend it reports to be above zero. */
@@ -115,10 +114,10 @@ const TIMEOUTS = {
 /** What every OpenRouter key starts with; the journal checks search the guest for it. */
 const KEY_PREFIX = "sk-or-";
 const PHRASE = "blue-harbor-42";
-/** The heading of https://example.com, which step e writes into heading.txt and remembers. */
-const HEADING = "Example Domain";
+/** The title of https://example.com, which step e writes into title.txt and remembers. */
+const TITLE = "Example Domain";
 const WORKSPACE = "/home/dot/workspace";
-const MEMORY_NOTE = "example-heading.md";
+const MEMORY_NOTE = "example-title.md";
 const BROWSERS = "/home/dot/browsers";
 
 // Output
@@ -206,7 +205,7 @@ async function startServer(): Promise<void> {
     // The web client starts after the control plane listens, and never stops it when it cannot start.
     await waitFor("the web client to answer", TIMEOUTS.server, async () => {
       assert(server!.exitCode === null, `invisible-dots server exited with ${server!.exitCode}`);
-      return (await fetch(`${WEB_URL}/login`, { redirect: "manual", signal: AbortSignal.timeout(5000) }).catch(() => undefined)) ? true : undefined;
+      return (await fetch(`${WEB_URL}/`, { redirect: "manual", signal: AbortSignal.timeout(5000) }).catch(() => undefined)) ? true : undefined;
     }, 500).catch((error: unknown) => {
       throw new Failure(`${(error as Error).message}; see ${join(LOG_DIR, "server.log")} (the web client is built with: npm run build --workspace @invisible-dots/web, or run with E2E_WEB=0)`);
     });
@@ -608,8 +607,6 @@ const state: {
   identity?: Identity;
   seedHash?: string;
   rememberedMessageId?: string;
-  /** The web client's session cookie (`idots_session=...`), when it runs. */
-  webCookie?: string;
 } = {};
 
 const SEED_FILE = (identity: Identity) => `${identity.profilePath.replace(/\/+$/, "")}/.stealth-identity.json`;
@@ -702,19 +699,13 @@ async function main(): Promise<void> {
     assert(health.openrouter_configured === true, "GET /api/health does not report the key as stored");
     let web = "web client off";
     if (WEB) {
-      // The one command serves the web client too (architecture section 9.7): it answers, it wants the token, and with it it is the API.
-      const login = await fetch(`${WEB_URL}/login`, { signal: AbortSignal.timeout(30_000) });
-      assert(login.status === 200 && (login.headers.get("content-type") ?? "").startsWith("text/html"), `${WEB_URL}/login answered ${login.status} ${login.headers.get("content-type")}`);
-      const unsigned = await fetch(`${WEB_URL}${ROUTES.health}`, { signal: AbortSignal.timeout(30_000) });
-      assert(unsigned.status === 401 && unsigned.headers.get("x-invisible-dots-login") === "required", `the web proxy answered ${unsigned.status} to a request with no session`);
-      const wrong = await fetch(`${WEB_URL}/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: "not-the-token" }), signal: AbortSignal.timeout(30_000) });
-      assert(wrong.status === 401, `the web client accepted a wrong token (${wrong.status})`);
-      const signedIn = await fetch(`${WEB_URL}/session`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: await apiToken() }), signal: AbortSignal.timeout(30_000) });
-      assert(signedIn.status === 204, `signing in at ${WEB_URL}/session answered ${signedIn.status}`);
-      state.webCookie = cookieOf(signedIn.headers.get("set-cookie"), "idots_session");
-      const proxied = await fetch(`${WEB_URL}${ROUTES.health}`, { headers: { cookie: state.webCookie }, signal: AbortSignal.timeout(30_000) });
-      assert(proxied.status === 200 && ((await proxied.json()) as { openrouter_configured?: boolean }).openrouter_configured === true, `the web proxy answered ${proxied.status} to a signed-in request`);
-      web = `web client at ${WEB_URL}: login page, 401 without a session, wrong token refused, signed in, proxy reaches the API`;
+      // The one command serves the web client too (architecture section 9.7), with no login: it listens on an
+      // address no Dot's VM reaches and its proxy adds the API token itself.
+      const home = await fetch(`${WEB_URL}/`, { signal: AbortSignal.timeout(30_000) });
+      assert(home.status === 200 && (home.headers.get("content-type") ?? "").startsWith("text/html"), `${WEB_URL}/ answered ${home.status} ${home.headers.get("content-type")}`);
+      const proxied = await fetch(`${WEB_URL}${ROUTES.health}`, { signal: AbortSignal.timeout(30_000) });
+      assert(proxied.status === 200 && ((await proxied.json()) as { openrouter_configured?: boolean }).openrouter_configured === true, `the web proxy answered ${proxied.status}`);
+      web = `web client at ${WEB_URL}: the pages, and the proxy reaches the API`;
     }
     return `server up; key stored; ${web}${leftovers.length ? `; removed ${leftovers.length} leftover Dot(s)` : ""}`;
   });
@@ -749,17 +740,18 @@ async function main(): Promise<void> {
   await step("e", "task: browser identity, explicit launch, example.com, file, memory note, progress, spend", async () => {
     const dotId = state.dotId!;
     const mark = lastEventId(await events(dotId));
-    // example.com has no <h1>: its markup is a title and paragraphs. Without the parenthesis the model has to guess
-    // what "heading" means and picks differently from run to run, which would make this step test the model's reading.
+    // The page's title, read from browser_snapshot's `title`: example.com's body has changed more than once (its <h1>
+    // went, then the line that stood in for it), and a step that asks for a heading tests the site and the model's
+    // reading of it. Its <title> has stayed "Example Domain".
     // The sentence before each call is what a `task.progress` event is made of.
     const task = await runTask(
       "Do these steps in order, one tool call at a time, and before each tool call write one short sentence saying what you are about to do.\n" +
         "1. Create a browser identity named research with browser_identity_create.\n" +
         "2. Open its browser with browser_identity_launch.\n" +
         "3. Open https://example.com in it with browser_navigate.\n" +
-        "4. Read the page text with browser_read_text. The page has no h1 element: its heading is the first line of its text.\n" +
-        `5. Write the heading text, and nothing else, into ${WORKSPACE}/heading.txt with write_file.\n` +
-        `6. Write the heading text, and nothing else, into /home/dot/memory/${MEMORY_NOTE} with write_file.\n` +
+        "4. Read the page with browser_snapshot. Its answer has the page's title in its title field.\n" +
+        `5. Write that title, and nothing else, into ${WORKSPACE}/title.txt with write_file.\n` +
+        `6. Write that title, and nothing else, into /home/dot/memory/${MEMORY_NOTE} with write_file.\n` +
         "Then answer with only DONE.",
     );
     const all = await events(dotId);
@@ -783,7 +775,7 @@ async function main(): Promise<void> {
       ["browser_identity_create", "browser.identity.create"],
       ["browser_identity_launch", "browser.identity.launch"],
       ["browser_navigate", "browser.navigate"],
-      ["browser_read_text", "browser.read"],
+      ["browser_snapshot", "browser.read"],
       ["write_file", "files.write"],
     ] as const) {
       const event = call(tool);
@@ -792,7 +784,7 @@ async function main(): Promise<void> {
     assert(launched[0]!.id < call("browser_navigate").id, "the page was opened before the identity was launched");
     assert(String(call("browser_navigate").data.target ?? "").startsWith(identityTarget(research.id, "https://example.com")), `browser_navigate's target is ${JSON.stringify(call("browser_navigate").data.target)}, not one that starts with ${JSON.stringify(identityTarget(research.id, "https://example.com"))}`);
     const writes = toolCalls(all, task.id, "write_file").filter((e) => e.data.ok === true).map((e) => String(e.data.target));
-    assert(writes.includes(`${WORKSPACE}/heading.txt`) && writes.includes(`/home/dot/memory/${MEMORY_NOTE}`), `write_file targets: ${JSON.stringify(writes)}`);
+    assert(writes.includes(`${WORKSPACE}/title.txt`) && writes.includes(`/home/dot/memory/${MEMORY_NOTE}`), `write_file targets: ${JSON.stringify(writes)}`);
 
     // task.progress: the text written beside a tool call, once each, before the task completes.
     const progress = mine.filter((e) => e.type === "task.progress");
@@ -801,10 +793,10 @@ async function main(): Promise<void> {
     assert(completed && progress.every((e) => e.id < completed.id), "a task.progress event is not before task.completed");
 
     // The files, by what the model's hash says and by what the host reads.
-    const hash = await hashTask("heading.txt hash", `printf '%s' "$(cat ${WORKSPACE}/heading.txt)" | sha256sum`);
-    assert(hash === sha256Text(HEADING), `heading.txt does not hold exactly ${JSON.stringify(HEADING)} (the Dot hashed it to ${hash})`);
-    assert((await guestText(dotId, `${WORKSPACE}/heading.txt`)) === HEADING, "heading.txt read from the host differs");
-    assert((await guestText(dotId, `/home/dot/memory/${MEMORY_NOTE}`)) === HEADING, `the memory note does not hold ${JSON.stringify(HEADING)}`);
+    const hash = await hashTask("title.txt hash", `printf '%s' "$(cat ${WORKSPACE}/title.txt)" | sha256sum`);
+    assert(hash === sha256Text(TITLE), `title.txt does not hold exactly ${JSON.stringify(TITLE)} (the Dot hashed it to ${hash})`);
+    assert((await guestText(dotId, `${WORKSPACE}/title.txt`)) === TITLE, "title.txt read from the host differs");
+    assert((await guestText(dotId, `/home/dot/memory/${MEMORY_NOTE}`)) === TITLE, `the memory note does not hold ${JSON.stringify(TITLE)}`);
     state.seedHash = await guestSha256(dotId, SEED_FILE(research));
 
     // The spend: on the events, on the task and in the usage total, and they agree.
@@ -812,7 +804,7 @@ async function main(): Promise<void> {
     assert(isSpend(task.spent_usd) && Math.abs(task.spent_usd - Number(completed.data.spent_usd)) < 1e-9, `the task record says ${task.spent_usd} USD, task.completed ${String(completed.data.spent_usd)}`);
     const usage = await api<{ spent_usd: number }>("GET", route(ROUTES.usage, { id: dotId }));
     assert(usage.spent_usd >= task.spent_usd - 1e-9, `GET usage says ${usage.spent_usd} USD, less than the task's ${task.spent_usd}`);
-    return `identity ${research.id} open; heading.txt and the note hold exactly "${HEADING}"; ${progress.length} task.progress; seed ${state.seedHash.slice(0, 12)}...; spent ${task.spent_usd} USD (usage ${usage.spent_usd}); tools: ${describeTools(all, task.id)}`;
+    return `identity ${research.id} open; title.txt and the note hold exactly "${TITLE}"; ${progress.length} task.progress; seed ${state.seedHash.slice(0, 12)}...; spent ${task.spent_usd} USD (usage ${usage.spent_usd}); tools: ${describeTools(all, task.id)}`;
   });
 
   await step("f", "the desktop screenshot and the identity's frame, through the API and the web client", async () => {
@@ -834,7 +826,7 @@ async function main(): Promise<void> {
     await writeFile(join(LOG_DIR, "frame.jpg"), jpeg);
     let viaWeb = "";
     if (WEB) {
-      const proxied = await fetch(`${WEB_URL}${frameRoute}`, { headers: { cookie: state.webCookie! }, signal: AbortSignal.timeout(60_000) });
+      const proxied = await fetch(`${WEB_URL}${frameRoute}`, { signal: AbortSignal.timeout(60_000) });
       assert(proxied.status === 200 && proxied.headers.get("content-type")?.startsWith("image/jpeg"), `the frame through the web client: ${proxied.status} ${proxied.headers.get("content-type")}`);
       jpegSize(new Uint8Array(await proxied.arrayBuffer()));
       viaWeb = ", and the same through the web client";
@@ -1019,11 +1011,11 @@ async function main(): Promise<void> {
     assert(identityEvents(await events(dotId), "browser.identity.launched", research.id, restartedAt).length >= 1, "no browser.identity.launched for research after the restart");
     const seedHash = await guestSha256(dotId, SEED_FILE(research));
     assert(seedHash === state.seedHash, `the identity's .stealth-identity.json changed: ${state.seedHash} -> ${seedHash}`);
-    assert((await guestText(dotId, `${WORKSPACE}/heading.txt`)) === HEADING, "heading.txt changed across the restart");
-    assert((await guestText(dotId, `/home/dot/memory/${MEMORY_NOTE}`)) === HEADING, "the memory note changed across the restart");
+    assert((await guestText(dotId, `${WORKSPACE}/title.txt`)) === TITLE, "title.txt changed across the restart");
+    assert((await guestText(dotId, `/home/dot/memory/${MEMORY_NOTE}`)) === TITLE, "the memory note changed across the restart");
 
     // A memory is a file: the Dot finds it with its file tools, after the restart too.
-    const recall = await runTask(`Use the grep tool to search /home/dot/memory for ${HEADING} and answer with only the file name of the note that holds it.`);
+    const recall = await runTask(`Use the grep tool to search /home/dot/memory for ${TITLE} and answer with only the file name of the note that holds it.`);
     const all = await events(dotId);
     assert(toolOk(all, recall.id, "grep"), `no successful grep (tools: ${describeTools(all, recall.id)})`);
     assert((recall.summary ?? "").includes(MEMORY_NOTE), `grep answer: ${JSON.stringify(recall.summary)}`);
@@ -1039,7 +1031,7 @@ async function main(): Promise<void> {
     await assertJournalClean(KEY_PREFIX, "the OpenRouter key's prefix");
     return (
       `server restart adopted pid ${oldPid}; graceful stop in ${stopSeconds} s, STOPPED then READY (new pid ${computer.pid}); ` +
-      "the open browser was closed on the way down and launched again with the same seed file; heading.txt, the note, memory search and the conversation kept; journal readable and without the key"
+      "the open browser was closed on the way down and launched again with the same seed file; title.txt, the note, memory search and the conversation kept; journal readable and without the key"
     );
   });
 

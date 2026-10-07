@@ -95,7 +95,7 @@ export const TOOLS = {
   browser_identity_launch: "browser.identity.launch",
   browser_identity_list: "browser.identity.list",
   browser_navigate: "browser.navigate",
-  browser_read_text: "browser.read",
+  browser_snapshot: "browser.read",
 } as const;
 export type ToolName = keyof typeof TOOLS;
 
@@ -470,11 +470,4 @@ export function dotName(prefix: string, stamp: string): string {
 /** A compact UTC stamp: 20261006T101500Z. */
 export function utcStamp(date: Date): string {
   return date.toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
-}
-
-/** The session cookie out of a `set-cookie` header: `name=value`, without its attributes. */
-export function cookieOf(setCookie: string | null, name: string): string {
-  const match = new RegExp(`(?:^|,\\s*)(${name}=[^;,\\s]+)`).exec(setCookie ?? "");
-  assert(match, `the answer sets no ${name} cookie`);
-  return match[1]!;
 }
