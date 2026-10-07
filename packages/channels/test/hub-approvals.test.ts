@@ -55,9 +55,12 @@ describe.each(testAdapters())("approvals over a channel, with the real Scheduler
     expect(channel.prompts[0]!.text).toBe(
       ["The Dot asks to use exec (permission browser.identity.delete).", "Reason: the tool needs approval", 'Arguments: {"identity_id":"shop-abc123"}'].join("\n"),
     );
+    // A prompt is recorded once its chat took it, so the record follows the channel.
+    const bindingId = (await db.channels.listBindings(dot.id))[0]!.id;
+    await waitFor(async () => (await db.channels.prompts(bindingId)).length === 2, "both prompts recorded");
     await quiet();
     expect(channel.prompts).toHaveLength(2);
-    expect((await db.channels.prompts((await db.channels.listBindings(dot.id))[0]!.id)).map((p) => p.chat_id)).toEqual(["10", "20"]);
+    expect((await db.channels.prompts(bindingId)).map((p) => p.chat_id)).toEqual(["10", "20"]);
   });
 
   it("leaves the arguments out of the prompt and of its outcome when show_arguments is off", async () => {
@@ -89,8 +92,9 @@ describe.each(testAdapters())("approvals over a channel, with the real Scheduler
       ["20", "prompt-2"],
     ]);
     expect(channel.edits.every((e) => e.text.endsWith("\n\nApproved."))).toBe(true);
+    // The prompts are forgotten once they were edited, so that follows the channel.
     const bindingId = (await db.channels.listBindings(dot.id))[0]!.id;
-    expect(await db.channels.prompts(bindingId)).toEqual([]);
+    await waitFor(async () => (await db.channels.prompts(bindingId)).length === 0, "the prompts forgotten");
   });
 
   it("rejects from the chat", async () => {
@@ -272,10 +276,11 @@ describe.each(testAdapters())("approvals over a channel, with the real Scheduler
     const { dot, channel, type } = await linkedFake(w, ["10", "20"]);
     type.sendFailures.push(new ChannelSendError("blocked", { retryable: false }));
     await ask(w, dot);
-    await waitFor(() => channel.prompts.length === 1, "the other owner asked");
+    const binding = (await db.channels.listBindings(dot.id))[0]!;
+    // The prompt is recorded once the chat took it, so the record is what to wait for.
+    await waitFor(async () => (await db.channels.prompts(binding.id)).length === 1, "the other owner's prompt recorded");
     await quiet();
     expect(channel.prompts.map((p) => p.chatId)).toEqual(["20"]);
-    const binding = (await db.channels.listBindings(dot.id))[0]!;
     expect((await db.channels.prompts(binding.id)).map((p) => p.chat_id)).toEqual(["20"]);
   });
 
