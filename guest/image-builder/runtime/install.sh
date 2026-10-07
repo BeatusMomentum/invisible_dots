@@ -89,7 +89,7 @@ write("up.sh", "#!/bin/sh\n"
       f"resolvectl default-route {device} no || true\n", 0o700)
 write("allow.nft", "table inet dot_vmproxy {\n chain out {\n  type filter hook output priority 0; policy drop;\n"
       "  oifname { \"lo\", \"tun0\" } accept\n  ct state established,related accept\n"
-      f"  ip daddr {address} tcp dport {url.port} accept\n  ip daddr {address} udp accept\n"
+      f"  ip daddr {address} tcp dport {url.port} accept\n  ip daddr {address} meta l4proto udp accept\n"
       "  ip daddr 10.0.2.0/24 accept\n  udp dport 67 accept\n }\n}\n", 0o600)
 PY
   then

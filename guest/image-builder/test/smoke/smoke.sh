@@ -58,7 +58,19 @@ lay_out_guest
 # The engine needs no privilege: no sudoers rule, no config directory.
 check "the engine has no sudo rule (no /etc/sudoers.d/invisible-dots-engine, no sudo for dotengine)" "[ ! -e /etc/sudoers.d/invisible-dots-engine ] && ! su -s /bin/bash dotengine -c 'sudo -n true' >/dev/null 2>&1"
 check "no sudoers file names dotengine (the old engine's rule is gone with the config installer)" "! grep -rqs dotengine /etc/sudoers /etc/sudoers.d"
-check "dotengine is in no group but its own and dot" "[ \"\$(id -nG dotengine | tr ' ' '\n' | sort | tr '\n' ' ')\" = 'dot dotengine ' ]"
+# --- the VM proxy's firewall, as install.sh writes it, is a ruleset nft takes ---
+# A rule nft refused stopped install.sh (set -e) before the tunnel started: the Dot went out directly with its proxy
+# set. install.sh's own generator runs here on a config that has a proxy, read from a copy of its path.
+vmproxy_rules_ok() {
+  local out=/tmp/vmproxy-check
+  rm -rf "$out"; mkdir -p "$out"
+  printf '{"dotId":"dot_smoke","token":"t","proxy":"socks5://user:p%%40ss@10.0.2.2:1080"}' > /tmp/vmproxy-config.json
+  sed -n "/<<'PY'\$/,/^PY\$/p" "$TREE/guest/image-builder/runtime/install.sh" | sed '1d;$d' \
+    | sed 's#/etc/invisible-dots/config.json#/tmp/vmproxy-config.json#' > /tmp/vmproxy-gen.py
+  python3 /tmp/vmproxy-gen.py "$out" && [ -s "$out/allow.nft" ] && [ -s "$out/hev.yml" ] && nft -c -f "$out/allow.nft"
+}
+check "the VM proxy's firewall that install.sh writes for a proxy is a ruleset nft accepts" "vmproxy_rules_ok"
+check "dotengine is in no group but its own and dot""[ \"\$(id -nG dotengine | tr ' ' '\n' | sort | tr '\n' ' ')\" = 'dot dotengine ' ]"
 write_host_token
 check "the token file is dot-agentd's own (dotagentd, 0600): neither the engine nor dot, the user of the model's commands, can read it" "[ \"\$(stat -c '%U:%G %a' /etc/invisible-dots/config.json)\" = 'dotagentd:dotagentd 600' ] && ! su -s /bin/bash dotengine -c 'cat /etc/invisible-dots/config.json' >/dev/null 2>&1 && ! su -s /bin/bash dot -c 'cat /etc/invisible-dots/config.json' >/dev/null 2>&1"
 check "dotagentd is in no group but its own, and dot is in neither of the two groups that reach a socket" "[ \"\$(id -nG dotagentd)\" = dotagentd ] && ! id -nG dot | tr ' ' '\n' | grep -qx -e dotagentd -e dotengine"

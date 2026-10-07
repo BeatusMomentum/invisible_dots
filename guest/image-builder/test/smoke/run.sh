@@ -100,8 +100,9 @@ pin_env=()
 if [ -n "${PIN_REMOVALS+set}" ]; then pin_env=(-e PIN_REMOVALS); fi
 set +e
 # --shm-size: Firefox keeps its shared memory in /dev/shm, and docker's 64 MB default is too small for it
-# (a VM's is half its RAM).
-docker run --rm --name "$run_id" --shm-size=1g -v "$run_id":/work "${tree_mount[@]}" \
+# (a VM's is half its RAM). NET_ADMIN: nft checks a ruleset against the kernel (the VM proxy's firewall), as the
+# guest's root does.
+docker run --rm --name "$run_id" --shm-size=1g --cap-add NET_ADMIN -v "$run_id":/work "${tree_mount[@]}" \
   -e TREE="$tree" -e AGENTD_BIN=/work/dot-agentd -e SMOKE_SUITE="$suite" "${pin_env[@]}" \
   ubuntu:24.04 bash "$tree/guest/image-builder/test/smoke/prepare-engine.sh" 2>&1 | tee "$log"
 status=${PIPESTATUS[0]}

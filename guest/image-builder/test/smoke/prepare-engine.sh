@@ -29,7 +29,8 @@ esac
 export AGENTD_BIN
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq >/dev/null
-apt-get install -y -qq sudo procps jq curl ca-certificates python3 >/dev/null
+# nftables and iproute2: the check of the VM proxy's firewall runs install.sh's own generator and nft on its output.
+apt-get install -y -qq sudo procps jq curl ca-certificates python3 nftables iproute2 >/dev/null
 
 builder=$TREE/guest/image-builder/builder
 engine_src=$TREE/invisible_engine_dots
