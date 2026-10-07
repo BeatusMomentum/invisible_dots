@@ -5,11 +5,6 @@
 </picture>
 <h3>Open-source, self-hosted alternative to OpenAI Dots, Meta Muse, Grok Bot, Manus Cue and Claude Cowork.</h3>
 
-<a href="https://github.com/feder-cr/invisible_dots/actions/workflows/tests.yml"><img alt="tests" src="https://github.com/feder-cr/invisible_dots/actions/workflows/tests.yml/badge.svg"></a>
-<a href="LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
-<img alt="status: alpha" src="https://img.shields.io/badge/status-alpha-orange">
-<img alt="hosts: Linux and Windows" src="https://img.shields.io/badge/hosts-Linux%20%7C%20Windows-lightgrey">
-
 <p><a href="#quickstart"><b>Quickstart</b></a> · <a href="docs/guide.md"><b>Guide</b></a> · <a href="docs/architecture.md"><b>Architecture</b></a> · <a href="docs/guide.md#security-model-and-known-limits"><b>Security</b></a> · <a href="docs/guide.md#privacy"><b>Privacy</b></a></p>
 </div>
 
@@ -75,16 +70,6 @@ Anything that needs a computer and a person's judgement, for as long as it takes
 | **[Many ways to reach it](docs/guide.md#talk-to-it-from-your-phone)** | Web UI, command line, HTTP API with live events, Telegram, and WhatsApp as an opt-in. |
 | **[Nothing lost on a crash](docs/guide.md#how-it-works)** | A restart or a `kill -9` keeps every message and task you saw accepted, and a tool call cut short is never run twice. |
 
-## Which one fits
-
-| | A browser API or library | A cloud sandbox for agents | invisible_dots |
-|---|---|---|---|
-| Where the agent's work runs | Your code drives a browser | A machine in someone's cloud | A VM on your own PC, one per agent |
-| What stays between tasks | What your code saves | What the sandbox keeps, for its lifetime | Its disk, files, memory, skills and browser logins |
-| The browser | Chromium, often over CDP | Whatever the sandbox ships | Firefox patched in C++, one identity per profile |
-| Risky actions | Your code decides | Your code decides | Allow, ask or deny per permission, answered from the Inbox or a chat |
-| What you write | Code | Code | A message or a task |
-
 ## Documentation
 
 - [Guide](docs/guide.md): install, the web UI, the command line, the browser, channels, configuration, updating
@@ -99,13 +84,6 @@ Anything that needs a computer and a person's judgement, for as long as it takes
 [invisible_core](https://github.com/feder-cr/invisible_core); the engine is a fork of
 [nanobot](https://github.com/HKUDS/nanobot).
 
-**Neighbours.** [cua](https://github.com/trycua/cua) gives agents computers through its own SDK and sandboxes;
-[E2B](https://github.com/e2b-dev/E2B) runs agents' code in cloud sandboxes; [OpenHands](https://github.com/All-Hands-AI/OpenHands)
-is a platform for software-development agents; [browser-use](https://github.com/browser-use/browser-use) lets an LLM
-drive a Chromium browser from Python; [Open Interpreter](https://github.com/OpenInterpreter/open-interpreter) runs
-the code a model writes on your own machine. invisible_dots puts the agent, its computer and its browser on your PC,
-one VM per agent, behind permissions you set.
-
 ## License
 
 MIT, see [LICENSE](LICENSE). Third-party components and their licenses: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
@@ -117,6 +95,13 @@ jurisdiction. A Dot acts with your accounts and from your connection: respect th
 their robots.txt.
 
 ---
+
+<p align="center">
+  <a href="https://github.com/feder-cr/invisible_dots/actions/workflows/tests.yml"><img alt="tests" src="https://github.com/feder-cr/invisible_dots/actions/workflows/tests.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-blue"></a>
+  <img alt="status: alpha" src="https://img.shields.io/badge/status-alpha-orange">
+  <img alt="hosts: Linux and Windows" src="https://img.shields.io/badge/hosts-Linux%20%7C%20Windows-lightgrey">
+</p>
 
 <p align="center">
   Built by <a href="https://it.linkedin.com/in/federico-elia-5199951b6">Federico Elia</a>
