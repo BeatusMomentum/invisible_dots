@@ -17,6 +17,8 @@ import os
 import sys
 
 LOG_VARIABLE = "FAKE_RELAY_LOG"
+# The account's home, which dot-agentd gives the command as HOME with the account's USER, LOGNAME and SHELL (exec.go).
+HOME_VARIABLE = "FAKE_RELAY_HOME"
 
 
 def parse_relay_args(args: list[str]) -> dict[str, object]:
@@ -82,6 +84,9 @@ def main(argv: list[str]) -> int:
     if log_path:
         with open(log_path, "a", encoding="utf-8") as log:
             log.write(json.dumps({"argv": args, **parsed}) + "\n")
+    home = os.environ.pop(HOME_VARIABLE, "")
+    if home:
+        os.environ.update(HOME=home, USER="dot", LOGNAME="dot", SHELL="/bin/bash")
 
     for pair in parsed["env"]:  # type: ignore[union-attr]
         name, _, value = pair.partition("=")

@@ -45,17 +45,23 @@ DESKTOP_PNG = base64.b64decode(
 _RELAY_DIR = tempfile.TemporaryDirectory(prefix="fake-relay-")
 
 
-def install_fake_relay(directory: Path, log: Path | None = None) -> Path:
+def install_fake_relay(directory: Path, log: Path | None = None, home: Path | None = None) -> Path:
     """Write an executable that runs fake_relay.py; it appends each call to `log`.
 
     A wrapper script, because the engine starts the relay with PATH as its only
-    environment variable: the log's name cannot travel in the engine's env.
+    environment variable: the log's name and the account's home cannot travel in
+    the engine's env. `home` is what the command gets as HOME, as dot-agentd gives
+    it the account's own (exec.go); without it a login shell would read the
+    profile of whoever runs the tests.
     """
     script = directory / f"dot-agentd-{uuid.uuid4().hex}"
     lines = ["#!/bin/sh"]
     if log is not None:
         lines.append(f"FAKE_RELAY_LOG='{log}'")
         lines.append("export FAKE_RELAY_LOG")
+    if home is not None:
+        lines.append(f"FAKE_RELAY_HOME='{home}'")
+        lines.append("export FAKE_RELAY_HOME")
     lines.append(f"exec '{sys.executable}' '{FAKE_RELAY}' \"$@\"")
     script.write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
     script.chmod(0o755)
@@ -93,7 +99,7 @@ class LocalComputer:
         # An HTTP status dot-agentd answers instead of a screenshot, when a test sets one.
         self.screenshot_status: int | None = None
         self._agentd = AgentdComputer(
-            agentd_bin=str(install_fake_relay(Path(_RELAY_DIR.name), relay_log)),
+            agentd_bin=str(install_fake_relay(Path(_RELAY_DIR.name), relay_log, self.root / VIRTUAL_HOME.lstrip("/"))),
             agentd_socket=DEFAULT_AGENTD_SOCKET,
             workspace=self.workspace,
         )
