@@ -1232,7 +1232,9 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
       expect(driver.calls.filter((c) => c === `stop:${dot.id}`)).toHaveLength(1);
       expect(driver.calls.filter((c) => c === `start:${dot.id}`)).toHaveLength(2);
       expect(await db.computers.get(dot.id)).toMatchObject({ state: "RUNNING", stop_reason: null });
-      expect((await db.dots.get(dot.id))?.status).toBe("READY");
+      // settle() is the scheduler's own work: the automation the woken guest runs may still be RUNNING the Dot (seen on
+      // a loaded PostgreSQL), and it is READY once that is done.
+      await waitFor(async () => (await db.dots.get(dot.id))?.status === "READY", `${dot.name} READY`, 15_000);
       expect(scheduler.lifecycle.isReady(dot.id)).toBe(true);
     }
   });
