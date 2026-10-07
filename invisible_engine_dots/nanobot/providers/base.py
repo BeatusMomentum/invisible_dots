@@ -666,13 +666,19 @@ class LLMProvider(ABC):
         """The one place a provider failure becomes text (the model, the logs and the host all read it).
 
         The text is the error body when the exception carries one, else the exception's own
-        message.
+        message. A body the client already parsed (the OpenAI client's `body` is the JSON) is
+        read for its message, `{"message": ...}` or `{"error": {"message": ...}}`: its Python
+        repr would reach the person as `{'message': ..., 'code': 400}`.
         """
         body = (
             getattr(exc, "doc", None)
             or getattr(exc, "body", None)
             or getattr(getattr(exc, "response", None), "text", None)
         )
+        if isinstance(body, dict):
+            error = body.get("error", body)
+            message = error.get("message") if isinstance(error, dict) else None
+            body = message if isinstance(message, str) and message.strip() else json.dumps(body, ensure_ascii=False)
         body_text = body if isinstance(body, str) else str(body) if body is not None else ""
         body_text = body_text.strip()
         if body_text:
