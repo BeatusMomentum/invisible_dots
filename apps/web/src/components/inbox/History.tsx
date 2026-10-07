@@ -36,7 +36,8 @@ function Answer({ status }: { status: string }) {
 export function History({ filter }: { filter: { dotId: string | null; permission: string | null } }) {
   const { dots } = useShell();
   const history = useHistory(filter.dotId);
-  useLiveRefresh(history.reload, ["approval.requested", "approval.resolved"]);
+  // dot.deleted too: a Dot's delete takes its answered approvals with it.
+  useLiveRefresh(history.reload, ["approval.requested", "approval.resolved", "dot.deleted"]);
   const names = useMemo(() => new Map((dots.data ?? []).map((dot) => [dot.id, dot.name])), [dots.data]);
 
   const rows = useMemo(

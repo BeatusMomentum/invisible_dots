@@ -526,7 +526,8 @@ describe.each(testAdapters())("the hub with the real Telegram adapter (%s)", { t
     await waitFor(() => bots.polling("555:ANOTHER-BOT-TOKEN-VALUE"), "the second bot to be polled");
     await w.scheduler.deleteDot(two.id);
     await waitFor(() => !bots.polling("555:ANOTHER-BOT-TOKEN-VALUE"), "polling to stop");
-    expect(await db.secrets.get(two.id, "telegram_bot_token")).toBeNull();
+    // The delete runs in the background: polling stops when it begins, the Dot's secrets and bindings go when it ends.
+    await waitFor(async () => (await db.secrets.get(two.id, "telegram_bot_token")) === null, "the token wiped with the Dot");
     expect((await db.query<{ n: number }>("SELECT count(*)::int AS n FROM channel_bindings")).rows[0]!.n).toBe(0);
   });
 });

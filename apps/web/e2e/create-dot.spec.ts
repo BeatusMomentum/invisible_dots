@@ -116,10 +116,19 @@ test("a Dot made elsewhere appears on the Home page while it is open", async ({ 
 });
 
 test("Home and the create page fit a phone: no sideways scroll at 390 px", async ({ page, harness }) => {
-  await harness.createDot("phone-card");
+  // The longest name a Dot may have.
+  const name = "phone-card-".padEnd(40, "x");
+  await harness.createDot(name);
   await page.setViewportSize({ width: 390, height: 844 });
   const loaded: Record<string, () => Promise<void>> = {
-    "/": () => expect(page.getByRole("article", { name: "phone-card" })).toBeVisible(),
+    "/": async () => {
+      const card = page.getByRole("article", { name });
+      await expect(card).toBeVisible();
+      // The name is cut short inside its card: the shell hides what passes the card's edge, so the page alone does
+      // not scroll and only the boxes tell.
+      const [outer, title] = [(await card.boundingBox())!, (await card.getByRole("heading", { name }).boundingBox())!];
+      expect(title.x + title.width, "the name passes the card's right edge").toBeLessThanOrEqual(outer.x + outer.width);
+    },
     "/new": () => expect(page.getByRole("region", { name: "Before you create" }).getByText("OpenRouter key: Ready")).toBeVisible(),
   };
   for (const [path, ready] of Object.entries(loaded)) {

@@ -8,6 +8,12 @@
 import type { Database } from "@invisible-dots/database";
 import { errorMessage, type Clock, type Logger } from "./support.js";
 
+// A claim skips a row another transaction holds (SKIP LOCKED); such holds last as long as one guest event's
+// transaction. A pass that claimed nothing while a task could be claimed comes back this soon, this many times;
+// past that the scheduler's timer finds the task.
+const SKIPPED_RETRY_MS = 25;
+const SKIPPED_RETRIES = 40;
+
 export class Dispatcher {
   #running: Promise<void> | null = null;
   #again = false;
@@ -32,14 +38,21 @@ export class Dispatcher {
     }
     this.#running = (async () => {
       try {
+        let skipped = 0;
         do {
           this.#again = false;
           for (;;) {
             const ts = this.clock.now().toISOString();
             const claimed = await this.db.transaction((tx) => tx.tasks.claimNext(ts));
             if (!claimed) break;
+            skipped = 0;
             this.log.info("task claimed", { taskId: claimed.task.id, dotId: claimed.task.dot_id });
             this.deliver(claimed.task.dot_id);
+          }
+          if (!this.#again && skipped < SKIPPED_RETRIES && (await this.db.tasks.hasClaimable())) {
+            skipped++;
+            this.#again = true;
+            await new Promise((resolve) => setTimeout(resolve, SKIPPED_RETRY_MS));
           }
         } while (this.#again);
       } catch (error) {

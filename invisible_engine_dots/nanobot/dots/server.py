@@ -166,6 +166,7 @@ class AgentServer:
         self._heartbeat_s = heartbeat_s
         self._refused_uids = refused_uids
         self._streams: set[_Stream] = set()
+        self._stopping = False
         self._runner: web.AppRunner | None = None
         self._socket_path: Path | None = None
         self._app = web.Application(middlewares=[self._errors, self._peers])
@@ -188,7 +189,9 @@ class AgentServer:
         logger.info("Dot API listening socket={}", path)
 
     async def stop_accepting(self) -> None:
-        """Stop listening: no new connection is taken. Requests and streams already open go on."""
+        """Stop listening: no new connection is taken, and no new stream on a connection kept open from before.
+        Requests and streams already open go on."""
+        self._stopping = True
         if self._runner is not None:
             for site in list(self._runner.sites):
                 await site.stop()
@@ -396,6 +399,10 @@ class AgentServer:
         if not re.fullmatch(r"[0-9]+", raw):
             raise HttpError(400, "invalid_after", f'after must be a non-negative integer, got "{raw}"')
         last = int(raw)
+        # dot-agentd reaches the socket through kept-alive connections, which outlive stop_accepting: a stream asked
+        # on one once the stop began would be one close_streams never ends, and the runner's cleanup would wait for it.
+        if self._stopping:
+            raise HttpError(503, "shutting_down", "the engine is stopping; the next one serves the stream")
         response = web.StreamResponse(
             status=200,
             headers={
@@ -405,12 +412,13 @@ class AgentServer:
                 "X-Accel-Buffering": "no",
             },
         )
-        await response.prepare(request)
+        # Registered before the first await, so a close_streams that comes while the headers go out ends it too.
         stream = _Stream()
         self._streams.add(stream)
         remove_listener = self._engine.on_append(stream.wake.set)
-        logger.info("event stream opened after={}", last)
         try:
+            await response.prepare(request)
+            logger.info("event stream opened after={}", last)
             while not stream.closing:
                 # Clear before reading: a commit after the read sets the event again.
                 stream.wake.clear()

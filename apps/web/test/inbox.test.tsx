@@ -204,6 +204,27 @@ describe("Needs you", () => {
     expect(screen.getByText("Nothing needs you")).toBeTruthy();
   });
 
+  it("drops the approvals of a Dot once its delete finishes: they go with the Dot, and nothing resolves them", async () => {
+    plane.approvals = [approvalRecord("a1", "d1")];
+    await renderInbox();
+    await waitFor(() => expect(cards()).toHaveLength(1));
+    // The delete removes the Dot's approvals with it; the stream says dot.deleted and no approval.resolved.
+    plane.approvals = [];
+    act(() => plane.push("d1", "dot.deleted", { name: "fares" }));
+    await waitFor(() => expect(cards()).toHaveLength(0));
+    expect(screen.getByText("Nothing needs you")).toBeTruthy();
+  });
+
+  it("drops the answers of a Dot from the History once its delete finishes", async () => {
+    plane.approvals = [approvalRecord("a1", "d1", { status: "approved", resolved_at: hoursAgo(1) })];
+    await renderInbox({ tab: "history" });
+    const table = await screen.findByRole("table");
+    await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(2));
+    plane.approvals = [];
+    act(() => plane.push("d1", "dot.deleted", { name: "fares" }));
+    await waitFor(() => expect(screen.queryByRole("table")).toBeNull());
+  });
+
   it("keeps an approval it answered in its place as a receipt, so that nothing moves under the pointer", async () => {
     plane.approvals = [approvalRecord("a1", "d1", { created_at: hoursAgo(3) }), approvalRecord("a2", "d1", { created_at: hoursAgo(2), tool: "browser_navigate", permission: "browser.navigate", arguments: { identity_id: "x", url: "https://example.com" } })];
     await renderInbox();

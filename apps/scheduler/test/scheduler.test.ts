@@ -69,6 +69,32 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
 
   const types = (events: StoredEvent[]) => events.map((e) => e.type);
 
+  // PGlite has one connection: no other transaction can hold a row while the claim runs.
+  if (kind === "pg") it("claims a task whose Dot's row another transaction held for a moment, without waiting for the timer", async () => {
+    const { scheduler } = make();
+    const dot = await readyDot(scheduler, "held-row");
+    // What the guest's next event does as a task ends (agent.state IDLE moves the Dot to READY): an update of the
+    // Dot's row, which the claim's FOR UPDATE OF d SKIP LOCKED skips over.
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => (release = resolve));
+    let holding!: () => void;
+    const held = new Promise<void>((resolve) => (holding = resolve));
+    const holder = db.transaction(async (tx) => {
+      await tx.dots.setStatus(dot.id, "READY");
+      holding();
+      await released;
+    });
+    await held;
+    const task = await scheduler.createTask(dot.id, { description: "after the held row" });
+    // The dispatch the task asked for has tried, and skipped it: the row is still held.
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect((await db.tasks.get(task.id))?.status).toBe("PENDING");
+    release();
+    await holder;
+    // The scheduler is not started here: no timer passes; only the dispatch itself can come back for the task.
+    await waitFor(async () => (await db.tasks.get(task.id))?.status !== "PENDING", "the task claimed once the row was free", 3_000);
+  });
+
   it("create -> READY: pushes the key and the runtime config, records images and state events", async () => {
     const { scheduler, driver } = make();
     const dot = await scheduler.createDot(yaml("ready-one"));

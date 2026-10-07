@@ -16,7 +16,8 @@ import { useLiveEvents, useLiveRefresh } from "../events";
 import { useResource, type Resource } from "../ui";
 
 const DOT_EVENTS = ["dot.created", "dot.updated", "dot.deleted", "computer.state", "computer.started", "computer.stopped"];
-const APPROVAL_EVENTS = ["approval.requested", "approval.resolved", "task.cancelled", "task.completed", "task.failed"];
+// dot.deleted too: a Dot's delete takes its approvals with it, and no approval.resolved says so.
+const APPROVAL_EVENTS = ["approval.requested", "approval.resolved", "task.cancelled", "task.completed", "task.failed", "dot.deleted"];
 const FAILED_TASK_EVENTS = ["task.failed"];
 const AGENT_EVENTS = ["agent.state", "agent.started"];
 const CHANNEL_EVENTS = ["channel.status", "channel.changed"];

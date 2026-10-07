@@ -71,8 +71,7 @@ const TERMINAL = "('COMPLETED', 'FAILED', 'CANCELLED')";
  * (under READ COMMITTED the NOT EXISTS reads the statement's snapshot), which
  * is why a second server on the same database is refused instead.
  */
-export const CLAIM_SQL = `
-SELECT t.*
+const CLAIMABLE = `
   FROM tasks t
   JOIN dots d ON d.id = t.dot_id
   JOIN computers c ON c.dot_id = t.dot_id
@@ -80,7 +79,10 @@ SELECT t.*
    AND (t.scheduled_at IS NULL OR t.scheduled_at <= now())
    AND d.status NOT IN ('CREATING', 'DISABLED')
    AND c.state NOT IN ('PROVISIONING', 'DELETING')
-   AND NOT EXISTS (SELECT 1 FROM tasks busy WHERE busy.dot_id = t.dot_id AND busy.status IN ${ACTIVE})
+   AND NOT EXISTS (SELECT 1 FROM tasks busy WHERE busy.dot_id = t.dot_id AND busy.status IN ${ACTIVE})`;
+
+export const CLAIM_SQL = `
+SELECT t.*${CLAIMABLE}
  ORDER BY t.priority DESC, t.created_at, t.id
  LIMIT 1
    FOR UPDATE OF t, d SKIP LOCKED`;
@@ -155,6 +157,15 @@ export class TasksRepository {
    * that tells its guest about it. Delivering that event is the inbound
    * deliverer's job, which survives a failed send and a restart.
    */
+  /**
+   * Whether a task could be claimed now, its rows' locks aside. A claim that found nothing while this is true
+   * skipped a row another transaction held for a moment: the guest's next event updating the Dot as a task ends.
+   */
+  async hasClaimable(): Promise<boolean> {
+    const { rows } = await this.q.query<{ any: boolean }>(`SELECT EXISTS (SELECT 1${CLAIMABLE}) AS any`);
+    return rows[0]?.any === true;
+  }
+
   async claimNext(ts: string = new Date().toISOString()): Promise<ClaimedTask | null> {
     const { rows } = await this.q.query<TaskRow>(CLAIM_SQL);
     const claimed = rows[0];
