@@ -10,12 +10,12 @@ export function showSearch(dotCount: number): boolean {
   return dotCount > SEARCH_THRESHOLD;
 }
 
-/** The Dots whose name, goal or model contains every word of `query`, in the order given. */
+/** The Dots whose name or model contains every word of `query`, in the order given. */
 export function filterDots(dots: readonly Dot[], query: string): Dot[] {
   const words = query.toLocaleLowerCase().split(/\s+/).filter(Boolean);
   if (words.length === 0) return [...dots];
   return dots.filter((dot) => {
-    const text = `${dot.name}\n${dot.config?.goal ?? ""}\n${dot.config?.model?.id ?? ""}`.toLocaleLowerCase();
+    const text = `${dot.name}\n${dot.config?.model?.id ?? ""}`.toLocaleLowerCase();
     return words.every((word) => text.includes(word));
   });
 }

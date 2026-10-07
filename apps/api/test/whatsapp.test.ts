@@ -17,7 +17,7 @@ import { hostFacts } from "./host-facts.js";
 
 const API_TOKEN = "test-token-0123456789abcdef";
 const NUMBER = "15550001111";
-const yaml = (name: string) => `name: ${name}\ngoal: watch fares\nmodel:\n  provider: openrouter\n  id: test/model\n`;
+const yaml = (name: string) => `name: ${name}\nmodel:\n  provider: openrouter\n  id: test/model\n`;
 
 describe.each(testAdapters())("WhatsApp routes of the control-plane API (%s)", { timeout: 60_000 }, (kind) => {
   let t: TestDatabase;

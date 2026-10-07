@@ -386,42 +386,38 @@ check "/state is IDLE with nothing pending" "st | jq -e '.state==\"IDLE\" and .p
 # lists the tools it was offered. The expected list is the permission table of
 # nanobot/dots/permissions.py, written out here: a tool the engine offers that the
 # table does not name (an MCP tool, a core tool left in) makes a list differ.
-offered_with() { # n, permissions json, managed_by_dot: the tools the model is offered in a chat turn
+offered_with() { # n, permissions json: the tools the model is offered in a chat turn
   echo "$2" > /tmp/perms.json
-  echo "{\"managed_by_dot\":$3,\"max_identities\":20,\"max_open\":3}" > /tmp/browser.json
   [ "$(push)" = '204 204' ] || return 1
   [ "$(ev "msg-tools-$1" user.message '{"text":"which tools?"}')" = 202 ] || return 1
   wait_event $STREAM ".type==\"message.assistant\" and .data.in_reply_to==\"msg-tools-$1\"" || return 1
   tail -1 /tmp/fake-tools.jsonl | jq -c '.tools|sort'
 }
-check_offered() { # n, label, permissions json, managed_by_dot, expected tools (sorted JSON)
-  local got; got=$(offered_with "$1" "$3" "$4")
+check_offered() { # n, label, permissions json, expected tools (sorted JSON)
+  local got; got=$(offered_with "$1" "$3")
   echo "offered ($2): $got"
-  check "offered tools: $2" "[ '$got' = '$5' ]"
+  check "offered tools: $2" "[ '$got' = '$4' ]"
 }
 BROWSER_GRANTED='"computer.screenshot":"allow","browser.identity.list":"allow","browser.identity.create":"allow","browser.identity.delete":"ask","browser.identity.launch":"allow","browser.identity.close":"allow","browser.navigate":"allow","browser.read":"allow","browser.act":"allow"'
-check_offered 1 "every permission granted (files.write and browser.identity.delete ask), the Dot manages its identities" \
-  '{"computer.exec":"allow","files.read":"allow","files.write":"ask","automations":"allow",'"$BROWSER_GRANTED"'}' true \
+check_offered 1 "every permission granted (files.write and browser.identity.delete ask)" \
+  '{"computer.exec":"allow","files.read":"allow","files.write":"ask","automations":"allow",'"$BROWSER_GRANTED"'}' \
   '["apply_patch","browser_back","browser_click","browser_click_at","browser_forward","browser_identity_close","browser_identity_create","browser_identity_delete","browser_identity_launch","browser_identity_list","browser_navigate","browser_press_key","browser_read_text","browser_reload","browser_screenshot","browser_scroll","browser_select_option","browser_snapshot","browser_type","computer_screenshot","cron","edit_file","exec","exec_session","find_files","grep","list_dir","list_exec_sessions","read_file","write_file"]'
 check_offered 2 "exec denied, files.read allowed, the rest missing from the map (deny)" \
-  '{"computer.exec":"deny","files.read":"allow"}' true \
+  '{"computer.exec":"deny","files.read":"allow"}' \
   '["find_files","grep","list_dir","read_file"]'
 check_offered 3 "only exec allowed: the command tools and nothing else" \
-  '{"computer.exec":"allow"}' true \
+  '{"computer.exec":"allow"}' \
   '["exec","exec_session","list_exec_sessions"]'
-check_offered 4 "an empty permission map offers nothing" '{}' true '[]'
-check_offered 5 "managed_by_dot false: every browser permission granted, yet no tool that creates or deletes an identity" \
-  '{'"$BROWSER_GRANTED"'}' false \
-  '["browser_back","browser_click","browser_click_at","browser_forward","browser_identity_close","browser_identity_launch","browser_identity_list","browser_navigate","browser_press_key","browser_read_text","browser_reload","browser_screenshot","browser_scroll","browser_select_option","browser_snapshot","browser_type","computer_screenshot"]'
-check_offered 6 "managed_by_dot false: browser.identity.delete asks and browser.read is allowed; only the reading tools are offered" \
-  '{"browser.identity.delete":"ask","browser.read":"allow"}' false \
-  '["browser_read_text","browser_screenshot","browser_snapshot"]'
-check_offered 7 "managed_by_dot true: delete asks, create is denied, nothing else" \
-  '{"browser.identity.delete":"ask","browser.identity.create":"deny"}' true \
+check_offered 4 "an empty permission map offers nothing" '{}' '[]'
+check_offered 5 "browser.identity.delete asks and browser.read is allowed: the delete and the reading tools" \
+  '{"browser.identity.delete":"ask","browser.read":"allow"}' \
+  '["browser_identity_delete","browser_read_text","browser_screenshot","browser_snapshot"]'
+check_offered 6 "delete asks, create is denied, nothing else" \
+  '{"browser.identity.delete":"ask","browser.identity.create":"deny"}' \
   '["browser_identity_delete"]'
 # GET /tools is the same table seen from the host: the whole table, and `offered` says what the model got.
 # The map of check 3 is pushed again: the model was offered exactly exec and its two sessions tools.
-offered_with 3b '{"computer.exec":"allow"}' true >/dev/null
+offered_with 3b '{"computer.exec":"allow"}' >/dev/null
 check "GET /tools through dot-agentd lists the 30 tools of the table, each with a description" "api $A/tools | jq -e '(.tools|length)==30 and all(.tools[]; (.description|length)>0 and (.permission|length)>0)' >/dev/null"
 check "GET /tools offers what the model was offered" "[ \"\$(api $A/tools | jq -c '[.tools[]|select(.offered)|.name]|sort')\" = '[\"exec\",\"exec_session\",\"list_exec_sessions\"]' ]"
 check "GET /tools names the permission each tool exercises" "api $A/tools | jq -e '(.tools|map({(.name):.permission})|add) | .exec==\"computer.exec\" and .read_file==\"files.read\" and .write_file==\"files.write\" and .cron==\"automations\"' >/dev/null"

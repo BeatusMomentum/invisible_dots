@@ -651,37 +651,6 @@ async def test_a_lost_browser_frees_its_slot_of_max_open(env: Env) -> None:
     assert env.event_types().count("browser.identity.closed") == 1
 
 
-async def test_set_limits_closes_only_the_sessions_beyond_a_lower_max_open_and_caps_new_identities(env: Env) -> None:
-    manager = env.manager(max_open=3, max_identities=5)
-    a, b, c = [await manager.create(name) for name in "abc"]
-    for identity in (a, b, c):
-        await manager.launch(identity.id)
-
-    manager.set_limits(1, 3)
-
-    assert manager.limits == (1, 3)
-    assert [manager.is_open(i.id) for i in (a, b, c)] == [False, False, True]
-    with pytest.raises(BrowserIdentityError, match="max_identities 3"):
-        await manager.create("d")
-    manager.set_limits(2, 4)
-    await manager.launch(a.id)
-    assert manager.open_count == 2
-    assert (await manager.create("d")).name == "d"
-    with pytest.raises(ValueError, match="max_open"):
-        manager.set_limits(0, 4)
-    assert manager.limits == (2, 4)
-
-
-async def test_a_lower_max_identities_deletes_nothing(env: Env) -> None:
-    manager = env.manager(max_identities=5)
-    for name in "abc":
-        await manager.create(name)
-
-    manager.set_limits(1, 1)
-
-    assert len(manager.list_identities()) == 3
-
-
 # ---------------------------------------------------------------------------
 # Close
 # ---------------------------------------------------------------------------
@@ -818,7 +787,7 @@ async def stop_launch(launching: asyncio.Task[Any]) -> None:
         await launching
 
 
-async def test_a_launch_in_flight_holds_up_no_other_identity_and_no_config_change(env: Env) -> None:
+async def test_a_launch_in_flight_holds_up_no_other_identity(env: Env) -> None:
     manager = env.manager(max_open=3, open_retry_initial_s=0.05, open_retry_max_s=0.05)
     other = await manager.create("other")
     spare = await manager.create("spare")
@@ -826,7 +795,6 @@ async def test_a_launch_in_flight_holds_up_no_other_identity_and_no_config_chang
     slow_id, launching = await start_slow_launch(env, manager, "slow")
 
     async with asyncio.timeout(10):
-        manager.set_limits(3, 30)
         await manager.close(other.id)
         await manager.delete(spare.id)
         fresh = await manager.create("fresh")
@@ -836,47 +804,6 @@ async def test_a_launch_in_flight_holds_up_no_other_identity_and_no_config_chang
     assert not manager.is_open(slow_id) and not manager.is_open(other.id)
     await stop_launch(launching)
     assert manager.open_count == 0
-
-
-async def test_a_lower_max_open_answers_at_once_and_closes_the_excess_in_the_background(env: Env) -> None:
-    manager = env.manager(max_open=3)
-    a, b, c = [await manager.create(name) for name in "abc"]
-    for identity in (a, b, c):
-        await manager.launch(identity.id)
-
-    manager.set_limits(1, 20)
-
-    # Nothing has been closed yet, but only c counts as open and the others cannot be used.
-    assert [manager.is_open(i.id) for i in (a, b, c)] == [False, False, True]
-    assert env.event_types().count("browser.identity.closed") == 0
-    with pytest.raises(BrowserIdentityError) as refused:
-        await manager.call_tool(a.id, "browser_status")
-    assert refused.value.code == "not_open"
-    await manager.close_all()
-    assert sorted(
-        event["data"]["identity_id"] for event in env.events() if event["type"] == "browser.identity.closed"
-    ) == sorted([a.id, b.id, c.id])
-    for identity in (a, b):
-        assert env.record(identity.id)[-1]["kind"] == "exit"
-
-
-async def test_a_lower_max_open_closes_a_browser_that_is_still_opening_once_it_has_opened(env: Env) -> None:
-    manager = env.manager(max_open=2, open_retry_initial_s=0.05, open_retry_max_s=0.05)
-    identity = await manager.create("late")
-    write_control(env.mcp_home(identity.id), download_answers=3)
-    launching = asyncio.create_task(manager.launch(identity.id))
-    await asyncio.sleep(0.1)
-    other = await manager.create("other")
-    await manager.launch(other.id)
-
-    manager.set_limits(1, 20)
-    await launching
-    await manager.close_all()
-
-    assert env.event_types().count("browser.identity.launched") == 2
-    assert sorted(
-        event["data"]["identity_id"] for event in env.events() if event["type"] == "browser.identity.closed"
-    ) == sorted([identity.id, other.id])
 
 
 async def test_two_launches_of_one_identity_start_one_browser_and_share_the_outcome(env: Env) -> None:

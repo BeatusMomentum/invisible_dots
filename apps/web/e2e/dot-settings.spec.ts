@@ -76,23 +76,21 @@ test("a preset sets the rows together, and the review lists every row that moved
   await expect(page.getByText("No changes.")).toBeVisible();
 });
 
-test("the other settings are saved with the permissions: the summary model, the spending cap and the browser limits", async ({ page, harness }) => {
+test("the other settings are saved with the permissions: the summary model, the spending cap and the step limit", async ({ page, harness }) => {
   const dot = await harness.createDot("config-rest");
   const guest = harness.driver.guestOf(dot.id);
   await page.goto(settings(harness.webUrl, dot.id));
   await page.getByLabel(/^Summary model/).fill("openai/gpt-5-mini");
   await page.getByLabel("Spending cap per task").fill("0.5");
-  await page.getByLabel("Most identities").fill("10");
-  await page.getByLabel("Most open at once").fill("2");
   await page.getByLabel("Steps per task").fill("25");
   await choose(page, "Delete browser identities", "Deny");
-  await expect(page.getByText("6 unsaved changes.")).toBeVisible();
+  await expect(page.getByText("4 unsaved changes.")).toBeVisible();
   await saveReviewed(page);
 
   const config = (await harness.api.getDot(dot.id)).config;
   expect(config.models).toEqual({ summary: "openai/gpt-5-mini" });
   expect(config.limits).toMatchObject({ max_cost_per_task_usd: 0.5, max_steps_per_task: 25 });
-  expect(config.browser.identities).toMatchObject({ max_identities: 10, max_open: 2 });
+  expect("browser" in config).toBe(false);
   // There is no memory to set: the Dot keeps its notes itself.
   expect("memory" in config).toBe(false);
   await expect(page.getByRole("switch", { name: /^Memory/ })).toHaveCount(0);
@@ -105,13 +103,13 @@ test("the other settings are saved with the permissions: the summary model, the 
   expect((await harness.api.getDot(dot.id)).config.models).toEqual({});
 });
 
-test("the rule between the browser limits is said where it is broken, and the disk cannot shrink", async ({ page, harness }) => {
+test("a setting that is wrong is said where it is, and the disk cannot shrink", async ({ page, harness }) => {
   const dot = await harness.createDot("config-rules");
   await page.goto(settings(harness.webUrl, dot.id));
-  await page.getByLabel("Most identities").fill("2");
-  await expect(page.getByText("max_open (3) cannot exceed max_identities (2)")).toBeVisible();
+  await page.getByRole("combobox", { name: "Model", exact: true }).fill("two words");
+  await expect(page.getByText("model id must not contain whitespace")).toBeVisible();
   await expect(page.getByRole("button", { name: "Review and save" })).toBeDisabled();
-  await page.getByLabel("Most open at once").fill("2");
+  await page.getByRole("combobox", { name: "Model", exact: true }).fill("openai/gpt-5");
   await expect(page.getByRole("button", { name: "Review and save" })).toBeEnabled();
   await page.getByRole("button", { name: "Discard changes" }).click();
 
@@ -228,8 +226,8 @@ for (const scheme of ["light", "dark"] as const) {
     await page.goto(settings(harness.webUrl, dot.id));
     await choose(page, "Run commands", "Deny");
     await expect(page.getByRole("list", { name: "Tools of Run commands" })).toBeVisible();
-    await page.getByLabel("Most identities").fill("2");
-    await expect(page.getByText("max_open (3) cannot exceed max_identities (2)")).toBeVisible();
+    await page.getByRole("combobox", { name: "Model", exact: true }).fill("two words");
+    await expect(page.getByText("model id must not contain whitespace")).toBeVisible();
 
     const spots: Record<string, string> = {
       "a permission's description": "li:has(fieldset legend:text-is('Run commands')) > div p.text-sm",

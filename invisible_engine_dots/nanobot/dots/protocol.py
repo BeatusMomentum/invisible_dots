@@ -144,7 +144,6 @@ T = TypeVar("T")
 NonEmptyStr = Annotated[str, Field(min_length=1, strict=True)]
 StrictInt = Annotated[int, Field(strict=True)]
 PositiveInt = Annotated[int, Field(strict=True, gt=0)]
-StrictBool = Annotated[bool, Field(strict=True)]
 
 
 def _refuse_null(value: T, expected: str) -> T:
@@ -277,16 +276,6 @@ class ModelConfig(_Open):
     id: NonEmptyStr
 
 
-class BrowserIdentitiesConfig(_Open):
-    managed_by_dot: StrictBool
-    max_identities: PositiveInt
-    max_open: PositiveInt
-
-
-class BrowserConfig(_Open):
-    identities: BrowserIdentitiesConfig
-
-
 class LimitsConfig(_Open):
     max_steps_per_task: PositiveInt
     context_tokens: Annotated[int, Field(strict=True, ge=4000, le=1_000_000)]
@@ -301,11 +290,9 @@ class DotRuntimeConfig(_Open):
     """
 
     name: Annotated[str, Field(strict=True, pattern=r"^[a-z0-9-]{1,40}$")]
-    goal: NonEmptyStr
     instructions: Annotated[str, Field(strict=True)] | None = None
     model: ModelConfig
     models: dict[str, NonEmptyStr] | None = None
-    browser: BrowserConfig
     permissions: dict[str, Literal["allow", "ask", "deny"]]
     limits: LimitsConfig
 

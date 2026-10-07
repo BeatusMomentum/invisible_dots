@@ -110,8 +110,6 @@ export const CONFIG_BOUNDS = {
   maxCostPerTaskUsd: { min: 0.01, max: 100, default: 1 },
   maxStepsPerTask: { min: 1, max: 1000, default: 60 },
   contextTokens: { min: 4000, max: 1_000_000, default: 32_000 },
-  maxIdentities: { min: 1, max: 1000, default: 20 },
-  maxOpen: { min: 1, max: 16, default: 3 },
 } as const;
 
 export const DOT_NAME_PATTERN = /^[a-z0-9-]{1,40}$/;
@@ -180,7 +178,6 @@ export const dotConfigSchema = z
     name: z
       .string()
       .regex(DOT_NAME_PATTERN, "name must be 1 to 40 characters of lowercase letters, digits and '-'"),
-    goal: z.string().trim().min(1, "goal must not be empty"),
     instructions: z.string().optional(),
     model: z
       .object({
@@ -221,19 +218,6 @@ export const dotConfigSchema = z
         disk: CONFIG_BOUNDS.disk.default,
         idle_timeout: CONFIG_BOUNDS.idleTimeout.default,
       }),
-    browser: z
-      .object({
-        identities: z
-          .object({
-            managed_by_dot: z.boolean().default(true),
-            max_identities: z.number().int().min(CONFIG_BOUNDS.maxIdentities.min).max(CONFIG_BOUNDS.maxIdentities.max).default(CONFIG_BOUNDS.maxIdentities.default),
-            max_open: z.number().int().min(CONFIG_BOUNDS.maxOpen.min).max(CONFIG_BOUNDS.maxOpen.max).default(CONFIG_BOUNDS.maxOpen.default),
-          })
-          .strict()
-          .default({ managed_by_dot: true, max_identities: CONFIG_BOUNDS.maxIdentities.default, max_open: CONFIG_BOUNDS.maxOpen.default }),
-      })
-      .strict()
-      .default({ identities: { managed_by_dot: true, max_identities: CONFIG_BOUNDS.maxIdentities.default, max_open: CONFIG_BOUNDS.maxOpen.default } }),
     permissions: z
       .record(z.string(), permissionDecision)
       .default({})
@@ -265,17 +249,7 @@ export const dotConfigSchema = z
         max_cost_per_task_usd: CONFIG_BOUNDS.maxCostPerTaskUsd.default,
       }),
   })
-  .strict()
-  .superRefine((config, ctx) => {
-    const ids = config.browser.identities;
-    if (ids.max_open > ids.max_identities) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["browser", "identities", "max_open"],
-        message: `max_open (${ids.max_open}) cannot exceed max_identities (${ids.max_identities})`,
-      });
-    }
-  });
+  .strict();
 
 export type DotConfig = z.output<typeof dotConfigSchema>;
 export type DotConfigInput = z.input<typeof dotConfigSchema>;

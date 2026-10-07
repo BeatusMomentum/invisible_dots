@@ -286,7 +286,6 @@ class AgentServer:
                 engine.set_config(body)
             except DotsConfigError as error:
                 raise HttpError(400, "invalid_config", str(error)) from None
-            engine.apply_browser_limits()
             return web.Response(status=204)
 
         if path == AGENT_ROUTES["events"]:

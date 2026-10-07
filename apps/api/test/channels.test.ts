@@ -14,7 +14,7 @@ const API_TOKEN = "test-token-0123456789abcdef";
 const BOT_TOKEN = "123456:SECRET-TOKEN-VALUE";
 const OTHER_BOT_TOKEN = "654321:OTHER-SECRET-TOKEN-VALUE";
 
-const yaml = (name: string) => `name: ${name}\ngoal: watch fares\nmodel:\n  provider: openrouter\n  id: test/model\n`;
+const yaml = (name: string) => `name: ${name}\nmodel:\n  provider: openrouter\n  id: test/model\n`;
 
 describe.each(testAdapters())("channel routes of the control-plane API (%s)", { timeout: 60_000 }, (kind) => {
   let t: TestDatabase;

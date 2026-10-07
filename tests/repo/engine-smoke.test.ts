@@ -150,11 +150,6 @@ describe("the engine smoke", () => {
     const first = /check_offered 1 [^\n]*\\\n[^\n]*\\\n\s+'(\[[^\n]*\])'/.exec(checks);
     expect(first, "check_offered 1").not.toBeNull();
     expect(JSON.parse(first![1]!)).toEqual(tools);
-    // Without managed_by_dot the two tools that create and delete identities are the only ones missing.
-    const unmanaged = /check_offered 5 [^\n]*\\\n[^\n]*\\\n\s+'(\[[^\n]*\])'/.exec(checks);
-    expect(unmanaged, "check_offered 5").not.toBeNull();
-    const browserOnly = tools.filter((t) => t.startsWith("browser_") || t === "computer_screenshot");
-    expect(JSON.parse(unmanaged![1]!)).toEqual(browserOnly.filter((t) => t !== "browser_identity_create" && t !== "browser_identity_delete"));
   });
 
   it.each(["smoke.sh", "browser/smoke.sh"])("%s exits non-zero on a failed check and on a skipped one, and prints the summary", (name) => {

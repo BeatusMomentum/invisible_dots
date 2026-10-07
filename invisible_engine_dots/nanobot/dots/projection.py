@@ -43,7 +43,7 @@ class EngineSettings:
 
 
 def project(config: DotRuntimeConfig, *, workspace: str, openrouter_base_url: str | None) -> EngineSettings:
-    offered = offered_tools(config.permissions, managed_identities=config.browser.identities.managed_by_dot)
+    offered = offered_tools(config.permissions)
     named = config.models or {}
     return EngineSettings(
         model_id=config.model.id,
@@ -60,8 +60,8 @@ def project(config: DotRuntimeConfig, *, workspace: str, openrouter_base_url: st
 
 
 def dot_prompt_section(config: DotRuntimeConfig) -> str:
-    """The system prompt section that tells the model whose Dot it is and what it is for."""
-    lines = [f'You are the Dot "{config.name}". Your goal:', config.goal.strip()]
+    """The system prompt section that tells the model whose Dot it is, and what its person asked of it."""
+    lines = [f'You are the Dot "{config.name}".']
     instructions = (config.instructions or "").strip()
     if instructions:
         lines += ["", "Instructions from the person who owns you:", instructions]

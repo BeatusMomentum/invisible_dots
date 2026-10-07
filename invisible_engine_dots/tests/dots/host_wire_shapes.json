@@ -3,7 +3,6 @@
     {
       "name": "shapes-min",
       "config": {
-        "goal": "keep watch",
         "name": "shapes-min",
         "model": {
           "id": "test/model",
@@ -15,13 +14,6 @@
           "max_cost_per_task_usd": 1
         },
         "models": {},
-        "browser": {
-          "identities": {
-            "max_open": 3,
-            "managed_by_dot": true,
-            "max_identities": 20
-          }
-        },
         "permissions": {
           "computer.exec": "allow",
           "computer.screenshot": "allow",
@@ -42,7 +34,6 @@
     {
       "name": "shapes-full",
       "config": {
-        "goal": "keep watch",
         "name": "shapes-full",
         "model": {
           "id": "test/model",
@@ -55,13 +46,6 @@
         },
         "models": {
           "summary": "test/small"
-        },
-        "browser": {
-          "identities": {
-            "max_open": 2,
-            "managed_by_dot": false,
-            "max_identities": 5
-          }
         },
         "permissions": {
           "computer.exec": "deny",

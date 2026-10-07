@@ -79,10 +79,10 @@ describe("serve", () => {
     const running = h.run({ web: true });
     await tick();
     expect(h.log).toEqual(["server start env=given", "web start"]);
-    expect(h.webOptions[0]).toMatchObject({ listen: { host: "127.0.0.1", port: 3000 }, apiUrl: "http://127.0.0.1:8787" });
+    expect(h.webOptions[0]).toMatchObject({ listen: { host: "127.0.0.2", port: 3000 }, apiUrl: "http://127.0.0.1:8787" });
     expect(h.webOptions[0]!.build.missing).toBeUndefined();
     expect(h.lines).toContain("info API token in /home/x/.invisible-dots/config/api.token; stop with Ctrl+C (Dots keep running)");
-    expect(h.lines).toContain("info web client at http://127.0.0.1:3000; sign in with the API token");
+    expect(h.lines).toContain("info web client at http://127.0.0.2:3000");
     h.signals.emit("SIGINT");
     await running;
     expect(h.log).toEqual(["server start env=given", "web start", "web stop", "server close"]);
@@ -107,7 +107,7 @@ describe("serve", () => {
   it("names the web client's own default, not the API's, when INVISIBLE_DOTS_WEB_LISTEN is malformed", async () => {
     const h = harness();
     await expect(h.run({ web: true, env: { INVISIBLE_DOTS_WEB_LISTEN: "three-thousand" } })).rejects.toThrow(
-      'INVISIBLE_DOTS_WEB_LISTEN must look like "127.0.0.1:3000", got "three-thousand"',
+      'INVISIBLE_DOTS_WEB_LISTEN must look like "127.0.0.2:3000", got "three-thousand"',
     );
   });
 

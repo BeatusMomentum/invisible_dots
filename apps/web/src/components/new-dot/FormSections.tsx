@@ -62,18 +62,6 @@ export function IdentitySection({ form, change, errorOf, touch }: SectionProps) 
           />
         )}
       </Field>
-      <Field id="dot-goal" label="Goal" hint="What the Dot should achieve, in a sentence or two." error={errorOf("goal")}>
-        {(control) => (
-          <Textarea
-            {...control}
-            rows={3}
-            value={form.goal}
-            placeholder="Check one-way fares from Milan to Lisbon every morning and report the cheapest day."
-            onChange={(event) => change({ goal: event.target.value })}
-            onBlur={() => touch("goal")}
-          />
-        )}
-      </Field>
       <Field id="dot-instructions" label="Instructions" optional hint="How it should work: where to write, what to avoid, what a good result looks like." error={errorOf("instructions")}>
         {(control) => <Textarea {...control} rows={4} value={form.instructions} onChange={(event) => change({ instructions: event.target.value })} />}
       </Field>

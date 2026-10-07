@@ -13,7 +13,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { Scheduler } from "../src/index.js";
 import { FakeDriver, ManualClock, waitFor, waitUntilSettledReady } from "../src/testing.js";
 
-const yaml = (name: string) => `name: ${name}\ngoal: keep watch\nmodel:\n  provider: openrouter\n  id: test/model\n`;
+const yaml = (name: string) => `name: ${name}\nmodel:\n  provider: openrouter\n  id: test/model\n`;
 
 describe("the commit points of the host", () => {
   let t: TestDatabase;

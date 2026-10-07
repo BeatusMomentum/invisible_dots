@@ -2,7 +2,6 @@
 
 import { AlertCircleIcon, InfoIcon } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
 import { statePill } from "../../lib/agent";
 import { api } from "../../lib/api";
 import { allowedActions, taskRunning } from "../../lib/computer";
@@ -22,14 +21,13 @@ import { TONE_DOT } from "./tone";
 import { useDotRing } from "./use-ring";
 
 /**
- * The Dot header (S4): its avatar, name and goal; the state it is in, what it cost today, and its computer with
+ * The Dot header (S4): its avatar and name; the state it is in, what it cost today, and its computer with
  * the power menu; and under it the banners that say why a Dot is in ERROR or that its agent was restarted.
  */
 export function DotHeader({ dotId, dot }: { dotId: string; dot: Resource<Dot> }) {
   const live = useDotLive(dotId);
   const ring = useDotRing(dotId, dot.data);
   const { dismissRestart } = useShell();
-  const [goalOpen, setGoalOpen] = useState(false);
   const record = dot.data;
 
   const hasError = record !== undefined && (record.status === "ERROR" || record.computer_state === "ERROR");
@@ -51,7 +49,6 @@ export function DotHeader({ dotId, dot }: { dotId: string; dot: Resource<Dot> })
   }
 
   const pill = statePill(record.status, live.agent);
-  const goal = record.config?.goal ?? "";
   // What the error banner offers besides the settings: a reboot, which the host only does to a computer that is up;
   // with the computer itself in ERROR the way back is to start it again.
   const allowed = allowedActions(record.computer_state ?? "");
@@ -65,17 +62,6 @@ export function DotHeader({ dotId, dot }: { dotId: string; dot: Resource<Dot> })
         <DotAvatar id={record.id} name={record.name} ring={ring} size="lg" />
         <div className="min-w-0 flex-1 basis-56">
           <h1 className="truncate text-xl font-semibold tracking-tight">{record.name}</h1>
-          {goal ? (
-            <button
-              type="button"
-              onClick={() => setGoalOpen((open) => !open)}
-              aria-expanded={goalOpen}
-              title={goalOpen ? "Show less" : "Show the whole goal"}
-              className={cn("block max-w-full text-left text-sm text-muted-foreground", goalOpen ? "whitespace-pre-wrap" : "truncate")}
-            >
-              {goal}
-            </button>
-          ) : null}
           {live.progress ? (
             <Link
               href={`/dots/${encodeURIComponent(dotId)}/tasks/${encodeURIComponent(live.progress.taskId)}`}

@@ -22,7 +22,6 @@ const dot = {
   name: "fare-watch",
   config: {
     name: "fare-watch",
-    goal: "Check fares",
     model: { provider: "openrouter", id: "test/model" },
     computer: { cpu: 2, memory: "4gb", disk: "40gb", idle_timeout: "15m" },
   },

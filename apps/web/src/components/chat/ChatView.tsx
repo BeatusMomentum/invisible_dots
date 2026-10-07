@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { isWorking } from "../../lib/agent";
 import { lastStepSinceUser } from "../../lib/chat-thread";
 import { viaChannel } from "../../lib/channels";
-import { composerState, messageNote, suggestions } from "../../lib/chat-view";
+import { composerState, messageNote, SUGGESTIONS } from "../../lib/chat-view";
 import { readDraft, writeDraft } from "../../lib/draft";
 import { ComputerPanel } from "../computer/ComputerPanel";
 import { useDot } from "../DotShell";
@@ -96,10 +96,10 @@ function ChatInner({ dotId }: { dotId: string }) {
             <ConversationEmptyState
               icon={<MessageSquareIcon className="size-6" />}
               title={`Say hello to ${who.name}`}
-              description={record?.config?.goal ? `Its goal: ${record.config.goal}` : "Tell it what you need."}
+              description="Tell it what you need."
             >
               <ul aria-label="Ways to begin" className="flex flex-wrap justify-center gap-2">
-                {suggestions(record?.config?.goal).map((text) => (
+                {SUGGESTIONS.map((text) => (
                   <li key={text}>
                     <Button type="button" variant="outline" size="sm" className="h-auto max-w-72 whitespace-normal py-1.5 text-left" onClick={() => suggest(text)}>
                       {text}

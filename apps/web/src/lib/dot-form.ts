@@ -60,7 +60,6 @@ export const FORM_BOUNDS = {
 
 export interface DotForm {
   name: string;
-  goal: string;
   instructions: string;
   modelId: string;
   /** The model that writes summaries; empty means the Dot's own model does. */
@@ -77,7 +76,6 @@ export interface DotForm {
 export function emptyForm(): DotForm {
   return {
     name: "",
-    goal: "",
     instructions: "",
     modelId: DEFAULT_MODEL_ID,
     summaryModelId: "",
@@ -94,7 +92,6 @@ export function emptyForm(): DotForm {
 export function formToConfig(form: DotForm): Record<string, unknown> {
   const config: Record<string, unknown> = {
     name: form.name,
-    goal: form.goal,
     model: { provider: "openrouter", id: form.modelId },
     computer: { cpu: form.cpu, memory: gibSize(form.memoryGib), disk: gibSize(form.diskGib), idle_timeout: form.idleTimeout },
     permissions: { ...form.permissions },
@@ -108,7 +105,6 @@ export function formToConfig(form: DotForm): Record<string, unknown> {
 export function configToForm(config: DotConfig): DotForm {
   return {
     name: config.name,
-    goal: config.goal,
     instructions: config.instructions ?? "",
     modelId: config.model.id,
     summaryModelId: config.models.summary ?? "",
@@ -121,7 +117,7 @@ export function configToForm(config: DotConfig): DotForm {
   };
 }
 
-export type FieldId = "name" | "goal" | "instructions" | "modelId" | "summaryModelId" | "cpu" | "memoryGib" | "diskGib" | "idleTimeout" | "maxCostUsd";
+export type FieldId = "name" | "instructions" | "modelId" | "summaryModelId" | "cpu" | "memoryGib" | "diskGib" | "idleTimeout" | "maxCostUsd";
 
 export interface FormIssue {
   /** The control the problem belongs to; null when it belongs to none (the YAML as a whole, a section the form has no control for). */
@@ -139,7 +135,6 @@ export function issueText(issue: FormIssue): string {
 /** Where each config path shows up in the form. A path not listed has no control. */
 const FIELD_OF_PATH: Readonly<Record<string, FieldId>> = {
   name: "name",
-  goal: "goal",
   instructions: "instructions",
   "model.id": "modelId",
   "models.summary": "summaryModelId",
@@ -195,8 +190,8 @@ export type YamlRead = { ok: true; form: DotForm } | { ok: false; issues: FormIs
 
 /**
  * Read YAML text back into the form. It fails with the schema's issues when the text is not a valid config, and
- * with one issue of its own when it is valid but sets something the form has no control for (the browser's limits,
- * the step and token limits): the form would drop it, so the person stays in the YAML.
+ * with one issue of its own when it is valid but sets something the form has no control for (the step and token
+ * limits): the form would drop it, so the person stays in the YAML.
  */
 export function yamlToForm(text: string): YamlRead {
   const parsed = safeParseDotConfig(text);
@@ -206,7 +201,7 @@ export function yamlToForm(text: string): YamlRead {
   if (!again.ok || canonical(withoutEmptyInstructions(again.config)) !== canonical(withoutEmptyInstructions(parsed.config))) {
     return {
       ok: false,
-      issues: [{ field: null, path: "", message: "This YAML sets options the form has no controls for (such as the browser limits or the step limit). Keep editing it as YAML." }],
+      issues: [{ field: null, path: "", message: "This YAML sets options the form has no controls for (such as the step limit). Keep editing it as YAML." }],
     };
   }
   return { ok: true, form };

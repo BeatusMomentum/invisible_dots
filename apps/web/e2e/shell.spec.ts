@@ -1,14 +1,14 @@
 import { expect, test } from "./fixtures.js";
 
 test("the rail lists the Dots and a Dot's page shows its header and its tabs", async ({ page, harness }) => {
-  const dot = await harness.createDot("shell-header", "Watch the fares from Milan to Lisbon");
+  const dot = await harness.createDot("shell-header");
   await page.goto(`${harness.webUrl}/`);
   const dots = page.getByRole("navigation", { name: "Dots" });
   await dots.getByRole("link", { name: /shell-header/ }).click();
 
   await expect(page).toHaveURL(new RegExp(`/dots/${dot.id}/chat$`));
   await expect(page.getByRole("heading", { level: 1, name: "shell-header" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /^Watch the fares/ })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Show the whole goal/ })).toHaveCount(0);
   await expect(dots.getByRole("link", { name: /shell-header/ })).toHaveAttribute("aria-current", "page");
   await expect(page.getByRole("img", { name: "Ready" }).first()).toBeVisible();
   await expect(page.getByText("$0.00")).toBeVisible();
@@ -80,7 +80,7 @@ test("the theme follows the system, can be chosen, and is applied before the pag
 });
 
 test("on a phone the rail is a sheet behind the menu button and nothing scrolls sideways", async ({ page, harness }) => {
-  const dot = await harness.createDot("shell-phone", "A goal long enough to run past the edge of a narrow screen if nothing held it back, word after word");
+  const dot = await harness.createDot("shell-phone");
   await page.setViewportSize({ width: 390, height: 800 });
   await page.goto(`${harness.webUrl}/dots/${dot.id}/chat`);
 

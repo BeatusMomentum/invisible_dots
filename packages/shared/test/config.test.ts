@@ -16,8 +16,6 @@ import {
 
 const FULL_YAML = `
 name: fare-watch
-goal: >
-  Check one-way fares from Milan to Lisbon every morning and report the cheapest day.
 instructions: >
   Write findings to ~/workspace/fares.csv.
 model:
@@ -30,11 +28,6 @@ computer:
   memory: 4gb
   disk: 40gb
   idle_timeout: 15m
-browser:
-  identities:
-    managed_by_dot: true
-    max_identities: 20
-    max_open: 3
 permissions:
   computer.exec: allow
   browser.identity.delete: ask
@@ -44,7 +37,7 @@ limits:
   max_cost_per_task_usd: 1.00
 `;
 
-const MINIMAL = { name: "a", goal: "do it", model: { provider: "openrouter", id: "openrouter/auto" } };
+const MINIMAL = { name: "a", model: { provider: "openrouter", id: "openrouter/auto" } };
 
 function issuesOf(input: unknown): string[] {
   const result = safeParseDotConfig(input);
@@ -108,20 +101,17 @@ describe("parseDotConfig", () => {
     const config = parseDotConfig(MINIMAL);
     expect(config).toEqual({
       name: "a",
-      goal: "do it",
       model: { provider: "openrouter", id: "openrouter/auto" },
       models: {},
       computer: { cpu: 2, memory: "4gb", disk: "40gb", idle_timeout: "15m" },
-      browser: { identities: { managed_by_dot: true, max_identities: 20, max_open: 3 } },
       permissions: {},
       limits: { max_steps_per_task: 60, context_tokens: 32_000, max_cost_per_task_usd: 1 },
     });
   });
 
   it("fills defaults inside a partially given section", () => {
-    const config = parseDotConfig({ ...MINIMAL, computer: { cpu: 4 }, browser: { identities: { max_open: 1 } } });
+    const config = parseDotConfig({ ...MINIMAL, computer: { cpu: 4 } });
     expect(config.computer).toEqual({ cpu: 4, memory: "4gb", disk: "40gb", idle_timeout: "15m" });
-    expect(config.browser.identities).toEqual({ managed_by_dot: true, max_identities: 20, max_open: 1 });
   });
 
   it("is idempotent, so a stored config can be parsed again", () => {
@@ -149,10 +139,10 @@ describe("parseDotConfig", () => {
     expect(issues).toEqual(['model.provider: model.provider must be "openrouter"']);
   });
 
-  it("requires goal and model", () => {
+  it("requires a model, and has no goal: what a Dot is for is what its person asks of it", () => {
     const issues = issuesOf({ name: "a" });
-    expect(issues.some((i) => i.startsWith("goal:"))).toBe(true);
     expect(issues.some((i) => i.startsWith("model:"))).toBe(true);
+    expect(issuesOf({ ...MINIMAL, goal: "watch the fares" })[0]).toMatch(/goal/);
   });
 
   it("enforces the resource ranges", () => {
@@ -166,11 +156,6 @@ describe("parseDotConfig", () => {
     expect(issuesOf({ ...MINIMAL, computer: { memory: "4096" } })[0]).toMatch(/followed by a unit/);
     expect(issuesOf({ ...MINIMAL, computer: { idle_timeout: "soon" } })[0]).toMatch(/invalid duration/);
     expect(parseDotConfig({ ...MINIMAL, computer: { memory: "2048mb", disk: "1tb" } }).computer.disk).toBe("1tb");
-  });
-
-  it("refuses max_open above max_identities", () => {
-    const issues = issuesOf({ ...MINIMAL, browser: { identities: { max_identities: 2, max_open: 3 } } });
-    expect(issues).toEqual(["browser.identities.max_open: max_open (3) cannot exceed max_identities (2)"]);
   });
 
   it("refuses unknown keys and unknown permissions", () => {
@@ -223,11 +208,11 @@ describe("parseDotConfig", () => {
 
   it("lists every issue in the error message", () => {
     try {
-      parseDotConfig({ name: "BAD", goal: "", model: { provider: "x", id: "y" } });
+      parseDotConfig({ name: "BAD", model: { provider: "x", id: "y" } });
       expect.unreachable();
     } catch (error) {
       expect(error).toBeInstanceOf(DotConfigError);
-      expect((error as Error).message).toMatch(/name: .*goal: .*model\.provider: /);
+      expect((error as Error).message).toMatch(/name: .*model\.provider: /);
     }
   });
 });
@@ -248,11 +233,6 @@ describe("CONFIG_BOUNDS", () => {
       max_steps_per_task: CONFIG_BOUNDS.maxStepsPerTask.default,
       context_tokens: CONFIG_BOUNDS.contextTokens.default,
       max_cost_per_task_usd: CONFIG_BOUNDS.maxCostPerTaskUsd.default,
-    });
-    expect(config.browser.identities).toEqual({
-      managed_by_dot: true,
-      max_identities: CONFIG_BOUNDS.maxIdentities.default,
-      max_open: CONFIG_BOUNDS.maxOpen.default,
     });
   });
 
@@ -275,24 +255,14 @@ describe("CONFIG_BOUNDS", () => {
     expect(safeParseDotConfig(withLimits({ max_cost_per_task_usd: maxCostPerTaskUsd.max + 1 })).ok).toBe(false);
   });
 
-  it("are the range of the step, context, identity and open-browser numbers too", () => {
-    const { maxStepsPerTask, contextTokens, maxIdentities, maxOpen } = CONFIG_BOUNDS;
-    const withIdentities = (identities: Record<string, unknown>) => ({ ...MINIMAL, browser: { identities } });
+  it("are the range of the step and context numbers too", () => {
+    const { maxStepsPerTask, contextTokens } = CONFIG_BOUNDS;
     for (const [field, bounds] of [["max_steps_per_task", maxStepsPerTask], ["context_tokens", contextTokens]] as const) {
       expect(safeParseDotConfig(withLimits({ [field]: bounds.min })).ok, `${field} min`).toBe(true);
       expect(safeParseDotConfig(withLimits({ [field]: bounds.max })).ok, `${field} max`).toBe(true);
       expect(safeParseDotConfig(withLimits({ [field]: bounds.min - 1 })).ok, `${field} below`).toBe(false);
       expect(safeParseDotConfig(withLimits({ [field]: bounds.max + 1 })).ok, `${field} above`).toBe(false);
     }
-    // max_open may not exceed max_identities, so each end of max_open is tried with room to spare.
-    expect(safeParseDotConfig(withIdentities({ max_open: maxOpen.min })).ok).toBe(true);
-    expect(safeParseDotConfig(withIdentities({ max_open: maxOpen.max, max_identities: maxIdentities.max })).ok).toBe(true);
-    expect(safeParseDotConfig(withIdentities({ max_open: maxOpen.min - 1 })).ok).toBe(false);
-    expect(safeParseDotConfig(withIdentities({ max_open: maxOpen.max + 1, max_identities: maxIdentities.max })).ok).toBe(false);
-    expect(safeParseDotConfig(withIdentities({ max_identities: maxIdentities.min, max_open: 1 })).ok).toBe(true);
-    expect(safeParseDotConfig(withIdentities({ max_identities: maxIdentities.max })).ok).toBe(true);
-    expect(safeParseDotConfig(withIdentities({ max_identities: maxIdentities.min - 1 })).ok).toBe(false);
-    expect(safeParseDotConfig(withIdentities({ max_identities: maxIdentities.max + 1 })).ok).toBe(false);
   });
 });
 

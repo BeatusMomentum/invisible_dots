@@ -105,7 +105,7 @@ class TestAChatTurn:
         system = h.provider.requests[1]["messages"][0]
         assert system["role"] == "system"
         assert 'You are the Dot "fare-watch"' in system["content"]
-        assert "Watch fares." in system["content"]
+        assert "goal" not in system["content"].lower()
         assert "Tool Usage Notes" in system["content"]
         assert "your own Linux computer" in system["content"]
         assert [(m["role"], m["content"]) for m in h.provider.requests[1]["messages"][1:]] == [

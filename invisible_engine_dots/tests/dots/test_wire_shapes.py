@@ -51,8 +51,7 @@ _OFFERED_CASES = [
     {"permissions": {"computer.exec": "allow", "files.read": "ask", "files.write": "deny", "automations": "deny"}},
     {"permissions": {}},
     {"permissions": {"computer.exec": "ask", "files.read": "ask", "files.write": "ask", "automations": "ask"}},
-    {"permissions": {"browser.identity.list": "allow", "browser.identity.create": "allow", "browser.identity.delete": "ask"}, "managed_identities": True},
-    {"permissions": {"browser.identity.list": "allow", "browser.identity.create": "allow", "browser.identity.delete": "ask"}, "managed_identities": False},
+    {"permissions": {"browser.identity.list": "allow", "browser.identity.create": "allow", "browser.identity.delete": "ask"}},
 ]
 
 
@@ -147,8 +146,7 @@ def _stable(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
 def _shapes(outbound_events: list[dict[str, Any]]) -> dict[str, Any]:
     cases = []
     for case in _OFFERED_CASES:
-        case = {"managed_identities": True, **case}
-        offered = offered_tools(case["permissions"], managed_identities=case["managed_identities"])
+        offered = offered_tools(case["permissions"])
         cases.append({**case, "offered": offered, "tools": tool_table(_Registry(), offered)})
     return {
         "limits": {"max_run_at_ms": MAX_RUN_AT_MS},
@@ -180,10 +178,6 @@ def test_the_cases_reach_every_kind_of_tool(outbound_events: list[dict[str, Any]
     shapes = _shapes(outbound_events)
     for case in shapes["tool_offering"]:
         assert [row["name"] for row in case["tools"]] == list(TOOL_PERMISSIONS)
-    unmanaged = next(c for c in shapes["tool_offering"] if not c["managed_identities"])
-    assert unmanaged["permissions"]["browser.identity.create"] == "allow"
-    assert "browser_identity_create" not in unmanaged["offered"] and "browser_identity_delete" not in unmanaged["offered"]
-    assert "browser_identity_list" in unmanaged["offered"]
 
 
 def test_the_events_pinned_are_one_of_every_type_the_engine_writes_and_every_set_of_keys_it_writes_them_with(

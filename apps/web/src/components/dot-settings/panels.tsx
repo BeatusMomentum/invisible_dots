@@ -1,12 +1,9 @@
 "use client";
 
 import { CONFIG_BOUNDS } from "@invisible-dots/shared/browser";
-import type { ReactNode } from "react";
 import { setField } from "../../lib/config-fields";
 import { FORM_BOUNDS, gibOf, gibSize, IDLE_CHOICES, MODEL_SUGGESTIONS } from "../../lib/dot-form";
 import { Input } from "../ui/input";
-import { Label } from "../ui/label";
-import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { Field, NumberField, SliderField } from "../new-dot/Field";
 import { Panel, type PanelProps } from "./panel";
@@ -22,9 +19,6 @@ export function GeneralPanel({ draft, change, errorOf }: PanelProps) {
         <p className="text-xs text-muted-foreground">A Dot keeps its name: it names the Dot in commands, logs and every page.</p>
         {errorOf("name") ? <p className="text-xs text-danger">{errorOf("name")}</p> : null}
       </div>
-      <Field id="set-goal" label="Goal" hint="What the Dot should achieve, in a sentence or two." error={errorOf("goal")}>
-        {(control) => <Textarea {...control} rows={3} value={draft.goal} onChange={(event) => change(setField(draft, "goal", event.target.value))} />}
-      </Field>
       <Field id="set-instructions" label="Instructions" optional hint="How it should work: where to write, what to avoid, what a good result looks like." error={errorOf("instructions")}>
         {(control) => <Textarea {...control} rows={4} value={draft.instructions ?? ""} onChange={(event) => change(setField(draft, "instructions", event.target.value))} />}
       </Field>
@@ -105,63 +99,6 @@ export function ComputerPanel({ draft, saved, change, errorOf }: PanelProps) {
           </select>
         )}
       </Field>
-    </Panel>
-  );
-}
-
-/** A switch with what it means in words: its label says the state, the text under it says what that does. */
-function SwitchRow({ id, label, meaning, checked, onChange, children }: { id: string; label: string; meaning: string; checked: boolean; onChange: (next: boolean) => void; children?: ReactNode }) {
-  return (
-    <div className="flex items-start gap-3">
-      <div className="min-w-0 flex-1 space-y-1">
-        <Label htmlFor={id} className="text-sm font-medium">
-          {label}
-        </Label>
-        <p className="text-sm text-muted-foreground">{meaning}</p>
-        {children}
-      </div>
-      <Switch id={id} checked={checked} onCheckedChange={onChange} />
-    </div>
-  );
-}
-
-export function BrowserPanel({ draft, change, errorOf }: PanelProps) {
-  const identities = draft.browser.identities;
-  return (
-    <Panel id="browser" title="Browser" description="The browser identities the Dot works with: each its own profile, with its own logins.">
-      <SwitchRow
-        id="set-managed"
-        label={identities.managed_by_dot ? "The Dot manages its identities" : "You manage its identities"}
-        meaning={
-          identities.managed_by_dot
-            ? "The Dot may create and delete browser identities itself, as far as its permissions allow."
-            : "The Dot is not offered the tools that create and delete identities. You make them on the Computer page."
-        }
-        checked={identities.managed_by_dot}
-        onChange={(next) => change(setField(draft, "browser.identities.managed_by_dot", next))}
-      />
-      <NumberField
-        id="set-max-identities"
-        label="Most identities"
-        min={CONFIG_BOUNDS.maxIdentities.min}
-        max={CONFIG_BOUNDS.maxIdentities.max}
-        step={1}
-        value={identities.max_identities}
-        onChange={(value) => change(setField(draft, "browser.identities.max_identities", value))}
-        hint="No identity can be made past this, by the Dot or by you."
-        error={errorOf("browser.identities.max_identities")}
-      />
-      <NumberField
-        id="set-max-open"
-        label="Most open at once"
-        min={CONFIG_BOUNDS.maxOpen.min}
-        max={CONFIG_BOUNDS.maxOpen.max}
-        step={1}
-        value={identities.max_open}
-        onChange={(value) => change(setField(draft, "browser.identities.max_open", value))}
-        hint="Each open browser uses the computer's memory. It cannot be more than the most identities."
-        error={errorOf("browser.identities.max_open")}
-      />
     </Panel>
   );
 }

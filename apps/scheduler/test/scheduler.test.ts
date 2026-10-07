@@ -7,7 +7,7 @@ import { FakeDriver, FakeGuestError, ManualClock, waitFor, waitUntilSettledReady
 
 
 const yaml = (name: string, idle = "15m") =>
-  `name: ${name}\ngoal: keep watch\nmodel:\n  provider: openrouter\n  id: test/model\ncomputer:\n  idle_timeout: ${idle}\n`;
+  `name: ${name}\nmodel:\n  provider: openrouter\n  id: test/model\ncomputer:\n  idle_timeout: ${idle}\n`;
 
 const automation = (over: Partial<FakeAutomation> = {}): FakeAutomation => ({
   id: "job_1",

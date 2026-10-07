@@ -19,9 +19,8 @@ import { FakeDriver, ManualClock, waitFor, waitUntilSettledReady } from "../src/
 
 const FIXTURE = fileURLToPath(new URL("../../../invisible_engine_dots/tests/dots/host_wire_shapes.json", import.meta.url));
 
-const MINIMAL = "name: shapes-min\ngoal: keep watch\nmodel:\n  provider: openrouter\n  id: test/model\n";
+const MINIMAL = "name: shapes-min\nmodel:\n  provider: openrouter\n  id: test/model\n";
 const FULL = `name: shapes-full
-goal: keep watch
 instructions: Answer in one line.
 model:
   provider: openrouter
@@ -33,11 +32,6 @@ computer:
   memory: 6G
   disk: 30G
   idle_timeout: 5m
-browser:
-  identities:
-    managed_by_dot: false
-    max_identities: 5
-    max_open: 2
 permissions:
   computer.exec: deny
   files.write: ask
@@ -84,7 +78,7 @@ describe("what the host sends the engine", () => {
       configs.push({ name, config: structuredClone(driver.guestOf(dot.id).config) });
     }
 
-    const dot = await readyDot("name: shapes-talk\ngoal: keep watch\nmodel:\n  provider: openrouter\n  id: test/model\n", "shapes-talk");
+    const dot = await readyDot("name: shapes-talk\nmodel:\n  provider: openrouter\n  id: test/model\n", "shapes-talk");
     const guest = driver.guestOf(dot.id);
     // A quiet guest: it takes a task up and says nothing else, so nothing but what the host sends is in `inbound`.
     guest.onInbound = (event, g) => {
@@ -126,7 +120,7 @@ describe("what the host sends the engine", () => {
     const priorities = written.inbound_events.filter((event) => event.type === "task.created").map((event) => event.data.priority);
     expect(priorities).toEqual([5, 0]);
     const [minimal, full] = written.runtime_configs.map((entry) => entry.config as Record<string, unknown>);
-    expect(Object.keys(full!).sort()).toEqual(["browser", "goal", "instructions", "limits", "model", "models", "name", "permissions"]);
+    expect(Object.keys(full!).sort()).toEqual(["instructions", "limits", "model", "models", "name", "permissions"]);
     expect(Object.keys(minimal!)).not.toContain("instructions");
     expect(minimal).not.toHaveProperty("computer");
   });

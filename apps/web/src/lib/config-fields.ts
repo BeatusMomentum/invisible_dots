@@ -32,7 +32,6 @@ function shownText(value: ConfigValue): string {
   return text.length > TEXT_SHOWN ? `${text.slice(0, TEXT_SHOWN)}...` : text;
 }
 
-const shownSwitch = (value: ConfigValue) => (value ? "on" : "off");
 const shownPlain = (value: ConfigValue) => String(value);
 
 /** The default decision of a permission: what it resolves to when the config says nothing about it. */
@@ -48,7 +47,6 @@ export function setPermission(config: DotConfig, permission: Permission, decisio
 
 const SCALARS = {
   "name": { label: "Name", applies: "turn", get: (c) => c.name, set: (c, v) => ({ ...c, name: String(v) }), show: shownPlain },
-  "goal": { label: "Goal", applies: "turn", get: (c) => c.goal, set: (c, v) => ({ ...c, goal: String(v) }), show: shownText },
   "instructions": {
     label: "Instructions",
     applies: "turn",
@@ -79,27 +77,6 @@ const SCALARS = {
     get: (c) => c.computer.idle_timeout,
     set: (c, v) => ({ ...c, computer: { ...c.computer, idle_timeout: String(v) } }),
     show: (v) => (v === "0" ? "never" : String(v)),
-  },
-  "browser.identities.managed_by_dot": {
-    label: "The Dot manages its browser identities",
-    applies: "turn",
-    get: (c) => c.browser.identities.managed_by_dot,
-    set: (c, v) => ({ ...c, browser: { identities: { ...c.browser.identities, managed_by_dot: Boolean(v) } } }),
-    show: shownSwitch,
-  },
-  "browser.identities.max_identities": {
-    label: "Most browser identities",
-    applies: "turn",
-    get: (c) => c.browser.identities.max_identities,
-    set: (c, v) => ({ ...c, browser: { identities: { ...c.browser.identities, max_identities: Number(v) } } }),
-    show: shownPlain,
-  },
-  "browser.identities.max_open": {
-    label: "Most browsers open at once",
-    applies: "turn",
-    get: (c) => c.browser.identities.max_open,
-    set: (c, v) => ({ ...c, browser: { identities: { ...c.browser.identities, max_open: Number(v) } } }),
-    show: shownPlain,
   },
   "limits.max_steps_per_task": {
     label: "Steps per task",

@@ -199,7 +199,7 @@ describe("startServer on an empty INVISIBLE_DOTS_HOME", { timeout: 120_000 }, ()
     const dotId = newId("dot");
     await first.db.dots.insert({
       id: dotId,
-      config: parseDotConfig("name: channeled\ngoal: test goal\nmodel:\n  provider: openrouter\n  id: test/model\n"),
+      config: parseDotConfig("name: channeled\nmodel:\n  provider: openrouter\n  id: test/model\n"),
       status: "DISABLED",
     });
     await first.channels.add(dotId, "telegram");

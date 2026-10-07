@@ -36,7 +36,7 @@ beforeEach(() => {
   navigate = () => {};
   window.localStorage.clear();
   plane = new FakeControlPlane();
-  plane.dots = [dotRecord("d1", { name: "fares", config: { goal: "Watch the fares to Lisbon" } as never })];
+  plane.dots = [dotRecord("d1", { name: "fares" })];
   plane.install();
   stubMatchMedia();
   stubResizeObserver();
@@ -126,10 +126,10 @@ describe("the conversation", () => {
     expect(within(screen.getByText("from this page").closest("article")!).queryByText(/^via /)).toBeNull();
   });
 
-  it("invites the first message with the goal and three ways to begin, which fill the box and do not send", async () => {
+  it("invites the first message with three ways to begin, which fill the box and do not send", async () => {
     await renderChat();
     expect(await screen.findByRole("heading", { name: "Say hello to fares" })).toBeTruthy();
-    expect(screen.getByText("Its goal: Watch the fares to Lisbon")).toBeTruthy();
+    expect(screen.getByText("Tell it what you need.")).toBeTruthy();
     const ways = within(screen.getByRole("list", { name: "Ways to begin" })).getAllByRole("button");
     expect(ways).toHaveLength(3);
     await userEvent.click(within(screen.getByRole("list", { name: "Ways to begin" })).getByRole("button", { name: "What can you do on your computer?" }));

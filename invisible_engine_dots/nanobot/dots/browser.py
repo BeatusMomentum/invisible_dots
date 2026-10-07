@@ -395,19 +395,6 @@ class BrowserManager:
         if tasks:
             await asyncio.wait(tasks)
 
-    def set_limits(self, max_open: int, max_identities: int) -> None:
-        """Apply new limits from a config change, and return at once.
-
-        Identities beyond a lower `max_open` are closed, least recently used first, and the others stay
-        open. Those closes run in the background (each can take `close_timeout_s`), and from this call on
-        the identities no longer count as open. A lower `max_identities` deletes nothing: it refuses new
-        identities until enough are deleted.
-        """
-        _check_limits(max_open, max_identities)
-        self._max_open = max_open
-        self._max_identities = max_identities
-        self._make_room(max_open)
-
     async def call_tool(self, identity_id: str, tool: str, arguments: Mapping[str, Any] | None = None) -> Any:
         """Call a tool of the identity's MCP server, with `browser: "main"` added to its arguments.
 

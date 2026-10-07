@@ -10,7 +10,7 @@ import { expect } from "vitest";
 import { ChannelHub, type ChannelHubOptions, type ChannelType } from "../src/index.js";
 import { FakeChannelType } from "../src/testing.js";
 
-const yaml = (name: string) => `name: ${name}\ngoal: keep watch\nmodel:\n  provider: openrouter\n  id: test/model\n`;
+const yaml = (name: string) => `name: ${name}\nmodel:\n  provider: openrouter\n  id: test/model\n`;
 
 export const FAST_BACKOFF = { initialMs: 1, maxMs: 5, jitter: 0 };
 

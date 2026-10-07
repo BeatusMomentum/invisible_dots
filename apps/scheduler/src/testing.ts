@@ -102,6 +102,9 @@ function desktopPng(): Uint8Array {
 }
 
 /** The error shape of vm-manager's GuestRequestError: a status (0 = unreachable) and the guest's code. */
+/** The most browser identities the engine keeps (`DEFAULT_MAX_IDENTITIES` in nanobot/dots/main.py). */
+export const FAKE_MAX_IDENTITIES = 20;
+
 export class FakeGuestError extends Error {
   constructor(
     readonly status: number,
@@ -167,8 +170,7 @@ export class FakeGuest implements GuestApi {
   readonly automations = new Map<string, FakeAutomation>();
   /**
    * The tools the fake's engine has: the real table's shape, a few rows; `offered` follows the permissions of the
-   * config, and for a tool that creates an identity also `browser.identities.managed_by_dot`, as the engine's
-   * `offered_tools` does.
+   * config, as the engine's `offered_tools` does.
    */
   readonly tools: Omit<ToolInfo, "offered">[] = [
     { name: "exec", permission: "computer.exec", description: "Run a shell command on the computer." },
@@ -424,8 +426,8 @@ export class FakeGuest implements GuestApi {
     this.#reachable("createBrowserIdentity");
     let checked: { name: string; proxy?: string };
     try {
-      // The agent's own rules: before any config the schema default of 20 applies.
-      checked = checkIdentityRequest(body, this.identities.size, this.config?.browser.identities.max_identities ?? 20);
+      // The agent's own rules, with the engine's own limit (DEFAULT_MAX_IDENTITIES in nanobot/dots/main.py).
+      checked = checkIdentityRequest(body, this.identities.size, FAKE_MAX_IDENTITIES);
     } catch (error) {
       if (error instanceof IdentityRequestError) throw new FakeGuestError(error.code === "limit" ? 409 : 400, error.message, error.code);
       throw error;
@@ -516,11 +518,8 @@ export class FakeGuest implements GuestApi {
   async listTools(): Promise<ToolListAnswer> {
     this.#reachable("listTools");
     const permissions: Record<string, string | undefined> = this.config?.permissions ?? {};
-    const managed = this.config?.browser.identities.managed_by_dot ?? true;
     const offered = (tool: Omit<ToolInfo, "offered">): boolean =>
-      this.config !== null &&
-      (permissions[tool.permission] === "allow" || permissions[tool.permission] === "ask") &&
-      (managed || tool.name !== "browser_identity_create");
+      this.config !== null && (permissions[tool.permission] === "allow" || permissions[tool.permission] === "ask");
     return { tools: this.tools.map((tool) => ({ ...tool, offered: offered(tool) })) };
   }
 

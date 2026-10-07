@@ -38,9 +38,8 @@ async function renderPage() {
   await waitFor(() => expect(plane.streamOpen).toBe(true));
 }
 
-async function fillIdentity(name = "fare-watch", goal = "Watch the fares from Milan to Lisbon") {
+async function fillIdentity(name = "fare-watch") {
   await userEvent.type(screen.getByLabelText("Name"), name);
-  await userEvent.type(screen.getByLabelText("Goal"), goal);
 }
 
 describe("Create a Dot: the form", () => {
@@ -80,7 +79,6 @@ describe("Create a Dot: the form", () => {
     expect(plane.created).toEqual([
       {
         name: "fare-watch",
-        goal: "Watch the fares from Milan to Lisbon",
         instructions: "Write to fares.csv.",
         model: { provider: "openrouter", id: "z-ai/glm-5.3-flash" },
         computer: { cpu: 4, memory: "8gb", disk: "40gb", idle_timeout: "30m" },
@@ -134,15 +132,14 @@ describe("Create a Dot: the form", () => {
 });
 
 describe("Create a Dot: what is wrong", () => {
-  it("does not create a Dot with no name and no goal, and lists what to fix", async () => {
+  it("does not create a Dot with no name, asks for no goal, and lists what to fix", async () => {
     await renderPage();
+    expect(screen.queryByLabelText("Goal")).toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "Create Dot" }));
     expect(plane.created).toEqual([]);
     const summary = await screen.findByRole("alert");
-    expect(summary.textContent).toContain("2 things to fix");
-    expect(within(summary).getAllByRole("listitem")).toHaveLength(2);
+    expect(within(summary).getAllByRole("listitem")).toHaveLength(1);
     expect(screen.getByLabelText("Name").getAttribute("aria-invalid")).toBe("true");
-    expect(screen.getByLabelText("Goal").getAttribute("aria-invalid")).toBe("true");
     await waitFor(() => expect(document.activeElement).toBe(summary.parentElement));
   });
 
@@ -280,9 +277,9 @@ describe("Create a Dot: the YAML editor", () => {
   it("lists what is wrong with the YAML as it is typed, and refuses to create from it", async () => {
     await renderPage();
     await userEvent.click(screen.getByRole("button", { name: "Advanced YAML" }));
-    // An empty form is already invalid: no name, no goal.
+    // An empty form is already invalid: it has no name.
     const problems = screen.getByRole("list", { name: "Problems in the YAML" });
-    expect(within(problems).getAllByRole("listitem").length).toBeGreaterThanOrEqual(2);
+    expect(within(problems).getAllByRole("listitem").length).toBeGreaterThanOrEqual(1);
     await userEvent.click(screen.getByRole("button", { name: "Create Dot" }));
     expect(plane.created).toEqual([]);
   });
@@ -302,13 +299,13 @@ describe("Create a Dot: the YAML editor", () => {
     await renderPage();
     await fillIdentity();
     await userEvent.click(screen.getByRole("button", { name: "Advanced YAML" }));
-    fireEvent.change(yamlBox(), { target: { value: `${yamlBox().value}memory:\n  enabled: false\n` } });
+    fireEvent.change(yamlBox(), { target: { value: yamlBox().value.replace("limits:\n", "limits:\n  max_steps_per_task: 10\n") } });
     await userEvent.click(screen.getByRole("button", { name: "Form" }));
     expect(screen.getByText("The form cannot show this")).toBeTruthy();
     expect(screen.getByText(/no controls for/)).toBeTruthy();
-    expect(yamlBox().value).toContain("enabled: false");
+    expect(yamlBox().value).toContain("max_steps_per_task: 10");
     // Editing the text again takes the message away.
-    fireEvent.change(yamlBox(), { target: { value: yamlBox().value.replace("enabled: false", "enabled: true") } });
+    fireEvent.change(yamlBox(), { target: { value: yamlBox().value.replace("  max_steps_per_task: 10\n", "") } });
     expect(screen.queryByText("The form cannot show this")).toBeNull();
   });
 

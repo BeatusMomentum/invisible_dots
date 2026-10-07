@@ -5,7 +5,7 @@ import { createTestDatabase, testAdapters, type TestDatabase } from "../src/test
 
 const SETUP_TIMEOUT = 60_000;
 const settings = { approvals: true, notify_tasks: true, show_arguments: true };
-const yaml = (name: string) => `name: ${name}\ngoal: test goal\nmodel:\n  provider: openrouter\n  id: test/model\n`;
+const yaml = (name: string) => `name: ${name}\nmodel:\n  provider: openrouter\n  id: test/model\n`;
 
 describe.each(testAdapters())("channel repository on %s", { timeout: SETUP_TIMEOUT }, (kind) => {
   let t: TestDatabase;

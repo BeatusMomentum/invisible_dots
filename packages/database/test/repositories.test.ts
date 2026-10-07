@@ -15,7 +15,7 @@ async function createdInOrder(db: Database, table: "tasks" | "approvals", ids: r
   );
 }
 
-const yaml = (name: string) => `name: ${name}\ngoal: test goal\nmodel:\n  provider: openrouter\n  id: test/model\n`;
+const yaml = (name: string) => `name: ${name}\nmodel:\n  provider: openrouter\n  id: test/model\n`;
 
 async function seedDot(r: Repositories, name: string) {
   const id = newId("dot");
@@ -57,7 +57,42 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
       "0007_dot_config_version",
       "0008_computer_next_automation",
       "0009_dot_keeps_its_memory",
+      "0010_dot_has_no_goal",
+      "0011_dot_has_no_browser_settings",
     ]);
+  });
+
+  it("0011: a config saved with browser settings loses them and moves its version; one without is left as it was", async () => {
+    const old = await seedDot(db, "alpha-browser");
+    const untouched = await seedDot(db, "alpha-browser-none");
+    await db.query(
+      `UPDATE dots SET config = config || '{"browser":{"identities":{"managed_by_dot":false,"max_identities":5,"max_open":2}}}'::jsonb WHERE id = $1`,
+      [old.id],
+    );
+    const sql = (await loadMigrations()).find((migration) => migration.version === "0011_dot_has_no_browser_settings")!.sql;
+
+    for (const statement of sql.split(/;\s*\n/).filter((part) => part.trim() !== "")) await db.query(statement);
+
+    const after = await db.dots.get(old.id);
+    expect("browser" in after!.config).toBe(false);
+    expect(after?.config).toEqual(old.config);
+    expect(after?.config_version).toBe(old.config_version + 1);
+    expect((await db.dots.get(untouched.id))?.config_version).toBe(untouched.config_version);
+  });
+
+  it("0010: a config saved with a goal loses it and moves its version; one without is left as it was", async () => {
+    const old = await seedDot(db, "alpha-goal");
+    const untouched = await seedDot(db, "alpha-goal-none");
+    await db.query(`UPDATE dots SET config = config || '{"goal":"watch the fares"}'::jsonb WHERE id = $1`, [old.id]);
+    const sql = (await loadMigrations()).find((migration) => migration.version === "0010_dot_has_no_goal")!.sql;
+
+    for (const statement of sql.split(/;\s*\n/).filter((part) => part.trim() !== "")) await db.query(statement);
+
+    const after = await db.dots.get(old.id);
+    expect("goal" in after!.config).toBe(false);
+    expect(after?.config).toEqual(old.config);
+    expect(after?.config_version).toBe(old.config_version + 1);
+    expect((await db.dots.get(untouched.id))?.config_version).toBe(untouched.config_version);
   });
 
   it("0009: a config saved with the memory switch and permission loses both and moves its version, and memory.written rows go", async () => {

@@ -65,8 +65,6 @@ and the checks read that file. What they pin:
   browser closed under it is not reopened and the call is not repeated: the call fails saying the browser
   is gone and to launch the identity again, the identity is closed (one `closed` event, its server ended,
   no slot held, so the next launch closes nothing);
-- `managed_by_dot` false drops the tools that create and delete identities from the offered list, whatever
-  the permissions say;
 - `browser.identity.delete: ask` parks the call and the approval survives `kill -9`, which also ends every
   server; after the restart every identity is `available`; SIGTERM asks an open browser to close before
   its server ends; a host `DELETE` of an open identity closes it first;

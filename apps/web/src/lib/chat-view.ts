@@ -30,14 +30,8 @@ export function composerState(dot: Pick<Dot, "status" | "computer_state"> | unde
   }
 }
 
-const GOAL_EXCERPT = 90;
-
-/** Three first messages to offer in an empty chat, the last taken from the Dot's goal. */
-export function suggestions(goal: string | undefined): string[] {
-  const text = (goal ?? "").trim().replace(/\s+/g, " ");
-  const excerpt = text.length > GOAL_EXCERPT ? `${text.slice(0, GOAL_EXCERPT - 3).trimEnd()}...` : text;
-  return ["Tell me what you will do first.", "What can you do on your computer?", excerpt ? `Start on your goal: ${excerpt}` : "What do you need from me to get started?"];
-}
+/** Three first messages to offer in an empty chat. */
+export const SUGGESTIONS: readonly string[] = ["What can you do on your computer?", "Open a browser and tell me what is on example.com.", "What do you need from me to get started?"];
 
 /** The note under a message the computer had to wake up for: the Dot answers once it is up. */
 export const QUEUED_NOTE = "Queued: the computer is waking up, and the Dot answers once it is.";

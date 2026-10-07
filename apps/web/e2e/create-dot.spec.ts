@@ -10,7 +10,6 @@ test("a Dot is created by the form: its config is what the form showed, and the 
   await expect(page.getByRole("region", { name: "Before you create" }).getByText("OpenRouter key: Ready")).toBeVisible();
 
   await page.getByLabel("Name", { exact: true }).fill("form-made");
-  await page.getByLabel("Goal", { exact: true }).fill("Watch the fares from Milan to Lisbon");
   await page.getByLabel("Instructions").fill("Write findings to fares.csv.");
   await page.getByLabel("Processors", { exact: true }).fill("4");
   await page.getByLabel("Memory, exact value").fill("8");
@@ -25,7 +24,6 @@ test("a Dot is created by the form: its config is what the form showed, and the 
   const stored = await harness.api.getDot("form-made");
   expect(stored.config).toMatchObject({
     name: "form-made",
-    goal: "Watch the fares from Milan to Lisbon",
     instructions: "Write findings to fares.csv.",
     model: { provider: "openrouter", id: "z-ai/glm-5.3-flash" },
     computer: { cpu: 4, memory: "8gb", disk: "40gb", idle_timeout: "15m" },
@@ -40,12 +38,11 @@ test("a Dot is created by the form: its config is what the form showed, and the 
 test("a Dot is created from YAML, edited in place", async ({ page, harness }) => {
   await page.goto(`${harness.webUrl}/new`);
   await page.getByLabel("Name", { exact: true }).fill("yaml-made");
-  await page.getByLabel("Goal", { exact: true }).fill("Sort the mail");
   await page.getByRole("button", { name: "Advanced YAML" }).click();
   const editor = page.getByRole("textbox", { name: "Configuration (YAML)" });
   await expect(editor).toHaveValue(/name: yaml-made/);
   // Something only the YAML can say.
-  await editor.fill(`${await editor.inputValue()}browser:\n  identities:\n    max_open: 2\n`);
+  await editor.fill((await editor.inputValue()).replace("limits:\n", "limits:\n  max_steps_per_task: 12\n"));
   await expect(page.getByText("The configuration is valid.")).toBeVisible();
   // The form cannot show it, so going back is refused and the text stays.
   await page.getByRole("button", { name: "Form" }).click();
@@ -54,7 +51,7 @@ test("a Dot is created from YAML, edited in place", async ({ page, harness }) =>
 
   await expect(page).toHaveURL(/\/dots\/[^/]+\/chat$/);
   const stored = await harness.api.getDot("yaml-made");
-  expect(stored.config.browser.identities.max_open).toBe(2);
+  expect(stored.config.limits.max_steps_per_task).toBe(12);
 });
 
 test("a name that is not valid, or is taken, is said so at once, and nothing is created", async ({ page, harness }) => {
@@ -66,7 +63,6 @@ test("a name that is not valid, or is taken, is said so at once, and nothing is 
   await expect(page.getByText(/lowercase letters, digits and '-'/).first()).toBeVisible();
   await name.fill("name-taken");
   await expect(page.getByText('A Dot named "name-taken" already exists')).toBeVisible();
-  await page.getByLabel("Goal", { exact: true }).fill("anything");
   await page.getByRole("button", { name: "Create Dot" }).click();
   await expect(page.getByRole("alert").filter({ hasText: "to fix" })).toBeVisible();
   await expect(page).toHaveURL(/\/new$/);
@@ -94,10 +90,10 @@ test("the checks beside the form say what the host lacks and the command that fi
 });
 
 test("the Home page shows a card per Dot and the computer's power on it works", async ({ page, harness }) => {
-  const dot = await harness.createDot("home-card", "Watch the fares from Milan to Lisbon");
+  const dot = await harness.createDot("home-card");
   await page.goto(`${harness.webUrl}/`);
   const card = page.getByRole("article", { name: "home-card" });
-  await expect(card.getByText("Watch the fares from Milan to Lisbon")).toBeVisible();
+  await expect(card.getByText(/goal/i)).toHaveCount(0);
   await expect(card.getByText("test/model")).toBeVisible();
   await expect(card.getByText("$0.00")).toBeVisible();
   await expect(card.getByRole("img", { name: "Ready" })).toBeVisible();
@@ -115,12 +111,12 @@ test("the Home page shows a card per Dot and the computer's power on it works", 
 test("a Dot made elsewhere appears on the Home page while it is open", async ({ page, harness }) => {
   await page.goto(`${harness.webUrl}/`);
   await expect(page.getByRole("heading", { level: 1, name: "Dots" })).toBeVisible();
-  await harness.createDot("home-live", "arrives while you look");
+  await harness.createDot("home-live");
   await expect(page.getByRole("article", { name: "home-live" })).toBeVisible();
 });
 
 test("Home and the create page fit a phone: no sideways scroll at 390 px", async ({ page, harness }) => {
-  await harness.createDot("phone-card", "a goal long enough that it has to wrap onto a second line of the card on a narrow screen");
+  await harness.createDot("phone-card");
   await page.setViewportSize({ width: 390, height: 844 });
   const loaded: Record<string, () => Promise<void>> = {
     "/": () => expect(page.getByRole("article", { name: "phone-card" })).toBeVisible(),

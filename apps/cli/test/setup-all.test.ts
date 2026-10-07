@@ -40,9 +40,9 @@ describe("setup --all", () => {
   });
 
   it("names the address the web client is configured to listen on", async () => {
-    expect(webAddress({})).toBe("http://127.0.0.1:3000");
+    expect(webAddress({})).toBe("http://127.0.0.2:3000");
     expect(webAddress({ [ENV.WEB_LISTEN]: " 127.0.0.1:4100 " })).toBe("http://127.0.0.1:4100");
-    expect(webAddress({ [ENV.WEB_LISTEN]: "" })).toBe("http://127.0.0.1:3000");
+    expect(webAddress({ [ENV.WEB_LISTEN]: "" })).toBe("http://127.0.0.2:3000");
     const result = await all({ env: { [ENV.WEB_LISTEN]: "127.0.0.1:4100" } });
     expect(result.text).toContain("open http://127.0.0.1:4100 in your browser");
   });

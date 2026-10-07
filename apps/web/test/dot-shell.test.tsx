@@ -48,15 +48,12 @@ async function renderDot(id = "d1") {
 }
 
 describe("the Dot header", () => {
-  it("shows the Dot's name, its goal on one line that opens on a click, and the tab's body below", async () => {
-    plane.dots = [dotRecord("d1", { name: "fares", config: { goal: "Watch fares\nand report" } as never })];
+  it("shows the Dot's name and no goal under it, and the tab's body below", async () => {
+    plane.dots = [dotRecord("d1", { name: "fares" })];
     await renderDot();
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("fares");
     expect(screen.getByText("the tab body")).toBeTruthy();
-    const goal = screen.getByRole("button", { name: /Watch fares/ });
-    expect(goal.getAttribute("aria-expanded")).toBe("false");
-    await userEvent.click(goal);
-    expect(goal.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.queryByRole("button", { name: /Show the whole goal/ })).toBeNull();
   });
 
   it("says the Dot cannot be loaded when the control plane has no such Dot", async () => {

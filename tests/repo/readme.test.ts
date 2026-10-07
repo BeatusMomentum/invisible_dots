@@ -113,17 +113,19 @@ describe("the README's account of the web UI", () => {
 });
 
 describe("the numbers the README gives", () => {
-  const config = parseDotConfig("name: a\ngoal: b\nmodel: { provider: openrouter, id: x/y }\n");
+  const config = parseDotConfig("name: a\nmodel: { provider: openrouter, id: x/y }\n");
   // The text with its line breaks and quote marks folded into spaces, so a reflow of a paragraph breaks nothing.
   const flat = readme.replace(/\s*\n(?:> ?)?\s*/g, " ");
 
   it("are the defaults of the configuration", () => {
     expect(config.computer.idle_timeout).toBe("15m");
     expect(flat).toContain("`idle_timeout`, 15 minutes in the sample");
-    expect(config.browser.identities.max_open).toBe(3);
-    expect(flat).toContain("`max_open` (default 3)");
-    expect(config.browser.identities.max_identities).toBe(20);
-    expect(flat).toContain("`max_identities` exist (default 20)");
+    // The browser's limits are the engine's own, not settings.
+    const engineMain = read("invisible_engine_dots/nanobot/dots/main.py");
+    expect(engineMain).toContain("DEFAULT_MAX_OPEN = 3\n");
+    expect(flat).toContain("At most 3 identities are open at once");
+    expect(engineMain).toContain("DEFAULT_MAX_IDENTITIES = 20\n");
+    expect(flat).toContain("at most 20 exist.");
     expect(config.computer.memory).toBe("4gb");
     expect(config.computer.disk).toBe("40gb");
     expect(flat).toContain("(40 GB in the sample)");

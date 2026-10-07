@@ -43,7 +43,7 @@ function card(name: string): HTMLElement {
 
 function manyDots(count: number) {
   return Array.from({ length: count }, (_, i) =>
-    dotRecord(`d${i}`, { name: `dot-${i}`, config: { goal: i === 3 ? "Sort the mail" : `goal ${i}`, model: { provider: "openrouter", id: "a/b" } } as never }),
+    dotRecord(i === 3 ? "d3" : `d${i}`, { name: i === 3 ? "mail-sorter" : `dot-${i}`, config: { model: { provider: "openrouter", id: "a/b" } } as never }),
   );
 }
 
@@ -144,12 +144,11 @@ describe("Home", () => {
     expect(screen.queryByRole("region", { name: "Get this computer ready" })).toBeNull();
   });
 
-  it("shows a card per Dot with its name, goal, state, model and what it spent today", async () => {
+  it("shows a card per Dot with its name, state, model and what it spent today", async () => {
     plane.spentUsd = 1.5;
-    plane.dots = [dotRecord("d1", { name: "fares", config: { goal: "Watch the fares from Milan to Lisbon", model: { provider: "openrouter", id: "z-ai/glm" } } as never })];
+    plane.dots = [dotRecord("d1", { name: "fares", config: { model: { provider: "openrouter", id: "z-ai/glm" } } as never })];
     await renderHome();
     const fares = await screen.findByRole("article", { name: "fares" });
-    expect(within(fares).getByText("Watch the fares from Milan to Lisbon")).toBeTruthy();
     expect(within(fares).getByText("Idle")).toBeTruthy();
     expect(within(fares).getByText("z-ai/glm")).toBeTruthy();
     await waitFor(() => expect(within(fares).getByText("$1.50")).toBeTruthy());
@@ -200,7 +199,7 @@ describe("Home", () => {
     expect(within(card("quiet")).queryByText(/waiting/)).toBeNull();
   });
 
-  it("offers the search only above six Dots, and narrows the cards by name, goal or model", async () => {
+  it("offers the search only above six Dots, and narrows the cards by name or model", async () => {
     plane.dots = manyDots(6);
     await renderHome();
     await screen.findAllByRole("article");

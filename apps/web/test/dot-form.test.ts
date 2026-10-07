@@ -16,20 +16,20 @@ import {
 import { presetPermissions } from "../src/lib/permission-presets";
 
 function filled(change: Partial<DotForm> = {}): DotForm {
-  return { ...emptyForm(), name: "fare-watch", goal: "Watch the fares from Milan to Lisbon", ...change };
+  return { ...emptyForm(), name: "fare-watch", ...change };
 }
 
 describe("the empty form", () => {
   it("starts from the schema's own defaults, so a new Dot gets what an omitted field would", () => {
     const config = parseDotConfig(formToConfig(filled()));
-    const bare = parseDotConfig({ name: "fare-watch", goal: "g", model: { provider: "openrouter", id: DEFAULT_MODEL_ID } });
+    const bare = parseDotConfig({ name: "fare-watch", model: { provider: "openrouter", id: DEFAULT_MODEL_ID } });
     expect(config.computer).toEqual(bare.computer);
     expect(config.limits).toEqual(bare.limits);
     for (const permission of PERMISSIONS) expect(resolvePermission(config, permission)).toBe(resolvePermission(bare, permission));
   });
 
-  it("is not valid until it has a name and a goal, and says which controls are at fault", () => {
-    expect(formIssues(emptyForm()).map((issue) => issue.field).sort()).toEqual(["goal", "name"]);
+  it("is not valid until it has a name, and says which control is at fault", () => {
+    expect(formIssues(emptyForm()).map((issue) => issue.field)).toEqual(["name"]);
     expect(formIssues(filled())).toEqual([]);
   });
 
@@ -53,7 +53,6 @@ describe("formToConfig", () => {
   it("writes what the controls show in the shape of the config, and nothing for what is empty", () => {
     expect(formToConfig(filled())).toEqual({
       name: "fare-watch",
-      goal: "Watch the fares from Milan to Lisbon",
       model: { provider: "openrouter", id: DEFAULT_MODEL_ID },
       computer: { cpu: 2, memory: "4gb", disk: "40gb", idle_timeout: "15m" },
       permissions: {},
@@ -114,7 +113,7 @@ describe("the YAML editor", () => {
   });
 
   it("gives the schema's issues for text that is not a valid config, each on its control", () => {
-    const read = yamlToForm("name: Bad Name\ngoal: g\nmodel:\n  provider: openrouter\n  id: a/b\ncomputer:\n  cpu: 99\n");
+    const read = yamlToForm("name: Bad Name\nmodel:\n  provider: openrouter\n  id: a/b\ncomputer:\n  cpu: 99\n");
     expect(read.ok).toBe(false);
     if (!read.ok) expect(read.issues.map((issue) => issue.field).sort()).toEqual(["cpu", "name"]);
   });
@@ -128,8 +127,6 @@ describe("the YAML editor", () => {
   it("refuses to go back to the form when the YAML sets something the form would drop", () => {
     const base = formToYaml(filled());
     const withExtra: Record<string, string> = {
-      "the browser limits": `${base}browser:\n  identities:\n    max_open: 5\n`,
-      "memory off": `${base}memory:\n  enabled: false\n`,
       "the step limit": base.replace("limits:\n", "limits:\n  max_steps_per_task: 10\n"),
     };
     for (const [what, yaml] of Object.entries(withExtra)) {
@@ -152,7 +149,7 @@ describe("the YAML editor", () => {
 
 describe("configToForm", () => {
   it("shows a config's sizes in GiB for the sliders", () => {
-    const config = parseDotConfig({ name: "a", goal: "g", model: { provider: "openrouter", id: "a/b" }, computer: { memory: "16gb", disk: "512gb" } });
+    const config = parseDotConfig({ name: "a", model: { provider: "openrouter", id: "a/b" }, computer: { memory: "16gb", disk: "512gb" } });
     expect(configToForm(config)).toMatchObject({ memoryGib: 16, diskGib: 512 });
   });
 });

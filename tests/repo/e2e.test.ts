@@ -177,17 +177,15 @@ describe("the e2e run's contract with the product", () => {
     expect(plain.name).toBe("e2e-1006-101500");
     expect(plain.model.id).toBe("z-ai/glm-5.3-flash");
     expect(plain.computer.idle_timeout).toBe("0");
-    expect(plain.browser.identities.max_open).toBe(3);
+    expect("browser" in plain).toBe(false);
 
     const strict = parseDotConfig(
       dotYaml({
         name: "e2e-x",
         model: "m/x",
-        maxOpen: 2,
         permissions: { "files.write": "ask", "computer.exec": "ask", "browser.identity.create": "ask", "browser.identity.delete": "ask" },
       }),
     );
-    expect(strict.browser.identities.max_open).toBe(2);
     const runtime = toRuntimeConfig(strict);
     for (const permission of ["files.write", "computer.exec", "browser.identity.create", "browser.identity.delete"]) {
       expect(resolvePermission(runtime, permission), permission).toBe("ask");

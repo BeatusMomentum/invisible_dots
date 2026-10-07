@@ -16,9 +16,7 @@ def runtime_config_body(**overrides: Any) -> dict[str, Any]:
     """A valid `PUT /config` body, with top-level fields replaced by `overrides`."""
     body: dict[str, Any] = {
         "name": "fare-watch",
-        "goal": "Watch fares.",
         "model": {"provider": "openrouter", "id": "z-ai/glm-5.3-flash"},
-        "browser": {"identities": {"managed_by_dot": True, "max_identities": 20, "max_open": 3}},
         "permissions": {},
         "limits": {"max_steps_per_task": 60, "context_tokens": 32000, "max_cost_per_task_usd": 1},
     }

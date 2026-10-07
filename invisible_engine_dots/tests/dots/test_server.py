@@ -303,14 +303,14 @@ class TestConfig:
         api: Api = await make_api()
 
         assert (await api.call("PUT", "/config", runtime_config_body())).status == 204
-        bad = await api.call("PUT", "/config", runtime_config_body(goal=""))
+        bad = await api.call("PUT", "/config", runtime_config_body(name="Not A Name"))
         post = await api.call("POST", "/config", runtime_config_body())
 
         assert (bad.status, bad.json["error"]) == (400, "invalid_config")
-        assert "goal" in bad.json["message"]
+        assert "name" in bad.json["message"]
         assert post.status == 405
         assert post.json["message"] == "POST is not allowed here; use PUT"
-        assert api.h.engine.config is not None and api.h.engine.config.goal == "Watch fares."
+        assert api.h.engine.config is not None and api.h.engine.config.name == "fare-watch"
 
 
 class TestEvents:
@@ -543,9 +543,7 @@ class TestBrowserIdentities:
     async def test_refuses_what_the_rules_refuse_with_the_status_the_host_expects(
         self, make_api: Callable[..., Any]
     ) -> None:
-        api: Api = await make_api()
-        api.h.configure(runtime_config_body(browser={"identities": {"managed_by_dot": True, "max_identities": 1, "max_open": 1}}))
-        api.h.engine.apply_browser_limits()
+        api: Api = await make_api(browser={"max_identities": 1, "max_open": 1})
 
         for body, message in (
             ({"name": 5}, "name must be a string"),
@@ -593,32 +591,7 @@ class TestBrowserIdentities:
         await api.h.browser.close_all()
         assert (await api.call("GET", "/health")).json["browser"] == {"identities": 2, "open": 0}
 
-    async def test_a_config_with_a_lower_max_open_closes_the_excess_open_browsers(
-        self, make_api: Callable[..., Any]
-    ) -> None:
-        api: Api = await make_api()
-        one = (await api.call("POST", "/browser-identities", {"name": "one"})).json
-        two = (await api.call("POST", "/browser-identities", {"name": "two"})).json
-        await api.h.browser.launch(one["id"])
-        await api.h.browser.launch(two["id"])
-        assert api.h.browser.open_count == 2
-
-        put = await api.call(
-            "PUT",
-            "/config",
-            runtime_config_body(browser={"identities": {"managed_by_dot": True, "max_identities": 20, "max_open": 1}}),
-        )
-
-        assert put.status == 204
-        assert api.h.browser.limits == (1, 20)
-        # The least recently used is the one closed; the other stays open. The close runs after the answer.
-        assert [i["status"] for i in (await api.call("GET", "/browser-identities")).json["identities"]] == ["available", "open"]
-        async with asyncio.timeout(10):
-            while api.h.types().count("browser.identity.closed") < 1:
-                await asyncio.sleep(0.02)
-        assert api.h.types().count("browser.identity.closed") == 1
-
-    async def test_a_config_a_close_a_delete_and_a_create_do_not_wait_for_a_launch_in_flight(
+    async def test_a_close_a_delete_and_a_create_do_not_wait_for_a_launch_in_flight(
         self, make_api: Callable[..., Any]
     ) -> None:
         api: Api = await make_api(browser={"open_retry_initial_s": 0.05, "open_retry_max_s": 0.05})
@@ -631,16 +604,11 @@ class TestBrowserIdentities:
 
         # The host gives a guest 30 s; a launch can take 15 minutes. None of these may wait for it.
         async with asyncio.timeout(10):
-            put = await api.call(
-                "PUT",
-                "/config",
-                runtime_config_body(browser={"identities": {"managed_by_dot": True, "max_identities": 20, "max_open": 1}}),
-            )
             closed = await api.call("POST", f"/browser-identities/{other['id']}/close")
             created = await api.call("POST", "/browser-identities", {"name": "fresh"})
             deleted = await api.call("DELETE", f"/browser-identities/{created.json['id']}")
 
-        assert (put.status, closed.status, created.status, deleted.status) == (204, 204, 201, 204)
+        assert (closed.status, created.status, deleted.status) == (204, 201, 204)
         assert not launching.done()
         launching.cancel()
         with pytest.raises(asyncio.CancelledError):

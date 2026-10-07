@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createTestDatabase, type TestDatabase } from "@invisible-dots/database/testing";
 import { prefixedStderrLogger, Scheduler } from "@invisible-dots/scheduler";
-import { FakeGuest, waitFor } from "@invisible-dots/scheduler/testing";
+import { FAKE_MAX_IDENTITIES, FakeGuest, waitFor } from "@invisible-dots/scheduler/testing";
 import { computerResources, hostPaths, parseDotConfig, type HostPaths } from "@invisible-dots/shared";
 import { silentLogger, VmManager } from "@invisible-dots/vm-manager";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -87,7 +87,7 @@ function manager(): VmManager {
 }
 
 function input(dotId = DOT, disk = "40gb") {
-  const config = parseDotConfig({ name: "drv", goal: "g", model: { provider: "openrouter", id: "m" }, computer: { disk } });
+  const config = parseDotConfig({ name: "drv", model: { provider: "openrouter", id: "m" }, computer: { disk } });
   return { dotId, token: TOKEN, resources: computerResources(config) };
 }
 
@@ -174,9 +174,10 @@ describe("VmManagerDriver over VmManager", () => {
     expect((await client.listBrowserIdentities()).identities.map((i) => i.id)).toEqual([identity.id]);
     expect((await client.getBrowserIdentity(identity.id)).name).toBe("Shop");
     await expect(client.createBrowserIdentity({ name: "proxied", proxy: 8080 as never })).rejects.toMatchObject({ status: 400, code: "invalid" });
-    await client.putConfig({ ...guest!.config!, browser: { identities: { managed_by_dot: true, max_identities: 1, max_open: 1 } } } as never);
-    await expect(client.createBrowserIdentity({ name: "second" })).rejects.toMatchObject({ status: 409, code: "limit" });
-    await client.deleteBrowserIdentity(identity.id);
+    const more = [];
+    for (let n = 1; n < FAKE_MAX_IDENTITIES; n++) more.push(await client.createBrowserIdentity({ name: `extra-${n}` }));
+    await expect(client.createBrowserIdentity({ name: "one-too-many" })).rejects.toMatchObject({ status: 409, code: "limit" });
+    for (const made of [identity, ...more]) await client.deleteBrowserIdentity(made.id);
 
     expect(await driver.stop(DOT, TOKEN)).toEqual({ forced: false });
     expect(host.requests).toContain("POST /v1/system/poweroff");
@@ -234,7 +235,7 @@ describe("Scheduler over VmManagerDriver", () => {
 
   it("create -> READY -> task over HTTP -> sleep -> restart of the control plane -> wake", { timeout: 30_000 }, async () => {
     let s = scheduler();
-    const yaml = "name: real-path\ngoal: g\nmodel:\n  provider: openrouter\n  id: m\n";
+    const yaml = "name: real-path\nmodel:\n  provider: openrouter\n  id: m\n";
     const dot = await s.createDot(yaml);
     await waitFor(async () => (await t.db.dots.get(dot.id))?.status === "READY", "READY", 10_000);
     const computer = await t.db.computers.get(dot.id);

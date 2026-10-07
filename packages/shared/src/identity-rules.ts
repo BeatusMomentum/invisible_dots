@@ -44,7 +44,7 @@ export function checkIdentityRequest(
   if (existingCount >= maxIdentities) {
     throw new IdentityRequestError(
       "limit",
-      `this Dot already has ${existingCount} browser identities, the most its configuration allows (max_identities ${maxIdentities}); delete one first`,
+      `this Dot already has ${existingCount} browser identities, the most it may keep (max_identities ${maxIdentities}); delete one first`,
     );
   }
   return proxy ? { name, proxy } : { name };

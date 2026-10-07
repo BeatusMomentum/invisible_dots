@@ -50,8 +50,6 @@ class ToolEntry:
     build: factory taking ToolDeps to instantiate the Tool.
     target: from the call's arguments, the one line `tool.called` shows of it (None: nothing).
     starts_terminal: from the call's arguments, whether it starts a terminal session.
-    needs_managed_identities: the tool exists only while the Dot may manage its browser identities itself
-        (`browser.identities.managed_by_dot`).
     arguments: from the call's arguments, the ones an `approval.requested` shows the person.
     """
 
@@ -60,7 +58,6 @@ class ToolEntry:
     target: Callable[[Mapping[str, Any]], str | None]
     # Whether the call starts a terminal session, which `tool.called` marks (`tty`); no other tool does.
     starts_terminal: Callable[[Mapping[str, Any]], bool] = targets.never_starts_terminal
-    needs_managed_identities: bool = False
     arguments: Callable[[Mapping[str, Any]], dict[str, Any]] = targets.all_arguments
 
 
@@ -192,8 +189,8 @@ TOOL_PERMISSIONS: Mapping[str, ToolEntry] = MappingProxyType(
         "cron": ToolEntry("automations", _build_cron, targets.cron_target),
         "computer_screenshot": ToolEntry("computer.screenshot", _build_computer_screenshot, targets.no_target),
         "browser_identity_list": ToolEntry("browser.identity.list", _build_browser_identity_list, targets.no_target),
-        "browser_identity_create": ToolEntry("browser.identity.create", _build_browser_identity_create, targets.identity_name_target, needs_managed_identities=True, arguments=targets.identity_create_arguments),
-        "browser_identity_delete": ToolEntry("browser.identity.delete", _build_browser_identity_delete, targets.identity_target, needs_managed_identities=True),
+        "browser_identity_create": ToolEntry("browser.identity.create", _build_browser_identity_create, targets.identity_name_target, arguments=targets.identity_create_arguments),
+        "browser_identity_delete": ToolEntry("browser.identity.delete", _build_browser_identity_delete, targets.identity_target),
         "browser_identity_launch": ToolEntry("browser.identity.launch", _build_browser_identity_launch, targets.identity_target),
         "browser_identity_close": ToolEntry("browser.identity.close", _build_browser_identity_close, targets.identity_target),
         "browser_navigate": ToolEntry("browser.navigate", _build_page_tool("browser_navigate"), targets.browser_navigate_target, arguments=targets.navigate_arguments),
@@ -246,19 +243,10 @@ def tool_arguments(tool_name: str, params: Mapping[str, Any]) -> dict[str, Any]:
     return entry.arguments(params) if entry else dict(params)
 
 
-def offered_tools(permissions: Mapping[str, str], *, managed_identities: bool = True) -> list[str]:
-    """The tools the model is offered, sorted.
-
-    A tool is offered when its permission is allow or ask (a permission missing
-    from the map is deny), and for a tool that creates or deletes browser
-    identities when the Dot manages them itself.
-    """
-    return sorted(
-        name
-        for name, entry in TOOL_PERMISSIONS.items()
-        if permissions.get(entry.permission) in ("allow", "ask")
-        and (managed_identities or not entry.needs_managed_identities)
-    )
+def offered_tools(permissions: Mapping[str, str]) -> list[str]:
+    """The tools the model is offered, sorted: those whose permission is allow or ask (a permission missing
+    from the map is deny)."""
+    return sorted(name for name, entry in TOOL_PERMISSIONS.items() if permissions.get(entry.permission) in ("allow", "ask"))
 
 
 def tool_table(registry: ToolRegistry, offered: Collection[str]) -> list[dict[str, Any]]:

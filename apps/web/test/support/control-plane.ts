@@ -12,7 +12,7 @@ export function dotRecord(id: string, change: Partial<DotSummary> = {}): DotSumm
     id,
     name: id,
     // The API parses every config with the schema's defaults, so these two always exist on a real record.
-    config: { goal: `the goal of ${id}`, permissions: {} } as unknown as DotConfig,
+    config: { permissions: {} } as unknown as DotConfig,
     status: "READY",
     error: null,
     created_at: "2026-01-01T00:00:00Z",

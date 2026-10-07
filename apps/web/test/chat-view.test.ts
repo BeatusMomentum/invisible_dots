@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { composerState, messageNote, QUEUED_NOTE, suggestions } from "../src/lib/chat-view";
+import { composerState, messageNote, QUEUED_NOTE, SUGGESTIONS } from "../src/lib/chat-view";
 
 describe("what the composer says", () => {
   it("lets the person write to a Dot whose computer is up, and says nothing", () => {
@@ -25,22 +25,10 @@ describe("what the composer says", () => {
 });
 
 describe("the first messages offered", () => {
-  it("are three, the last drawn from the goal", () => {
-    const offered = suggestions("Watch the airline fares to Lisbon and tell me when one drops");
-    expect(offered).toHaveLength(3);
-    expect(offered[2]).toBe("Start on your goal: Watch the airline fares to Lisbon and tell me when one drops");
-  });
-
-  it("cut a long goal to one line, whatever its whitespace", () => {
-    const offered = suggestions(`${"word ".repeat(60)}\n\nend`);
-    expect(offered[2]!.length).toBeLessThanOrEqual("Start on your goal: ".length + 90);
-    expect(offered[2]).toMatch(/\.\.\.$/);
-    expect(offered[2]).not.toMatch(/\n/);
-  });
-
-  it("do not pretend to have a goal when there is none", () => {
-    expect(suggestions(undefined)[2]).toBe("What do you need from me to get started?");
-    expect(suggestions("   ")[2]).toBe("What do you need from me to get started?");
+  it("are three, each a question the Dot can answer without a goal: a Dot has none", () => {
+    expect(SUGGESTIONS).toHaveLength(3);
+    expect(new Set(SUGGESTIONS).size).toBe(3);
+    expect(SUGGESTIONS.join(" ")).not.toMatch(/goal/i);
   });
 });
 

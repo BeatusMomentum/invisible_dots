@@ -8,7 +8,7 @@ from nanobot.agent.context import ContextBuilder, TranscriptInput
 from nanobot.dots.skills import Skill
 
 NOW = datetime(2026, 10, 5, 14, 30, tzinfo=timezone.utc)
-DOT = 'You are the Dot "fare-watch". Your goal:\nWatch fares.'
+DOT = 'You are the Dot "fare-watch".'
 
 
 def builder(memory_notes: tuple[str, ...] = ()) -> ContextBuilder:

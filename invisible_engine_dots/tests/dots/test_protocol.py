@@ -212,14 +212,10 @@ class TestRuntimeConfig:
     @pytest.mark.parametrize(
         ("mutate", "path"),
         [
-            (lambda b: b.update(goal=""), "goal"),
             (lambda b: b.update(instructions=3), "instructions"),
             (lambda b: b["model"].update(provider="anthropic"), "model.provider"),
             (lambda b: b["model"].update(id=""), "model.id"),
             (lambda b: b.update(models={"summary": ""}), "models.summary"),
-            (lambda b: b["browser"]["identities"].update(managed_by_dot="yes"), "browser.identities.managed_by_dot"),
-            (lambda b: b["browser"]["identities"].update(max_identities=0), "browser.identities.max_identities"),
-            (lambda b: b["browser"]["identities"].update(max_open=-1), "browser.identities.max_open"),
             (lambda b: b.update(permissions={"files.read": "maybe"}), "permissions.files.read"),
             (lambda b: b["limits"].update(max_steps_per_task=0), "limits.max_steps_per_task"),
             (lambda b: b["limits"].update(max_steps_per_task=1.5), "limits.max_steps_per_task"),
@@ -227,7 +223,6 @@ class TestRuntimeConfig:
             (lambda b: b["limits"].update(context_tokens=1_000_001), "limits.context_tokens"),
             (lambda b: b["limits"].update(max_cost_per_task_usd=0), "limits.max_cost_per_task_usd"),
             (lambda b: b["limits"].update(max_cost_per_task_usd=True), "limits.max_cost_per_task_usd"),
-            (lambda b: b.pop("browser"), "browser"),
             (lambda b: b.pop("limits"), "limits"),
         ],
     )
@@ -252,11 +247,11 @@ class TestRuntimeConfig:
         assert parse_runtime_config(body).limits.max_cost_per_task_usd == 0.01
 
     def test_lists_every_problem(self, config_body: Callable[..., dict[str, Any]]) -> None:
-        body = config_body(name="X", goal="")
+        body = config_body(name="X", instructions=3)
         body["limits"]["context_tokens"] = 1
         with pytest.raises(DotsConfigError) as caught:
             parse_runtime_config(body)
-        for path in ("name:", "goal:", "limits.context_tokens:"):
+        for path in ("name:", "instructions:", "limits.context_tokens:"):
             assert path in str(caught.value)
 
     @pytest.mark.parametrize("value", [None, [], "config", 4])
@@ -266,7 +261,7 @@ class TestRuntimeConfig:
 
     def test_never_echoes_a_value(self, config_body: Callable[..., dict[str, Any]]) -> None:
         secret = "sk-or-this-must-not-appear"
-        body = config_body(name=secret, goal=1, permissions={"files.read": secret})
+        body = config_body(name=secret, instructions=1, permissions={"files.read": secret})
         body["model"]["provider"] = secret
         body["limits"]["context_tokens"] = secret
         with pytest.raises(DotsConfigError) as caught:

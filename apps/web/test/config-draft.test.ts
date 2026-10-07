@@ -13,32 +13,32 @@ describe("the draft of a config", () => {
   });
 
   it("edits the draft and goes back to the base on discard, keeping the version", () => {
-    const edited = edit(startDraft(config, 3), setField(config, "goal", "mine"));
-    expect(edited.draft.goal).toBe("mine");
+    const edited = edit(startDraft(config, 3), setField(config, "instructions", "mine"));
+    expect(edited.draft.instructions).toBe("mine");
     expect(edited.base).toBe(config);
     expect(discard(edited)).toEqual(startDraft(config, 3));
   });
 
   it("takes the host's newer config as it is when nothing was edited, without saying anything", () => {
-    const newer = setField(config, "goal", "elsewhere");
+    const newer = setField(config, "instructions", "elsewhere");
     expect(follow(startDraft(config, 3), newer, 4)).toEqual(startDraft(newer, 4));
   });
 
   it("keeps edits that are under way on top of the newer config, and says so", () => {
     const mine = edit(startDraft(config, 3), setPermission(config, "computer.exec", "ask"));
-    const newer = setField(config, "goal", "elsewhere");
+    const newer = setField(config, "instructions", "elsewhere");
     const followed = follow(mine, newer, 4);
     expect(followed.rebased).toBe(true);
     expect(followed.version).toBe(4);
     expect(followed.base).toBe(newer);
-    expect(followed.draft.goal).toBe("elsewhere");
+    expect(followed.draft.instructions).toBe("elsewhere");
     expect(followed.draft.permissions).toEqual({ "computer.exec": "ask" });
   });
 
   it("changes nothing for the version it has, or an older one that was slow to arrive", () => {
-    const mine = edit(startDraft(config, 3), setField(config, "goal", "mine"));
-    expect(follow(mine, setField(config, "goal", "x"), 3)).toBe(mine);
-    expect(follow(mine, setField(config, "goal", "x"), 2)).toBe(mine);
+    const mine = edit(startDraft(config, 3), setField(config, "instructions", "mine"));
+    expect(follow(mine, setField(config, "instructions", "x"), 3)).toBe(mine);
+    expect(follow(mine, setField(config, "instructions", "x"), 2)).toBe(mine);
   });
 });
 

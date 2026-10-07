@@ -441,8 +441,6 @@ export interface DotYamlOptions {
   model: string;
   /** Permissions written into the config, as `permission: decision`. */
   permissions?: Record<string, "allow" | "ask" | "deny">;
-  /** `browser.identities.max_open`; the product's default when left out. */
-  maxOpen?: number;
 }
 
 /** The Dot's config (architecture section 7) as YAML. */
@@ -450,8 +448,6 @@ export function dotYaml(options: DotYamlOptions): string {
   const permissions = Object.entries(options.permissions ?? {});
   return [
     `name: ${options.name}`,
-    "goal: >",
-    "  Run the end-to-end acceptance checks of invisible_dots and do exactly what each task says.",
     "instructions: >",
     "  Follow each task literally. When asked to answer with only a value, answer with that value and nothing else.",
     "model:",
@@ -461,7 +457,6 @@ export function dotYaml(options: DotYamlOptions): string {
     "  cpu: 2",
     "  memory: 4gb",
     "  idle_timeout: 0",
-    ...(options.maxOpen === undefined ? [] : ["browser:", "  identities:", `    max_open: ${options.maxOpen}`]),
     ...(permissions.length > 0 ? ["permissions:", ...permissions.map(([permission, decision]) => `  ${permission}: ${decision}`)] : []),
     "",
   ].join("\n");

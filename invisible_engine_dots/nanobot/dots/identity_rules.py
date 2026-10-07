@@ -87,8 +87,8 @@ def check_identity_request(
     if existing_count >= max_identities:
         raise IdentityRequestError(
             "limit",
-            f"this Dot already has {existing_count} browser identities, the most its configuration "
-            f"allows (max_identities {max_identities}); delete one first",
+            f"this Dot already has {existing_count} browser identities, the most it may keep "
+            f"(max_identities {max_identities}); delete one first",
         )
     return IdentityRequest(name, proxy)
 

@@ -54,7 +54,6 @@ export function DotCard({ dot }: { dot: Dot }) {
 
       <div className="min-w-0 space-y-1">
         {status.reason ? <p className="text-sm text-danger">{status.reason}</p> : null}
-        <p className="line-clamp-2 text-sm text-muted-foreground">{dot.config?.goal ?? ""}</p>
 
       <dl className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
         {model ? (

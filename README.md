@@ -28,7 +28,7 @@ files, memory and skills that outlast every task, and permissions you set.</p>
 </p>
 
 A **Dot** is a persistent AI agent with a computer of its own. You give it a
-goal, a model and a set of permissions; invisible_dots gives it a QEMU virtual
+name, a model and a set of permissions; invisible_dots gives it a QEMU virtual
 machine on your own PC, with a disk that persists, a Linux desktop, a shell, its
 own files, memory and skills, and browser identities that keep their cookies and
 logins from one task to the next. You talk to it from a web UI, the command
@@ -197,7 +197,7 @@ node apps/cli/dist/invisible-dots.mjs logs my-first-dot
 
 `secret openrouter` asks for the key (it is never a command-line argument, and
 what you paste at the prompt is not shown on the screen). `init` writes
-`dot.yaml`, the Dot's name, goal, model, resources and permissions, to edit
+`dot.yaml`, the Dot's name, instructions, model, resources and permissions, to edit
 before `create`. The first Dot takes a while to boot; the message waits in the
 queue until it is ready. `logs` prints the Dot's events and keeps following new
 ones until Ctrl+C (`--no-follow` prints and exits). It worked when `logs` shows
@@ -406,10 +406,10 @@ proxy cannot be reached, nothing leaves the VM. When a VM proxy and an identity
 proxy are both set, the identity's proxy is reached through the VM's tunnel.
 
 Launching is explicit: a page action on an identity that is not open fails, so
-denying `browser.identity.launch` cannot be undone by navigating. At most
-`max_open` identities are open at once (default 3, roughly 0.8 GB each), the
-least recently used one closing first, and at most `max_identities` exist
-(default 20). Screenshots go to the model and are never stored.
+denying `browser.identity.launch` cannot be undone by navigating. At most 3
+identities are open at once (roughly 0.8 GB each), the least recently used one
+closing first, and at most 20 exist. Screenshots go to the model and are never
+stored.
 
 How well the browser holds up against bot checks is measured in
 [invisible_playwright's README](https://github.com/feder-cr/invisible_playwright),
@@ -645,9 +645,9 @@ inside their VMs.
 
 ## Configuration
 
-A Dot is one YAML file, checked by one schema: name, goal, instructions,
-model, computer (cpu, memory, disk, idle timeout), browser identities,
-permissions and limits. Every field and its range is in
+A Dot is one YAML file, checked by one schema: name, instructions,
+model, computer (cpu, memory, disk, idle timeout), permissions and
+limits. Every field and its range is in
 [architecture: Dot configuration](docs/architecture.md#7-dot-configuration);
 `invisible-dots init` writes a sample.
 

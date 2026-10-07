@@ -35,7 +35,6 @@ describe("setPermission", () => {
 describe("setField", () => {
   it("sets each setting where the config keeps it, and the result is a config the schema accepts", () => {
     let config = fullConfig();
-    config = setField(config, "goal", "A new goal");
     config = setField(config, "instructions", "Write to the workspace");
     config = setField(config, "model.id", "openai/gpt-5");
     config = setField(config, "models.summary", "openai/gpt-5-mini");
@@ -43,20 +42,15 @@ describe("setField", () => {
     config = setField(config, "computer.memory", "8gb");
     config = setField(config, "computer.disk", "80gb");
     config = setField(config, "computer.idle_timeout", "1h");
-    config = setField(config, "browser.identities.managed_by_dot", false);
-    config = setField(config, "browser.identities.max_identities", 30);
-    config = setField(config, "browser.identities.max_open", 5);
     config = setField(config, "limits.max_steps_per_task", 90);
     config = setField(config, "limits.context_tokens", 64_000);
     config = setField(config, "limits.max_cost_per_task_usd", 2.5);
     expect(parseDotConfig(config)).toEqual({
       name: "fare-watch",
-      goal: "A new goal",
       instructions: "Write to the workspace",
       model: { provider: "openrouter", id: "openai/gpt-5" },
       models: { summary: "openai/gpt-5-mini" },
       computer: { cpu: 4, memory: "8gb", disk: "80gb", idle_timeout: "1h" },
-      browser: { identities: { managed_by_dot: false, max_identities: 30, max_open: 5 } },
       permissions: {},
       limits: { max_steps_per_task: 90, context_tokens: 64_000, max_cost_per_task_usd: 2.5 },
     });
@@ -92,11 +86,11 @@ describe("configChanges", () => {
 
   it("says that the size of the computer applies at its next start, and cuts a long text", () => {
     const before = fullConfig();
-    const changes = configChanges(before, setField(setField(before, "computer.memory", "8gb"), "goal", "g".repeat(500)));
+    const changes = configChanges(before, setField(setField(before, "computer.memory", "8gb"), "instructions", "g".repeat(500)));
     expect(changes.find((c) => c.key === "computer.memory")?.applies).toBe("start");
-    const goal = changes.find((c) => c.key === "goal")!;
-    expect(goal.after.length).toBe(303);
-    expect(goal.after.endsWith("...")).toBe(true);
+    const instructions = changes.find((c) => c.key === "instructions")!;
+    expect(instructions.after.length).toBe(303);
+    expect(instructions.after.endsWith("...")).toBe(true);
   });
 
   it("names an empty text as empty", () => {
@@ -109,10 +103,10 @@ describe("rebase", () => {
   const base = fullConfig();
 
   it("puts my edits on top of a config someone else changed in other fields", () => {
-    const mine = setPermission(setField(base, "goal", "My goal"), "files.write", "ask");
+    const mine = setPermission(setField(base, "instructions", "My instructions"), "files.write", "ask");
     const latest = setPermission(setField(base, "limits.max_steps_per_task", 10), "automations", "allow");
     const merged = rebase(base, mine, latest);
-    expect(merged.goal).toBe("My goal");
+    expect(merged.instructions).toBe("My instructions");
     expect(merged.limits.max_steps_per_task).toBe(10);
     expect(merged.permissions).toEqual({ "files.write": "ask", automations: "allow" });
   });
@@ -127,7 +121,7 @@ describe("rebase", () => {
   });
 
   it("with no edits is the latest config", () => {
-    const latest = setField(base, "goal", "elsewhere");
+    const latest = setField(base, "instructions", "elsewhere");
     expect(rebase(base, base, latest)).toEqual(latest);
   });
 
@@ -158,17 +152,15 @@ describe("the fields", () => {
     const a: DotConfig = fullConfig();
     const b: DotConfig = parseDotConfig({
       name: "other",
-      goal: "other goal",
       instructions: "other",
       model: { provider: "openrouter", id: "x/y" },
       models: { summary: "x/z" },
       computer: { cpu: 3, memory: "8gb", disk: "50gb", idle_timeout: "1h" },
-      browser: { identities: { managed_by_dot: false, max_identities: 2, max_open: 1 } },
       permissions: Object.fromEntries(PERMISSIONS.map((p) => [p, "deny"])),
       limits: { max_steps_per_task: 5, context_tokens: 5000, max_cost_per_task_usd: 7 },
     });
     // Every difference between two whole configs is a listed change, and putting all of them on a base gives the config back.
-    expect(configChanges(a, b)).toHaveLength(15 + PERMISSIONS.length);
+    expect(configChanges(a, b)).toHaveLength(11 + PERMISSIONS.length);
     expect(configChanges(rebase(a, b, a), b)).toEqual([]);
   });
 });

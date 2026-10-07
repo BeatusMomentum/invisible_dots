@@ -330,25 +330,6 @@ def test_every_browser_tool_is_served_by_invisible_playwright_mcp_and_no_other_t
     assert set(browser_tools.PAGE_TOOLS) == {name for name, e in TOOL_PERMISSIONS.items() if e.permission in PAGE_PERMISSIONS}
 
 
-def test_only_the_tools_that_make_or_delete_identities_need_the_dot_to_manage_them() -> None:
-    assert {name for name, entry in TOOL_PERMISSIONS.items() if entry.needs_managed_identities} == {
-        "browser_identity_create",
-        "browser_identity_delete",
-    }
-
-
-def test_the_identity_tools_that_create_and_delete_follow_managed_by_dot() -> None:
-    permissions = {permission: "allow" for permission in BROWSER_PERMISSIONS}
-    managed = offered_tools(permissions, managed_identities=True)
-    unmanaged = offered_tools(permissions, managed_identities=False)
-
-    assert {"browser_identity_create", "browser_identity_delete"} <= set(managed)
-    assert not {"browser_identity_create", "browser_identity_delete"} & set(unmanaged)
-    assert set(managed) - set(unmanaged) == {"browser_identity_create", "browser_identity_delete"}
-    # Listing, opening and closing are not creating: they stay.
-    assert {"browser_identity_list", "browser_identity_launch", "browser_identity_close", "browser_navigate"} <= set(unmanaged)
-
-
 def test_each_browser_permission_offers_its_own_tools_only() -> None:
     assert offered_tools({"browser.read": "allow"}) == ["browser_read_text", "browser_screenshot", "browser_snapshot"]
     assert offered_tools({"browser.navigate": "ask"}) == ["browser_navigate"]

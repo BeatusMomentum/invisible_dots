@@ -19,18 +19,18 @@ function startTurn(guest: FakeGuest): void {
 }
 
 test("the person talks to the Dot: the working row follows the turn, the steps sit between the messages, the answer is markdown", async ({ page, harness }) => {
-  const dot = await harness.createDot("chat-turn", "Watch the fares to Lisbon");
+  const dot = await harness.createDot("chat-turn");
   const guest = harness.driver.guestOf(dot.id);
   startTurn(guest);
   await page.goto(`${harness.webUrl}/dots/${dot.id}/chat`);
 
-  // A Dot nobody has talked to: its goal, and ways to begin that fill the box and do not send.
+  // A Dot nobody has talked to: ways to begin that fill the box and do not send.
   await expect(page.getByRole("heading", { name: "Say hello to chat-turn" })).toBeVisible();
-  await expect(page.getByText("Its goal: Watch the fares to Lisbon")).toBeVisible();
+  await expect(page.getByText("Tell it what you need.")).toBeVisible();
   const box = page.getByRole("textbox", { name: "Message" });
   await expect(box).toBeFocused();
-  await page.getByRole("button", { name: "Tell me what you will do first." }).click();
-  await expect(box).toHaveValue("Tell me what you will do first.");
+  await page.getByRole("button", { name: "What can you do on your computer?" }).click();
+  await expect(box).toHaveValue("What can you do on your computer?");
   await box.fill("");
 
   // Nothing below reloads the page: this marker would not survive it.
@@ -219,7 +219,7 @@ test("the chat works from the keyboard and keeps a draft across a reload", async
 });
 
 test("the chat fits a phone: long lines wrap, code scrolls inside its block, and the computer is a strip above the thread", async ({ page, harness }) => {
-  const dot = await harness.createDot("chat-phone", "A goal long enough to run past the edge of a narrow screen if nothing held it back, word after word");
+  const dot = await harness.createDot("chat-phone");
   const guest = harness.driver.guestOf(dot.id);
   await page.setViewportSize({ width: 390, height: 844 });
   await harness.api.sendMessage(dot.id, "An unbroken line of text that is long enough to wrap on a narrow screen several times over before it ends");
@@ -285,7 +285,7 @@ test("a Dot opened by its name moves to its id, and the chat hears the Dot live"
 });
 
 test("a message that came through a chat says which one, and one typed here says nothing", async ({ page, harness }) => {
-  const dot = await harness.createDot("chat-origin", "Watch the fares to Lisbon");
+  const dot = await harness.createDot("chat-origin");
   const origin = { channel: "telegram", binding_id: "bind_e2e", chat_id: "4242", external_id: "99:1" } as const;
   await harness.control.scheduler.sendMessage(dot.id, "Is the 9 am flight still the cheapest?", origin);
   await harness.control.scheduler.sendMessage(dot.id, "And the one on Friday?");

@@ -388,7 +388,7 @@ async function waitReply(dotId: string, messageId: string): Promise<StoredEvent>
 }
 
 /** Rewrites the Dot's config (it is pushed to the guest at once): every step names the whole config it needs. */
-async function configure(options: Pick<DotYamlOptions, "permissions" | "maxOpen"> = {}): Promise<void> {
+async function configure(options: Pick<DotYamlOptions, "permissions"> = {}): Promise<void> {
   await api("PATCH", route(ROUTES.dot, { id: state.dotId! }), { config: dotYaml({ name: DOT_NAME, model: MODEL, ...options }) });
 }
 
@@ -865,7 +865,6 @@ async function main(): Promise<void> {
   await step("h", "identities: no implicit launch, max_open evicts the least recently used, close and delete from the host", async () => {
     const dotId = state.dotId!;
     const research = state.identity!;
-    await configure({ maxOpen: 2 });
     const make = async (name: string): Promise<Identity> => {
       const made = await api<Identity>("POST", route(ROUTES.identities, { id: dotId }), { name });
       assert(made.status === "available" && made.profilePath === `${BROWSERS}/${made.id}/profile`, `a new identity is ${JSON.stringify(made)}`);
@@ -873,6 +872,7 @@ async function main(): Promise<void> {
     };
     const alpha = await make("alpha");
     const beta = await make("beta");
+    const gamma = await make("gamma");
     const opened = async () => new Set((await identities(dotId)).filter((i) => i.status === "open").map((i) => i.id));
     assert((await opened()).size === 1 && (await opened()).has(research.id), "only research should be open before this step");
 
@@ -888,22 +888,22 @@ async function main(): Promise<void> {
     assert(identityEvents(afterRefused, "browser.identity.launched", alpha.id, refusedAt).length === 0, "browser_navigate launched a closed identity");
     assert((await opened()).size === 1, "an identity was opened by a page tool");
 
-    // max_open is 2: the third launch closes the one used least recently, which is research.
+    // The engine keeps at most 3 open: the fourth launch closes the one used least recently, which is research.
     const lruAt = lastEventId(afterRefused);
     const lru = await runTask(
-      `Call browser_identity_launch for the identity ${alpha.id}, then for the identity ${beta.id}, one call at a time. Then call browser_identity_list and answer with only the ids of the identities whose status is open, separated by commas.`,
+      `Call browser_identity_launch for the identity ${alpha.id}, then for the identity ${beta.id}, then for the identity ${gamma.id}, one call at a time. Then call browser_identity_list and answer with only the ids of the identities whose status is open, separated by commas.`,
     );
     const afterLru = await events(dotId);
-    for (const id of [alpha.id, beta.id]) assert(identityEvents(afterLru, "browser.identity.launched", id, lruAt).length === 1, `no single browser.identity.launched for ${id}`);
+    for (const id of [alpha.id, beta.id, gamma.id]) assert(identityEvents(afterLru, "browser.identity.launched", id, lruAt).length === 1, `no single browser.identity.launched for ${id}`);
     assert(identityEvents(afterLru, "browser.identity.closed", research.id, lruAt).length === 1, "research was not closed to make room (browser.identity.closed)");
     assert(identityEvents(afterLru, "browser.identity.closed", alpha.id, lruAt).length === 0, "the identity used last was closed instead of the oldest");
     const open = await opened();
-    assert(open.size === 2 && open.has(alpha.id) && open.has(beta.id), `open identities after the third launch: ${JSON.stringify([...open])}`);
+    assert(open.size === 3 && open.has(alpha.id) && open.has(beta.id) && open.has(gamma.id), `open identities after the fourth launch: ${JSON.stringify([...open])}`);
     assert(toolOk(afterLru, lru.id, "browser_identity_list"), "browser_identity_list did not run");
     const answer = lru.summary ?? "";
-    assert(answer.includes(alpha.id) && answer.includes(beta.id) && !answer.includes(research.id), `the model listed the open identities as ${JSON.stringify(answer)}`);
+    assert(answer.includes(alpha.id) && answer.includes(beta.id) && answer.includes(gamma.id) && !answer.includes(research.id), `the model listed the open identities as ${JSON.stringify(answer)}`);
     const servers = await mcpSessions(dotId);
-    assert([...servers].sort().join() === [alpha.id, beta.id].sort().join(),`browser servers run for ${JSON.stringify(servers)}, the open identities are ${alpha.id} and ${beta.id}`);
+    assert([...servers].sort().join() === [alpha.id, beta.id, gamma.id].sort().join(), `browser servers run for ${JSON.stringify(servers)}, the open identities are ${alpha.id}, ${beta.id} and ${gamma.id}`);
 
     // The host closes one: the profile stays, the frame says not_open.
     const closeAt = lastEventId(afterLru);
@@ -934,9 +934,10 @@ async function main(): Promise<void> {
     const gone = await guestExec(dotId, `test ! -e ${BROWSERS}/${alpha.id} && echo gone`);
     assert(gone.stdout.trim() === "gone", `${BROWSERS}/${alpha.id} is still in the guest`);
     await api("DELETE", route(ROUTES.identity, { id: dotId, identityId: beta.id }));
+    await api("DELETE", route(ROUTES.identity, { id: dotId, identityId: gamma.id }));
     await waitFor("every browser server to be gone", 60_000, async () => ((await mcpSessions(dotId)).length === 0 ? true : undefined), 1000);
     assert((await identities(dotId)).map((i) => i.id).join() === research.id, "research should be the only identity left");
-    return `closed identity not launched by a page tool; max_open 2 closed ${research.id} for the third launch; frame of a closed identity 409 not_open; host close, and host delete of an open identity, leave no browser server and no directory`;
+    return `closed identity not launched by a page tool; the engine's max_open of 3 closed ${research.id} for the fourth launch; frame of a closed identity 409 not_open; host close, and host delete of an open identity, leave no browser server and no directory`;
   });
 
   await step("i", "approvals of identity create and delete: proxy masked, nothing deleted before the approval", async () => {

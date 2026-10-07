@@ -80,7 +80,6 @@ describe("the settings of a Dot", () => {
           instructions: "Write to the workspace.",
           models: { summary: "openai/gpt-5-mini" },
           computer: { cpu: 3, memory: "6gb", disk: "50gb", idle_timeout: "1h" },
-          browser: { identities: { managed_by_dot: false, max_identities: 8, max_open: 2 } },
           limits: { max_steps_per_task: 30, context_tokens: 16_000, max_cost_per_task_usd: 0.5 },
         }),
       }),
@@ -88,7 +87,6 @@ describe("the settings of a Dot", () => {
     await renderSettings();
     expect(screen.getByText("fares", { selector: "code" })).toBeTruthy();
     expect(screen.queryByLabelText("Name")).toBeNull();
-    expect((field("Goal") as HTMLTextAreaElement).value).toBe("Watch the fares from Milan to Lisbon");
     expect((field(/^Instructions/) as HTMLTextAreaElement).value).toBe("Write to the workspace.");
     expect((field("Model") as HTMLInputElement).value).toBe("z-ai/glm-5.3-flash");
     expect((field(/^Summary model/) as HTMLInputElement).value).toBe("openai/gpt-5-mini");
@@ -96,9 +94,6 @@ describe("the settings of a Dot", () => {
     expect((field("Memory") as HTMLInputElement).value).toBe("6");
     expect((field("Disk") as HTMLInputElement).value).toBe("50");
     expect((field("Sleep after") as HTMLSelectElement).value).toBe("1h");
-    expect(screen.getByRole("switch", { name: "You manage its identities" }).getAttribute("aria-checked")).toBe("false");
-    expect((field("Most identities") as HTMLInputElement).value).toBe("8");
-    expect((field("Most open at once") as HTMLInputElement).value).toBe("2");
     expect((field("Spending cap per task") as HTMLInputElement).value).toBe("0.5");
     expect((field("Steps per task") as HTMLInputElement).value).toBe("30");
     expect((field("Context tokens") as HTMLInputElement).value).toBe("16000");
@@ -110,7 +105,7 @@ describe("the settings of a Dot", () => {
   it("has a section for each part of the config, and a danger zone last", async () => {
     await renderSettings();
     const headings = screen.getAllByRole("heading", { level: 2 }).map((h) => h.textContent);
-    expect(headings).toEqual(["General", "Model", "Permissions and tools", "Computer", "Browser", "Limits", "VM proxy", "Danger zone"]);
+    expect(headings).toEqual(["General", "Model", "Permissions and tools", "Computer", "Limits", "VM proxy", "Danger zone"]);
   });
 });
 
@@ -278,10 +273,10 @@ describe("the review before a save", () => {
   it("discards the edits and goes back to what the host has", async () => {
     await renderSettings();
     await choose("Run commands", "Deny");
-    fireEvent.change(field("Goal"), { target: { value: "Something else" } });
+    fireEvent.change(field(/^Instructions/), { target: { value: "Something else" } });
     await userEvent.setup().click(screen.getByRole("button", { name: "Discard changes" }));
     expect(chosen("Run commands")).toBe("allow");
-    expect((field("Goal") as HTMLTextAreaElement).value).toBe("Watch the fares from Milan to Lisbon");
+    expect((field(/^Instructions/) as HTMLTextAreaElement).value).toBe("");
     expect(screen.getByText("No changes.")).toBeTruthy();
   });
 
@@ -322,12 +317,8 @@ describe("the other settings", () => {
     expect((plane.updates[1]!.config as DotConfig).models).toEqual({});
   });
 
-  it("saves the browser limits and the spending cap with the rest, in one patch", async () => {
+  it("saves the limits and the spending cap with the rest, in one patch", async () => {
     await renderSettings();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("switch", { name: "The Dot manages its identities" }));
-    fireEvent.change(field("Most identities"), { target: { value: "9" } });
-    fireEvent.change(field("Most open at once"), { target: { value: "4" } });
     fireEvent.change(field("Spending cap per task"), { target: { value: "0.25" } });
     fireEvent.change(field("Steps per task"), { target: { value: "12" } });
     fireEvent.change(field("Context tokens"), { target: { value: "8000" } });
@@ -337,19 +328,19 @@ describe("the other settings", () => {
     await waitFor(() => expect(plane.updates).toHaveLength(1));
     const config = plane.updates[0]!.config as DotConfig;
     expect("memory" in config).toBe(false);
-    expect(config.browser.identities).toEqual({ managed_by_dot: false, max_identities: 9, max_open: 4 });
+    expect("browser" in config).toBe(false);
     expect(config.limits).toEqual({ max_steps_per_task: 12, context_tokens: 8000, max_cost_per_task_usd: 0.25 });
   });
 
-  it("says the rule between the browser limits where it is broken, and does not allow the save", async () => {
+  it("says what is wrong with a setting where it is, and does not allow the save", async () => {
     await renderSettings();
-    fireEvent.change(field("Most identities"), { target: { value: "2" } });
-    expect(await screen.findByText("max_open (3) cannot exceed max_identities (2)")).toBeTruthy();
-    expect(field("Most open at once").getAttribute("aria-invalid")).toBe("true");
+    fireEvent.change(field("Model"), { target: { value: "two words" } });
+    expect(await screen.findByText("model id must not contain whitespace")).toBeTruthy();
+    expect(field("Model").getAttribute("aria-invalid")).toBe("true");
     expect(reviewButton().disabled).toBe(true);
     expect(screen.getByText("Some settings need fixing before this can be saved.")).toBeTruthy();
-    fireEvent.change(field("Most open at once"), { target: { value: "2" } });
-    await waitFor(() => expect(screen.queryByText(/cannot exceed max_identities/)).toBeNull());
+    fireEvent.change(field("Model"), { target: { value: "openai/gpt-5" } });
+    await waitFor(() => expect(screen.queryByText("model id must not contain whitespace")).toBeNull());
     expect(reviewButton().disabled).toBe(false);
   });
 
@@ -364,11 +355,10 @@ describe("the other settings", () => {
     expect((plane.updates[0]!.config as DotConfig).computer.disk).toBe("60gb");
   });
 
-  it("refuses a goal that is empty before it can be saved", async () => {
+  it("has no goal to set: what a Dot is for is what its person asks of it", async () => {
     await renderSettings();
-    fireEvent.change(field("Goal"), { target: { value: "  " } });
-    expect(await screen.findByText("goal must not be empty")).toBeTruthy();
-    expect(reviewButton().disabled).toBe(true);
+    await screen.findByLabelText(/^Instructions/);
+    expect(screen.queryByLabelText("Goal")).toBeNull();
   });
 });
 
@@ -422,12 +412,12 @@ describe("the YAML view", () => {
     expect(yamlBox().value).toBe("name: [unclosed");
   });
 
-  it("carries every option between the text and the form, the identity switch included", async () => {
+  it("carries every option between the text and the form, the step limit included", async () => {
     await renderSettings();
     await userEvent.setup().click(screen.getByRole("button", { name: "Advanced YAML" }));
-    fireEvent.change(yamlBox(), { target: { value: `${yamlBox().value.replace("managed_by_dot: true", "managed_by_dot: false")}` } });
+    fireEvent.change(yamlBox(), { target: { value: yamlBox().value.replace(/max_steps_per_task: \d+/, "max_steps_per_task: 7") } });
     await userEvent.setup().click(screen.getByRole("button", { name: "Form" }));
-    expect(screen.getByRole("switch", { name: "You manage its identities" })).toBeTruthy();
+    expect((field("Steps per task") as HTMLInputElement).value).toBe("7");
   });
 });
 
@@ -456,10 +446,10 @@ describe("a config that changed under the edit", () => {
   it("follows the host's config silently while nothing was edited", async () => {
     await renderSettings();
     const record = plane.dots[0]!;
-    record.config = setField(record.config, "goal", "A goal set elsewhere");
+    record.config = setField(record.config, "instructions", "Instructions set elsewhere");
     record.config_version = 2;
     act(() => plane.push("d1", "dot.updated", { name: "fares" }));
-    await waitFor(() => expect((field("Goal") as HTMLTextAreaElement).value).toBe("A goal set elsewhere"));
+    await waitFor(() => expect((field(/^Instructions/) as HTMLTextAreaElement).value).toBe("Instructions set elsewhere"));
     expect(screen.queryByText("The configuration changed while you were editing")).toBeNull();
   });
 
@@ -468,7 +458,7 @@ describe("a config that changed under the edit", () => {
     await choose("Run commands", "Deny");
     // The config changes behind the page's back, with no event heard (the stream is not the only way a save can be stale).
     const record = plane.dots[0]!;
-    record.config = setField(record.config, "goal", "Changed in another tab");
+    record.config = setField(record.config, "instructions", "Changed in another tab");
     record.config_version = 2;
     await saveReviewed();
     await waitFor(() => expect(plane.updates).toHaveLength(1));
@@ -477,7 +467,7 @@ describe("a config that changed under the edit", () => {
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     expect(screen.queryByText(/^Saved\./)).toBeNull();
     expect(await screen.findByText("The configuration changed while you were editing")).toBeTruthy();
-    expect((field("Goal") as HTMLTextAreaElement).value).toBe("Changed in another tab");
+    expect((field(/^Instructions/) as HTMLTextAreaElement).value).toBe("Changed in another tab");
     expect(chosen("Run commands")).toBe("deny");
     expect(saved().permissions).toEqual({});
   });

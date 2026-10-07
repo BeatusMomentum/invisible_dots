@@ -11,8 +11,8 @@ describe("showSearch", () => {
 
 describe("filterDots", () => {
   const dots = [
-    dotRecord("1", { name: "fare-watch", config: { goal: "Watch the fares from Milan to Lisbon", model: { provider: "openrouter", id: "z-ai/glm" } } as never }),
-    dotRecord("2", { name: "inbox", config: { goal: "Sort the mail", model: { provider: "openrouter", id: "a/claude" } } as never }),
+    dotRecord("1", { name: "fare-watch", config: { model: { provider: "openrouter", id: "z-ai/glm" } } as never }),
+    dotRecord("2", { name: "inbox", config: { model: { provider: "openrouter", id: "a/claude" } } as never }),
   ];
 
   it("keeps every Dot for an empty or blank query", () => {
@@ -20,15 +20,15 @@ describe("filterDots", () => {
     expect(filterDots(dots, "   ")).toHaveLength(2);
   });
 
-  it("matches the name, the goal and the model, ignoring case", () => {
+  it("matches the name and the model, ignoring case", () => {
     expect(filterDots(dots, "FARE").map((d) => d.id)).toEqual(["1"]);
-    expect(filterDots(dots, "mail").map((d) => d.id)).toEqual(["2"]);
+    expect(filterDots(dots, "inbox").map((d) => d.id)).toEqual(["2"]);
     expect(filterDots(dots, "claude").map((d) => d.id)).toEqual(["2"]);
   });
 
   it("needs every word, in any order", () => {
-    expect(filterDots(dots, "lisbon fares").map((d) => d.id)).toEqual(["1"]);
-    expect(filterDots(dots, "lisbon mail")).toEqual([]);
+    expect(filterDots(dots, "glm fare").map((d) => d.id)).toEqual(["1"]);
+    expect(filterDots(dots, "glm inbox")).toEqual([]);
   });
 
   it("copes with a Dot whose config is missing", () => {

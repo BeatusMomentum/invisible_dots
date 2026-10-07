@@ -20,7 +20,7 @@ const REPORT: DoctorCheck[] = [
 ];
 
 const yaml = (name: string, idle = "15m") =>
-  `name: ${name}\ngoal: watch fares\nmodel:\n  provider: openrouter\n  id: test/model\ncomputer:\n  idle_timeout: ${idle}\n`;
+  `name: ${name}\nmodel:\n  provider: openrouter\n  id: test/model\ncomputer:\n  idle_timeout: ${idle}\n`;
 
 describe.each(testAdapters())("control-plane API (%s)", (kind) => {
   let t: TestDatabase;
@@ -136,7 +136,7 @@ describe.each(testAdapters())("control-plane API (%s)", (kind) => {
   });
 
   it("create validates the config: 400 with the issues, 409 for a taken name", async () => {
-    const invalid = await api.createDot({ name: "Bad Name", goal: "x", model: { provider: "openrouter", id: "m" } }).catch((e) => e);
+    const invalid = await api.createDot({ name: "Bad Name", model: { provider: "openrouter", id: "m" } }).catch((e) => e);
     expect(invalid).toBeInstanceOf(ApiError);
     expect(invalid).toMatchObject({ status: 400, code: "invalid_config" });
     expect((invalid as ApiError).details).toEqual([expect.objectContaining({ path: "name" })]);

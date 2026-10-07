@@ -4,7 +4,6 @@ import { parseDotConfig, type DotConfig } from "@invisible-dots/shared/browser";
 export function fullConfig(change: Record<string, unknown> = {}): DotConfig {
   return parseDotConfig({
     name: "fare-watch",
-    goal: "Watch the fares from Milan to Lisbon",
     model: { provider: "openrouter", id: "z-ai/glm-5.3-flash" },
     ...change,
   });

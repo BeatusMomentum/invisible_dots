@@ -56,7 +56,7 @@ export function HomePage() {
           {showSearch(list.length) ? (
             <div className="relative max-w-sm">
               <SearchIcon aria-hidden="true" className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input type="search" aria-label="Search Dots" placeholder="Search by name, goal or model" value={query} onChange={(event) => setQuery(event.target.value)} className="pl-9" />
+              <Input type="search" aria-label="Search Dots" placeholder="Search by name or model" value={query} onChange={(event) => setQuery(event.target.value)} className="pl-9" />
             </div>
           ) : null}
           {shown.length > 0 ? (

@@ -80,18 +80,6 @@ def test_offers_the_model_only_the_tools_whose_permission_is_not_denied(make_con
     assert settings(make_config({})).offered_tools == ()
 
 
-def test_the_tools_that_make_and_delete_identities_follow_managed_by_dot(
-    config_body: Callable[..., dict[str, Any]],
-) -> None:
-    permissions = {"browser.identity.create": "allow", "browser.identity.delete": "ask", "browser.identity.launch": "allow"}
-    managed = settings(parse_runtime_config(config_body(permissions=permissions)))
-    assert managed.offered_tools == ("browser_identity_create", "browser_identity_delete", "browser_identity_launch")
-
-    identities = {"managed_by_dot": False, "max_identities": 20, "max_open": 3}
-    unmanaged = settings(parse_runtime_config(config_body(permissions=permissions, browser={"identities": identities})))
-    assert unmanaged.offered_tools == ("browser_identity_launch",)
-
-
 def test_offers_nothing_outside_the_permission_table(make_config: Callable[..., DotRuntimeConfig]) -> None:
     everything = {permission: "allow" for permission in {e.permission for e in TOOL_PERMISSIONS.values()}}
     assert set(settings(make_config(everything)).offered_tools) == set(TOOL_PERMISSIONS)
@@ -116,17 +104,16 @@ def test_the_projection_is_pure_and_the_settings_are_frozen(make_config: Callabl
     assert config.permissions == {"files.read": "allow"}
 
 
-def test_the_prompt_section_names_the_dot_and_its_goal(make_config: Callable[..., DotRuntimeConfig]) -> None:
-    assert dot_prompt_section(make_config({})) == 'You are the Dot "fare-watch". Your goal:\nWatch fares.'
+def test_the_prompt_section_names_the_dot(make_config: Callable[..., DotRuntimeConfig]) -> None:
+    assert dot_prompt_section(make_config({})) == 'You are the Dot "fare-watch".'
 
 
 def test_the_prompt_section_carries_the_instructions_when_there_are_some(
     config_body: Callable[..., dict[str, Any]],
 ) -> None:
-    config = parse_runtime_config(config_body(goal="  Watch fares.\n", instructions="  Be brief.\nNo emoji.  "))
+    config = parse_runtime_config(config_body(instructions="  Be brief.\nNo emoji.  "))
     assert dot_prompt_section(config) == (
-        'You are the Dot "fare-watch". Your goal:\n'
-        "Watch fares.\n"
+        'You are the Dot "fare-watch".\n'
         "\n"
         "Instructions from the person who owns you:\n"
         "Be brief.\nNo emoji."

@@ -46,8 +46,9 @@ DEFAULT_STATE_DIR = "/home/dotengine/state"
 UPSTREAM_COMMIT = "f75470e7"
 # How often work that waits is looked at again, in seconds.
 RETRY_INTERVAL_S = 5.0
-# The browser limits until the host pushes the config, which replaces them at once: the defaults of
-# the host's schema (`browser.identities` in packages/shared config.ts).
+# The browser limits: at most this many identities open at once (each holds about 0.8 GB of the computer's
+# memory; opening one more closes the one used least recently), and at most this many in all. They are the
+# engine's own, not a setting: the Dot manages its identities itself.
 DEFAULT_MAX_OPEN = 3
 DEFAULT_MAX_IDENTITIES = 20
 
@@ -173,7 +174,6 @@ async def serve(environment: Environment, stop: asyncio.Event) -> None:
         retry: asyncio.Task[None] | None = None
         try:
             engine.start()
-            engine.apply_browser_limits()
             await cron.start()
             retry = asyncio.get_running_loop().create_task(_retry(engine))
             await stop.wait()

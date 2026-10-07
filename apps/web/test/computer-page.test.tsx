@@ -272,7 +272,7 @@ describe("the usage", () => {
 
   it("compares what the computer was given with what it uses, and names the images it started from", async () => {
     plane.system = system;
-    plane.dots = [dotRecord("d1", { name: "fares", config: { goal: "g", computer: { cpu: 2, memory: "4gb", disk: "40gb", idle_timeout: "15m" } } as never })];
+    plane.dots = [dotRecord("d1", { name: "fares", config: { computer: { cpu: 2, memory: "4gb", disk: "40gb", idle_timeout: "15m" } } as never })];
     await renderComputer({ view: "usage" });
     const given = await screen.findByRole("region", { name: "Given to the computer" });
     expect(within(given).getByText("4gb")).toBeTruthy();

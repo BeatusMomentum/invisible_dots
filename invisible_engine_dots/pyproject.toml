@@ -87,3 +87,4 @@ ignore = ["E501"]
 asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["tests"]
+markers = ["limits(max_open, max_identities): the browser manager's limits for a test of the browser tools"]

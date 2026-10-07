@@ -2,7 +2,7 @@ import { PERMISSIONS, parseDotConfig, resolvePermission, toRuntimeConfig } from 
 import { describe, expect, it } from "vitest";
 import { PRESET_IDS, PRESETS, presetOf, presetPermissions } from "../src/lib/permission-presets";
 
-const BASE = { name: "p", goal: "g", model: { provider: "openrouter", id: "a/b" } };
+const BASE = { name: "p", model: { provider: "openrouter", id: "a/b" } };
 
 function resolved(preset: (typeof PRESET_IDS)[number]) {
   return toRuntimeConfig(parseDotConfig({ ...BASE, permissions: presetPermissions(preset) })).permissions;

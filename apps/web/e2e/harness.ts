@@ -47,7 +47,7 @@ export interface Harness {
    */
   host: { images: DoctorCheck[] };
   /** A Dot whose computer is up and READY. */
-  createDot(name: string, goal?: string): Promise<DotRecord>;
+  createDot(name: string): Promise<DotRecord>;
   /** The control plane stops answering (its server closes) while the web client goes on: what a person sees when the API dies. `close` still cleans up. */
   stopApi(): Promise<void>;
   close(): Promise<void>;
@@ -144,8 +144,8 @@ export async function startHarness({ withKey = true }: HarnessOptions = {}): Pro
     host,
     api,
     token: control.token,
-    async createDot(name, goal = "watch the fares") {
-      const dot = await api.createDot(`name: ${name}\ngoal: ${goal}\nmodel:\n  provider: openrouter\n  id: test/model\ncomputer:\n  idle_timeout: 15m\n`);
+    async createDot(name) {
+      const dot = await api.createDot(`name: ${name}\nmodel:\n  provider: openrouter\n  id: test/model\ncomputer:\n  idle_timeout: 15m\n`);
       await waitUntilSettledReady(control.scheduler, driver, dot.id, name);
       return dot;
     },

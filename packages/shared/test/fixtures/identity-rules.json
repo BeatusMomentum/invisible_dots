@@ -269,7 +269,7 @@
       },
       "error": {
         "code": "limit",
-        "message": "this Dot already has 20 browser identities, the most its configuration allows (max_identities 20); delete one first"
+        "message": "this Dot already has 20 browser identities, the most it may keep (max_identities 20); delete one first"
       },
       "existing": 20,
       "max": 20
@@ -281,7 +281,7 @@
       },
       "error": {
         "code": "limit",
-        "message": "this Dot already has 25 browser identities, the most its configuration allows (max_identities 20); delete one first"
+        "message": "this Dot already has 25 browser identities, the most it may keep (max_identities 20); delete one first"
       },
       "existing": 25,
       "max": 20
@@ -293,7 +293,7 @@
       },
       "error": {
         "code": "limit",
-        "message": "this Dot already has 0 browser identities, the most its configuration allows (max_identities 0); delete one first"
+        "message": "this Dot already has 0 browser identities, the most it may keep (max_identities 0); delete one first"
       },
       "existing": 0,
       "max": 0

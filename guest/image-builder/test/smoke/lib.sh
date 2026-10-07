@@ -137,14 +137,13 @@ wait_health() {
 # and calls push.
 reset_config() {
   echo '{"computer.exec":"allow"}' > /tmp/perms.json; chmod 0644 /tmp/perms.json
-  echo '{"managed_by_dot":true,"max_identities":20,"max_open":3}' > /tmp/browser.json; chmod 0644 /tmp/browser.json   # the config's browser.identities
   echo '{}' > /tmp/models.json; chmod 0644 /tmp/models.json     # the config's models (the summary role)
   echo 32000 > /tmp/context.json; chmod 0644 /tmp/context.json # the config's limits.context_tokens
 }
 push() {
   api -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d "{\"openrouter_api_key\":\"$KEY\"}" "$A/secrets"
   echo -n " "
-  api -o /dev/null -w '%{http_code}' -X PUT -H 'content-type: application/json' -d '{"name":"smoke","goal":"Answer the smoke test.","model":{"provider":"openrouter","id":"openai/gpt-4o-mini"},"browser":{"identities":'"$(cat /tmp/browser.json)"'},"permissions":'"$(cat /tmp/perms.json)"',"models":'"$(cat /tmp/models.json)"',"limits":{"max_steps_per_task":60,"context_tokens":'"$(cat /tmp/context.json)"',"max_cost_per_task_usd":1}}' "$A/config"
+  api -o /dev/null -w '%{http_code}' -X PUT -H 'content-type: application/json' -d '{"name":"smoke","model":{"provider":"openrouter","id":"openai/gpt-4o-mini"},"permissions":'"$(cat /tmp/perms.json)"',"models":'"$(cat /tmp/models.json)"',"limits":{"max_steps_per_task":60,"context_tokens":'"$(cat /tmp/context.json)"',"max_cost_per_task_usd":1}}' "$A/config"
 }
 # What the fake host runs on every agent.started: the same push, as a script.
 write_push_script() { { declare -f api push; echo "H=(-sS -H 'Authorization: Bearer $TOKEN'); A=$A; KEY=$KEY; push"; } > /tmp/push.sh; }

@@ -1514,15 +1514,6 @@ class TestStoppingWithBrowsersOpen:
         margin_s = 5
         assert steps + margin_s <= PREPARE_SLEEP_TIMEOUT_S
 
-    async def test_a_config_applies_the_browser_limits_to_the_manager(self, make_engine: MakeEngine) -> None:
-        h = started(make_engine([]))
-        assert h.browser.limits == (3, 20)
-
-        h.configure(cfg(browser={"identities": {"managed_by_dot": True, "max_identities": 5, "max_open": 2}}))
-        h.engine.apply_browser_limits()
-
-        assert h.browser.limits == (2, 5)
-
 
 class TestAChatTurnThatFailsBeforeItsOpeningIsStored:
     @staticmethod

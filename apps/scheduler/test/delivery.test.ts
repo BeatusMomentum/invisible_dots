@@ -12,8 +12,8 @@ import { Scheduler, type Logger, type SchedulerOptions } from "../src/index.js";
 import type { GuestApi, GuestEndpoint } from "../src/index.js";
 import { FakeDriver, FakeGuest, FakeGuestError, ManualClock, waitFor, waitUntilSettledReady } from "../src/testing.js";
 
-const yaml = (name: string, goal = "keep watch") =>
-  `name: ${name}\ngoal: ${goal}\nmodel:\n  provider: openrouter\n  id: test/model\ncomputer:\n  idle_timeout: 10m\n`;
+const yaml = (name: string, instructions = "keep watch") =>
+  `name: ${name}\ninstructions: ${instructions}\nmodel:\n  provider: openrouter\n  id: test/model\ncomputer:\n  idle_timeout: 10m\n`;
 
 const KEY = "sk-or-delivery-test-key-0123456789";
 
@@ -291,11 +291,11 @@ describe.each(testAdapters())("delivery to guests (%s)", (kind) => {
     scheduler.lifecycle.markSuspect(dot.id);
     const ready = scheduler.lifecycle.ensureReady(dot.id);
     await pushing.reached;
-    const update = await scheduler.updateDot(dot.id, yaml("late-config", "a brand new goal"));
-    expect(update.config.goal).toBe("a brand new goal");
+    const update = await scheduler.updateDot(dot.id, yaml("late-config", "a brand new instruction"));
+    expect(update.config.instructions).toBe("a brand new instruction");
     pushing.open();
     await ready;
-    expect(guest.config?.goal).toBe("a brand new goal");
+    expect(guest.config?.instructions).toBe("a brand new instruction");
   });
 
   it("a guest that echoes the key in a failed secret push never puts it in the log, the rows or the events", async () => {

@@ -57,11 +57,11 @@ NOT_OPEN = "identity {} is not open; call browser_identity_launch first"
 
 
 class Env:
-    def __init__(self, tmp_path: Path, store: DotStore) -> None:
+    def __init__(self, tmp_path: Path, store: DotStore, **limits: int) -> None:
         self.tmp_path = tmp_path
         (tmp_path / "computer").mkdir()
         self.computer = LocalComputer(tmp_path / "computer")
-        self.manager: BrowserManager = make_browser_manager(tmp_path, store, self.computer)
+        self.manager: BrowserManager = make_browser_manager(tmp_path, store, self.computer, **limits)
         self.registry: ToolRegistry = build_registry(
             ToolDeps(self.computer, ExecSessionManager(), CronService(tmp_path / "cron" / "jobs.json"), self.manager)
         )
@@ -85,9 +85,10 @@ class Env:
 
 
 @pytest.fixture
-async def bare_env(tmp_path: Path, dot_store: DotStore) -> AsyncIterator[Env]:
-    """Tools and a manager, run outside any turn."""
-    made = Env(tmp_path, dot_store)
+async def bare_env(request: pytest.FixtureRequest, tmp_path: Path, dot_store: DotStore) -> AsyncIterator[Env]:
+    """Tools and a manager, run outside any turn; `@pytest.mark.limits(max_open=..., max_identities=...)` sets the manager's."""
+    marker = request.node.get_closest_marker("limits")
+    made = Env(tmp_path, dot_store, **(marker.kwargs if marker else {}))
     yield made
     await made.manager.close_all()
 
@@ -251,8 +252,8 @@ async def test_launch_opens_the_browser_and_close_keeps_the_profile(env: Env) ->
     assert said(after) == NOT_OPEN.format(identity_id)
 
 
+@pytest.mark.limits(max_open=1)
 async def test_launching_past_max_open_says_which_browser_it_closed(env: Env) -> None:
-    env.manager.set_limits(1, 20)
     first = await env.open_identity("first")
     second = (await env.manager.create("second")).id
 
@@ -326,8 +327,8 @@ async def test_a_refused_request_is_an_error_result_that_says_why(env: Env) -> N
     assert said(gone) == 'no browser identity "nope-aaaaaa"' == said(launch_gone)
 
 
+@pytest.mark.limits(max_open=1, max_identities=1)
 async def test_the_limit_on_identities_is_reported_to_the_model(env: Env) -> None:
-    env.manager.set_limits(1, 1)
     await env.run("browser_identity_create", name="one")
 
     over = await env.run("browser_identity_create", name="two")

@@ -8,7 +8,7 @@ change the document in the same commit.
 
 A Dot is a persistent agent that owns a computer. Every Dot has:
 
-- a configuration (name, goal, instructions, model, permissions, resources),
+- a configuration (name, instructions, model, permissions, resources),
 - its own QEMU virtual machine (hardware accelerated) with a persistent qcow2 disk,
 - inside that VM, its own agent runtime, which calls models through OpenRouter,
 - its own memory, conversation and task state, stored inside the VM,
@@ -730,7 +730,7 @@ command detached into another session outlives it.
 | `GET /events/stream` | `?after=<seq>` | `text/event-stream`, one SSE message per outbound event, `id: <seq>` |
 | `GET /state` | | `{ state, current_task_id, pending_approval }`; `pending_approval` is the id of the oldest approval the engine waits on, or `null` |
 | `GET /browser-identities` | | `{ identities: BrowserIdentity[] }`, oldest first; an identity says `hasProxy` and nothing of its proxy, which is a secret |
-| `POST /browser-identities` | `{ name, proxy? }`; `proxy` is an explicit option: absent, `null` or blank means none, the normal case | `201 BrowserIdentity`; `400 invalid` (a name that is empty or too long, or a proxy that is not a string; a proxy that is a string is kept as written and judged by invisible-playwright-mcp when the identity launches), `409 limit` (`max_identities`) |
+| `POST /browser-identities` | `{ name, proxy? }`; `proxy` is an explicit option: absent, `null` or blank means none, the normal case | `201 BrowserIdentity`; `400 invalid` (a name that is empty or too long, or a proxy that is not a string; a proxy that is a string is kept as written and judged by invisible-playwright-mcp when the identity launches), `409 limit` (the 20 identities the engine keeps at most) |
 | `GET /browser-identities/:id` | | `BrowserIdentity`; `404 not_found` |
 | `DELETE /browser-identities/:id` | | `204` after the identity's browser is closed and its directory removed; `404 not_found` |
 | `GET /browser-identities/:id/frame` | | `200 image/jpeg` (`Cache-Control: no-store`), one frame of the identity's window, taken with the server's `browser_watch`; `404 not_found`; `409 not_open` when the identity is closed; `503 busy` when a call of the Dot held the identity for longer than 5 seconds; `502 frame_failed` (the server has no page to show, or sent a frame that is not a JPEG: the engine is the one owner of that rule, the host passes the bytes on as `image/jpeg`) or `crashed` |
@@ -1011,9 +1011,10 @@ ignores anything else.
   identity's proxy never changes after it is created (there is no route that
   edits it), so the two agree, but a proxy edited in the engine's database would
   not reach a browser whose session file already exists.
-- At most `browser.identities.max_open` identities are open at once (default
-  3, roughly 0.8 GB of memory each). Launching one more closes the least
-  recently used. At most `browser.identities.max_identities` exist.
+- At most 3 identities are open at once (roughly 0.8 GB of memory each).
+  Launching one more closes the least recently used. At most 20 exist. Both are
+  the engine's own (`DEFAULT_MAX_OPEN` and `DEFAULT_MAX_IDENTITIES` in
+  `nanobot/dots/main.py`), not settings: the Dot manages its identities itself.
 - Launching is explicit. A browser action on an identity that is not open does
   not launch it: it fails with "identity <id> is not open; call
   browser_identity_launch first". Each permission therefore decides only its own
@@ -1059,9 +1060,7 @@ YAML in, validated by one schema in `packages/shared` (zod):
 
 ```yaml
 name: fare-watch                       # [a-z0-9-], 1..40
-goal: >
-  Check one-way fares from Milan to Lisbon every morning and report the cheapest day.
-instructions: >                        # optional
+instructions: >                        # optional: how it should work, in its system prompt
   Write findings to ~/workspace/fares.csv.
 model:
   provider: openrouter                 # the only accepted value
@@ -1073,11 +1072,6 @@ computer:
   memory: 4gb                          # 2gb..64gb
   disk: 40gb                           # 20gb..1024gb
   idle_timeout: 15m                    # sleep after this long with nothing to do; 0 = never
-browser:
-  identities:
-    managed_by_dot: true               # the Dot may create and delete identities itself
-    max_identities: 20
-    max_open: 3
 permissions:                           # allow | ask | deny, keyed by permission name
   computer.exec: allow
   browser.identity.delete: ask
@@ -1087,10 +1081,14 @@ limits:
   max_cost_per_task_usd: 1.00          # USD of model spend of a task or a chat turn, 0.01..100; the last request may exceed it (section 8.2)
 ```
 
+A Dot has no goal: what it is for is what its person asks of it, in the chat, in a task or in its
+instructions. Nor does it have browser settings: it manages its identities itself, within the
+engine's limits (section 6). A config saved with either before (migrations `0010_dot_has_no_goal.sql`
+and `0011_dot_has_no_browser_settings.sql` take them out) is refused as an unknown key.
+
 The ranges and defaults of the numbers in that file (`computer.cpu`, `memory`,
 `disk`, the default `idle_timeout`, `limits.max_cost_per_task_usd`,
-`limits.max_steps_per_task`, `limits.context_tokens` and
-`browser.identities.max_identities` and `max_open`) are `CONFIG_BOUNDS` in
+`limits.max_steps_per_task` and `limits.context_tokens`) are `CONFIG_BOUNDS` in
 `packages/shared`. The schema takes its numbers from it and
 so does the web client's form, so a slider can never offer what the API refuses.
 
@@ -1207,8 +1205,8 @@ does not know.
 | `cron` | `automations` | adds, lists and removes the Dot's own scheduled automations |
 | `computer_screenshot` | `computer.screenshot` | takes a screenshot of the Dot's whole desktop and shows it to the model (no arguments) |
 | `browser_identity_list` | `browser.identity.list` | lists the browser identities with their status (open or available), whether each has a proxy of its own (and nothing of the proxy), and the two limits |
-| `browser_identity_create` | `browser.identity.create` | makes an identity, closed: `name`, `proxy?` (an explicit option that the model leaves out unless the person gave one; offered only when `managed_by_dot`) |
-| `browser_identity_delete` | `browser.identity.delete` | closes an identity and deletes it with its profile: `identity_id` (offered only when `managed_by_dot`) |
+| `browser_identity_create` | `browser.identity.create` | makes an identity, closed: `name`, `proxy?` (an explicit option that the model leaves out unless the person gave one) |
+| `browser_identity_delete` | `browser.identity.delete` | closes an identity and deletes it with its profile: `identity_id` |
 | `browser_identity_launch` | `browser.identity.launch` | opens the browser of an identity, closing the least recently used one at `max_open`: `identity_id` |
 | `browser_identity_close` | `browser.identity.close` | closes the browser of an identity, keeping its profile: `identity_id` |
 | `browser_navigate` | `browser.navigate` | loads an `http://` or `https://` URL and no other (`file:`, `about:`, `view-source:`, `data:` and `javascript:` are refused, so the permission to navigate is not a permission to read files): `identity_id, url` |
@@ -1229,9 +1227,7 @@ The browser tools are served by the `BrowserManager` and so by
 `invisible-playwright-mcp`, the only browser of a Dot; each takes an
 `identity_id`, and the model never sees the MCP server's own tool names. A
 browser action on an identity that is not open does not launch it, it says so
-(section 6). When `managed_by_dot` is false, `browser_identity_create` and
-`browser_identity_delete` are not offered at all. A screenshot is shown to the
-model and not stored (section 6).
+(section 6). A screenshot is shown to the model and not stored (section 6).
 
 The tool calls of one response run one at a time, in the order the model
 gave them. Only the response's `tool_calls` count: a call written in the
@@ -1471,7 +1467,7 @@ other engine owns the state.
   table whose permission is `allow` or `ask`, minus the memory tools when
   memory is off), `max_steps_per_task` as the step limit, `context_tokens` as
   the context budget, the 12000-character result cap, and the Dot's section of
-  the system prompt (its name, goal and instructions, then nanobot's tool
+  the system prompt (its name and instructions, then nanobot's tool
   contract, a short note on its computer, the memory notes and the time).
   There is no config file, no installer and no sudo rule. The same config
   again changes nothing, and the same key again builds no provider
@@ -1520,8 +1516,7 @@ other engine owns the state.
   holds the offered ones, so a denied tool is not even seen, and the gate
   decides every call by the same table. The table also says which arguments
   of a call an `approval.requested` may carry (all of them, but for the proxy
-  of `browser_identity_create`) and which tools exist only while the
-  Dot manages its browser identities itself (`browser.identities.managed_by_dot`).
+  of `browser_identity_create`).
   The engine has no MCP server of its own to configure: the one server it runs
   is `invisible-playwright-mcp`, and only through the `BrowserManager`, on a
   registry no turn sees.
@@ -1533,7 +1528,7 @@ other engine owns the state.
   `dot-agentd relay` with the environment of section 6 and nanobot's MCP client
   on a registry of its own. Launch, close and delete run one at a time; calls on
   one identity run one at a time. At `max_open` a launch closes the least
-  recently used identity first; a lower `max_identities` deletes nothing. A
+  recently used identity first. A
   browser action on an identity that is not open fails with `not_open` and
   never launches it. A browser that the server reports gone while its process
   lives (Firefox crashed, its window was closed) is not reopened and the call is
@@ -1556,10 +1551,8 @@ other engine owns the state.
   `browser_close` first, so Firefox flushes its profile, then ends the process.
   Every `browser.identity.*` event commits with the row change it describes.
   The model's identity and page tools (`browser_tools.py`) and the routes of
-  section 5.3 are the callers; a config that arrives applies `max_open` and
-  `max_identities` to the manager at once (a lower `max_open` closes the excess
-  open browsers, least recently used first), and the manager starts with the
-  host schema's defaults (3 and 20) until it does. A page tool names the one
+  section 5.3 are the callers; `max_open` and `max_identities` (3 and 20) are
+  set when the manager is made and nothing changes them. A page tool names the one
   tool of the MCP server it calls (`PAGE_TOOLS`) and the manager adds
   `browser: "main"` to every call.
 - Images. A tool's image is shown to the model and kept out of the stored
@@ -2036,7 +2029,7 @@ is no other stylesheet: every screen is utilities over the tokens. The browser t
 real control plane in-process over the fake VM layer and the built web client
 against it (`e2e/harness.ts`), so a test drives what a Dot's computer does.
 
-Home (`/`) is a card per Dot: its avatar ring, name and goal, the state with the
+Home (`/`) is a card per Dot: its avatar ring and name, the state with the
 recorded reason beside an ERROR, the model, what it spent today, the approvals
 that wait, Open chat and the computer's power menu. Each card's spend pill is
 scoped to its own Dot, so a message of one Dot re-reads only that Dot's usage.
@@ -2077,7 +2070,7 @@ own key row is left out, so the key is said once. Submitting is `POST /api/dots`
 
 A Dot's settings (`/dots/<id>/settings`) are the same config, edited in place:
 one draft of the whole `DotConfig`, as a form (General, Model, Permissions and
-tools, Computer, Browser, Limits) or as the same YAML, never a second
+tools, Computer, Limits) or as the same YAML, never a second
 model of it. `lib/config-fields.ts` is the one table of what can change (where
 each field lives, its words, when a change reaches the Dot) and gives what the
 page needs from it: the list of changes, the notice a save ends with, and the
@@ -2118,7 +2111,7 @@ opened under this Dot's address is shown as missing. The story and the progress 
 the page reads from its start, asking only for the event types of a task's
 story (`lib/event-log.ts` is the one function that pages through the route's
 `types` filter) only once a task is running
-or open, and then keeps current from the live stream. The newest progress line of a running task is also under the goal in
+or open, and then keeps current from the live stream. The newest progress line of a running task is also under the name in
 the Dot header. A task that waits for an answer shows its approval as a card on its own card and in its
 drawer, answerable there (see the Inbox below).
 

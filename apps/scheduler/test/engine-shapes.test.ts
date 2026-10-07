@@ -24,7 +24,6 @@ import { FakeGuest, type FakeAutomation } from "../src/testing.js";
 
 interface OfferingCase {
   permissions: Record<string, string>;
-  managed_identities: boolean;
   offered: string[];
   tools: unknown[];
 }
@@ -33,13 +32,12 @@ const shapes = JSON.parse(
   readFileSync(fileURLToPath(new URL("../../../invisible_engine_dots/tests/dots/wire_shapes.json", import.meta.url)), "utf8"),
 ) as { limits: { max_run_at_ms: number }; outbound_events: { type: string; data: Record<string, unknown> }[]; tool_offering: OfferingCase[]; skills: unknown[] };
 
-const baseConfig = toRuntimeConfig(parseDotConfig("name: shapes\ngoal: check\nmodel:\n  provider: openrouter\n  id: test/model\n"));
+const baseConfig = toRuntimeConfig(parseDotConfig("name: shapes\nmodel:\n  provider: openrouter\n  id: test/model\n"));
 
 function configFor(offering: OfferingCase): DotRuntimeConfig {
   return {
     ...baseConfig,
     permissions: offering.permissions as DotRuntimeConfig["permissions"],
-    browser: { identities: { ...baseConfig.browser.identities, managed_by_dot: offering.managed_identities } },
   };
 }
 
@@ -131,10 +129,8 @@ describe("what the engine answers, as the host describes it", () => {
       expect(tools.length).toBeGreaterThan(0);
       for (const tool of tools) {
         expect(engineRows.get(tool.name), `the engine has no tool ${tool.name}`).toBe(tool.permission);
-        expect(tool.offered, `${tool.name} with ${JSON.stringify(offering.permissions)}, managed identities ${offering.managed_identities}`).toBe(offering.offered.includes(tool.name));
+        expect(tool.offered, `${tool.name} with ${JSON.stringify(offering.permissions)}`).toBe(offering.offered.includes(tool.name));
       }
     }
-    // The identity switch is among what is compared: some case grants the tool that creates an identity and is not offered it.
-    expect(shapes.tool_offering.some((o) => !o.managed_identities && o.permissions["browser.identity.create"] === "allow" && !o.offered.includes("browser_identity_create"))).toBe(true);
   });
 });

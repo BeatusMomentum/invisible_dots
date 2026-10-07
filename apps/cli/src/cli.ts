@@ -126,8 +126,6 @@ Exit codes: 0 ok; 1 the server reported an error, a doctor check is not ok or a 
 
 export const SAMPLE_DOT = `# A Dot configuration (docs/architecture.md, section 7).
 name: my-first-dot                     # lowercase letters, digits and '-', up to 40
-goal: >
-  Keep a short daily summary of the front page of a news site in ~/workspace/news.md.
 instructions: >
   Be concise. Write findings to files in ~/workspace.
 model:
@@ -138,11 +136,6 @@ computer:
   memory: 4gb
   disk: 40gb
   idle_timeout: 15m                    # sleep after 15 minutes with nothing to do; 0 = never
-browser:
-  identities:
-    managed_by_dot: true
-    max_identities: 20
-    max_open: 3
 permissions:
   computer.exec: allow
   browser.identity.delete: ask
@@ -370,7 +363,6 @@ export async function run(argv: string[], io: CliIo): Promise<number> {
             ["id", dot.id],
             ["status", dot.status + (dot.error ? ` (${dot.error})` : "")],
             ["model", dot.config.model.id],
-            ["goal", oneLine(dot.config.goal, 100)],
             ["computer", `${computer.state}${computer.ready ? ", ready" : ""}${computer.last_error ? ` (last error: ${computer.last_error})` : ""}`],
             ["resources", `${dot.config.computer.cpu} cpu, ${dot.config.computer.memory} memory, ${dot.config.computer.disk} disk, idle_timeout ${dot.config.computer.idle_timeout}`],
             ["last active", computer.last_active_at ?? "never"],
