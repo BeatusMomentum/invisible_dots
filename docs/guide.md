@@ -89,8 +89,8 @@ Install Node, Go and Git, clone, build the command line, run `setup --all`, run
 ```powershell
 winget install -e --id OpenJS.NodeJS.LTS; winget install -e --id GoLang.Go; winget install -e --id Git.Git
 $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
-git clone https://github.com/feder-cr/dots
-cd dots
+git clone https://github.com/feder-cr/invisible_dots
+cd invisible_dots
 npm ci
 npm run build --workspace @invisible-dots/cli
 ```
@@ -101,8 +101,8 @@ npm run build --workspace @invisible-dots/cli
 curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
 sudo apt-get install -y nodejs git
 sudo snap install go --classic
-git clone https://github.com/feder-cr/dots
-cd dots
+git clone https://github.com/feder-cr/invisible_dots
+cd invisible_dots
 npm ci
 npm run build --workspace @invisible-dots/cli
 ```
