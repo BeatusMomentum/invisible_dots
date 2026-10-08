@@ -3,7 +3,7 @@
   <source media="(max-width: 1239px) and (prefers-color-scheme: dark)" srcset="docs/images/hero-mobile-dark.gif">
   <source media="(max-width: 1239px)" srcset="docs/images/hero-mobile-light.gif">
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/hero-dark.gif">
-  <img alt="invisible_dots, an open-source, self-hosted alternative to OpenAI Dots, Meta Muse, Grok Bot, Manus Cue and Claude Cowork. An animation of what a Dot does: asked once in its chat to send GitHub Trending's top 3 to Telegram every morning at 8:00, it works on a computer of its own, asks before it adds the daily automation, and then sends the list every day." src="docs/images/hero-light.gif" width="100%">
+  <img alt="invisible_dots, an open-source, self-hosted alternative to OpenAI Dots, Meta Muse, Grok Bot, Manus Cue and Claude Cowork. An animation of what a Dot does: asked once in its chat to save a shop's invoices every month and send the total to Telegram, it works on a computer of its own (a desktop, a terminal, files and a Firefox that keeps the shop's login), writes the steps down as a skill, asks before it adds the monthly automation, and then sends the total every month; several Dots, one computer each." src="docs/images/hero-light.gif" width="100%">
 </picture>
 </div>
 
