@@ -7,7 +7,7 @@ import pytest
 
 from nanobot.agent.memory import (
     _ARCHIVE_TOOL_RESULT,
-    _RECENT_USER_MESSAGE_TOKENS,
+    RECENT_USER_MESSAGE_TOKENS,
     Consolidator,
     _build_raw_checkpoint,
     _format_messages,
@@ -510,7 +510,7 @@ class TestCompactionOfALongThread:
     def test_the_latest_messages_kept_are_the_newest_up_to_the_limit_the_one_across_it_cut(self):
         from nanobot.agent.memory import _with_recent_user_messages
 
-        big = "word " * _RECENT_USER_MESSAGE_TOKENS
+        big = "word " * RECENT_USER_MESSAGE_TOKENS
         messages = [
             {"role": "user", "content": "oldest"},
             {"role": "user", "content": big},
@@ -518,7 +518,7 @@ class TestCompactionOfALongThread:
             {"role": "user", "content": "newest"},
         ]
 
-        text = _with_recent_user_messages("S", messages)
+        text = _with_recent_user_messages("S", messages, RECENT_USER_MESSAGE_TOKENS)
 
         head, latest = text.split("## The person's latest messages, as they wrote them\n\n")
         assert head == "S\n\n"
@@ -526,3 +526,19 @@ class TestCompactionOfALongThread:
         assert parts[-1] == "newest"
         assert "oldest" not in latest and "not the person's" not in latest
         assert parts[0].startswith("word word") and parts[0] != big
+
+    @pytest.mark.parametrize(
+        ("budget", "kept"),
+        [
+            (1_000_000, RECENT_USER_MESSAGE_TOKENS),  # a large window: Codex's 20000
+            (40_000, 10_000),  # a small one: a quarter of the budget, room left for the work after it
+            (2_880, 720),
+            (0, RECENT_USER_MESSAGE_TOKENS),  # no window known
+        ],
+    )
+    def test_the_latest_messages_kept_are_at_most_a_quarter_of_the_budget_of_the_requests_they_go_into(
+        self, budget, kept
+    ):
+        from nanobot.agent.memory import recent_user_message_tokens
+
+        assert recent_user_message_tokens(budget) == kept

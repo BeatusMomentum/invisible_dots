@@ -32,7 +32,17 @@ if TYPE_CHECKING:
 
 # The person's latest messages are kept as they wrote them after the summary, newest first up to this many tokens
 # (Codex's COMPACT_USER_MESSAGE_MAX_TOKENS, Apache-2.0: github.com/openai/codex, codex-rs/core/src/compact.rs).
-_RECENT_USER_MESSAGE_TOKENS = 20_000
+RECENT_USER_MESSAGE_TOKENS = 20_000
+
+
+def recent_user_message_tokens(prompt_budget: int) -> int:
+    """How much of the person's latest messages a summary keeps as they wrote them: Codex's 20000 tokens, but no
+    more than a quarter of the prompt budget of the requests the summary goes into (the share of recent context
+    opencode keeps whole), so that a model with a small window still has room for the work after the summary.
+    A budget of 0 (no window known) keeps the 20000."""
+    if prompt_budget <= 0:
+        return RECENT_USER_MESSAGE_TOKENS
+    return min(RECENT_USER_MESSAGE_TOKENS, prompt_budget // 4)
 _ARCHIVE_TOOL_RESULT = (
     "Session archival does not execute tools. Use only the supplied conversation and "
     "return the requested compact checkpoint now; do not call another tool."
@@ -125,9 +135,9 @@ def _drop_oldest_message(messages: list[dict[str, Any]]) -> list[dict[str, Any]]
     return removed
 
 
-def _with_recent_user_messages(summary: str, messages: list[dict[str, Any]]) -> str:
-    """The summary, then the person's latest messages as they wrote them: newest first up to
-    _RECENT_USER_MESSAGE_TOKENS, the one that crosses the limit cut to fit, put back in their order."""
+def _with_recent_user_messages(summary: str, messages: list[dict[str, Any]], limit: int) -> str:
+    """The summary, then the person's latest messages as they wrote them: newest first up to `limit` tokens, the
+    one that crosses the limit cut to fit, put back in their order."""
     kept: list[str] = []
     used = 0
     for message in reversed(messages):
@@ -137,9 +147,9 @@ def _with_recent_user_messages(summary: str, messages: list[dict[str, Any]]) -> 
         if not isinstance(text, str) or not text.strip() or text == SUMMARY_CONTINUATION_TEXT:
             continue
         tokens = estimate_message_tokens({"role": "user", "content": text})
-        if used + tokens > _RECENT_USER_MESSAGE_TOKENS:
-            if _RECENT_USER_MESSAGE_TOKENS - used > 0:
-                kept.append(truncate_text_to_tokens(text, _RECENT_USER_MESSAGE_TOKENS - used))
+        if used + tokens > limit:
+            if limit - used > 0:
+                kept.append(truncate_text_to_tokens(text, limit - used))
             break
         kept.append(text)
         used += tokens
@@ -341,8 +351,10 @@ class Consolidator:
         session_key: str,
         tools: list[dict[str, Any]],
         provider_state: ProviderConversationState | None = None,
+        recent_user_tokens: int = RECENT_USER_MESSAGE_TOKENS,
     ) -> str | None:
-        """Summarize the exact transcript prefix already accepted by the model."""
+        """Summarize the exact transcript prefix already accepted by the model; the person's latest messages, up to
+        `recent_user_tokens`, follow the summary as they wrote them (`recent_user_message_tokens`)."""
         source_messages = [
             dict(message)
             for message in accepted_messages
@@ -367,7 +379,7 @@ class Consolidator:
         )
         if summary is None:
             return None
-        return _with_recent_user_messages(summary, source_messages)
+        return _with_recent_user_messages(summary, source_messages, recent_user_tokens)
 
     async def summarize_provider_compaction(
         self,

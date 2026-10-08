@@ -306,6 +306,9 @@ class TestCommitPoints:
 
         for module in ("nanobot.agent.context_governance", "nanobot.agent.memory"):
             monkeypatch.setattr(f"{module}.estimate_prompt_tokens_chain", four_characters_a_token)
+        monkeypatch.setattr(
+            "nanobot.agent.memory.estimate_message_tokens", lambda message: len(str(message.get("content"))) // 4
+        )
         h = make_harness(
             [says("summary of the old conversation"), says("a fresh answer")],
             {"files.read": "allow"},
@@ -327,12 +330,16 @@ class TestCommitPoints:
         assert outcome.kind == "completed"
         stored = h.messages()
         metadata = h.store.read(lambda conn: s.read_session_metadata(conn, CHAT))
-        # The model's summary, then every message of the person, as they wrote it, oldest first.
-        latest = [f"question {index} " + "x" * 300 for index in range(6)] + ["a new question"]
-        assert metadata["_last_summary"]["text"] == (
-            "summary of the old conversation\n\n## The person's latest messages, as they wrote them\n\n"
-            + "\n\n---\n\n".join(latest)
+        # The model's summary, then the person's latest messages as they wrote them: newest first up to a quarter of
+        # the request budget (976 tokens: 244 of four characters), the one across that line cut, put back in order.
+        summary, latest = metadata["_last_summary"]["text"].split(
+            "\n\n## The person's latest messages, as they wrote them\n\n"
         )
+        assert summary == "summary of the old conversation"
+        kept = latest.split("\n\n---\n\n")
+        assert kept[-4:] == [f"question {index} " + "x" * 300 for index in (3, 4, 5)] + ["a new question"]
+        assert kept[0].startswith("question 2") and len(kept[0]) < len("question 2 " + "x" * 300)
+        assert len(kept) == 5
         boundary = metadata["last_consolidated"]
         # The old messages and the opening message the model was asked about are before the
         # marker, the answer it then gave is after it.

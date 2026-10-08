@@ -28,9 +28,9 @@ from typing import Any, Literal, Protocol, cast
 from loguru import logger
 
 from nanobot.agent.context import ContextBuilder, TranscriptInput
-from nanobot.agent.context_governance import ContextWindowExceededError
+from nanobot.agent.context_governance import ContextWindowExceededError, prompt_budget
 from nanobot.agent.hook import AgentHook, AgentHookContext, AgentRunHookContext
-from nanobot.agent.memory import Consolidator
+from nanobot.agent.memory import Consolidator, recent_user_message_tokens
 from nanobot.agent.runner import AgentRunner, AgentRunResult, AgentRunSpec
 from nanobot.agent.tools.context import RequestContext, bind_request_context, reset_request_context
 from nanobot.agent.tools.file_state import FileStateStore, bind_file_states, reset_file_states
@@ -349,6 +349,10 @@ class TurnRunner:
                 # The turn's own model sends the tools it was given, which keeps its prompt cache; another
                 # model may not take tool definitions at all.
                 tools=tools.get_definitions() if summary_model == settings.model_id else [],
+                # The summary goes into the requests of the turn's own model: what it keeps whole fits that window.
+                recent_user_tokens=recent_user_message_tokens(
+                    prompt_budget(runtime.context_window_tokens, runtime.generation.max_tokens)
+                ),
             ),
             injection_callback=self._injected if session_key == CHAT_SESSION_KEY else None,
             gate=self._gate,
