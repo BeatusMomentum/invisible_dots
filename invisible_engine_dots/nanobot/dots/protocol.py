@@ -278,7 +278,6 @@ class ModelConfig(_Open):
 
 class LimitsConfig(_Open):
     max_steps_per_task: PositiveInt
-    context_tokens: Annotated[int, Field(strict=True, ge=4000, le=1_000_000)]
     max_cost_per_task_usd: Annotated[float, Field(strict=True, gt=0)]
 
 

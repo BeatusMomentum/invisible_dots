@@ -1066,7 +1066,7 @@ model:
   provider: openrouter                 # the only accepted value
   id: z-ai/glm-5.3-flash               # any OpenRouter model id
 models:                                # optional per-role models, OpenRouter ids; the roles: summary
-  summary: openai/gpt-5-mini         # writes the summary when the thread outgrows limits.context_tokens
+  summary: openai/gpt-5-mini         # writes the summary when the thread outgrows the model's window (section 8.6)
 computer:
   cpu: 2                               # 1..16
   memory: 4gb                          # 2gb..64gb
@@ -1077,18 +1077,19 @@ permissions:                           # allow | ask | deny, keyed by permission
   browser.identity.delete: ask
 limits:
   max_steps_per_task: 60               # model turns before a task is failed
-  context_tokens: 32000                # prompt tokens a request may use, 4000..1000000 (section 8.6)
   max_cost_per_task_usd: 1.00          # USD of model spend of a task or a chat turn, 0.01..100; the last request may exceed it (section 8.2)
 ```
 
 A Dot has no goal: what it is for is what its person asks of it, in the chat, in a task or in its
 instructions. Nor does it have browser settings: it manages its identities itself, within the
-engine's limits (section 6). A config saved with either before (migrations `0010_dot_has_no_goal.sql`
-and `0011_dot_has_no_browser_settings.sql` take them out) is refused as an unknown key.
+engine's limits (section 6). Nor does it set any token limit: every request uses its model's own
+context window and longest answer, as OpenRouter publishes them (section 8.5). A config saved with
+any of these before (migrations `0010_dot_has_no_goal.sql`, `0011_dot_has_no_browser_settings.sql`
+and `0012_dot_has_no_context_tokens.sql` take them out) is refused as an unknown key.
 
 The ranges and defaults of the numbers in that file (`computer.cpu`, `memory`,
-`disk`, the default `idle_timeout`, `limits.max_cost_per_task_usd`,
-`limits.max_steps_per_task` and `limits.context_tokens`) are `CONFIG_BOUNDS` in
+`disk`, the default `idle_timeout`, `limits.max_cost_per_task_usd` and
+`limits.max_steps_per_task`) are `CONFIG_BOUNDS` in
 `packages/shared`. The schema takes its numbers from it and
 so does the web client's form, so a slider can never offer what the API refuses.
 
@@ -1260,30 +1261,57 @@ runs at most once. Section 8.8 says how the gate does this.
 tests never receives them), the key from memory (section 4.3). Tool calling in
 the OpenAI format, `tool_choice: "auto"`, every request streamed (with
 `stream_options.include_usage`, so the final chunk carries the usage and the
-cost, section 8.2). A response cut by the
-output limit (`finish_reason: "length"`) has none of its tool calls executed:
-what it said is stored without them and the model is asked to go on, a bounded
-number of times. Retries with exponential backoff on 429 and 5xx (at most 4
+cost, section 8.2).
+
+Every request uses the whole of what its model can do. The engine reads each
+model's limits once from OpenRouter's list of models (`GET /models`): the
+context window and the longest answer of the provider OpenRouter routes the
+model to by default (`top_provider`). A model OpenRouter does not list fails
+the turn in words; a router that publishes no limits gets none. Each request
+sends the longest answer as `max_tokens`, or what the window leaves after the
+prompt when that is less (OpenRouter refuses more, and without a `max_tokens`
+each provider applies a default of its own), so no answer is cut shorter than
+the model allows. A response cut there all the same (`finish_reason:
+"length"`) has none of its tool calls executed: what it said is stored without
+them and the model is asked to go on, a bounded number of times; a response cut
+before any text (the budget went to a call that never finished) is told that
+nothing ran and to do the work in smaller steps. Retries with exponential backoff on 429 and 5xx (at most 4
 attempts, honouring `Retry-After`). Tool results longer than 12000 characters
 are cut with a marker.
 
 ### 8.6 Memory
 
 - Working memory: the thread is append-only in the Dot's database; what is
-  sent is bounded by `limits.context_tokens`. Before every model request the
-  runner measures the request (the system prompt, the tool definitions and the
-  messages) against that budget less the room for the answer, and compacts it
-  when it does not fit: tool results the model has already processed become
-  placeholders, and the older part of the thread is replaced by a summary the
-  Dot's model writes (a mechanical digest when that fails). The summary is
-  stored with the session, at the boundary it covers, when the turn ends, and
-  the next request is the system prompt, the summary and the thread after it.
-  `models.summary` (section 7) names another model for the summary request.
-  That request goes through the same metered provider, so its real cost counts
-  toward the cap (section 8.2); it keeps `limits.context_tokens` as its window,
-  so the summary model needs a window at least that large; and it carries no
-  tool definitions, because a model other than the turn's may not accept them
-  (the turn's own model keeps sending them so that its prompt cache is reused).
+  sent is bounded only by the model's own context window (section 8.5). Before
+  every model request the runner measures the request (the system prompt, the
+  tool definitions and the messages; the provider's reported usage when it
+  matches) against that window less the room kept for the answer (20000
+  tokens, or the model's longest answer when shorter, opencode's rule), and
+  compacts it when it does not fit, in two steps:
+  1. old tool results are cleared: walking back from the newest, the first
+     40000 tokens of results stay, and the older ones become a short note
+     saying the tool can be called again, when that frees 20000 tokens or more.
+     The calls, the reasoning and every message stay as they are. This needs no
+     model call; on SWE-bench it costs half as much as a summary for the same
+     solve rate (JetBrains, "The Complexity Trap", arXiv 2508.21433);
+  2. only when the request still does not fit, the thread is replaced by a
+     summary its model writes: a handoff for the model that resumes the work
+     (Codex's framing, under the headings of OpenHands' summarizing prompt
+     plus the approvals and files of the Dot), after which the person's latest
+     messages are kept as they wrote them, newest first up to 20000 tokens
+     (Codex's rule). When the thread is too long for the summary model, its
+     oldest messages go first, each with the results of its calls; when the
+     model cannot summarize at all, the messages themselves, up to half of its
+     budget, are the summary.
+  The summary is stored with the session, at the boundary it covers, when the
+  turn ends, and the next request is the system prompt, the summary and the
+  thread after it. `models.summary` (section 7) names another model for the
+  summary request. That request goes through the same metered provider, so its
+  real cost counts toward the cap (section 8.2); it works within that model's
+  own window; and it carries no tool definitions, because a model other than
+  the turn's may not accept them (the turn's own model keeps sending them so
+  that its prompt cache is reused). `THIRD_PARTY_NOTICES.md` names the three
+  projects this takes from.
 - Long-term memory: notes, one file each, in `/home/dot/memory` on the Dot's
   computer, which the Dot keeps itself, as Claude Code keeps its own: nothing
   is set and nobody else writes them. The system prompt says where they are,
@@ -1465,8 +1493,8 @@ other engine owns the state.
   the zod schema), stored in `dots_kv` and projected in process
   (`projection.py`): the OpenRouter model id, the tools offered (those of the
   table whose permission is `allow` or `ask`, minus the memory tools when
-  memory is off), `max_steps_per_task` as the step limit, `context_tokens` as
-  the context budget, the 12000-character result cap, and the Dot's section of
+  memory is off), `max_steps_per_task` as the step limit, the 12000-character
+  result cap, and the Dot's section of
   the system prompt (its name and instructions, then nanobot's tool
   contract, a short note on its computer, the memory notes and the time).
   There is no config file, no installer and no sudo rule. The same config

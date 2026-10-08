@@ -31,9 +31,14 @@ precision = sum(e in KNOWN for e in edges) / len(edges)
 check(precision >= 0.7, f"documented influences ({precision:.0%} of the edges, 70% needed)")
 report = pathlib.Path("/app/report.md").read_text(encoding="utf-8")
 check(len(report.split()) >= 1500, f"at least 1500 words ({len(report.split())})")
-parts = re.split(r"(?m)^##\s+", report)[1:]
-titles = {p.splitlines()[0].strip() for p in parts}
-check(set(LANGUAGES) <= titles, f"a section per language (missing {sorted(set(LANGUAGES) - titles)})")
-check(all(re.search(r"https?://", p) for p in parts if p.splitlines()[0].strip() in LANGUAGES), "a source URL in each language's section")
+def language_of(heading):
+    # "C (1972)", "1. Python", "Go: ..." or "Swift - ..." name the language before the extras.
+    name = re.sub(r"^\d+[.)]\s*", "", heading.strip().strip("*_`"))
+    return re.split(r"\s+[(\[:|\u2013\u2014-]|:", name)[0].strip().strip("*_`")
+parts = re.split(r"(?m)^##+\s+", report)[1:]
+sections = {language_of(p.splitlines()[0]): p for p in parts}
+missing = sorted(set(LANGUAGES) - set(sections))
+check(not missing, f"a section per language (missing {missing}; headings {sorted(sections)[:30]})")
+check(all(re.search(r"https?://", sections[n]) for n in LANGUAGES), "a source URL in each language's section")
 domains = {re.sub(r"^www\.", "", d.lower()) for d in re.findall(r"https?://([^/\s)\]>]+)", report)}
 check(len(domains) >= 5, f"sources from at least five websites ({sorted(domains)})")

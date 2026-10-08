@@ -219,8 +219,6 @@ class TestRuntimeConfig:
             (lambda b: b.update(permissions={"files.read": "maybe"}), "permissions.files.read"),
             (lambda b: b["limits"].update(max_steps_per_task=0), "limits.max_steps_per_task"),
             (lambda b: b["limits"].update(max_steps_per_task=1.5), "limits.max_steps_per_task"),
-            (lambda b: b["limits"].update(context_tokens=3999), "limits.context_tokens"),
-            (lambda b: b["limits"].update(context_tokens=1_000_001), "limits.context_tokens"),
             (lambda b: b["limits"].update(max_cost_per_task_usd=0), "limits.max_cost_per_task_usd"),
             (lambda b: b["limits"].update(max_cost_per_task_usd=True), "limits.max_cost_per_task_usd"),
             (lambda b: b.pop("limits"), "limits"),
@@ -238,21 +236,27 @@ class TestRuntimeConfig:
             parse_runtime_config(body)
 
     def test_the_edges_of_the_limits_pass(self, config_body: Callable[..., dict[str, Any]]) -> None:
-        for tokens in (4000, 1_000_000):
-            body = config_body()
-            body["limits"]["context_tokens"] = tokens
-            assert parse_runtime_config(body).limits.context_tokens == tokens
         body = config_body()
         body["limits"]["max_cost_per_task_usd"] = 0.01
         assert parse_runtime_config(body).limits.max_cost_per_task_usd == 0.01
 
     def test_lists_every_problem(self, config_body: Callable[..., dict[str, Any]]) -> None:
         body = config_body(name="X", instructions=3)
-        body["limits"]["context_tokens"] = 1
+        body["limits"]["max_steps_per_task"] = 0
         with pytest.raises(DotsConfigError) as caught:
             parse_runtime_config(body)
-        for path in ("name:", "instructions:", "limits.context_tokens:"):
+        for path in ("name:", "instructions:", "limits.max_steps_per_task:"):
             assert path in str(caught.value)
+
+    def test_a_config_from_a_host_that_still_names_a_context_limit_is_taken_and_the_limit_is_not_a_setting(
+        self, config_body: Callable[..., dict[str, Any]]
+    ) -> None:
+        # A host of an earlier release pushed limits.context_tokens; the window is now the model's own.
+        body = config_body()
+        body["limits"]["context_tokens"] = 32000
+        limits = parse_runtime_config(body).limits
+        assert (limits.max_steps_per_task, limits.max_cost_per_task_usd) == (60, 1)
+        assert "context_tokens" not in type(limits).model_fields
 
     @pytest.mark.parametrize("value", [None, [], "config", 4])
     def test_refuses_what_is_not_an_object(self, value: object) -> None:
@@ -263,7 +267,7 @@ class TestRuntimeConfig:
         secret = "sk-or-this-must-not-appear"
         body = config_body(name=secret, instructions=1, permissions={"files.read": secret})
         body["model"]["provider"] = secret
-        body["limits"]["context_tokens"] = secret
+        body["limits"]["max_cost_per_task_usd"] = secret
         with pytest.raises(DotsConfigError) as caught:
             parse_runtime_config(body)
         assert secret not in str(caught.value)

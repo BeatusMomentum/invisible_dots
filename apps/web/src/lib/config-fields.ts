@@ -85,13 +85,6 @@ const SCALARS = {
     set: (c, v) => ({ ...c, limits: { ...c.limits, max_steps_per_task: Number(v) } }),
     show: shownPlain,
   },
-  "limits.context_tokens": {
-    label: "Context tokens",
-    applies: "turn",
-    get: (c) => c.limits.context_tokens,
-    set: (c, v) => ({ ...c, limits: { ...c.limits, context_tokens: Number(v) } }),
-    show: shownPlain,
-  },
   "limits.max_cost_per_task_usd": {
     label: "Spending cap per task",
     applies: "turn",

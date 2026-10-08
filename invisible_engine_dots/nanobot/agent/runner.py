@@ -592,7 +592,9 @@ class AgentRunner:
 
             if response.finish_reason == "error":
                 if LLMProvider.is_arrearage_response(response):
-                    final_content = _ARREARAGE_ERROR_MESSAGE
+                    # The provider's own words follow: how much the balance still allows, where to add credit.
+                    said = (clean or "").strip().removeprefix("Error:").strip()
+                    final_content = f"{_ARREARAGE_ERROR_MESSAGE} The provider said: {said}" if said else _ARREARAGE_ERROR_MESSAGE
                 else:
                     final_content = clean or _DEFAULT_ERROR_MESSAGE
                 stop_reason = "error"
@@ -697,6 +699,7 @@ class AgentRunner:
         messages: list[dict[str, Any]],
         *,
         tools: list[dict[str, Any]] | None,
+        answer_tokens: int | None,
     ) -> dict[str, Any]:
         kwargs: dict[str, Any] = {
             "messages": spec.request_attachments(messages) if spec.request_attachments else messages,
@@ -705,7 +708,8 @@ class AgentRunner:
         }
         generation = spec.runtime.generation
         kwargs["temperature"] = generation.temperature
-        kwargs["max_tokens"] = generation.max_tokens
+        # The model's longest answer within what its window leaves (ContextGovernor.answer_tokens).
+        kwargs["max_tokens"] = answer_tokens
         kwargs["reasoning_effort"] = generation.reasoning_effort
         return kwargs
 
@@ -730,6 +734,7 @@ class AgentRunner:
             spec,
             messages,
             tools=tool_definitions,
+            answer_tokens=request_state.answer_tokens,
         )
         provider_context = replace(
             provider_context or ProviderCallContext(),
@@ -897,6 +902,7 @@ class AgentRunner:
             spec,
             messages,
             tools=None,
+            answer_tokens=request_state.answer_tokens,
         )
         response = await spec.runtime.provider.chat_stream_with_retry(
             **kwargs,

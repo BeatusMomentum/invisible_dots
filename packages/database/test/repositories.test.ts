@@ -59,7 +59,23 @@ describe.each(testAdapters())("repositories on %s", { timeout: SETUP_TIMEOUT }, 
       "0009_dot_keeps_its_memory",
       "0010_dot_has_no_goal",
       "0011_dot_has_no_browser_settings",
+      "0012_dot_has_no_context_tokens",
     ]);
+  });
+
+  it("0012: a config saved with limits.context_tokens loses it and moves its version; the other limits stay; one without is left as it was", async () => {
+    const old = await seedDot(db, "alpha-context");
+    const untouched = await seedDot(db, "alpha-context-none");
+    await db.query(`UPDATE dots SET config = jsonb_set(config, '{limits,context_tokens}', '32000') WHERE id = $1`, [old.id]);
+    const sql = (await loadMigrations()).find((migration) => migration.version === "0012_dot_has_no_context_tokens")!.sql;
+
+    for (const statement of sql.split(/;\s*\n/).filter((part) => part.trim() !== "")) await db.query(statement);
+
+    const after = await db.dots.get(old.id);
+    expect("context_tokens" in after!.config.limits).toBe(false);
+    expect(after?.config).toEqual(old.config);
+    expect(after?.config_version).toBe(old.config_version + 1);
+    expect((await db.dots.get(untouched.id))?.config_version).toBe(untouched.config_version);
   });
 
   it("0011: a config saved with browser settings loses them and moves its version; one without is left as it was", async () => {

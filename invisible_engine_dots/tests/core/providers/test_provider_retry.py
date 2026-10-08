@@ -757,8 +757,8 @@ async def test_chat_stream_with_retry_retries_zhipu_1302_with_429_status(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_with_retry_normalizes_explicit_none_max_tokens() -> None:
-    """chat_stream_with_retry must apply the same None-guard as every other request."""
+async def test_chat_stream_with_retry_sends_no_answer_limit_when_none_is_known() -> None:
+    """An explicit None takes the provider's own setting, which sets no limit: the model's own maximum applies."""
     provider = ScriptedProvider([LLMResponse(content="ok")])
 
     response = await provider.chat_stream_with_retry(
@@ -768,5 +768,5 @@ async def test_chat_stream_with_retry_normalizes_explicit_none_max_tokens() -> N
     )
 
     assert response.content == "ok"
-    assert provider.last_kwargs["max_tokens"] == 4096
+    assert provider.last_kwargs["max_tokens"] is None
     assert provider.last_kwargs["temperature"] == 0.7

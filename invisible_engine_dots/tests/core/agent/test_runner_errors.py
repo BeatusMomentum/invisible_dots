@@ -146,8 +146,57 @@ async def test_llm_arrearage_error_surfaces_clear_message():
     ))
 
     assert result.stop_reason == "error"
-    assert result.final_content == _ARREARAGE_ERROR_MESSAGE
+    assert result.final_content == f"{_ARREARAGE_ERROR_MESSAGE} The provider said: HTTP 402 insufficient_quota"
     assert result.failure_error_kind == "billing"
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_for_credit_says_what_the_provider_said_after_the_explanation():
+    """OpenRouter's 402 says how much the balance still allows and where to add credit: the person reads it."""
+    from nanobot.agent.runner import _ARREARAGE_ERROR_MESSAGE, AgentRunner
+
+    said = (
+        "This request requires more credits, or fewer max_tokens. You requested up to 943715 tokens, "
+        "but can only afford 238409. To increase, visit https://openrouter.ai/settings/credits"
+    )
+    provider = MagicMock(spec=LLMProvider)
+    provider.chat_stream_with_retry = AsyncMock(return_value=LLMResponse(
+        content=f"Error: {said}", finish_reason="error", error_status_code=402,
+    ))
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+
+    result = await AgentRunner().run(make_run_spec(provider,
+        initial_messages=[{"role": "user", "content": "hello"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=5,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+    ))
+
+    assert result.final_content == f"{_ARREARAGE_ERROR_MESSAGE} The provider said: {said}"
+
+
+@pytest.mark.asyncio
+async def test_a_refusal_for_credit_with_no_text_says_the_explanation_alone():
+    from nanobot.agent.runner import _ARREARAGE_ERROR_MESSAGE, AgentRunner
+
+    provider = MagicMock(spec=LLMProvider)
+    provider.chat_stream_with_retry = AsyncMock(return_value=LLMResponse(
+        content="", finish_reason="error", error_status_code=402,
+    ))
+    tools = MagicMock()
+    tools.get_definitions.return_value = []
+
+    result = await AgentRunner().run(make_run_spec(provider,
+        initial_messages=[{"role": "user", "content": "hello"}],
+        tools=tools,
+        model="test-model",
+        max_iterations=5,
+        max_tool_result_chars=_MAX_TOOL_RESULT_CHARS,
+    ))
+
+    assert result.final_content == _ARREARAGE_ERROR_MESSAGE
 
 
 @pytest.mark.asyncio

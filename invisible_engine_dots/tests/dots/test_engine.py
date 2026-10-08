@@ -41,7 +41,7 @@ from nanobot.dots.engine import (
 )
 from nanobot.dots.protocol import PREPARE_SLEEP_TIMEOUT_S, DotsConfigError
 from nanobot.dots.transcript_outbox import CLOSED, CLOSED_INTERRUPTED, INBOUND_ID
-from nanobot.providers.base import LLMResponse
+from nanobot.providers.base import LLMResponse, ModelLimits
 
 CHAT = s.CHAT_SESSION_KEY
 MakeEngine = Callable[..., EngineHarness]
@@ -560,7 +560,7 @@ class TestTasks:
         assert h.engine.state == "IDLE"
 
     async def test_a_task_that_reaches_the_step_limit_fails_with_the_limit(self, make_engine: MakeEngine) -> None:
-        body = cfg(limits={"max_steps_per_task": 1, "context_tokens": 32000, "max_cost_per_task_usd": 1})
+        body = cfg(limits={"max_steps_per_task": 1, "max_cost_per_task_usd": 1})
         h = make_engine([calls(call("c1", "list_dir", path="."))])
         h.engine.start()
         h.configure(body)
@@ -575,7 +575,7 @@ class TestTasks:
     async def test_a_task_that_spent_the_cap_fails_with_what_it_spent_and_its_calls_are_closed(
         self, make_engine: MakeEngine
     ) -> None:
-        body = cfg(limits={"max_steps_per_task": 60, "context_tokens": 32000, "max_cost_per_task_usd": 1})
+        body = cfg(limits={"max_steps_per_task": 60, "max_cost_per_task_usd": 1})
         h = make_engine(
             [
                 calls(call("c1", "list_dir", path="."), cost=0.6),
@@ -598,7 +598,7 @@ class TestTasks:
         assert h.engine.state == "IDLE"
 
     async def test_a_chat_turn_that_spent_the_cap_answers_with_what_it_spent(self, make_engine: MakeEngine) -> None:
-        body = cfg(limits={"max_steps_per_task": 60, "context_tokens": 32000, "max_cost_per_task_usd": 0.01})
+        body = cfg(limits={"max_steps_per_task": 60, "max_cost_per_task_usd": 0.01})
         h = make_engine(
             [calls(call("c1", "list_dir", path="."), cost=0.006), calls(call("c2", "list_dir", path="."), cost=0.006)]
         )
@@ -619,7 +619,7 @@ class TestTasks:
         assert h.inbound_state("m1") == "applied"
 
     async def test_the_cap_still_holds_for_a_task_after_the_process_was_killed(self, make_engine: MakeEngine) -> None:
-        body = cfg(limits={"max_steps_per_task": 60, "context_tokens": 32000, "max_cost_per_task_usd": 1})
+        body = cfg(limits={"max_steps_per_task": 60, "max_cost_per_task_usd": 1})
         h = make_engine(
             [
                 calls(call("c1", "exec", command="sleep 30"), cost=0.6),
@@ -853,12 +853,11 @@ class TestConfig:
             monkeypatch.setattr(f"{module}.estimate_prompt_tokens_chain", four_characters_a_token)
 
         def small_window(role_model: str) -> dict[str, Any]:
-            limits = {"max_steps_per_task": 60, "context_tokens": 6000, "max_cost_per_task_usd": 1}
-            return cfg(limits=limits, models={"summary": role_model})
+            return cfg(models={"summary": role_model})
 
         def outgrow_the_window() -> None:
-            # Over the request budget (3976 tokens) and inside what the summary may read (5000), the second
-            # time with the summary of the first turn in it.
+            # Over the request budget of a 6000 token window (3976 tokens), the second time with the summary of
+            # the first turn in it.
             old: list[dict[str, Any]] = []
             for index in range(11):
                 old += [
@@ -869,6 +868,7 @@ class TestConfig:
 
         gate = Gate()
         h = make_engine([gate.holds(says("summary one")), says("one"), says("summary two"), says("two")])
+        h.provider.default_limits = ModelLimits(context_tokens=6000, answer_tokens=1000)
         h.engine.start()
         h.configure(small_window("first/summarizer"))
         outgrow_the_window()

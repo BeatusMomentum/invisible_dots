@@ -189,17 +189,25 @@ class Handler(BaseHTTPRequestHandler):
                     },
                 )
         if self.command == "GET" and "/models" in self.path:
+            # Each model with the window and the longest answer of its default provider, which the engine reads
+            # its limits from. smoke/small's window is small enough for a thread of the run to outgrow it.
+            def model(model_id: str, window: int, answer: int) -> dict:
+                return {
+                    "id": model_id,
+                    "name": "stand-in",
+                    "context_length": window,
+                    "top_provider": {"context_length": window, "max_completion_tokens": answer},
+                    "pricing": {"prompt": "0", "completion": "0"},
+                    "supported_parameters": ["tools", "tool_choice", "max_tokens"],
+                }
+
             self._send_json(
                 200,
                 {
                     "data": [
-                        {
-                            "id": "openai/gpt-4o-mini",
-                            "name": "stand-in",
-                            "context_length": 128000,
-                            "pricing": {"prompt": "0", "completion": "0"},
-                            "supported_parameters": ["tools", "tool_choice"],
-                        }
+                        model("openai/gpt-4o-mini", 128000, 16384),
+                        model("smoke/small", 8000, 4096),
+                        model("smoke/summarizer", 8000, 4096),
                     ]
                 },
             )

@@ -38,6 +38,7 @@ from nanobot.session.summary import (
     SessionSummaryCheckpoint,
 )
 from nanobot.utils.helpers import (
+    estimate_message_tokens,
     estimate_prompt_tokens_chain,
     maybe_persist_tool_result,
     truncate_text,
@@ -62,9 +63,41 @@ ProviderCompactionConsolidator = Callable[
 # read_file has its own bound; exempt it to avoid persist->read->persist loops.
 TOOL_RESULT_OFFLOAD_EXEMPT_TOOLS = frozenset({"read_file"})
 BACKFILL_CONTENT = "[Tool result unavailable - call was interrupted or lost]"
+# A request is compacted only when it reaches its model's own window, less the room kept for the answer: 20000
+# tokens, or the model's longest answer when that is shorter (opencode's rule, MIT:
+# github.com/anomalyco/opencode, packages/opencode/src/session/overflow.ts).
+ANSWER_ROOM_TOKENS = 20_000
+# Compacting starts by clearing old tool results, which needs no model call and, measured on SWE-bench, costs
+# half as much as summarizing for the same solve rate (JetBrains, "The Complexity Trap", arXiv 2508.21433). The
+# newest 40000 tokens of results stay, and the older ones are cleared only when that frees 20000 tokens or more
+# (opencode's PRUNE_PROTECT and PRUNE_MINIMUM). Unlike opencode, the results of the last user turns are not
+# kept whole: a task is one user turn, so that rule would never clear anything in the long work it is for.
+CLEAR_PROTECT_TOKENS = 40_000
+CLEAR_MINIMUM_TOKENS = 20_000
+CLEARED_TOOL_RESULT = "[Old tool result cleared to save context; call the tool again if you need it.]"
 PLACEHOLDER_TEXTS = frozenset({
     "[Previous assistant message omitted.]",
 })
+
+
+def prompt_budget(context_window_tokens: int | None, max_tokens: int | None) -> int:
+    """The tokens a prompt may take: the model's window less the room kept for the answer (ANSWER_ROOM_TOKENS, or
+    the model's longest answer when that is shorter) and the estimate's safety margin; 0 when the window is not
+    known, which leaves the request as it is."""
+    if not context_window_tokens:
+        return 0
+    answer_room = ANSWER_ROOM_TOKENS if max_tokens is None else min(ANSWER_ROOM_TOKENS, max_tokens)
+    return max(0, context_window_tokens - answer_room - CONTEXT_SAFETY_BUFFER)
+
+
+def answer_limit(context_window_tokens: int | None, max_tokens: int | None, prompt_tokens: int) -> int | None:
+    """The answer limit a request sends: the model's longest answer, or what its window leaves after the prompt
+    when that is less (a provider refuses more); None when the model publishes no longest answer."""
+    if max_tokens is None:
+        return None
+    if not context_window_tokens:
+        return max_tokens
+    return max(1, min(max_tokens, context_window_tokens - prompt_tokens - CONTEXT_SAFETY_BUFFER))
 
 
 class ContextWindowExceededError(RuntimeError):
@@ -206,6 +239,8 @@ class ModelRequestState:
     provider_compaction_applied: bool = False
     compacted_tool_results: set[str] = field(default_factory=set)
     events: EventSink = NO_EVENTS
+    # The answer limit of the request prepare_request prepared last (None: no limit is known, none is sent).
+    answer_tokens: int | None = None
 
 
 class ContextGovernor:
@@ -317,9 +352,33 @@ class ContextGovernor:
         request_context_tokens: int | None = None,
     ) -> tuple[int, str] | None:
         """Return the authoritative measurement when a request is pressured."""
+        measurement = self.measure_request(
+            config,
+            messages,
+            usage,
+            usage_matches_messages=usage_matches_messages,
+            tool_definitions=tool_definitions,
+            request_context_tokens=request_context_tokens,
+        )
+        return measurement if self._pressured(config, measurement) else None
+
+    def _pressured(self, config: ContextGovernanceConfig, measurement: tuple[int, str] | None) -> bool:
+        budget = self.input_budget(config)
+        return measurement is not None and not (budget > 0 and measurement[0] < budget)
+
+    def measure_request(
+        self,
+        config: ContextGovernanceConfig,
+        messages: list[dict[str, Any]],
+        usage: LLMUsage | None,
+        *,
+        usage_matches_messages: bool,
+        tool_definitions: list[dict[str, Any]] | None,
+        request_context_tokens: int | None = None,
+    ) -> tuple[int, str] | None:
+        """The prompt tokens of a request, from its authoritative source; None when the window is not known."""
         if not config.context_window_tokens:
             return None
-        budget = self.input_budget(config)
         if request_context_tokens is not None:
             measured = request_context_tokens
             source = "resumed provider state plus pending messages"
@@ -337,8 +396,6 @@ class ContextGovernor:
                 messages,
                 tool_definitions,
             )
-        if budget > 0 and measured < budget:
-            return None
         return measured, source
 
     @staticmethod
@@ -537,7 +594,7 @@ class ContextGovernor:
             and prepared == state.messages
             and tool_definitions == state.tool_definitions
         )
-        pressure = self.request_pressure(
+        measurement = self.measure_request(
             state.config,
             prepared,
             state.usage,
@@ -545,6 +602,9 @@ class ContextGovernor:
             tool_definitions=tool_definitions,
             request_context_tokens=request_context_tokens,
         )
+        pressure = measurement if self._pressured(state.config, measurement) else None
+        # The prompt the answer limit is figured from: this measurement, measured again if the request changes.
+        prompt_tokens = measurement[0] if measurement is not None else 0
         provider_context = (
             state.conversation.prepare_request(
                 transcript,
@@ -557,6 +617,27 @@ class ContextGovernor:
                 context_window_tokens=state.config.context_window_tokens,
             )
         )
+        if pressure is not None:
+            # First the cheap step: clear old tool results. When the request then fits, no summary is written.
+            cleared = self.clear_old_tool_results(prepared)
+            if cleared is not None:
+                measured = estimate_prompt_tokens_chain(
+                    state.config.provider, state.config.model, cleared, tool_definitions,
+                )
+                if measured[0] < self.input_budget(state.config):
+                    logger.info(
+                        "Cleared old tool results for {}: {} tokens before, {} after (budget {})",
+                        state.config.session_key or "default", pressure[0], measured[0],
+                        self.input_budget(state.config),
+                    )
+                    prepared = cleared
+                    pressure = None
+                    prompt_tokens = measured[0]
+                    state.conversation.replace_transcript(state.compaction.raw_messages)
+                    state.usage = None
+                    provider_context = state.conversation.independent_request_context(
+                        context_window_tokens=state.config.context_window_tokens,
+                    )
         if pressure is not None:
             input_budget = self.input_budget(state.config)
             if (
@@ -580,6 +661,9 @@ class ContextGovernor:
                     pressure,
                     tool_definitions=tool_definitions,
                 )
+                prompt_tokens = estimate_prompt_tokens_chain(
+                    state.config.provider, state.config.model, prepared, tool_definitions,
+                )[0]
                 provider_context = state.conversation.independent_request_context(
                     context_window_tokens=state.config.context_window_tokens,
                 )
@@ -589,23 +673,46 @@ class ContextGovernor:
             )
         state.messages = deepcopy(prepared)
         state.tool_definitions = deepcopy(tool_definitions)
+        state.answer_tokens = self.answer_tokens(state.config, prompt_tokens)
         return prepared, provider_context
 
     @staticmethod
     def input_budget(config: ContextGovernanceConfig) -> int:
-        if not config.context_window_tokens:
-            return 0
+        """The tokens a request's prompt may take before it is compacted (`prompt_budget`)."""
+        return prompt_budget(config.context_window_tokens, config.max_tokens)
 
-        provider_max_tokens = getattr(
-            getattr(config.provider, "generation", None),
-            "max_tokens",
-            4096,
-        )
-        max_output = config.max_tokens if isinstance(config.max_tokens, int) else (
-            provider_max_tokens if isinstance(provider_max_tokens, int) else 4096
-        )
-        budget = config.context_window_tokens - max_output - CONTEXT_SAFETY_BUFFER
-        return budget if budget > 0 else 0
+    @staticmethod
+    def answer_tokens(config: ContextGovernanceConfig, prompt_tokens: int) -> int | None:
+        """The answer limit a request sends (`answer_limit`)."""
+        return answer_limit(config.context_window_tokens, config.max_tokens, prompt_tokens)
+
+    @staticmethod
+    def clear_old_tool_results(messages: list[dict[str, Any]]) -> list[dict[str, Any]] | None:
+        """The request with its older tool results cleared, or None when that would free too little.
+
+        Walking back from the newest message, the first CLEAR_PROTECT_TOKENS tokens of tool results stay; every
+        older result is replaced by CLEARED_TOOL_RESULT when together they free CLEAR_MINIMUM_TOKENS or more. The
+        calls, the reasoning and every other message stay as they are, and a cleared result keeps its call id.
+        """
+        protected = 0
+        freed = 0
+        cleared: list[int] = []
+        for index in range(len(messages) - 1, -1, -1):
+            message = messages[index]
+            if message.get("role") != "tool" or message.get("content") == CLEARED_TOOL_RESULT:
+                continue
+            tokens = estimate_message_tokens(message)
+            if protected < CLEAR_PROTECT_TOKENS:
+                protected += tokens
+                continue
+            cleared.append(index)
+            freed += tokens
+        if freed < CLEAR_MINIMUM_TOKENS:
+            return None
+        updated = list(messages)
+        for index in cleared:
+            updated[index] = {**messages[index], "content": CLEARED_TOOL_RESULT}
+        return updated
 
     @staticmethod
     def normalize_tool_result(

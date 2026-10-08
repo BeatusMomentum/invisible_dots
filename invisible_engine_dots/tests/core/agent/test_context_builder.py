@@ -78,7 +78,9 @@ def test_a_session_summary_is_added_and_a_nothing_summary_is_not() -> None:
 
     assert prompt.endswith(
         "[Archived Context Summary]\n\n"
-        "Previous conversation summary (last active 2026-10-04T10:00:00+00:00):\n"
+        "Another model started this work and wrote this summary of it before its context was compacted "
+        "(last active 2026-10-04T10:00:00+00:00). The tools and files it used are still yours: "
+        "build on what it did and do not repeat work already done.\n\n"
         "the fares were checked"
     )
     nothing = {"text": "(nothing)", "last_active": "2026-10-04T10:00:00+00:00"}

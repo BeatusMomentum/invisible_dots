@@ -63,7 +63,10 @@ class ContextBuilder:
         if session_summary and session_summary["text"] != "(nothing)":
             parts.append(
                 "[Archived Context Summary]\n\n"
-                f"Previous conversation summary (last active {session_summary['last_active']}):\n"
+                # Codex's summary prefix (Apache-2.0: github.com/openai/codex, codex-rs/prompts/templates/compact).
+                "Another model started this work and wrote this summary of it before its context was compacted "
+                f"(last active {session_summary['last_active']}). The tools and files it used are still yours: "
+                "build on what it did and do not repeat work already done.\n\n"
                 f"{session_summary['text']}"
             )
         return "\n\n---\n\n".join(parts)

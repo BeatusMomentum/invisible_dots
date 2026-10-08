@@ -9,7 +9,6 @@
           "provider": "openrouter"
         },
         "limits": {
-          "context_tokens": 32000,
           "max_steps_per_task": 60,
           "max_cost_per_task_usd": 1
         },
@@ -40,7 +39,6 @@
           "provider": "openrouter"
         },
         "limits": {
-          "context_tokens": 64000,
           "max_steps_per_task": 30,
           "max_cost_per_task_usd": 2.5
         },

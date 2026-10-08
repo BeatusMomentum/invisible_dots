@@ -20,7 +20,13 @@ from collections.abc import Callable
 from copy import deepcopy
 from typing import Any
 
-from nanobot.providers.base import GenerationSettings, LLMProvider, LLMResponse, ToolCallRequest
+from nanobot.providers.base import (
+    GenerationSettings,
+    LLMProvider,
+    LLMResponse,
+    ModelLimits,
+    ToolCallRequest,
+)
 
 ScriptEntry = LLMResponse | BaseException | Callable[["ScriptedProvider"], Any]
 
@@ -72,6 +78,9 @@ class ScriptedProvider(LLMProvider):
         # The ProviderCallContext of each request, kept apart from `requests`, which tests serialize.
         self.contexts: list[Any] = []
         self.generation = GenerationSettings(max_tokens=max_tokens)
+        # What the stand-in publishes for every model (a test changes it, or names a model's own in `limits`).
+        self.default_limits = ModelLimits(context_tokens=32_000, answer_tokens=max_tokens)
+        self.limits: dict[str, ModelLimits] = {}
 
     async def chat_stream(self, *args: Any, **kwargs: Any) -> LLMResponse:
         raise AssertionError("the runner asks through chat_stream_with_retry")
@@ -79,12 +88,16 @@ class ScriptedProvider(LLMProvider):
     def get_default_model(self) -> str:
         return "scripted/model"
 
+    async def model_limits(self, model: str) -> ModelLimits:
+        return self.limits.get(model, self.default_limits)
+
     async def chat_stream_with_retry(self, **kwargs: Any) -> LLMResponse:  # type: ignore[override]
         self.requests.append(
             {
                 "messages": deepcopy(kwargs["messages"]),
                 "tools": deepcopy(kwargs.get("tools")),
                 "model": kwargs.get("model"),
+                "max_tokens": kwargs.get("max_tokens"),
             }
         )
         self.contexts.append(kwargs.get("provider_context"))

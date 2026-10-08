@@ -109,7 +109,6 @@ export const CONFIG_BOUNDS = {
   idleTimeout: { default: "15m" },
   maxCostPerTaskUsd: { min: 0.01, max: 100, default: 1 },
   maxStepsPerTask: { min: 1, max: 1000, default: 60 },
-  contextTokens: { min: 4000, max: 1_000_000, default: 32_000 },
 } as const;
 
 export const DOT_NAME_PATTERN = /^[a-z0-9-]{1,40}$/;
@@ -160,7 +159,7 @@ const modelId = z
 /**
  * The roles a Dot's `models` map may name: the jobs the engine can give to a model other than `model.id`. The
  * list is closed because a role the engine never asks for would be a setting that does nothing. `summary` is the
- * model that writes the summary when the conversation outgrows `limits.context_tokens`. The engine keeps a copy
+ * model that writes the summary when the conversation outgrows the model's context window (section 8.6). The engine keeps a copy
  * in nanobot/dots/protocol.py, kept equal by tests/repo/vendored-nanobot.test.ts.
  */
 export const MODEL_ROLES = ["summary"] as const;
@@ -233,8 +232,6 @@ export const dotConfigSchema = z
     limits: z
       .object({
         max_steps_per_task: z.number().int().min(CONFIG_BOUNDS.maxStepsPerTask.min).max(CONFIG_BOUNDS.maxStepsPerTask.max).default(CONFIG_BOUNDS.maxStepsPerTask.default),
-        // Prompt tokens a request may use; what is sent is kept under it (section 8.6).
-        context_tokens: z.number().int().min(CONFIG_BOUNDS.contextTokens.min).max(CONFIG_BOUNDS.contextTokens.max).default(CONFIG_BOUNDS.contextTokens.default),
         // USD a task, or a chat turn, may spend on the model before it stops (section 8.2).
         max_cost_per_task_usd: z
           .number()
@@ -245,7 +242,6 @@ export const dotConfigSchema = z
       .strict()
       .default({
         max_steps_per_task: CONFIG_BOUNDS.maxStepsPerTask.default,
-        context_tokens: CONFIG_BOUNDS.contextTokens.default,
         max_cost_per_task_usd: CONFIG_BOUNDS.maxCostPerTaskUsd.default,
       }),
   })
