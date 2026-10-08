@@ -7,7 +7,7 @@ from nanobot.providers.openai_compat_provider import (
 from nanobot.providers.registry import OPENROUTER
 
 _DOT_HEADERS = {
-    "HTTP-Referer": "https://github.com/feder-cr/dots",
+    "HTTP-Referer": "https://github.com/feder-cr/invisible_dots",
     "X-Title": "invisible_dots",
 }
 

@@ -29,7 +29,7 @@ def test_the_provider_is_openrouters_with_the_key_the_model_and_the_default_base
     assert provider.default_model == "z-ai/glm-5.3-flash"
     assert provider._effective_base == "https://openrouter.ai/api/v1"
     # The Dot's attribution goes to openrouter.ai.
-    assert provider._default_headers["HTTP-Referer"] == "https://github.com/feder-cr/dots"
+    assert provider._default_headers["HTTP-Referer"] == "https://github.com/feder-cr/invisible_dots"
     assert provider._default_headers["X-Title"] == "invisible_dots"
 
 

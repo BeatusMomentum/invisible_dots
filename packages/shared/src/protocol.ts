@@ -48,10 +48,6 @@ export function truncateText(text: string, max: number = TOOL_RESULT_MAX_CHARS, 
   return text.slice(0, head) + marker(text.length - keep) + (tail > 0 ? text.slice(text.length - tail) : "");
 }
 
-export const OPENROUTER_CHAT_URL = "https://openrouter.ai/api/v1/chat/completions";
-export const OPENROUTER_REFERER = "https://github.com/feder-cr/dots";
-export const OPENROUTER_TITLE = "invisible_dots";
-
 export const DEFAULT_LISTEN = "127.0.0.1:8787";
 /** Where `invisible-dots server` serves the web client (section 9.7). */
 /**
