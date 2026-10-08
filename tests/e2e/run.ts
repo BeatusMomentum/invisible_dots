@@ -371,9 +371,14 @@ async function waitApproval(taskId: string, tool: string): Promise<Approval> {
   return approval;
 }
 
-async function approve(approvalId: string, note?: string): Promise<void> {
-  const done = await cli(["approve", approvalId, ...(note ? ["--note", note] : []), "--json"]);
+async function approve(approvalId: string, note?: string, options: { always?: boolean } = {}): Promise<void> {
+  const done = await cli(["approve", approvalId, ...(note ? ["--note", note] : []), ...(options.always ? ["--always"] : []), "--json"]);
   assert(done.code === 0, `invisible-dots approve exited with ${done.code}: ${done.stderr.trim()}`);
+}
+
+async function reject(approvalId: string, note: string): Promise<void> {
+  const done = await cli(["reject", approvalId, "--note", note, "--json"]);
+  assert(done.code === 0, `invisible-dots reject exited with ${done.code}: ${done.stderr.trim()}`);
 }
 
 async function sendMessage(text: string): Promise<string> {
@@ -834,7 +839,7 @@ async function main(): Promise<void> {
     return `desktop ${picture.width}x${picture.height} PNG, not blank; frame of ${research.id} ${size.width}x${size.height} JPEG (${jpeg.byteLength} bytes)${viaWeb}`;
   });
 
-  await step("g", "approval: files.write is ask, approve through the CLI", async () => {
+  await step("g", "approval: files.write is ask; approve, reject, and approve always through the CLI", async () => {
     const dotId = state.dotId!;
     await configure({ permissions: { "files.write": "ask" } });
     const task = await queueTask(`Write the text approved-write, and nothing else, into ${WORKSPACE}/approval.txt with the write_file tool, then answer with only DONE.`);
@@ -851,7 +856,33 @@ async function main(): Promise<void> {
     assert(all.some((e) => e.type === "approval.resolved" && e.data.approval_id === approval.id), "no approval.resolved event");
     assert(toolOk(all, task.id, "write_file"), `the approved write_file did not succeed (tools: ${describeTools(all, task.id)})`);
     assert((await guestText(dotId, `${WORKSPACE}/approval.txt`)) === "approved-write", "approval.txt does not hold exactly the approved text");
-    return `approval ${approval.id} approved; task ${task.id} COMPLETED; approval.txt holds exactly the approved text`;
+
+    // Rejected: the write never runs, and the task ends without the file.
+    const refused = await queueTask(`Write the text rejected-write into ${WORKSPACE}/rejected.txt with the write_file tool. If the user rejects it, do not try again or any other way: answer with only REJECTED.`);
+    const refusal = await waitApproval(refused.id, "write_file");
+    await reject(refusal.id, "not this file");
+    await waitFor(`task ${refused.id} to end after the rejection`, TIMEOUTS.task, async () => {
+      const task = await api<Task>("GET", route(ROUTES.task, { id: refused.id }));
+      return ENDED.includes(task.status) ? task : undefined;
+    }, 3000);
+    const afterRefusal = await events(dotId);
+    assert(afterRefusal.some((e) => e.type === "approval.resolved" && e.data.approval_id === refusal.id && e.data.decision === "reject"), "no approval.resolved reject event");
+    assert(!toolOk(afterRefusal, refused.id, "write_file"), `a rejected write_file ran (tools: ${describeTools(afterRefusal, refused.id)})`);
+    const absent = await guestExec(dotId, `test ! -e ${WORKSPACE}/rejected.txt && echo absent`);
+    assert(absent.stdout.trim() === "absent", "rejected.txt exists after its write was rejected");
+
+    // Approved always: this write runs, and the next one runs without asking.
+    const first = await queueTask(`Write the text always-write, and nothing else, into ${WORKSPACE}/always.txt with the write_file tool, then answer with only DONE.`);
+    const always = await waitApproval(first.id, "write_file");
+    await approve(always.id, undefined, { always: true });
+    await waitTask(first.id);
+    assert((await guestText(dotId, `${WORKSPACE}/always.txt`)) === "always-write", "always.txt does not hold exactly the approved text");
+    const next = await runTask(`Write the text after-always, and nothing else, into ${WORKSPACE}/after-always.txt with the write_file tool, then answer with only DONE.`);
+    const afterAlways = await events(dotId);
+    assert(!taskEvents(afterAlways, next.id).some((e) => e.type === "approval.requested"), "a write asked again after it was approved always");
+    assert(toolCalls(afterAlways, next.id, "write_file").some((e) => e.data.ok === true && e.data.decision === "allow"), `the write after always did not run as allowed (tools: ${describeTools(afterAlways, next.id)})`);
+    assert((await guestText(dotId, `${WORKSPACE}/after-always.txt`)) === "after-always", "after-always.txt does not hold exactly the text");
+    return `approval ${approval.id} approved, approval.txt holds exactly the approved text; ${refusal.id} rejected, nothing written; ${always.id} approved always, and the next write ran as allowed without asking`;
   });
 
   await step("h", "identities: no implicit launch, max_open evicts the least recently used, close and delete from the host", async () => {
