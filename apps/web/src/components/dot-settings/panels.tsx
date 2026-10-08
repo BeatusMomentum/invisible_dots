@@ -130,17 +130,6 @@ export function LimitsPanel({ draft, change, errorOf }: PanelProps) {
         hint="Model turns a task may take before it fails."
         error={errorOf("limits.max_steps_per_task")}
       />
-      <NumberField
-        id="set-context"
-        label="Context tokens"
-        min={CONFIG_BOUNDS.contextTokens.min}
-        max={CONFIG_BOUNDS.contextTokens.max}
-        step={1000}
-        value={limits.context_tokens}
-        onChange={(value) => change(setField(draft, "limits.context_tokens", value))}
-        hint="The most prompt a request may carry. When a conversation outgrows it, the older part is summarised."
-        error={errorOf("limits.context_tokens")}
-      />
     </Panel>
   );
 }

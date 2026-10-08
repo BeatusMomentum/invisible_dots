@@ -80,7 +80,7 @@ describe("the settings of a Dot", () => {
           instructions: "Write to the workspace.",
           models: { summary: "openai/gpt-5-mini" },
           computer: { cpu: 3, memory: "6gb", disk: "50gb", idle_timeout: "1h" },
-          limits: { max_steps_per_task: 30, context_tokens: 16_000, max_cost_per_task_usd: 0.5 },
+          limits: { max_steps_per_task: 30, max_cost_per_task_usd: 0.5 },
         }),
       }),
     ];
@@ -96,7 +96,8 @@ describe("the settings of a Dot", () => {
     expect((field("Sleep after") as HTMLSelectElement).value).toBe("1h");
     expect((field("Spending cap per task") as HTMLInputElement).value).toBe("0.5");
     expect((field("Steps per task") as HTMLInputElement).value).toBe("30");
-    expect((field("Context tokens") as HTMLInputElement).value).toBe("16000");
+    // The context window is the model's own: there is nothing to set.
+    expect(screen.queryByLabelText("Context tokens")).toBeNull();
     expect(screen.getByText(/The last request may go over/)).toBeTruthy();
     expect(screen.getByText("No changes.")).toBeTruthy();
     expect(reviewButton().disabled).toBe(true);
@@ -321,7 +322,6 @@ describe("the other settings", () => {
     await renderSettings();
     fireEvent.change(field("Spending cap per task"), { target: { value: "0.25" } });
     fireEvent.change(field("Steps per task"), { target: { value: "12" } });
-    fireEvent.change(field("Context tokens"), { target: { value: "8000" } });
     // Nothing is saved by the switches themselves: they edit the draft.
     expect(plane.updates).toEqual([]);
     await saveReviewed();
@@ -329,7 +329,7 @@ describe("the other settings", () => {
     const config = plane.updates[0]!.config as DotConfig;
     expect("memory" in config).toBe(false);
     expect("browser" in config).toBe(false);
-    expect(config.limits).toEqual({ max_steps_per_task: 12, context_tokens: 8000, max_cost_per_task_usd: 0.25 });
+    expect(config.limits).toEqual({ max_steps_per_task: 12, max_cost_per_task_usd: 0.25 });
   });
 
   it("says what is wrong with a setting where it is, and does not allow the save", async () => {

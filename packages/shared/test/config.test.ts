@@ -33,7 +33,6 @@ permissions:
   browser.identity.delete: ask
 limits:
   max_steps_per_task: 60
-  context_tokens: 32000
   max_cost_per_task_usd: 1.00
 `;
 
@@ -105,7 +104,7 @@ describe("parseDotConfig", () => {
       models: {},
       computer: { cpu: 2, memory: "4gb", disk: "40gb", idle_timeout: "15m" },
       permissions: {},
-      limits: { max_steps_per_task: 60, context_tokens: 32_000, max_cost_per_task_usd: 1 },
+      limits: { max_steps_per_task: 60, max_cost_per_task_usd: 1 },
     });
   });
 
@@ -231,7 +230,6 @@ describe("CONFIG_BOUNDS", () => {
     });
     expect(config.limits).toEqual({
       max_steps_per_task: CONFIG_BOUNDS.maxStepsPerTask.default,
-      context_tokens: CONFIG_BOUNDS.contextTokens.default,
       max_cost_per_task_usd: CONFIG_BOUNDS.maxCostPerTaskUsd.default,
     });
   });
@@ -255,14 +253,19 @@ describe("CONFIG_BOUNDS", () => {
     expect(safeParseDotConfig(withLimits({ max_cost_per_task_usd: maxCostPerTaskUsd.max + 1 })).ok).toBe(false);
   });
 
-  it("are the range of the step and context numbers too", () => {
-    const { maxStepsPerTask, contextTokens } = CONFIG_BOUNDS;
-    for (const [field, bounds] of [["max_steps_per_task", maxStepsPerTask], ["context_tokens", contextTokens]] as const) {
-      expect(safeParseDotConfig(withLimits({ [field]: bounds.min })).ok, `${field} min`).toBe(true);
-      expect(safeParseDotConfig(withLimits({ [field]: bounds.max })).ok, `${field} max`).toBe(true);
-      expect(safeParseDotConfig(withLimits({ [field]: bounds.min - 1 })).ok, `${field} below`).toBe(false);
-      expect(safeParseDotConfig(withLimits({ [field]: bounds.max + 1 })).ok, `${field} above`).toBe(false);
-    }
+  it("are the range of the step number too", () => {
+    const { maxStepsPerTask } = CONFIG_BOUNDS;
+    expect(safeParseDotConfig(withLimits({ max_steps_per_task: maxStepsPerTask.min })).ok).toBe(true);
+    expect(safeParseDotConfig(withLimits({ max_steps_per_task: maxStepsPerTask.max })).ok).toBe(true);
+    expect(safeParseDotConfig(withLimits({ max_steps_per_task: maxStepsPerTask.min - 1 })).ok).toBe(false);
+    expect(safeParseDotConfig(withLimits({ max_steps_per_task: maxStepsPerTask.max + 1 })).ok).toBe(false);
+  });
+
+  it("set no token limit: the model's own context window and answer length are used, so a config naming one is refused", () => {
+    expect(CONFIG_BOUNDS).not.toHaveProperty("contextTokens");
+    expect(parseDotConfig(MINIMAL).limits).not.toHaveProperty("context_tokens");
+    const refused = safeParseDotConfig(withLimits({ context_tokens: 32_000 }));
+    expect(refused.ok).toBe(false);
   });
 });
 

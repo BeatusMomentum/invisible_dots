@@ -7,7 +7,7 @@ export interface PanelProps {
   /** The config as the host has it: what the person is editing from. */
   saved: DotConfig;
   change: (next: DotConfig) => void;
-  /** The schema's complaint about a config path (`limits.context_tokens`), or null. */
+  /** The schema's complaint about a config path (`limits.max_steps_per_task`), or null. */
   errorOf: (path: string) => string | null;
 }
 

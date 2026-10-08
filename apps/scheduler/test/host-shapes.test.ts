@@ -37,7 +37,6 @@ permissions:
   files.write: ask
 limits:
   max_steps_per_task: 30
-  context_tokens: 64000
   max_cost_per_task_usd: 2.5
 `;
 
