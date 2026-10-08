@@ -1117,6 +1117,16 @@ def return_approval_run(conn: sqlite3.Connection, session_key: str, tool_call_id
     return cursor.rowcount == 1
 
 
+def end_waiting_approvals(conn: sqlite3.Connection, session_key: str) -> int:
+    """The calls of `session_key` still waiting for a decision end undecided: its task was cancelled, and the
+    host expires their approvals, so no decision will come."""
+    cursor = conn.execute(
+        "UPDATE dots_approvals SET status = 'done' WHERE session_key = ? AND status = 'pending'",
+        (session_key,),
+    )
+    return cursor.rowcount
+
+
 def end_approval_telling(conn: sqlite3.Connection, session_key: str) -> bool:
     """The turn that told `session_key` of a decision gave its final answer: the approval is done."""
     cursor = conn.execute(

@@ -1159,6 +1159,48 @@ class TestApprovals:
         assert h.approval(approval_id).status == "done"
         assert h.asked() == 0
 
+    async def test_a_task_cancelled_while_its_call_waits_leaves_no_approval_waiting(
+        self, make_engine: MakeEngine
+    ) -> None:
+        # The host expires the approval of a cancelled task, so no decision for it ever arrives.
+        h = started(
+            make_engine([calls(call("c1", "write_file", path="b.txt", content="y")), says("hi")]),
+            {**ALLOW_ALL, "files.write": "ask"},
+        )
+        h.engine.accept(task_created("a"))
+        await h.idle()
+        (approval,) = h.pending_approvals()
+
+        assert h.states()[-1] == "WAITING_APPROVAL"
+
+        h.engine.accept(task_cancelled("a"))
+        await h.idle()
+
+        # Idle again, so the host shows the Dot ready and may put it to sleep.
+        assert h.approval(approval.approval_id).status == "done"
+        assert h.engine.state_answer().pending_approval is None
+        assert h.states()[-1] == "IDLE"
+        h.engine.accept(user_message("m1"))
+        await h.idle()
+        assert h.states()[-1] == "IDLE"
+        assert not (h.tmp_path / "home" / "dot" / "workspace" / "b.txt").exists()
+
+    async def test_a_task_cancelled_while_another_call_waits_keeps_the_agent_waiting(
+        self, make_engine: MakeEngine
+    ) -> None:
+        h = make_engine([])
+        h.store.write(lambda c: s.enqueue_task(c, task_id="a", description="x", priority=0))
+        h.store.write(lambda c: s.start_task(c, "a"))
+        park(h, s.task_session_key("a"), "a")
+        kept = park(h, CHAT, None, call_id="call-2")
+        h.engine.start()
+        h.store.write(lambda c: s.record_agent_state(c, "WAITING_APPROVAL"))
+
+        h.engine.accept(task_cancelled("a"))
+
+        assert [a.approval_id for a in h.pending_approvals()] == [kept]
+        assert h.engine.state == "WAITING_APPROVAL"
+
     async def test_after_a_stop_ends_an_approval_whose_call_was_running_and_tells_a_cut_turn_again(
         self, make_engine: MakeEngine
     ) -> None:

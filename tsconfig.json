@@ -13,7 +13,8 @@
     "guest/image-builder/src/**/*.ts",
     "guest/image-builder/test/**/*.ts",
     "tests/repo/**/*.ts",
-    "tests/e2e/**/*.ts"
+    "tests/e2e/**/*.ts",
+    "tests/bench/**/*.ts"
   ],
   "exclude": ["node_modules", "apps/web", "invisible_engine_dots"]
 }

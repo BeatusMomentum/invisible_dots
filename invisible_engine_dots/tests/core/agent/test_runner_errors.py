@@ -327,7 +327,7 @@ async def test_length_finish_with_blank_content_routes_to_length_recovery():
     exhaustion.
     """
     from nanobot.agent.runner import AgentRunner
-    from nanobot.utils.runtime import LENGTH_RECOVERY_PROMPT
+    from nanobot.utils.runtime import UNFINISHED_LENGTH_RECOVERY_PROMPT as LENGTH_RECOVERY_PROMPT
 
     provider = MagicMock(spec=LLMProvider)
     # First call: truncated (length) with blank content and a dropped tool call.

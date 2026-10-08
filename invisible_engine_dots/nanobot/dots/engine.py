@@ -373,8 +373,16 @@ class Engine:
                 task = dots_store.get_task(conn, task_id) if task_id else None
                 if task is None or not dots_store.finish_task(conn, task_id, "cancelled"):
                     logger.warning("cancel for a task that is unknown or already finished; ignored task_id={}", task_id)
-                elif task.status == "running":
-                    cancel_session.append(task.session_key)
+                else:
+                    if (
+                        dots_store.end_waiting_approvals(conn, task.session_key)
+                        and dots_store.read_kv(conn, dots_store.KV_AGENT_STATE) == "WAITING_APPROVAL"
+                        and not dots_store.list_approvals(conn, "pending")
+                    ):
+                        # Nothing runs while the agent waits: with nothing left to wait for, it is idle.
+                        dots_store.record_agent_state(conn, "IDLE")
+                    if task.status == "running":
+                        cancel_session.append(task.session_key)
             return True
 
         if not self._store.write(apply):

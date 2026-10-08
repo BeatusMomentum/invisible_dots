@@ -43,7 +43,7 @@ tested by `tests/repo/e2e.test.ts` on every push:
 | d | a Dot created from YAML (`invisible-dots create`) is READY; its `qemu.json` matches the computer record; `doctor` exits 0; a chat message gets a reply that reports its `spent_usd`; the engine's own state, read through dot-agentd's proxy, is IDLE |
 | e | one task: create the browser identity `research`, launch it **explicitly**, open https://example.com, read the page's title with `browser_snapshot`, write it to `/home/dot/workspace/title.txt` and to the memory note `/home/dot/memory/example-title.md`. Proved by the events (`browser.identity.created` and `launched`, launch before navigate, each `tool.called` under the permission of its table row with its `target`, `task.progress` before `task.completed`), the identity list (open, profile under `/home/dot/browsers`), the file's SHA-256 computed in the guest by the Dot's own exec tool and compared with that of `Example Domain`, the same two files read through dot-agentd, and the spend: on `task.completed`, on the task record and in `GET /api/dots/:id/usage`, above zero and in agreement |
 | f | `GET .../computer/screenshot` returns a PNG that is not blank; `GET .../browser-identities/:id/frame` returns a JPEG of the open identity, directly and through the web client's proxy |
-| g | with `files.write: ask`, a task stops at `approval.requested` (the file does not exist yet, the engine holds the same approval), `invisible-dots approve` releases it, and the file holds exactly what was approved |
+| g | with `files.write: ask`, a task stops at `approval.requested` (the file does not exist yet, the engine holds the same approval), `invisible-dots approve` releases it, and the file holds exactly what was approved; `invisible-dots reject` keeps another write from running; `invisible-dots approve --always` lets a third run, and the next write runs as allowed without asking |
 | h | with four identities and the engine's `max_open` of 3: a page tool on an identity that is not open fails and opens nothing (no implicit launch); the fourth explicit launch closes the least recently used one (`browser.identity.closed`) and the browser servers running in the guest are exactly the open identities; the host's `POST .../close` keeps the profile and the frame then answers `409 not_open`; the host's `DELETE` of an open identity closes it, then deletes it, and its directory is gone; no browser server is left |
 | i | with `browser.identity.create` and `browser.identity.delete` on ask: the create approval shows the proxy masked (`***`, with no user, password or host), the host lists the identity as having a proxy and says no more, nothing exists before the approval, the delete approval names the identity and its directory is still there until approved; the password is in no approval, identity record or call event, and not in the guest's journal |
 | j | the server restarts and adopts the running VM (same pid, browser still open); `invisible-dots computer stop` reaches STOPPED with QEMU gone, through the guest's own poweroff (`computer.stopped` says `forced: false`, in well under the 60 s after which QEMU is killed); the open browser was closed on the way down (`browser.identity.closed`); `start` reaches READY with no browser server running; the identity is launched again and its `.stealth-identity.json` is unchanged (by SHA-256); `title.txt`, the note, a `grep` that finds it, and the conversation are all still there; the guest's whole system journal, read inside the guest, holds no OpenRouter key |
@@ -185,6 +185,36 @@ lasts. Remove everything afterwards with `docker rm -f idots-e2e` and
 `docker volume rm idots-e2e-home idots-e2e-work`. Do remove the home volume:
 it holds `config/master.key` next to the database in which the key is stored
 encrypted under it, so whoever can read the volume can decrypt the key.
+
+## The scale run
+
+`scale.ts` loads one host with Dots, on real VMs, through the same outside
+driver (`driver.ts`). For each level of N Dots (default 1, 2, 4, 8) it creates
+the N at once, waits until every one is READY, sends each a chat message,
+gives each a task that runs a command in its computer and reads the result
+back from the guest, then deletes them all. Meanwhile it samples `/api/health`
+and `/api/dots` four times a second, and the host's available memory and the
+QEMU processes' memory every two seconds. A level passes when every Dot came
+up, answered and did its task, and:
+
+| Budget | Default |
+|---|---|
+| the API's 95th percentile | under `SCALE_HEALTH_P95_MS` (500 ms) |
+| READY, a reply and a task at the 95th percentile | within `SCALE_RATIO` (3) times the same with one Dot, plus 30 s |
+| the host's available memory | above `SCALE_MIN_FREE_MB` (1024 MB) |
+
+The budgets are ratios to one Dot, so they measure how the host shares out,
+not how fast it is. Each Dot has 1 CPU and `SCALE_MEMORY` (2gb). It needs the
+images step b of the end-to-end run built in the same home:
+
+```bash
+docker exec -w /work/dots -e E2E_OPENROUTER_KEY_FILE=/run/secrets/openrouter \
+  -e E2E_LOG_DIR=/work/logs/scale idots-e2e node tests/e2e/scale.ts --levels 1,2,4,8
+```
+
+`summary.txt` has one line per level (READY, reply and task times at p50 and
+p95, the API's p95, the lowest available memory and the QEMU processes' total),
+`samples.json` every sample.
 
 ## Linux only
 

@@ -36,6 +36,7 @@ export const ROUTES = {
   dots: "/api/dots",
   dot: "/api/dots/:id",
   messages: "/api/dots/:id/messages",
+  tasks: "/api/dots/:id/tasks",
   task: "/api/tasks/:id",
   computer: "/api/dots/:id/computer",
   screenshot: "/api/dots/:id/computer/screenshot",
@@ -52,10 +53,13 @@ export const ROUTES = {
 export const ROUTE_CALLS: readonly (readonly [string, string])[] = [
   ["GET", ROUTES.health],
   ["GET", ROUTES.dots],
+  ["POST", ROUTES.dots],
   ["GET", ROUTES.dot],
   ["PATCH", ROUTES.dot],
   ["DELETE", ROUTES.dot],
   ["GET", ROUTES.messages],
+  ["POST", ROUTES.messages],
+  ["POST", ROUTES.tasks],
   ["GET", ROUTES.task],
   ["GET", ROUTES.computer],
   ["GET", ROUTES.screenshot],
@@ -82,8 +86,8 @@ export function route(template: string, params: Record<string, string> = {}, que
 }
 
 /** The first word(s) of each `invisible-dots` command the run calls, and the flags it passes. */
-export const CLI_COMMANDS = ["doctor", "image build", "server", "secret openrouter", "create", "task", "message", "computer", "approve"] as const;
-export const CLI_FLAGS = ["--json", "--note", "--no-web"] as const;
+export const CLI_COMMANDS = ["doctor", "image build", "server", "secret openrouter", "create", "task", "message", "computer", "approve", "reject"] as const;
+export const CLI_FLAGS = ["--json", "--note", "--always", "--no-web"] as const;
 
 /** The Dot's tools the run asserts on (nanobot/dots/permissions.py `TOOL_PERMISSIONS`), with the permission each exercises. */
 export const TOOLS = {
@@ -441,6 +445,8 @@ export interface DotYamlOptions {
   model: string;
   /** Permissions written into the config, as `permission: decision`. */
   permissions?: Record<string, "allow" | "ask" | "deny">;
+  /** The computer's size; 2 CPUs and 4gb when not given. */
+  computer?: { cpu: number; memory: string };
 }
 
 /** The Dot's config (architecture section 7) as YAML. */
@@ -454,8 +460,8 @@ export function dotYaml(options: DotYamlOptions): string {
     "  provider: openrouter",
     `  id: ${options.model}`,
     "computer:",
-    "  cpu: 2",
-    "  memory: 4gb",
+    `  cpu: ${options.computer?.cpu ?? 2}`,
+    `  memory: ${options.computer?.memory ?? "4gb"}`,
     "  idle_timeout: 0",
     ...(permissions.length > 0 ? ["permissions:", ...permissions.map(([permission, decision]) => `  ${permission}: ${decision}`)] : []),
     "",
