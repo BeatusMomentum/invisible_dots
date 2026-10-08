@@ -467,6 +467,9 @@ EOF""",
         for f in files:
             want = subprocess.run(["bash", "/app/summary.sh", f], capture_output=True, text=True).stdout
             got = subprocess.run(["python3", "/app/summary.py", f], capture_output=True, text=True, timeout=30).stdout
+            if got != want:
+                import difflib
+                print("".join(difflib.unified_diff(want.splitlines(True), got.splitlines(True), "summary.sh", "summary.py")))
             check(got == want, f"same output for {os.path.basename(f)}")
     """,
 )

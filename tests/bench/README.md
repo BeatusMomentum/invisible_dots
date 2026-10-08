@@ -48,6 +48,29 @@ expected answers are computed there, never by the agent). Each grader is
 The oracle of `automation-tick` cannot use the Dot's automations, which belong
 to the Dot: it writes the two lines the grader checks itself.
 
+## The long tasks
+
+`tasks-long/` holds five tasks of two to three hours (`author_long.py`, with
+the reference solutions in `references/`), where the Dot researches or builds
+something whole. Each is graded by checking the result itself, never by
+asking a model:
+
+| Task | What the Dot does | What the grader checks |
+|---|---|---|
+| `chess-perft` | a chess move generator, every rule included | the published perft counts of five positions at depth 4 and 5 (up to 4.9 million) and four positions it has not seen, each within 15 minutes |
+| `lisp-interpreter` | an interpreter for a Scheme subset | 30 programs it has not seen: closures, tail calls a million deep, recursion 5000 deep, errors, output format |
+| `kv-store` | a key-value database server over HTTP | the API, TTLs, 1000 writes from 20 clients at once, and every acknowledged write after a `kill -9` and a restart |
+| `language-history` | research on 18 programming languages, on the web | the years and creators (16 of 18 right), the best-known influences between them, a cited report of 1500 words from five websites |
+| `fraud-investigation` | an investigation of 292,467 generated card transactions | exactly the planted cases of four kinds of fraud, a script that finds them again, and a report with their numbers |
+
+They run with more room than the product's defaults:
+
+```bash
+docker exec -w /work/dots -e E2E_OPENROUTER_KEY_FILE=/run/secrets/openrouter \
+  -e BENCH_MAX_STEPS=1000 -e BENCH_MAX_COST_USD=10 idots-bench \
+  bash tests/bench/run.sh dot -p tests/bench/tasks-long -n 5
+```
+
 ## Running
 
 In the bench container: the end-to-end run's Linux host plus Python and

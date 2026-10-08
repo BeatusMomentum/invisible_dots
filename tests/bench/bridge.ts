@@ -9,6 +9,7 @@
  *   node tests/bench/bridge.ts create <name>             stdin: the Dot's YAML; waits for READY; {"id"}
  *   node tests/bench/bridge.ts delete <dot id>           waits until it is gone
  *   node tests/bench/bridge.ts task <dot id> <ms>        stdin: the description; waits for the end; the task
+ *   node tests/bench/bridge.ts events <dot id> [task id] the Dot's events, or one task's
  *   node tests/bench/bridge.ts exec <dot id> <ms>        stdin: a bash command, run as dot; its exit and output
  *   node tests/bench/bridge.ts put <dot id> <path>       stdin: the bytes of a file under /home/dot
  *   node tests/bench/bridge.ts get <dot id> <path>       stdout: the bytes of a file under /home/dot
@@ -87,6 +88,10 @@ switch (command) {
     print(ended);
     break;
   }
+  case "events":
+    // The Dot's events (of one task when a task id is given): what it did, kept with the trial's logs.
+    print((await product.events(target)).filter((e) => !extra || e.data.task_id === extra));
+    break;
   case "exec": {
     const result = await product.guestExec(target, (await stdin()).toString("utf8"), Number(extra));
     print(result);

@@ -9,6 +9,8 @@ and the Dot is told where it works.
 
 from __future__ import annotations
 
+import json
+
 from harbor.agents.base import BaseAgent
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
@@ -35,6 +37,9 @@ class DotAgent(BaseAgent):
         description = f"{map_paths(instruction)}\n\n(Work in {environment.workdir_path()} on your computer.)"
         # Harbor bounds the run with the task's agent timeout; the bridge cancels the task if it outlives it.
         task = await bridge.call("task", environment.dot_id, str(4 * 3600 * 1000), stdin=description.encode())
+        # What the Dot did (its calls, its progress, its answer), kept before the Dot is deleted.
+        events = await bridge.call("events", environment.dot_id, task["id"])
+        (self.logs_dir / "events.json").write_text(json.dumps(events, indent=1), encoding="utf-8")
         context.cost_usd = task.get("spent_usd")
         context.metadata = {
             "task_id": task.get("id"),
