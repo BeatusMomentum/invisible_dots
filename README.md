@@ -7,9 +7,7 @@
 </picture>
 </div>
 
-A **Dot** is a persistent AI agent with a QEMU virtual machine of its own, on your own PC. Its disk, files, memory,
-skills and browser logins outlast every task. You talk to it from a web UI, the command line, an HTTP API or
-Telegram, and it runs on any model on [OpenRouter](https://openrouter.ai), with your key.
+Open-source, self-hosted alternative to OpenAI Dots, Grok Bot. Built to be undetectable by anti-bot systems.
 
 ## Quickstart
 
