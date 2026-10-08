@@ -40,6 +40,10 @@ class DotAgent(BaseAgent):
         # What the Dot did (its calls, its progress, its answer), kept before the Dot is deleted.
         events = await bridge.call("events", environment.dot_id, task["id"])
         (self.logs_dir / "events.json").write_text(json.dumps(events, indent=1), encoding="utf-8")
+        if task.get("status") != "COMPLETED":
+            # Why it did not complete is in the engine's own log, which goes with the Dot.
+            journal = await environment.exec("journalctl -u invisible-dots-agent --no-pager -o cat | tail -n 2000")
+            (self.logs_dir / "engine.log").write_text(journal.stdout or journal.stderr or "", encoding="utf-8")
         context.cost_usd = task.get("spent_usd")
         context.metadata = {
             "task_id": task.get("id"),
