@@ -1255,7 +1255,7 @@ runs at most once. Section 8.8 says how the gate does this.
 ### 8.5 OpenRouter
 
 `POST https://openrouter.ai/api/v1/chat/completions` with
-`HTTP-Referer: https://github.com/feder-cr/dots` and `X-Title: invisible_dots`
+`HTTP-Referer: https://github.com/feder-cr/invisible_dots` and `X-Title: invisible_dots`
 (sent only when the base URL's host is `openrouter.ai`, so a stand-in used by
 tests never receives them), the key from memory (section 4.3). Tool calling in
 the OpenAI format, `tool_choice: "auto"`, every request streamed (with

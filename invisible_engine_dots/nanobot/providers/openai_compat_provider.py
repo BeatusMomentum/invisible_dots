@@ -49,7 +49,7 @@ _STANDARD_FN_KEYS = frozenset({"name", "arguments"})
 # The Dot's attribution on OpenRouter. This is the only place these two values live,
 # and they are sent only to an openrouter.ai base URL.
 _DEFAULT_OPENROUTER_HEADERS = {
-    "HTTP-Referer": "https://github.com/feder-cr/dots",
+    "HTTP-Referer": "https://github.com/feder-cr/invisible_dots",
     "X-Title": "invisible_dots",
 }
 _KIMI_K3_MODEL = "kimi-k3"

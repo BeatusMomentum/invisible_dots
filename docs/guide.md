@@ -589,7 +589,7 @@ it, and to whom:
 
 - **OpenRouter** gets the conversation, the tool results and what the Dot
   reads, under your key. Requests carry the headers
-  `HTTP-Referer: https://github.com/feder-cr/dots` and `X-Title: invisible_dots`.
+  `HTTP-Referer: https://github.com/feder-cr/invisible_dots` and `X-Title: invisible_dots`.
 - **Telegram and WhatsApp** carry the messages and approval prompts of a
   linked channel, and can read them. Link previews are off, so neither
   service fetches a link of a message on its own; a person who taps a link
