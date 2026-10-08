@@ -97,7 +97,7 @@ describe("the e2e run's contract with the product", () => {
   it("is TypeScript that Node runs as it is: every file of the runs strips to JavaScript", () => {
     // The runs are started with plain Node (type stripping), which refuses what only a compiler can turn
     // into JavaScript (a parameter property, an enum); the typecheck alone accepts those.
-    for (const file of ["tests/e2e/run.ts", "tests/e2e/scale.ts", "tests/e2e/driver.ts", "tests/e2e/lib.ts"]) {
+    for (const file of ["tests/e2e/run.ts", "tests/e2e/scale.ts", "tests/e2e/driver.ts", "tests/e2e/lib.ts", "tests/bench/bridge.ts"]) {
       expect(() => stripTypeScriptTypes(read(file)), file).not.toThrow();
     }
   });
