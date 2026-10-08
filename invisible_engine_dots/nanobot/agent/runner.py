@@ -592,7 +592,9 @@ class AgentRunner:
 
             if response.finish_reason == "error":
                 if LLMProvider.is_arrearage_response(response):
-                    final_content = _ARREARAGE_ERROR_MESSAGE
+                    # The provider's own words follow: how much the balance still allows, where to add credit.
+                    said = (clean or "").strip().removeprefix("Error:").strip()
+                    final_content = f"{_ARREARAGE_ERROR_MESSAGE} The provider said: {said}" if said else _ARREARAGE_ERROR_MESSAGE
                 else:
                     final_content = clean or _DEFAULT_ERROR_MESSAGE
                 stop_reason = "error"
