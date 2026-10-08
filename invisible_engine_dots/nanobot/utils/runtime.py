@@ -24,6 +24,14 @@ LENGTH_RECOVERY_PROMPT = (
     "existing text, recap, or apologize."
 )
 
+# A response cut before it had any text: the output budget went to a tool call that never finished, so there
+# is nothing to continue and the call did not run. Asked to continue, the model makes the same call again.
+UNFINISHED_LENGTH_RECOVERY_PROMPT = (
+    "The previous assistant response was cut off at the output limit before it finished, so none of it was "
+    "delivered and no tool call in it ran. Do that work again in smaller steps: for example, write a long file "
+    "as a first part and add the rest with further calls."
+)
+
 def empty_tool_result_message(tool_name: str) -> str:
     """Short prompt-safe marker for tools that completed without visible output."""
     return f"({tool_name} completed with no output)"
@@ -56,6 +64,8 @@ def build_finalization_retry_message() -> dict[str, str]:
 
 def build_length_recovery_message(content: str) -> dict[str, str]:
     """Prompt the model to continue after hitting output token limit."""
+    if is_blank_text(content):
+        return {"role": "user", "content": UNFINISHED_LENGTH_RECOVERY_PROMPT}
     tail = content[-_LENGTH_RECOVERY_TAIL_CHARS:]
     prompt = (
         f"{LENGTH_RECOVERY_PROMPT}\n\n"
