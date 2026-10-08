@@ -649,13 +649,14 @@ check "t9 fails with the cap's text after one more response: the spend survived 
 check "the failure of t9 reports the spend of both processes: spent_usd 1.2" "wait_event $STREAM '.type==\"task.failed\" and .data.task_id==\"t9\" and .data.spent_usd==1.2'"
 check "t9 asked the model twice in all: once before the kill, once after" "[ \"\$(grep -c 'REPEAT-EXEC sleep 4' /tmp/fake-tools.jsonl)\" = 2 ]"
 
-# --- models.summary: a thread that outgrows limits.context_tokens is summarized by the role's model ---
-# The window is 8000 tokens, the answer's room 4096 and the safety buffer 1024: a request over 2880 tokens is
-# compacted, and the summary of it may read 3904. Each of the five messages is about 900 tokens, so the thread
-# outgrows its request budget within them, while the summary's input still fits (a summary that does not fit is a
-# mechanical digest and asks no model). The stand-in answers each message with the same short text.
-echo '{"summary":"smoke/summarizer"}' > /tmp/models.json; echo 8000 > /tmp/context.json
-check "the host pushes a config with a summary model and an 8000 token window (204 204)" "[ \"\$(push)\" = '204 204' ]"
+# --- models.summary: a thread that outgrows its model's window is summarized by the role's model ---
+# smoke/small's window, as the stand-in publishes it, is 8000 tokens and its longest answer 4096, the room kept
+# for it; with the safety buffer of 1024 a request over 2880 tokens is compacted. The messages carry no tool result
+# to clear, so the summary model is asked; its own request has the same budget, and what does not fit of the thread
+# loses its oldest messages first. Each of the five messages is about 900 tokens, so the thread outgrows its budget
+# within them. The stand-in answers each message with the same short text.
+echo '{"summary":"smoke/summarizer"}' > /tmp/models.json; echo smoke/small > /tmp/model.txt
+check "the host pushes a config with a summary model and a model of an 8000 token window (204 204)" "[ \"\$(push)\" = '204 204' ]"
 LONG=$(yes 'alpha beta gamma delta epsilon zeta' | head -n 130 | tr '\n' ' ')
 for n in 1 2 3 4 5; do
   ev "msg-long-$n" user.message "{\"text\":\"$n $LONG\"}" >/dev/null
@@ -664,9 +665,9 @@ done
 check "the five long messages were answered" "wait_event $STREAM '.type==\"message.assistant\" and .data.in_reply_to==\"msg-long-5\"'"
 check "a request went to the summary role's model, with no tool in it" "jq -s -e 'any(.[]; .model==\"smoke/summarizer\" and (.tools|length)==0)' /tmp/fake-tools.jsonl >/dev/null"
 check "every request the summary role's model got was offered no tool (it never answers a turn)" "jq -s -e '[.[] | select(.model==\"smoke/summarizer\")] | length > 0 and all(.[]; (.tools|length)==0)' /tmp/fake-tools.jsonl >/dev/null"
-check "the turns themselves went to the Dot's own model, offered the tools of the permission map" "jq -s -e '[.[] | select(.model==\"openai/gpt-4o-mini\")] | length >= 5 and (last | .tools | index(\"exec\") != null)' /tmp/fake-tools.jsonl >/dev/null"
-echo '{}' > /tmp/models.json; echo 32000 > /tmp/context.json
-check "the host pushes the config without a summary model again (204 204)" "[ \"\$(push)\" = '204 204' ]"
+check "the turns themselves went to the Dot's own model, offered the tools of the permission map" "jq -s -e '[.[] | select(.model==\"smoke/small\")] | length >= 5 and (last | .tools | index(\"exec\") != null)' /tmp/fake-tools.jsonl >/dev/null"
+echo '{}' > /tmp/models.json; echo openai/gpt-4o-mini > /tmp/model.txt
+check "the host pushes the config without a summary model, with the usual model, again (204 204)" "[ \"\$(push)\" = '204 204' ]"
 
 # --- what the model is sent, read whole ---
 # Here, after the last model turn of the run, so the checks judge EVERY request:

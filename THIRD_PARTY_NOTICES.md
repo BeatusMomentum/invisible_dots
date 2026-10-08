@@ -81,6 +81,80 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## Context compaction (OpenHands, OpenAI Codex, opencode)
+
+How the engine compacts a request that reaches its model's context window
+(`invisible_engine_dots/nanobot/agent/context_governance.py`, `memory.py` and
+`templates/agent/consolidator_archive.md`) takes from three projects:
+
+- the headings of the summary (USER_CONTEXT, TASK_TRACKING, COMPLETED, PENDING,
+  CURRENT_STATE, CODE_STATE, TESTS, CHANGES, DEPS, VERSION_CONTROL_STATUS) from
+  the summarizing prompt of OpenHands' software-agent-sdk
+  (`openhands-sdk/openhands/sdk/context/condenser/prompts/summarizing_system.j2`);
+- the handoff framing of the summary and of the text that introduces it, the
+  person's latest messages kept as they wrote them up to 20000 tokens, and
+  dropping the oldest messages when the summary's own request does not fit,
+  from OpenAI Codex (`codex-rs/prompts/templates/compact/`,
+  `codex-rs/core/src/compact.rs`), under the Apache License 2.0
+  (https://www.apache.org/licenses/LICENSE-2.0), with this notice:
+
+```text
+OpenAI Codex
+Copyright 2025 OpenAI
+```
+
+- the room kept for the answer (20000 tokens) and the thresholds for clearing old
+  tool results (the newest 40000 tokens kept, 20000 freed at least) from
+  opencode (`packages/opencode/src/session/overflow.ts` and `compaction.ts`).
+
+```text
+MIT License
+
+Copyright (c) 2026 OpenHands contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+```text
+MIT License
+
+Copyright (c) 2025 opencode
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
 ## nanobot
 
 `invisible_engine_dots/` is imported from nanobot

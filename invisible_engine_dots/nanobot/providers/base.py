@@ -437,11 +437,25 @@ class LLMResponse:
 
 @dataclass(frozen=True)
 class GenerationSettings:
-    """Default generation settings."""
+    """Default generation settings.
+
+    ``max_tokens`` None sends no limit of our own: the answer may be as long as the model gives. A runtime sets
+    it to the model's published maximum (``ModelLimits``), which is sent so no provider default cuts it shorter.
+    """
 
     temperature: float = 0.7
-    max_tokens: int = 4096
+    max_tokens: int | None = None
     reasoning_effort: str | None = None
+
+
+@dataclass(frozen=True)
+class ModelLimits:
+    """What one request to a model can hold, as its provider publishes it: the context window (prompt and answer
+    together) and the longest answer. None where the provider publishes nothing (a router choosing the model
+    per request); then no limit is assumed and none is sent."""
+
+    context_tokens: int | None = None
+    answer_tokens: int | None = None
 
 
 _SYNTHETIC_USER_CONTENT = "(conversation continued)"
@@ -552,6 +566,10 @@ class LLMProvider(ABC):
     def supports_pre_request_compaction(self, model: str | None = None) -> bool:
         """Whether the provider enforces compaction_input_budget before generation."""
         return False
+
+    async def model_limits(self, model: str) -> ModelLimits:
+        """The limits `model` has at this provider; unknown for a provider that publishes none."""
+        return ModelLimits()
 
     @staticmethod
     def _sanitize_empty_content(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1005,7 +1023,7 @@ class LLMProvider(ABC):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         model: str | None = None,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
         temperature: float = 0.7,
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,

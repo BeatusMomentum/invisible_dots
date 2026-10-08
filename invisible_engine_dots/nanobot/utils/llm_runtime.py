@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from nanobot.providers.base import GenerationSettings, LLMProvider
+from nanobot.providers.base import GenerationSettings, LLMProvider, ModelLimits
 
 
 @dataclass(frozen=True, slots=True)
@@ -19,7 +19,8 @@ class LLMRuntime:
     provider: LLMProvider
     model: str
     generation: GenerationSettings
-    context_window_tokens: int
+    # The model's context window, prompt and answer together; None when it is not known.
+    context_window_tokens: int | None
     model_preset: str | None = None
 
     @classmethod
@@ -28,7 +29,7 @@ class LLMRuntime:
         provider: LLMProvider,
         model: str,
         *,
-        context_window_tokens: int,
+        context_window_tokens: int | None,
         model_preset: str | None = None,
     ) -> LLMRuntime:
         """Capture provider defaults without retaining mutable generation state."""
@@ -49,3 +50,10 @@ class LLMRuntime:
             context_window_tokens=context_window_tokens,
             model_preset=model_preset,
         )
+
+    @classmethod
+    def at_model_limits(cls, provider: LLMProvider, model: str, limits: ModelLimits) -> LLMRuntime:
+        """A runtime that uses the whole of what the model can do: its context window, and its longest answer
+        as the answer's limit on every request (sent, so no provider default cuts it shorter)."""
+        runtime = cls.capture(provider, model, context_window_tokens=limits.context_tokens)
+        return replace(runtime, generation=replace(runtime.generation, max_tokens=limits.answer_tokens))

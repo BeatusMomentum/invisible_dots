@@ -278,9 +278,16 @@ class FakeOpenRouter:
         await response.write(b"data: [DONE]\n\n")
         return response
 
+    async def _models(self, request: web.Request) -> web.Response:
+        # OpenRouter's list of models: each with the context window and the longest answer of the provider it
+        # routes to by default, which is what the engine reads its limits from.
+        model = {"id": "z-ai/glm-5.3-flash", "top_provider": {"context_length": 400_000, "max_completion_tokens": 128_000}}
+        return web.json_response({"data": [model]})
+
     async def start(self) -> None:
         app = web.Application()
         app.router.add_post("/api/v1/chat/completions", self._completions)
+        app.router.add_get("/api/v1/models", self._models)
         self.runner = web.AppRunner(app, access_log=None)
         await self.runner.setup()
         await web.TCPSite(self.runner, "127.0.0.1", self.port).start()
@@ -383,6 +390,8 @@ class TestTheEngineServed:
         assert request["body"]["model"] == "z-ai/glm-5.3-flash"
         assert "HTTP-Referer" not in request["headers"]
         assert "ping" in json.dumps(request["body"]["messages"])
+        # The answer may be as long as the model's own longest: the limit OpenRouter publishes for it is sent.
+        assert request["body"]["max_tokens"] == 128_000
         # The state is in the one database file, the key in none.
         state = Path(served.environment.state_dir)
         assert (state / "engine.sqlite").exists()

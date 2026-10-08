@@ -23,6 +23,7 @@ from nanobot.providers.base import (
     LLMProvider,
     LLMResponse,
     LLMUsage,
+    ModelLimits,
     ToolCallRequest,
     parse_tool_arguments,
     tool_arguments_json_for_replay,
@@ -386,6 +387,9 @@ class OpenAICompatProvider(LLMProvider):
         # to create (~700 ms on Windows). Defer until first use.
         self._client: AsyncOpenAIType | None = None
         self._client_lock = asyncio.Lock()
+        # The limits of every model the endpoint lists, read once (GET /models) when a request first needs them.
+        self._model_limits: dict[str, ModelLimits] | None = None
+        self._model_limits_lock = asyncio.Lock()
 
     def _build_client(self) -> None:
         """Create the OpenAI client using the current module-level AsyncOpenAI."""
@@ -590,7 +594,7 @@ class OpenAICompatProvider(LLMProvider):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
         model: str | None,
-        max_tokens: int,
+        max_tokens: int | None,
         temperature: float,
         reasoning_effort: str | None,
         tool_choice: str | dict[str, Any] | None,
@@ -610,10 +614,12 @@ class OpenAICompatProvider(LLMProvider):
         if self._supports_temperature(model_name, reasoning_effort):
             kwargs["temperature"] = temperature
 
-        if _requires_max_completion_tokens(model_name):
-            kwargs["max_completion_tokens"] = max(1, max_tokens)
-        else:
-            kwargs["max_tokens"] = max(1, max_tokens)
+        # No limit is sent when none is known: the model's own maximum applies.
+        if max_tokens is not None:
+            if _requires_max_completion_tokens(model_name):
+                kwargs["max_completion_tokens"] = max(1, max_tokens)
+            else:
+                kwargs["max_tokens"] = max(1, max_tokens)
 
         # Normalize reasoning_effort into a semantic form (OpenAI vocab)
         # used for internal decisions, and a wire form actually sent out.
@@ -1108,12 +1114,36 @@ class OpenAICompatProvider(LLMProvider):
     # Public API
     # ------------------------------------------------------------------
 
+    async def model_limits(self, model: str) -> ModelLimits:
+        """The limits the endpoint publishes for `model` (``GET /models``), read once per provider.
+
+        OpenRouter gives each model the context window and the longest answer of the provider it routes to by
+        default (``top_provider``); a model with none published there (a router) has unknown limits. A model the
+        endpoint does not list is an error: a request for it would fail too.
+        """
+        async with self._model_limits_lock:
+            if self._model_limits is None:
+                client = await self._ensure_client()
+                listed: dict[str, ModelLimits] = {}
+                async for item in client.models.list():
+                    top = (item.model_extra or {}).get("top_provider") or {}
+                    context, answer = top.get("context_length"), top.get("max_completion_tokens")
+                    listed[item.id] = ModelLimits(
+                        context_tokens=context if isinstance(context, int) and context > 0 else None,
+                        answer_tokens=answer if isinstance(answer, int) and answer > 0 else None,
+                    )
+                self._model_limits = listed
+        found = self._model_limits.get(model)
+        if found is None:
+            raise LookupError(f"{self.provider_name} does not list the model {model}")
+        return found
+
     async def chat_stream(
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         model: str | None = None,
-        max_tokens: int = 4096,
+        max_tokens: int | None = None,
         temperature: float = 0.7,
         reasoning_effort: str | None = None,
         tool_choice: str | dict[str, Any] | None = None,

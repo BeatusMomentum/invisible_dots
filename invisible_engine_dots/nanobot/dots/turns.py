@@ -23,7 +23,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import partial
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from loguru import logger
 
@@ -48,7 +48,7 @@ from nanobot.dots.secrets import KeyHolder
 from nanobot.dots.skills import all_skills
 from nanobot.dots.spend import CostCapReached, TurnSpend
 from nanobot.dots.store import CHAT_SESSION_KEY, DotStore, ToolIntent
-from nanobot.providers.base import ToolCallRequest
+from nanobot.providers.base import ModelLimits, ToolCallRequest
 from nanobot.session.manager import Session
 from nanobot.session.summary import session_summary_from_metadata
 from nanobot.utils.llm_runtime import LLMRuntime
@@ -257,11 +257,12 @@ class TurnRunner:
         except CostCapReached as exc:
             return TurnOutcome.failed(str(exc))
         except ContextWindowExceededError as exc:
-            # Said in words, with what to change: the error's own text ("6371/0 via tiktoken") reached the chat as it was.
+            # Said in words: the error's own text ("6371/0 via tiktoken") reached the chat as it was. The window is
+            # the model's own, so what is left to change is the model, or what the request carries.
             return TurnOutcome.failed(
-                f"the request needs {exc.estimated_tokens} tokens and limits.context_tokens "
-                f"({settings.context_window_tokens}) leaves {exc.input_budget} for it once the room for the answer is "
-                "kept; raise Context tokens in the Dot's settings"
+                f"the request needs {exc.estimated_tokens} tokens and the model {settings.model_id} takes "
+                f"{exc.input_budget} once the room for its answer is kept, even with the older part of the thread "
+                "summarised; choose a model with a larger context window"
             )
         except asyncio.CancelledError:
             raise
@@ -291,15 +292,12 @@ class TurnRunner:
             self._store, session_key, settings.max_cost_usd, "turn" if session_key == CHAT_SESSION_KEY else "task"
         )
         provider = spend.meter(self._providers.current(settings, self._key_holder.require()))
-        runtime = LLMRuntime.capture(
-            provider, settings.model_id, context_window_tokens=settings.context_window_tokens
-        )
+        # Every request uses the whole of what its model can do: its own context window and longest answer.
+        runtime = LLMRuntime.at_model_limits(provider, settings.model_id, await _limits_of(provider, settings.model_id))
         # The summary of an outgrown thread may be written by another model (the `summary` role), through
-        # the same metered provider, so its cost counts. Its window is the Dot's budget, not its own.
+        # the same metered provider, so its cost counts; it works within its own limits.
         summary_model = settings.model_for("summary")
-        summary_runtime = LLMRuntime.capture(
-            provider, summary_model, context_window_tokens=settings.context_window_tokens
-        )
+        summary_runtime = LLMRuntime.at_model_limits(provider, summary_model, await _limits_of(provider, summary_model))
         tools = self._base_registry.view(settings.offered_tools)
         # What the tools of this turn returned for the model to look at, and the transcript does not keep.
         images = TurnImages()
@@ -412,6 +410,14 @@ class TurnRunner:
             (entry for entry in entries or [] if entry.type == "file"), key=_mtime, reverse=True
         )
         return [entry.name for entry in notes[:MEMORY_NOTES_LISTED]]
+
+
+async def _limits_of(provider: Any, model: str) -> ModelLimits:
+    """The limits OpenRouter publishes for `model`; a turn cannot run without them."""
+    try:
+        return cast(ModelLimits, await provider.model_limits(model))
+    except Exception as exc:
+        raise RuntimeError(f"could not read the limits of the model {model} from OpenRouter: {exc}") from exc
 
 
 def _opening_message(opening: OpeningMessage) -> dict[str, Any]:

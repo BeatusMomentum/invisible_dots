@@ -1,42 +1,22 @@
-Create a compact replacement checkpoint for this session.
+You are performing a CONTEXT CHECKPOINT COMPACTION. Write a handoff summary for another model that will resume this work with only the system prompt and your summary: the conversation above will be gone.
 
-When `[Archived Context Summary]` appears in the system prompt, update that previous checkpoint to reflect the current conversation state.
+When `[Archived Context Summary]` appears in the system prompt, it is the previous checkpoint: carry into yours what still matters from it. What you leave out is lost; where it and the conversation disagree, the conversation wins.
 
-## Merge rules
+Track, under these headings (leave out a heading with nothing under it):
 
-- Use the latest correction or decision as the current version of a fact, and merge duplicates.
-- Preserve exact names, identifiers, paths, commands, decisions, results, and unresolved blockers when they are needed to continue the session.
-- Retain a fact already present in long-term memory when it is needed for session continuity.
+USER_CONTEXT: what the person asked for, their goals, preferences and clarifications, in short form; their constraints and any instruction about safety or security word for word.
+TASK_TRACKING: the active tasks with their ids and statuses, exactly as they were.
+COMPLETED: what is done, with its results.
+PENDING: what is still to be done.
+CURRENT_STATE: where the work stands now, and the next step.
+APPROVALS: calls that wait for the person's decision, or that were approved or refused, with their approval ids.
+FILES: the paths of the files read, created, changed or deleted, of the memory notes, and of anything saved to come back to.
 
-## What to retain
+For coding work, also:
+CODE_STATE: file paths, function signatures, data structures.
+TESTS: failing cases, error messages, outputs.
+CHANGES: the edits made.
+DEPS: dependencies, imports, external calls.
+VERSION_CONTROL_STATUS: the repository's state, branch, commits, pull requests.
 
-Always retain a compact working-state handoff:
-- active objective
-- current status
-- completed results that constrain later work
-- unresolved blockers
-- next action
-- exact identifiers needed for that action
-
-Mark working-state facts `[ephemeral]`.
-
-For other facts, retain a candidate only when it meets all four SNIP criteria:
-- Signal: remembering it saves the user from repeating it
-- Novel: it adds a distinct fact to this checkpoint
-- Important: losing it would cause rework or discard a preference or rule
-- Persistent: it is expected to remain useful for at least two weeks
-
-Assign each retained fact its best current mark:
-- `[permanent]` for core preferences, personal traits, and habits that remain relevant indefinitely
-- `[durable]` for technical discoveries, project knowledge, and configuration that remains valid for months
-- `[ephemeral]` for active task state and temporary decisions that may change within weeks
-- `[correction]` for the current fact that supersedes conflicting earlier long-term memory
-
-When space is limited, prioritize user corrections and preferences, then solutions, decisions, events, and environment facts.
-
-## Output
-
-Return one concise retained fact per line in this form:
-- [mark] fact
-
-Use `(nothing)` when neither the previous checkpoint nor the current conversation contains a qualifying fact or active working state.
+Keep exact file paths, identifiers, commands, URLs, error messages and numbers. Do not call a tool. Do not copy the person's latest messages: they are kept after your summary as they wrote them.

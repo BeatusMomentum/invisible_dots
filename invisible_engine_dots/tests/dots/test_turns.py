@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -26,7 +27,7 @@ from nanobot.dots.transcript_outbox import (
     INBOUND_ID,
 )
 from nanobot.dots.turns import OpeningMessage, TurnOutcome, TurnUnit
-from nanobot.providers.base import LLMResponse
+from nanobot.providers.base import LLMResponse, ModelLimits
 
 CHAT = s.CHAT_SESSION_KEY
 MakeHarness = Callable[..., Harness]
@@ -51,7 +52,7 @@ def outgrow_the_window(h: Harness, monkeypatch: pytest.MonkeyPatch) -> None:
 
     for module in ("nanobot.agent.context_governance", "nanobot.agent.memory"):
         monkeypatch.setattr(f"{module}.estimate_prompt_tokens_chain", four_characters_a_token)
-    h.settings_override = {"context_window_tokens": 2500}
+    h.provider.default_limits = replace(h.provider.default_limits, context_tokens=2500)
     old: list[dict[str, Any]] = []
     for index in range(6):
         old += [
@@ -191,7 +192,7 @@ class TestATaskTurn:
         assert [kind for kind, _ in h.events()] == ["tool.called", "message.assistant"]
 
     async def test_reaching_the_step_limit_fails_the_turn_with_the_limit(self, make_harness: MakeHarness) -> None:
-        limits = {"max_steps_per_task": 2, "context_tokens": 32000, "max_cost_per_task_usd": 1}
+        limits = {"max_steps_per_task": 2, "max_cost_per_task_usd": 1}
         h = make_harness(
             [calls(call("c1", "list_dir", path=".")), calls(call("c2", "list_dir", path="."))], limits=limits
         )
@@ -208,17 +209,17 @@ class TestATaskTurn:
     async def test_a_window_too_small_for_the_request_fails_the_turn_in_words_and_asks_nothing(
         self, make_harness: MakeHarness
     ) -> None:
-        # 4000 is in the schema's range, yet less than the answer's room and the safety buffer: nothing fits.
-        limits = {"max_steps_per_task": 60, "context_tokens": 4000, "max_cost_per_task_usd": 1}
-        h = make_harness([says("never")], limits=limits)
+        # A model whose whole window is less than the engine's own prompt: nothing fits, and no summary helps.
+        h = make_harness([says("never")])
+        h.provider.default_limits = ModelLimits(context_tokens=4000, answer_tokens=1000)
 
         outcome = await h.run(chat_unit())
 
         assert outcome.kind == "failed"
         assert outcome.reason is not None
         assert outcome.reason.startswith("the request needs ")
-        assert "and limits.context_tokens (4000) leaves " in outcome.reason
-        assert outcome.reason.endswith("raise Context tokens in the Dot's settings")
+        assert "and the model z-ai/glm-5.3-flash takes " in outcome.reason
+        assert outcome.reason.endswith("choose a model with a larger context window")
         assert "via tiktoken" not in outcome.reason
         assert h.provider.requests == []
 
@@ -311,7 +312,7 @@ class TestCommitPoints:
             max_tokens=500,
         )
         # A budget of 976 tokens for the request, 2000 for the summary of it.
-        h.settings_override = {"context_window_tokens": 2500}
+        h.provider.default_limits = replace(h.provider.default_limits, context_tokens=2500)
         old: list[dict[str, Any]] = []
         for index in range(6):
             old += [
@@ -326,7 +327,12 @@ class TestCommitPoints:
         assert outcome.kind == "completed"
         stored = h.messages()
         metadata = h.store.read(lambda conn: s.read_session_metadata(conn, CHAT))
-        assert metadata["_last_summary"]["text"] == "summary of the old conversation"
+        # The model's summary, then every message of the person, as they wrote it, oldest first.
+        latest = [f"question {index} " + "x" * 300 for index in range(6)] + ["a new question"]
+        assert metadata["_last_summary"]["text"] == (
+            "summary of the old conversation\n\n## The person's latest messages, as they wrote them\n\n"
+            + "\n\n---\n\n".join(latest)
+        )
         boundary = metadata["last_consolidated"]
         # The old messages and the opening message the model was asked about are before the
         # marker, the answer it then gave is after it.
@@ -358,7 +364,7 @@ class TestCommitPoints:
         assert answer_request["model"] == "z-ai/glm-5.3-flash"
         assert h.provider.tool_names[1] == READ_TOOLS
         metadata = h.store.read(lambda conn: s.read_session_metadata(conn, CHAT))
-        assert metadata["_last_summary"]["text"] == "the summary"
+        assert metadata["_last_summary"]["text"].startswith("the summary\n\n## The person's latest messages")
 
     async def test_without_a_summary_role_the_dots_own_model_writes_the_summary_with_the_tools_of_the_turn(
         self, make_harness: MakeHarness, monkeypatch: pytest.MonkeyPatch
@@ -403,7 +409,7 @@ class TestCommitPoints:
             {"files.read": "allow"},
             max_tokens=500,
         )
-        h.settings_override = {"context_window_tokens": 2500}
+        h.provider.default_limits = replace(h.provider.default_limits, context_tokens=2500)
         (h.tmp_path / "home" / "dot" / "workspace" / "big.txt").write_bytes(b"z" * 800)
         old = [
             {"role": "user", "content": "q1 " + "x" * 700},
@@ -817,6 +823,33 @@ class TestHowATurnFails:
         assert h.events() == []
         assert h.inbound_state("in1") == "in_transcript"
 
+    async def test_limits_that_cannot_be_read_fail_the_turn_in_words_and_ask_nothing(
+        self, make_harness: MakeHarness
+    ) -> None:
+        h = make_harness([says("never")])
+
+        async def unreachable(model: str) -> ModelLimits:
+            raise ConnectionError("openrouter.ai did not answer")
+
+        h.provider.model_limits = unreachable  # type: ignore[method-assign]
+        h.accept("in1")
+
+        outcome = await h.run(chat_unit())
+
+        assert outcome == TurnOutcome.failed(
+            "could not read the limits of the model z-ai/glm-5.3-flash from OpenRouter: openrouter.ai did not answer"
+        )
+        assert h.provider.requests == []
+
+    async def test_every_request_of_a_turn_sends_the_longest_answer_of_its_model(self, make_harness: MakeHarness) -> None:
+        h = make_harness([says("ok")])
+        h.provider.default_limits = ModelLimits(context_tokens=1_000_000, answer_tokens=64_000)
+        h.accept("in1")
+
+        await h.run(chat_unit())
+
+        assert [request["max_tokens"] for request in h.provider.requests] == [64_000]
+
     async def test_an_exception_fails_the_turn_with_its_message(self, make_harness: MakeHarness) -> None:
         h = make_harness([RuntimeError("the connection broke")])
         h.accept("in1")
@@ -954,7 +987,7 @@ NO_COST_TEXT = (
 
 
 def cap_limits(cap: float) -> dict[str, Any]:
-    return {"max_steps_per_task": 60, "context_tokens": 32000, "max_cost_per_task_usd": cap}
+    return {"max_steps_per_task": 60, "max_cost_per_task_usd": cap}
 
 
 def cap_text(spent: str, cap: str, what: str = "task") -> str:
@@ -1057,7 +1090,7 @@ class TestTheCostCap:
             max_tokens=500,
             limits=cap_limits(0.01),
         )
-        h.settings_override = {"context_window_tokens": 2500}
+        h.provider.default_limits = replace(h.provider.default_limits, context_tokens=2500)
         (h.tmp_path / "home" / "dot" / "workspace" / "big.txt").write_bytes(b"z" * 800)
         old = [
             {"role": "user", "content": "q1 " + "x" * 700},

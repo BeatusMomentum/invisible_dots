@@ -7,8 +7,7 @@ import pytest
 
 from nanobot.agent.memory import (
     _ARCHIVE_TOOL_RESULT,
-    _RAW_CHECKPOINT_MAX_CHARS,
-    _SUMMARY_HARD_CAP,
+    _RECENT_USER_MESSAGE_TOKENS,
     Consolidator,
     _build_raw_checkpoint,
     _format_messages,
@@ -79,14 +78,13 @@ async def _archive(
 
 
 class TestTurnTranscriptSummary:
-    @pytest.mark.parametrize("summary", ["replacement checkpoint", "(nothing)"])
     async def test_uses_exact_accepted_prefix(
         self,
         consolidator,
         mock_provider,
         runtime,
-        summary,
     ):
+        summary = "replacement checkpoint"
         runtime = replace(runtime, context_window_tokens=4096)
         accepted = [
             {"role": "system", "content": "stable system"},
@@ -105,11 +103,12 @@ class TestTurnTranscriptSummary:
             tools=tools,
         )
 
-        assert result == summary
+        # The person's latest message follows the summary as they wrote it.
+        assert result == summary + "\n\n## The person's latest messages, as they wrote them\n\naccepted history"
         call = mock_provider.chat_stream_with_retry.await_args.kwargs
         assert call["messages"][:-1] == accepted
         assert call["messages"][-1]["role"] == "user"
-        assert "SNIP" in call["messages"][-1]["content"]
+        assert "CONTEXT CHECKPOINT COMPACTION" in call["messages"][-1]["content"]
         assert call["tools"] == tools
 
     async def test_failure_returns_raw_checkpoint(
@@ -123,7 +122,6 @@ class TestTurnTranscriptSummary:
             {"role": "user", "content": "accepted history"},
         ]
         mock_provider.chat_stream_with_retry.return_value = LLMResponse(content="")
-        consolidator._SAFETY_BUFFER = 0
 
         result = await consolidator.summarize_transcript(
             accepted,
@@ -162,7 +160,7 @@ class TestTurnTranscriptSummary:
             tools=[{"type": "function", "function": {"name": "inspect"}}],
         )
 
-        assert result == "replacement checkpoint"
+        assert result == "replacement checkpoint\n\n## The person's latest messages, as they wrote them\n\nraw history must not be replayed"
         call = mock_provider.chat_stream_with_retry.await_args.kwargs
         assert call["messages"][0] == accepted[0]
         assert call["messages"][-1]["content"] == _ARCHIVE_PROMPT
@@ -213,7 +211,7 @@ class TestTurnTranscriptSummary:
             tools=[{"type": "function", "function": {"name": "inspect"}}],
         )
 
-        assert result == "replacement checkpoint"
+        assert result == "replacement checkpoint\n\n## The person's latest messages, as they wrote them\n\nraw history must not be replayed"
         first_call, recovery_call = mock_provider.chat_stream_with_retry.await_args_list
         assert first_call.kwargs["tools"] == recovery_call.kwargs["tools"] == []
         recovery_context = recovery_call.kwargs["provider_context"]
@@ -247,6 +245,7 @@ class TestConsolidatorSummarize:
     ):
         admitted = replace(
             runtime,
+            context_window_tokens=100_000,
             generation=GenerationSettings(
                 temperature=0.25,
                 max_tokens=321,
@@ -301,14 +300,18 @@ class TestConsolidatorSummarize:
         mock_provider,
         runtime,
     ):
-        runtime = replace(runtime, generation=GenerationSettings(max_tokens=256))
         mock_provider.chat_stream_with_retry.side_effect = RuntimeError("API error")
+        messages = [{"role": "user", "content": "NEW_MARKER " + "new " * 200}]
 
-        result = await _archive(
-            consolidator,
-            [{"role": "user", "content": "NEW_MARKER " + "new " * 200}],
-            runtime,
+        # The caller bounds the mechanical checkpoint (half of the summary model's prompt budget in a turn).
+        result = await consolidator.summarize(
+            messages,
+            runtime=runtime,
+            session_key="test:session",
+            history=[{"role": "system", "content": "system prompt"}, *messages],
+            request_tools=[],
             previous_summary="OLD_MARKER " + "old " * 200,
+            fallback_max_tokens=256,
         )
 
         assert result is not None
@@ -324,21 +327,21 @@ class TestConsolidatorSummarize:
 
 
 class TestConsolidatorPromptContract:
-    def test_archive_prompt_requests_a_cumulative_replacement_checkpoint(self):
+    def test_archive_prompt_requests_a_handoff_that_replaces_the_previous_checkpoint(self):
         prompt = _ARCHIVE_PROMPT
 
-        for section in ("## Merge rules", "## What to retain", "## Output"):
-            assert section in prompt
-        assert "replacement checkpoint" in prompt
+        # Codex's handoff framing, OpenHands' headings and the Dot's own, and the merge rule.
+        assert "CONTEXT CHECKPOINT COMPACTION" in prompt
+        assert "handoff summary for another model that will resume this work" in prompt
         assert "[Archived Context Summary]" in prompt
-        assert "current conversation state" in prompt
-        assert "SNIP" in prompt
-        for mark in ("[permanent]", "[durable]", "[ephemeral]", "[correction]"):
-            assert mark in prompt
-        assert "working-state handoff" in prompt
-        assert "- [mark] fact" in prompt
-        assert "[skip]" not in prompt
-        assert "(nothing)" in prompt
+        assert "the conversation wins" in prompt
+        for heading in (
+            "USER_CONTEXT:", "TASK_TRACKING:", "COMPLETED:", "PENDING:", "CURRENT_STATE:", "APPROVALS:", "FILES:",
+            "CODE_STATE:", "TESTS:", "CHANGES:", "DEPS:", "VERSION_CONTROL_STATUS:",
+        ):
+            assert heading in prompt
+        assert "Do not call a tool." in prompt
+        assert "they are kept after your summary as they wrote them" in prompt
         assert "history.jsonl" not in prompt
 
 
@@ -414,17 +417,18 @@ class TestRawCheckpoint:
 
     def test_raw_checkpoint_strips_thinking_before_truncating(self):
         # A thinking block longer than the cap must not leave its head in the checkpoint.
-        content = "<think>PRIVATE" + "x" * (2 * _RAW_CHECKPOINT_MAX_CHARS) + "</think>VISIBLE_TAIL"
+        content = "<think>PRIVATE" + "x" * 40_000 + "</think>VISIBLE_TAIL"
 
         checkpoint = _build_raw_checkpoint([{"role": "assistant", "content": content}])
 
         assert "PRIVATE" not in checkpoint
         assert "VISIBLE_TAIL" in checkpoint
 
-    def test_raw_checkpoint_truncates_large_content(self):
+    def test_raw_checkpoint_keeps_large_content_whole(self):
+        # No fixed size: the turn bounds the checkpoint by its model's own window (`fallback_max_tokens`).
         checkpoint = _build_raw_checkpoint([{"role": "user", "content": "x" * 50_000}])
 
-        assert len(checkpoint) < 50_000
+        assert "x" * 50_000 in checkpoint
         assert checkpoint.startswith("[RAW]")
 
     def test_raw_checkpoint_preserves_small_content(self):
@@ -458,20 +462,67 @@ class TestSummaryBounds:
 
         assert summary == "safe summary"
 
-    async def test_oversized_summary_uses_the_emergency_cap(
-        self, consolidator, mock_provider, runtime
+    async def test_a_long_summary_comes_back_whole(self, consolidator, mock_provider, runtime):
+        """No size of our own: the model's longest answer bounds its summary."""
+        mock_provider.chat_stream_with_retry.return_value = MagicMock(content="S" * 200_000, finish_reason="stop")
+
+        summary = await _archive(consolidator, [{"role": "user", "content": "hi"}], runtime)
+
+        assert summary == "S" * 200_000
+
+
+class TestCompactionOfALongThread:
+    async def test_a_thread_too_long_for_the_summary_model_loses_its_oldest_messages_with_their_results(
+        self, consolidator, mock_provider, runtime, monkeypatch
     ):
-        """A pathologically large LLM summary must not come back full-length."""
-        mock_provider.chat_stream_with_retry.return_value = MagicMock(
-            content="S" * (_SUMMARY_HARD_CAP * 2),
-            finish_reason="stop",
+        def ten_tokens_a_message(provider, model, messages, tools):
+            return 10 * len(messages), "test"
+
+        monkeypatch.setattr("nanobot.agent.memory.estimate_prompt_tokens_chain", ten_tokens_a_message)
+        monkeypatch.setattr("nanobot.agent.memory.estimate_message_tokens", lambda message: 10)
+        mock_provider.chat_stream_with_retry.return_value = LLMResponse(content="the summary")
+        call = {"id": "c1", "type": "function", "function": {"name": "exec", "arguments": "{}"}}
+        thread = [
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": None, "tool_calls": [call]},
+            {"role": "tool", "tool_call_id": "c1", "name": "exec", "content": "out"},
+            {"role": "user", "content": "second"},
+            {"role": "assistant", "content": "done"},
+        ]
+        history = [{"role": "system", "content": "system prompt"}, *thread]
+
+        # Room for the instructions, three messages and the request for the summary: 50 tokens.
+        summary = await consolidator.summarize(
+            thread,
+            runtime=runtime,
+            session_key="test:long",
+            history=history,
+            request_tools=[],
+            input_token_budget=50,
         )
 
-        summary = await _archive(
-            consolidator,
-            [{"role": "user", "content": "hi"}],
-            runtime,
-        )
+        assert summary == "the summary"
+        sent = mock_provider.chat_stream_with_retry.await_args.kwargs["messages"]
+        # "first" went, then its call went with its result: nothing is split, the newest stay.
+        assert [m.get("content") for m in sent[:-1]] == ["system prompt", "second", "done"]
+        assert sent[-1]["content"] == _ARCHIVE_PROMPT
 
-        assert summary is not None
-        assert len(summary) <= _SUMMARY_HARD_CAP + 50
+    def test_the_latest_messages_kept_are_the_newest_up_to_the_limit_the_one_across_it_cut(self):
+        from nanobot.agent.memory import _with_recent_user_messages
+
+        big = "word " * _RECENT_USER_MESSAGE_TOKENS
+        messages = [
+            {"role": "user", "content": "oldest"},
+            {"role": "user", "content": big},
+            {"role": "assistant", "content": "not the person's"},
+            {"role": "user", "content": "newest"},
+        ]
+
+        text = _with_recent_user_messages("S", messages)
+
+        head, latest = text.split("## The person's latest messages, as they wrote them\n\n")
+        assert head == "S\n\n"
+        parts = latest.split("\n\n---\n\n")
+        assert parts[-1] == "newest"
+        assert "oldest" not in latest and "not the person's" not in latest
+        assert parts[0].startswith("word word") and parts[0] != big
