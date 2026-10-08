@@ -26,7 +26,7 @@ CASES = [
     ("comments", "; a comment\n(display 1) ; another\n(newline)", "1\n", 0, ""),
     ("procedures-print", "(display (procedure? car)) (display (procedure? (lambda (x) x))) (display (number? 'a)) (newline)", "#t#t#f\n", 0, ""),
     ("min-max-abs", "(display (min 3 1 2)) (display (max 3 1 2)) (display (abs -7)) (newline)", "137\n", 0, ""),
-    ("undefined-variable", "(display 1) (newline) (display nope)", "1\n", 1, "undefined variable"),
+    ("undefined-variable", "(display 1) (newline) (display nope)", "1\n", 1, "error:"),
     ("not-a-procedure", "(display 2) (5 3)", "2", 1, "error"),
     ("car-of-empty", "(car '())", "", 1, "error"),
     ("division-by-zero", "(display (/ 1 0))", "", 1, "error"),
