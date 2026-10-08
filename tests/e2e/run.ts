@@ -25,26 +25,24 @@
  * What does not need a VM (the names this run relies on, its byte checks and
  * scans, its YAML) is in lib.ts, tested in CI by tests/repo/e2e.test.ts.
  */
-import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { createWriteStream, existsSync, type WriteStream } from "node:fs";
+import { existsSync } from "node:fs";
 import { appendFile, copyFile, mkdir, open, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ENDED, MINUTE, Product, processAlive, say, sleep, waitFor } from "./driver.ts";
 import {
   assert,
   describeTools,
   DOCTOR_CHECKS,
   dotName,
-  dotTokenFromSeed,
   dotYaml,
   enc,
   eventLines,
   Failure,
   filesHolding,
   filesUnder,
-  guestProof,
   identityEvents,
   identityTarget,
   isSpend,
@@ -64,7 +62,6 @@ import {
   toolCalls,
   toolOk,
   utcStamp,
-  waitFor as waitForWith,
   type AgentStateAnswer,
   type Approval,
   type CheckResult,
@@ -95,7 +92,6 @@ const CHECK_ONLY = process.argv.includes("--check");
 const DOT_PREFIX = "e2e-";
 const DOT_NAME = dotName(DOT_PREFIX, STAMP);
 
-const MINUTE = 60_000;
 const TIMEOUTS = {
   cli: 2 * MINUTE,
   /** Downloads the cloud image and the browser engine and provisions a builder VM. */
@@ -120,224 +116,34 @@ const WORKSPACE = "/home/dot/workspace";
 const MEMORY_NOTE = "example-title.md";
 const BROWSERS = "/home/dot/browsers";
 
-// Output
+// The product, driven from the outside (driver.ts)
 
-const env = { ...process.env, INVISIBLE_DOTS_HOME: HOME };
-let cliLog: WriteStream | undefined;
-
-function say(text: string): void {
-  process.stdout.write(`${new Date().toISOString()} ${text}\n`);
-}
-
-const sleep = (ms: number): Promise<void> => new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
-
-function waitFor<T>(what: string, timeoutMs: number, probe: () => Promise<T | undefined>, everyMs = 2000): Promise<T> {
-  return waitForWith(what, timeoutMs, probe, everyMs);
-}
-
-// Processes
-
-interface CliResult {
-  code: number | null;
-  stdout: string;
-  stderr: string;
-}
-
-/**
- * One `invisible-dots` call. Its arguments and output go to cli.log; stdin
- * (only ever the key) does not. With `stream`, output is also appended to
- * that file as it arrives, for a long command whose progress is followed.
- */
-async function cli(args: string[], options: { stdin?: string; timeoutMs?: number; stream?: string } = {}): Promise<CliResult> {
-  const timeoutMs = options.timeoutMs ?? TIMEOUTS.cli;
-  const child = spawn(process.execPath, [CLI, ...args], { cwd: REPO, env, stdio: ["pipe", "pipe", "pipe"] });
-  const out: Buffer[] = [];
-  const err: Buffer[] = [];
-  const streamTo = options.stream ? createWriteStream(options.stream, { flags: "a" }) : undefined;
-  child.stdout.on("data", (chunk: Buffer) => {
-    out.push(chunk);
-    streamTo?.write(chunk);
-  });
-  child.stderr.on("data", (chunk: Buffer) => {
-    err.push(chunk);
-    streamTo?.write(chunk);
-  });
-  child.stdin.end(options.stdin ?? "");
-  const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
-  const code = await new Promise<number | null>((resolveExit, reject) => {
-    child.on("error", reject);
-    child.on("close", (exitCode) => resolveExit(exitCode));
-  });
-  clearTimeout(timer);
-  streamTo?.end();
-  const result = { code, stdout: Buffer.concat(out).toString("utf8"), stderr: Buffer.concat(err).toString("utf8") };
-  cliLog?.write(`$ invisible-dots ${args.join(" ")}\n${result.stdout}${result.stderr ? `[stderr]\n${result.stderr}` : ""}[exit ${code}]\n\n`);
-  return result;
-}
-
-/** A `--json` call that must succeed: its parsed output. */
-async function cliJson<T>(args: string[]): Promise<T> {
-  const done = await cli([...args, "--json"]);
-  assert(done.code === 0, `invisible-dots ${args[0]} exited with ${done.code}: ${done.stderr.trim()}`);
-  return JSON.parse(done.stdout) as T;
-}
-
-let server: ChildProcess | undefined;
-
-async function startServer(): Promise<void> {
-  const log = createWriteStream(join(LOG_DIR, "server.log"), { flags: "a" });
-  server = spawn(process.execPath, [CLI, "server", ...(WEB ? [] : ["--no-web"])], { cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] });
-  server.stdout!.pipe(log);
-  server.stderr!.pipe(log);
-  const started = Date.now();
-  for (;;) {
-    assert(server.exitCode === null, `invisible-dots server exited with ${server.exitCode}; see ${join(LOG_DIR, "server.log")}`);
-    try {
-      const health = await api<{ status: string; database: string }>("GET", ROUTES.health);
-      if (health.status === "ok") break;
-    } catch {
-      // Not listening yet, or the token file is not written yet.
-    }
-    assert(Date.now() - started < TIMEOUTS.server, "the server did not answer /api/health in time");
-    await sleep(500);
-  }
-  if (WEB) {
-    // The web client starts after the control plane listens, and never stops it when it cannot start.
-    await waitFor("the web client to answer", TIMEOUTS.server, async () => {
-      assert(server!.exitCode === null, `invisible-dots server exited with ${server!.exitCode}`);
-      return (await fetch(`${WEB_URL}/`, { redirect: "manual", signal: AbortSignal.timeout(5000) }).catch(() => undefined)) ? true : undefined;
-    }, 500).catch((error: unknown) => {
-      throw new Failure(`${(error as Error).message}; see ${join(LOG_DIR, "server.log")} (the web client is built with: npm run build --workspace @invisible-dots/web, or run with E2E_WEB=0)`);
-    });
-  }
-}
-
-/**
- * Stops the server the way a person does with Ctrl+C or a service manager.
- * On Linux SIGTERM runs the server's own shutdown (it closes the database and
- * releases server.lock); on Windows Node's kill() is TerminateProcess, so the
- * same call would test a hard kill instead. This run is written for Linux
- * hosts (README), where step j restarts the server gracefully.
- */
-async function stopServer(): Promise<void> {
-  const child = server;
-  if (!child || child.exitCode !== null) return;
-  const exited = new Promise<void>((resolveExit) => child.once("exit", () => resolveExit()));
-  child.kill("SIGTERM");
-  const timer = setTimeout(() => child.kill("SIGKILL"), 30_000);
-  await exited;
-  clearTimeout(timer);
-}
-
-function processAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return (error as NodeJS.ErrnoException).code === "EPERM";
-  }
-}
-
-// API
-
-class HttpError extends Error {
-  readonly status: number;
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
-
-async function apiToken(): Promise<string> {
-  const fromEnv = process.env.INVISIBLE_DOTS_TOKEN?.trim();
-  if (fromEnv) return fromEnv;
-  return (await readFile(join(HOME, "config", "api.token"), "utf8")).split(/\r?\n/)[0]!.trim();
-}
-
-/** A call that returns whatever the server answers, error statuses included. */
-async function raw(method: string, path: string, body?: unknown): Promise<Response> {
-  const headers: Record<string, string> = { authorization: `Bearer ${await apiToken()}` };
-  if (body !== undefined) headers["content-type"] = "application/json";
-  return fetch(`${API_URL}${path}`, {
-    method,
-    headers,
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000),
-  });
-}
-
-async function request(method: string, path: string, body?: unknown): Promise<Response> {
-  const response = await raw(method, path, body);
-  if (!response.ok) throw new HttpError(response.status, `${method} ${path}: ${response.status} ${await response.text()}`);
-  return response;
-}
-
-async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const response = await request(method, path, body);
-  return (response.status === 204 || response.status === 202 ? undefined : await response.json()) as T;
-}
-
-/** The status and the error code of an answer that is expected to be a refusal. */
-async function refusal(method: string, path: string): Promise<{ status: number; error: string }> {
-  const response = await raw(method, path);
-  const body = (await response.json().catch(() => ({}))) as { error?: string };
-  return { status: response.status, error: body.error ?? "" };
-}
-
-async function events(dotId: string, after = 0): Promise<StoredEvent[]> {
-  const all: StoredEvent[] = [];
-  for (;;) {
-    const page = (await api<{ events: StoredEvent[] }>("GET", route(ROUTES.events, { id: dotId }, { after, limit: 1000 }))).events;
-    all.push(...page);
-    if (page.length < 1000) return all;
-    after = page.at(-1)!.id;
-  }
-}
-
-async function identities(dotId: string): Promise<Identity[]> {
-  return (await api<{ identities: Identity[] }>("GET", route(ROUTES.identities, { id: dotId }))).identities;
-}
+const product = new Product({ repo: REPO, home: HOME, logDir: LOG_DIR, cli: CLI, apiUrl: API_URL, webUrl: WEB_URL, web: WEB, timeouts: TIMEOUTS });
+const {
+  cli,
+  cliJson,
+  startServer,
+  stopServer,
+  raw,
+  request,
+  api,
+  refusal,
+  events,
+  identities,
+  computerOf,
+  waitReady,
+  waitComputerState,
+  waitDeleted,
+  waitTask,
+  guestRequest,
+  guestExec,
+} = product;
 
 async function identityNamed(dotId: string, name: string): Promise<Identity> {
   const found = (await identities(dotId)).find((i) => i.name === name);
   assert(found, `GET browser-identities does not list ${name}`);
   return found;
 }
-
-async function computerOf(dotId: string): Promise<Computer> {
-  return api<Computer>("GET", route(ROUTES.computer, { id: dotId }));
-}
-
-async function waitReady(dotId: string): Promise<{ dot: Dot; computer: Computer }> {
-  return waitFor("the Dot to be READY", TIMEOUTS.ready, async () => {
-    const dot = await api<Dot>("GET", route(ROUTES.dot, { id: dotId }));
-    const computer = await computerOf(dotId);
-    assert(dot.status !== "ERROR", `the Dot went to ERROR: ${dot.error ?? "(no error)"}; computer last_error: ${computer.last_error ?? "-"}`);
-    return dot.status === "READY" && computer.ready ? { dot, computer } : undefined;
-  }, 3000);
-}
-
-async function waitComputerState(dotId: string, state: string, timeoutMs: number): Promise<Computer> {
-  return waitFor(`the computer to be ${state}`, timeoutMs, async () => {
-    const computer = await computerOf(dotId);
-    assert(!(computer.state === "ERROR" && state !== "ERROR"), `the computer went to ERROR: ${computer.last_error ?? "-"}`);
-    return computer.state === state ? computer : undefined;
-  });
-}
-
-async function waitDeleted(dotId: string, what: string): Promise<void> {
-  await waitFor(what, TIMEOUTS.delete, async () => {
-    try {
-      await api("GET", route(ROUTES.dot, { id: dotId }));
-      return undefined;
-    } catch (error) {
-      if (error instanceof HttpError && error.status === 404) return true;
-      throw error;
-    }
-  });
-}
-
-const ENDED = ["COMPLETED", "FAILED", "CANCELLED"];
 
 /** Queues a task through the CLI. */
 async function queueTask(description: string): Promise<Task> {
@@ -347,15 +153,6 @@ async function queueTask(description: string): Promise<Task> {
 /** Queues a task and waits for it to end; a task that does not complete fails the step. */
 async function runTask(description: string): Promise<Task> {
   return waitTask((await queueTask(description)).id);
-}
-
-async function waitTask(taskId: string): Promise<Task> {
-  const done = await waitFor(`task ${taskId} to end`, TIMEOUTS.task, async () => {
-    const task = await api<Task>("GET", route(ROUTES.task, { id: taskId }));
-    return ENDED.includes(task.status) ? task : undefined;
-  }, 3000);
-  assert(done.status === "COMPLETED", `task ${taskId} ended ${done.status}: ${done.error ?? done.summary ?? "(no detail)"}`);
-  return done;
 }
 
 /** The approval a running task parks on, for the tool named; the task must not end first. */
@@ -411,37 +208,6 @@ function expectChecks(checks: Map<string, CheckResult>, ids: readonly string[]):
 }
 
 // The guest, reached the way the control plane reaches it (architecture section 5.1)
-
-/**
- * One request to dot-agentd on the forwarded port of the running computer: the
- * proof handshake first (the Dot's token goes only to a process that proves it
- * holds it), then the request with the Dot's own token, read from its seed.
- * This is how the run does to a guest what the model is not allowed to do to
- * its own computer: read what it wrote, with no tool and no permission.
- */
-async function guestRequest(dotId: string, method: string, path: string, body?: unknown): Promise<Response> {
-  const computer = await computerOf(dotId);
-  assert(computer.guest_port, `the computer is ${computer.state}: it has no guest port`);
-  const token = dotTokenFromSeed(await readFile(join(HOME, "vms", dotId, "seed.iso")));
-  const base = `http://127.0.0.1:${computer.guest_port}`;
-  const nonce = randomBytes(16).toString("hex");
-  const proofResponse = await fetch(`${base}/v1/proof?nonce=${nonce}`, { signal: AbortSignal.timeout(30_000) });
-  assert(proofResponse.ok, `GET /v1/proof: ${proofResponse.status}`);
-  assert(((await proofResponse.json()) as { proof?: string }).proof === guestProof(token, nonce), "dot-agentd did not prove it holds this Dot's token");
-  return fetch(`${base}${path}`, {
-    method,
-    headers: { authorization: `Bearer ${token}`, ...(body === undefined ? {} : { "content-type": "application/json" }) },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000),
-  });
-}
-
-/** `POST /v1/exec` (architecture section 5.2): a command as the user dot, whatever the Dot's permissions say. */
-async function guestExec(dotId: string, command: string): Promise<{ exit_code: number; stdout: string; stderr: string; timed_out: boolean }> {
-  const response = await guestRequest(dotId, "POST", "/v1/exec", { command, timeout_ms: 30_000 });
-  if (!response.ok) throw new Error(`POST /v1/exec: ${response.status} ${await response.text()}`);
-  return (await response.json()) as { exit_code: number; stdout: string; stderr: string; timed_out: boolean };
-}
 
 /** The engine's own state, through dot-agentd's proxy to its socket (`GET /v1/agent/state`). */
 async function agentState(dotId: string): Promise<AgentStateAnswer> {
@@ -596,7 +362,7 @@ async function step(id: string, title: string, body: () => Promise<string>): Pro
  * fails.
  */
 async function saveEvents(): Promise<void> {
-  if (!state.dotId || !server || server.exitCode !== null) return;
+  if (!state.dotId || !product.serverRunning) return;
   try {
     await writeFile(join(LOG_DIR, "events.txt"), `${eventLines(await events(state.dotId)).join("\n")}\n`);
   } catch (error) {
@@ -641,7 +407,7 @@ async function answers(url: string): Promise<boolean> {
 
 async function main(): Promise<void> {
   await mkdir(LOG_DIR, { recursive: true });
-  cliLog = createWriteStream(join(LOG_DIR, "cli.log"), { flags: "a" });
+  product.logCliTo(join(LOG_DIR, "cli.log"));
   say(`home ${HOME}, logs ${LOG_DIR}, Dot ${DOT_NAME}, model ${MODEL}, web ${WEB ? WEB_URL : "off"}${CHECK_ONLY ? ", --check" : ""}`);
 
   await step("a", "host: key, binaries, ports, doctor (accelerator and QEMU)", async () => {
@@ -1196,7 +962,7 @@ try {
   if (!(error instanceof Failure) && !results.some((r) => !r.ok)) say(`error: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
 } finally {
   await stopServer().catch(() => undefined);
-  cliLog?.end();
+  product.closeCliLog();
   await mkdir(LOG_DIR, { recursive: true });
   await writeFile(join(LOG_DIR, "summary.json"), `${JSON.stringify({ dot: DOT_NAME, model: MODEL, web: WEB, results }, null, 2)}\n`);
   for (const r of results) await appendFile(join(LOG_DIR, "summary.txt"), `${r.ok ? "PASS" : "FAIL"} ${r.step} ${r.seconds}s ${r.title}: ${r.detail}\n`);

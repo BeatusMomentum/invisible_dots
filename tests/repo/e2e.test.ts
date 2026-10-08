@@ -17,6 +17,7 @@
 import { spawnSync } from "node:child_process";
 import { createHmac } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { stripTypeScriptTypes } from "node:module";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -93,6 +94,14 @@ function event(id: number, type: string, data: Record<string, unknown>): StoredE
 }
 
 describe("the e2e run's contract with the product", () => {
+  it("is TypeScript that Node runs as it is: every file of the runs strips to JavaScript", () => {
+    // The runs are started with plain Node (type stripping), which refuses what only a compiler can turn
+    // into JavaScript (a parameter property, an enum); the typecheck alone accepts those.
+    for (const file of ["tests/e2e/run.ts", "tests/e2e/scale.ts", "tests/e2e/driver.ts", "tests/e2e/lib.ts"]) {
+      expect(() => stripTypeScriptTypes(read(file)), file).not.toThrow();
+    }
+  });
+
   it("calls only routes the architecture lists (section 9.6) and the API registers, with the method it uses", () => {
     const architecture = read("docs/architecture.md");
     const section = architecture.slice(architecture.indexOf("### 9.6 API"), architecture.indexOf("### 9.7 Web client"));

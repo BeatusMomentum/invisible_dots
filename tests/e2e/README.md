@@ -186,6 +186,36 @@ lasts. Remove everything afterwards with `docker rm -f idots-e2e` and
 it holds `config/master.key` next to the database in which the key is stored
 encrypted under it, so whoever can read the volume can decrypt the key.
 
+## The scale run
+
+`scale.ts` loads one host with Dots, on real VMs, through the same outside
+driver (`driver.ts`). For each level of N Dots (default 1, 2, 4, 8) it creates
+the N at once, waits until every one is READY, sends each a chat message,
+gives each a task that runs a command in its computer and reads the result
+back from the guest, then deletes them all. Meanwhile it samples `/api/health`
+and `/api/dots` four times a second, and the host's available memory and the
+QEMU processes' memory every two seconds. A level passes when every Dot came
+up, answered and did its task, and:
+
+| Budget | Default |
+|---|---|
+| the API's 95th percentile | under `SCALE_HEALTH_P95_MS` (500 ms) |
+| READY, a reply and a task at the 95th percentile | within `SCALE_RATIO` (3) times the same with one Dot, plus 30 s |
+| the host's available memory | above `SCALE_MIN_FREE_MB` (1024 MB) |
+
+The budgets are ratios to one Dot, so they measure how the host shares out,
+not how fast it is. Each Dot has 1 CPU and `SCALE_MEMORY` (2gb). It needs the
+images step b of the end-to-end run built in the same home:
+
+```bash
+docker exec -w /work/dots -e E2E_OPENROUTER_KEY_FILE=/run/secrets/openrouter \
+  -e E2E_LOG_DIR=/work/logs/scale idots-e2e node tests/e2e/scale.ts --levels 1,2,4,8
+```
+
+`summary.txt` has one line per level (READY, reply and task times at p50 and
+p95, the API's p95, the lowest available memory and the QEMU processes' total),
+`samples.json` every sample.
+
 ## Linux only
 
 The run is written for a Linux host (step a refuses another). Step j restarts
