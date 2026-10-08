@@ -281,6 +281,37 @@ describe.each(testAdapters())("Scheduler with a fake driver and a fake guest (%s
     expect(types(await db.events.list({ dotId: dot.id, types: ["approval.resolved"] }))).toEqual(["approval.resolved"]);
   });
 
+  it("an approve and a reject sent at the same moment: one wins, the other is a 409, and the guest hears one decision", async () => {
+    const { scheduler, driver } = make();
+    const dot = await readyDot(scheduler, "two-answers");
+    const guest = driver.guestOf(dot.id);
+    expect(guest.config?.permissions["browser.identity.delete"]).toBe("ask");
+    for (let round = 0; round < 5; round++) {
+      const id = guest.requestApproval(undefined);
+      await waitFor(async () => (await db.approvals.get(id))?.status === "pending", "pending approval");
+
+      const answers = await Promise.allSettled([
+        scheduler.resolveApproval(id, "approve", { always: true }),
+        scheduler.resolveApproval(id, "reject", { note: "no" }),
+      ]);
+
+      const won = answers.filter((a) => a.status === "fulfilled");
+      const lost = answers.filter((a) => a.status === "rejected");
+      expect([won.length, lost.length]).toEqual([1, 1]);
+      expect((lost[0] as PromiseRejectedResult).reason).toMatchObject({ status: 409, code: "already_resolved" });
+      const winner = (won[0] as PromiseFulfilledResult<{ status: string }>).value.status;
+      expect((await db.approvals.get(id))?.status).toBe(winner);
+      const decision = winner === "approved" ? "approve" : "reject";
+      await waitFor(() => guest.inbound.some((e) => e.type === "approval.received" && e.data.approval_id === id), "decision delivered");
+      expect(guest.inbound.flatMap((e) => (e.type === "approval.received" && e.data.approval_id === id ? [e.data.decision] : []))).toEqual([decision]);
+      const resolved = (await db.events.list({ dotId: dot.id, types: ["approval.resolved"] })).filter((e) => e.data.approval_id === id);
+      expect(resolved.map((e) => e.data.decision)).toEqual([decision]);
+      // "Always" changes the permission only when the approve won.
+      expect((await db.dots.get(dot.id))?.config.permissions["browser.identity.delete"] === "allow").toBe(winner === "approved");
+      await db.dots.setPermission(dot.id, "browser.identity.delete", "ask");
+    }
+  });
+
   it("approve with always: the permission becomes allow in the config and the guest, once, in the same transaction as the decision", async () => {
     const { scheduler, driver } = make();
     const dot = await readyDot(scheduler, "always-allow");
